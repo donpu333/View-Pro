@@ -1080,39 +1080,40 @@ html, body {
             color: #f23645;
         }
 
-   /* Горизонтальный режим (по умолчанию) */
+   /* === ВЕРТИКАЛЬНАЯ ПАНЕЛЬ ПО УМОЛЧАНИЮ === */
 .drawing-toolbar {
     position: absolute;
     left: 20px;
     top: 60px;
     background: #2D2D2D;
     border-radius: 8px;
-    padding: 5px 8px;
+    padding: 10px 5px;
     display: flex;
-    flex-direction: row;
-    gap: 4px;
+    flex-direction: column;      /* ← ВЕРТИКАЛЬНО */
+    gap: 10px;
     z-index: 10001;
     border: 1px solid #404040;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    width: auto;
-    height: auto;
+    width: 54px;                 /* ← УЗКАЯ */
     cursor: default;
     user-select: none;
     align-items: center;
-    flex-wrap: wrap;
-    max-width: 600px;
-}
-
-/* Вертикальный режим */
-.drawing-toolbar.vertical {
-    flex-direction: column;
-    width: 54px;
-    padding: 10px 5px;
-    gap: 10px;
     flex-wrap: nowrap;
     max-width: 54px;
 }
 
+/* === ГОРИЗОНТАЛЬНЫЙ РЕЖИМ (добавляется классом) === */
+.drawing-toolbar.horizontal {
+    flex-direction: row;
+    width: auto;
+    padding: 5px 8px;
+    gap: 4px;
+    flex-wrap: wrap;
+    max-width: 600px;
+}
+html.toolbar-vertical-default .drawing-toolbar {
+    flex-direction: column;
+}
 /* Кнопки в toolbar-header при горизонтальном режиме */
 .drawing-toolbar:not(.vertical) .toolbar-header {
     border-bottom: none;
