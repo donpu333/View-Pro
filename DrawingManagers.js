@@ -582,16 +582,21 @@ class HorizontalRayManager {
             }
         });
 
-        container.addEventListener('mousemove', (e) => {
+               container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
-            const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+            const cssX = e.clientX - rect.left;
+            const cssY = e.clientY - rect.top;
+            
+            // 1. Сохраняем CSS-координаты (нужны для горячих клавиш O и мыши)
+            this._lastMouseX = cssX;
+            this._lastMouseY = cssY;
 
-            this._lastMouseX = x;
-            this._lastMouseY = y;
+            // 2. Переводим в Bitmap ТОЛЬКО для hitTest и перетаскивания
+            const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
             if (this._potentialDrag && !this._isDragging) {
-                const dx = Math.abs(x - this._potentialDrag.startX);
-                const dy = Math.abs(y - this._potentialDrag.startY);
+                const dx = Math.abs(bmX - this._potentialDrag.startX);
+                const dy = Math.abs(bmY - this._potentialDrag.startY);
 
                 if (dx > this._dragThreshold || dy > this._dragThreshold) {
                     this._isDragging = true;
@@ -611,8 +616,8 @@ class HorizontalRayManager {
                 e.preventDefault();
                 e.stopPropagation();
 
-                const deltaX = x - this._dragStartX;
-                const deltaY = y - this._dragStartY;
+                const deltaX = bmX - this._dragStartX;
+                const deltaY = bmY - this._dragStartY;
 
                 const rayX = this._chartManager.timeToCoordinate(this._dragStartTime);
                 const rayY = this._chartManager.priceToCoordinate(this._dragStartPrice);
@@ -635,8 +640,8 @@ class HorizontalRayManager {
                     const newRayY = this._chartManager.priceToCoordinate(this._dragRay.price);
 
                     if (newRayX !== null && newRayY !== null) {
-                        this._dragRay.dragPointX = newRayX * this._pixelRatio;
-                        this._dragRay.dragPointY = newRayY * this._pixelRatio;
+                        this._dragRay.dragPointX = newRayX;
+                        this._dragRay.dragPointY = newRayY;
                     }
 
                     this._requestRedraw();
@@ -647,7 +652,7 @@ class HorizontalRayManager {
                 
                 for (const item of raysForCurrent) {
                     if (!item.primitive || !item.primitive._paneView || !item.primitive._paneView._renderer) continue;
-                    const hitType = item.primitive._paneView._renderer.hitTest(x, y);
+                    const hitType = item.primitive._paneView._renderer.hitTest(bmX, bmY);
                     if (hitType) {
                         hit = { ray: item.ray, type: hitType };
                         break;
@@ -674,7 +679,6 @@ class HorizontalRayManager {
                 }
             }
         });
-
         container.addEventListener('mouseup', (e) => {
             this._potentialDrag = null;
 
@@ -1981,17 +1985,21 @@ class TrendLineManager {
         }
     }
 
-    _handleMouseMove(e) {
+       _handleMouseMove(e) {
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        // 1. Сохраняем CSS-координаты
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
 
-        this._lastMouseX = bmX; this._lastMouseY = bmY;
+        // 2. Bitmap для логики
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
         if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-            let price = this._chartManager.coordinateToPrice(y);
-            let time = this._getTimeFromCoordinate(x);
+            let price = this._chartManager.coordinateToPrice(cssY);
+            let time = this._chartManager.coordinateToTime(cssX);
             if (price !== null && time !== null) {
                 if (this._tempLine) {
                     this._tempLine.point2 = { price, time };
@@ -2010,24 +2018,18 @@ class TrendLineManager {
             if (dx > 3 || dy > 3) {
                 this._isDragging = true; this._dragLine = this._potentialDrag.line; this._dragPoint = this._potentialDrag.pointType;
                 this._dragLine.dragging = true;
-                
-                // FIX: Сохраняем стартовые координаты в Bitmap-пространстве, чтобы не было бага сложения CSS+Bitmap
                 const p1x = this._chartManager.timeToCoordinateWithFallback?.(this._dragLine.point1.time) ?? this._chartManager.timeToCoordinate(this._dragLine.point1.time);
                 const p1y = this._chartManager.priceToCoordinateWithFallback?.(this._dragLine.point1.price) ?? this._chartManager.priceToCoordinate(this._dragLine.point1.price);
                 const p2x = this._chartManager.timeToCoordinateWithFallback?.(this._dragLine.point2.time) ?? this._chartManager.timeToCoordinate(this._dragLine.point2.time);
                 const p2y = this._chartManager.priceToCoordinateWithFallback?.(this._dragLine.point2.price) ?? this._chartManager.priceToCoordinate(this._dragLine.point2.price);
-                
                 if (p1x !== null && p1y !== null) this._dragLine._pixelStart1 = { x: p1x * this._pixelRatio, y: p1y * this._pixelRatio };
                 if (p2x !== null && p2y !== null) this._dragLine._pixelStart2 = { x: p2x * this._pixelRatio, y: p2y * this._pixelRatio };
-                
-                this._dragStartX = this._potentialDrag.startX; 
-                this._dragStartY = this._potentialDrag.startY;
+                this._dragStartX = this._potentialDrag.startX; this._dragStartY = this._potentialDrag.startY;
                 this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
                 this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
                 this._chartManager.chartContainer.style.cursor = 'grabbing';
             }
         }
-        
         if (this._isDragging && this._dragLine) {
             e.preventDefault(); e.stopPropagation();
             const deltaX = bmX - this._dragStartX, deltaY = bmY - this._dragStartY;
@@ -2054,7 +2056,6 @@ class TrendLineManager {
             }
         }
     }
-
     _handleMouseUp(e) {
         if (this._isDragging) {
             e.preventDefault(); e.stopPropagation();
@@ -3104,19 +3105,22 @@ class RulerLineManager {
         }
     }
 
-    _handleMouseMove(e) {
+       _handleMouseMove(e) {
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        // 1. Сохраняем CSS-координаты (нужны для горячих клавиш)
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
 
-        this._lastMouseX = bmX;
-        this._lastMouseY = bmY;
+        // 2. Bitmap для логики перетаскивания и хиттеста
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
         if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-            // Используем CSS координаты для получения цены/времени
-            let price = this._chartManager.coordinateToPrice(y);
-            let time = this._chartManager.coordinateToTime(x);
+            // Для получения цены/времени при рисовании используем CSS-координаты
+            let price = this._chartManager.coordinateToPrice(cssY);
+            let time = this._chartManager.coordinateToTime(cssX);
             if (price !== null && time !== null) {
                 if (!this._tempLine) {
                     this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
@@ -3994,14 +3998,17 @@ class AlertLineManager {
             }
         });
 
-        container.addEventListener('mousemove', (e) => {
+              container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+            const cssX = e.clientX - rect.left;
+            const cssY = e.clientY - rect.top;
+            
+            // 1. Сохраняем CSS-координаты (нужны для горячей клавиши I)
+            this._lastMouseX = cssX;
+            this._lastMouseY = cssY;
 
-            this._lastMouseX = bmX;
-            this._lastMouseY = bmY;
+            // 2. Bitmap для логики перетаскивания и хиттеста
+            const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
             if (this._potentialDrag && !this._isDragging) {
                 const dx = Math.abs(bmX - this._potentialDrag.startX);
@@ -4054,7 +4061,6 @@ class AlertLineManager {
                 }
             }
         });
-
         container.addEventListener('mouseup', (e) => {
             this._potentialDrag = null;
             if (this._isDragging) {
@@ -5510,14 +5516,17 @@ class TextManager {
             }
         });
 
-        container.addEventListener('mousemove', (e) => {
+             container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+            const cssX = e.clientX - rect.left;
+            const cssY = e.clientY - rect.top;
+            
+            // 1. Сохраняем CSS-координаты (нужны для горячих клавиш)
+            this._lastMouseX = cssX;
+            this._lastMouseY = cssY;
 
-            this._lastMouseX = bmX;
-            this._lastMouseY = bmY;
+            // 2. Bitmap для логики перетаскивания и хиттеста
+            const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
             if (this._potentialDrag && !this._isDragging) {
                 const dx = Math.abs(bmX - this._potentialDrag.startX);
