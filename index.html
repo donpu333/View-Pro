@@ -18,7 +18,16 @@
 </head>
 
 <body>
-  
+  <body>
+<script>
+// Применяем вертикальный режим мгновенно, до отрисовки
+(function() {
+    var orientation = localStorage.getItem('drawingToolbarOrientation');
+    if (!orientation || orientation === 'vertical') {
+        document.documentElement.classList.add('toolbar-vertical-default');
+    }
+})();
+</script>
 <!-- ПАНЕЛЬ КОТИРОВОК (СПРАВА) -->
 <div class="ticker-panel" id="tickerPanel">
 
@@ -2594,7 +2603,7 @@ function takeChartScreenshot() {
 const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
 if (toolbarOrientationBtn && drawingToolbar) {
     // Загружаем сохраненную ориентацию
-    const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
+    const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'vertical';
     if (savedOrientation === 'vertical') {
         drawingToolbar.classList.add('vertical');
         toolbarOrientationBtn.textContent = '⇅';
