@@ -3323,9 +3323,7 @@ class RulerLineManager {
         if (this._magnetEnabled) {
             const snapped = this._snapToPrice(price, time);
             price = snapped.price; time = snapped.time; anchorCandle = snapped.anchorCandle;
-        } else {
-            const snappedTime = this._findClosestCandleTime(time);
-            if (snappedTime) time = snappedTime;
+       
         }
         this._drawingStartPoint = { price, time, x, y, anchorCandle };
         this._isDrawingSecondPoint = true;
@@ -3351,9 +3349,7 @@ class RulerLineManager {
         if (this._magnetEnabled) {
             const snapped = this._snapToPrice(price, time);
             price = snapped.price; time = snapped.time; anchorCandle = snapped.anchorCandle;
-        } else {
-            const snappedTime = this._findClosestCandleTime(time);
-            if (snappedTime) time = snappedTime;
+        
         }
         const startTime = this._drawingStartPoint.time, endTime = time;
         let point1, point2, ac1, ac2;
@@ -5818,9 +5814,7 @@ class TextManager {
             price = snapped.price;
             time = snapped.time;
             anchorCandle = snapped.anchorCandle;
-        } else {
-            const snappedTime = this._findClosestCandleTime(time);
-            if (snappedTime) time = snappedTime;
+        
         }
         
         const color = document.getElementById('textCurrentColorBox')?.style.backgroundColor || '#FFFFFF';
