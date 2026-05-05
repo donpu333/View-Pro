@@ -2594,7 +2594,7 @@ function takeChartScreenshot() {
 const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
 if (toolbarOrientationBtn && drawingToolbar) {
     // Загружаем сохраненную ориентацию
-    const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'vertical';
+    const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
     if (savedOrientation === 'vertical') {
         drawingToolbar.classList.add('vertical');
         toolbarOrientationBtn.textContent = '⇅';
