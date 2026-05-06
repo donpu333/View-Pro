@@ -127,6 +127,19 @@ class TickerEvents {
             });
         });
     }
+const refreshBtn = document.getElementById('refreshCacheBtn');
+if (refreshBtn && !refreshBtn.dataset.initialized) {
+    refreshBtn.dataset.initialized = 'true';
+    refreshBtn.addEventListener('click', async () => {
+        refreshBtn.style.opacity = '0.5';
+        refreshBtn.textContent = '⏳';
+        await this.parent.refreshSymbolCache(15000);
+        this.parent.updateModalCount();
+        refreshBtn.style.opacity = '1';
+        refreshBtn.textContent = '🔄';
+    });
+}
+    
 }
 
 if (typeof window !== 'undefined') {
