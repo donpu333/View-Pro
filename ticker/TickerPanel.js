@@ -130,14 +130,18 @@ class TickerPanel {
         if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
 
         setTimeout(async () => {
-            await this.loadUserData();
-            if (this.watchlistManager) this.watchlistManager.syncActiveListFromPanel();
-            this.initializeDataParallel();
-            this.startCacheCleanup();
-            this.updateModalWithData?.();
-            if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
-        }, 100);
-    }
+    await this.loadUserData();
+    if (this.watchlistManager) this.watchlistManager.syncActiveListFromPanel();
+    this.initializeDataParallel();
+    this.startCacheCleanup();
+    this.updateModalWithData?.();
+    if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
+    
+    // Обновляем кэш раз в 4 часа
+    this._cacheRefreshInterval = setInterval(() => {
+        this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
+    }, 4 * 60 * 60 * 1000);
+}, 100);
 
     async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
