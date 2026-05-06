@@ -253,42 +253,69 @@ setTimeout(async () => {
         this.updateModalCount();
     }
 
-    addInitialSymbols() {
-        const savedSymbols = this.state.customSymbols;
-        savedSymbols.forEach(symbolKey => {
-            const parts = symbolKey.split(':');
-            if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
+  addInitialSymbols() {
+    const savedSymbols = this.state.customSymbols;
+    savedSymbols.forEach(symbolKey => {
+        const parts = symbolKey.split(':');
+        if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
+    });
+    this.updateModalCount();
+    
+    // Собираем USDT-символы, которые есть в панели
+    const bnFutSymbols = [...this.tickersMap.keys()]
+        .filter(k => k.endsWith(':binance:futures'))
+        .map(k => k.split(':')[0]);
+    const bnSpotSymbols = [...this.tickersMap.keys()]
+        .filter(k => k.endsWith(':binance:spot'))
+        .map(k => k.split(':')[0]);
+
+    // Группируем по 100 символов (ограничение API)
+    const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+
+    const bnFutPromises = bnFutSymbols.length > 0 
+        ? chunk(bnFutSymbols, 100).map(batch => 
+            fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${batch.map(s => `"${s}"`).join(',')}]`)
+                .then(r => r.json()).catch(() => [])
+          )
+        : [Promise.resolve([])];
+
+    const bnSpotPromises = bnSpotSymbols.length > 0 
+        ? chunk(bnSpotSymbols, 100).map(batch => 
+            fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${batch.map(s => `"${s}"`).join(',')}]`)
+                .then(r => r.json()).catch(() => [])
+          )
+        : [Promise.resolve([])];
+
+    const byFutPromise = fetch('https://api.bybit.com/v5/market/tickers?category=linear').then(r => r.json()).catch(() => null);
+    const bySpotPromise = fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).catch(() => null);
+
+    Promise.all([
+        Promise.all(bnFutPromises).then(chunks => chunks.flat()),
+        Promise.all(bnSpotPromises).then(chunks => chunks.flat()),
+        byFutPromise,
+        bySpotPromise
+    ]).then(([bnF, bnS, byF, byS]) => {
+        if (Array.isArray(bnF)) bnF.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:binance:futures`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); tk.trades=parseInt(t.count); }});
+        if (Array.isArray(bnS)) bnS.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:binance:spot`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); tk.trades=parseInt(t.count); }});
+        if (byF?.retCode === 0) byF.result.list.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:bybit:futures`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h)*parseFloat(t.lastPrice); }});
+        if (byS?.retCode === 0) byS.result.list.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:bybit:spot`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h)*parseFloat(t.lastPrice); }});
+
+        this.renderTickerList();
+        requestAnimationFrame(() => {
+            const container = document.getElementById('tickerListContainer');
+            const loader = document.getElementById('tickerLoader');
+            if (container) container.classList.add('ready');
+            if (loader) loader.style.display = 'none';
         });
-        this.updateModalCount();
         
-        Promise.all([
-            fetch('https://fapi.binance.com/fapi/v1/ticker/24hr').then(r => r.json()).catch(() => []),
-            fetch('https://api.binance.com/api/v3/ticker/24hr').then(r => r.json()).catch(() => []),
-            fetch('https://api.bybit.com/v5/market/tickers?category=linear').then(r => r.json()).catch(() => null),
-            fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).catch(() => null)
-        ]).then(([bnF, bnS, byF, byS]) => {
-            if (Array.isArray(bnF)) bnF.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:binance:futures`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); tk.trades=parseInt(t.count); }});
-            if (Array.isArray(bnS)) bnS.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:binance:spot`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); tk.trades=parseInt(t.count); }});
-            if (byF?.retCode === 0) byF.result.list.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:bybit:futures`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h)*parseFloat(t.lastPrice); }});
-            if (byS?.retCode === 0) byS.result.list.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:bybit:spot`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h)*parseFloat(t.lastPrice); }});
-
-            this.renderTickerList();
-            requestAnimationFrame(() => {
-                const container = document.getElementById('tickerListContainer');
-                const loader = document.getElementById('tickerLoader');
-                if (container) container.classList.add('ready');
-                if (loader) loader.style.display = 'none';
-            });
-            
-            this._blockDOMUpdates = false; 
-            this.updatePriceElements(); 
-            this.startTickerPanelPriceEngine(); 
-            
-        }).catch(e => console.error('❌ Ошибка загрузки:', e));
+        this._blockDOMUpdates = false; 
+        this.updatePriceElements(); 
+        this.startTickerPanelPriceEngine(); 
         
-        this.setupDelegatedEvents();
-    }
-
+    }).catch(e => console.error('❌ Ошибка загрузки:', e));
+    
+    this.setupDelegatedEvents();
+}
     startTickerPanelPriceEngine() {
         if (this._priceEngineStarted) return;
         this._priceEngineStarted = true;
