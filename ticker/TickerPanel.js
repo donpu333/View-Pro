@@ -228,30 +228,30 @@ setTimeout(async () => {
     }
 
     processParallelData(results, updateOnly = false) {
-        const MAX_SYMBOLS = 4000;
-        let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
-        
-        if (results[0]?.symbols) binanceFuturesList = results[0].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'futures' }));
-        if (results[1]?.symbols) binanceSpotList = results[1].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'spot' }));
-        if (results[2]?.retCode === 0 && results[2]?.result?.list) bybitFuturesList = results[2].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'futures' }));
-        if (results[3]?.retCode === 0 && results[3]?.result?.list) bybitSpotList = results[3].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'spot' }));
-        
-        this.binanceSymbolsCache = [...binanceFuturesList, ...binanceSpotList];
-        this.bybitSymbolsCache = [...bybitFuturesList, ...bybitSpotList];
-        
-        this.binanceSymbolsCache = this.removeDuplicates(this.binanceSymbolsCache, 'symbol');
-        this.bybitSymbolsCache = this.removeDuplicates(this.bybitSymbolsCache, 'symbol');
-        this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
-        this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
-        
-        this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures').slice(0, MAX_SYMBOLS);
-        this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot').slice(0, MAX_SYMBOLS);
-        this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures').slice(0, MAX_SYMBOLS);
-        this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot').slice(0, MAX_SYMBOLS);
-        
-        this.allSymbolsCache = [...this.binanceSymbolsCache, ...this.bybitSymbolsCache];
-        this.updateModalCount();
-    }
+    const MAX_SYMBOLS = 4000;
+    let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
+    
+    if (results[0]?.symbols) binanceFuturesList = results[0].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'futures' }));
+    if (results[1]?.symbols) binanceSpotList = results[1].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'spot' }));
+    if (results[2]?.retCode === 0 && results[2]?.result?.list) bybitFuturesList = results[2].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'futures' }));
+    if (results[3]?.retCode === 0 && results[3]?.result?.list) bybitSpotList = results[3].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'spot' }));
+    
+    this.binanceSymbolsCache = [...binanceFuturesList, ...binanceSpotList];
+    this.bybitSymbolsCache = [...bybitFuturesList, ...bybitSpotList];
+    
+    this.binanceSymbolsCache = this.removeDuplicates(this.binanceSymbolsCache, 'symbol');
+    this.bybitSymbolsCache = this.removeDuplicates(this.bybitSymbolsCache, 'symbol');
+    this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
+    this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
+    
+    this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures').slice(0, MAX_SYMBOLS);
+    this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot').slice(0, MAX_SYMBOLS);
+    this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures').slice(0, MAX_SYMBOLS);
+    this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot').slice(0, MAX_SYMBOLS);
+    
+    this.allSymbolsCache = [...this.binanceSymbolsCache, ...this.bybitSymbolsCache];
+    this.updateModalCount();
+}
 
   addInitialSymbols() {
     const savedSymbols = this.state.customSymbols;
