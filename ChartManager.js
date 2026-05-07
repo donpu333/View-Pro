@@ -640,7 +640,7 @@ getCurrentSymbolKey() {
     }
 }
     
-   async loadCandlesFromCache(symbol, exchange, marketType, interval) {
+    async loadCandlesFromCache(symbol, exchange, marketType, interval) {
     const CACHE_VERSION = '2';
     const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
     
@@ -650,6 +650,7 @@ getCurrentSymbolKey() {
         const cached = await window.db.get('candles', key);
         if (!cached) return null;
         
+        // Проверяем версию (на случай, если ключ без версии, но поле есть)
         if (cached.version !== CACHE_VERSION) {
             console.log(`Кэш устарел (версия ${cached.version}), удаляем`);
             await window.db.delete('candles', key);
@@ -662,31 +663,14 @@ getCurrentSymbolKey() {
             return null;
         }
         
-        // ════════════════════════════════════════
-        // ✅ ПЕРЕПРОВЕРКА ПРИ ЗАГРУЗКЕ ИЗ КЭША!
-        // ════════════════════════════════════════
-        const data = cached.data;
-        const beforeCount = data.length;
-        const validData = data.filter(c => this._isValidCandle(c));
-        
-        if (validData.length < beforeCount) {
-            console.warn(`⚠️ Кэш содержал ${beforeCount - validData.length} битых свечей (старый формат?)`);
-        }
-        
-        if (validData.length === 0) {
-            console.warn(`⚠️ Кэш полностью битый, удаляем`);
-            await window.db.delete('candles', key);
-            return null;
-        }
-        
-        console.log(`📦 Загружено ${validData.length} свечей из кэша: ${key}`);
-        return validData;  // ✅ Только валидные!
-        
+        console.log(`📦 Загружено ${cached.data.length} свечей из кэша: ${key}`);
+        return cached.data;
     } catch (error) {
         console.warn('❌ Ошибка загрузки свечей из кэша:', error);
         return null;
     }
 }
+// Вставьте после метода loadCandlesFromCache или перед getCurrentPrice
 
     async clearOldCaches() {
     const CACHE_VERSION = '2';
@@ -855,59 +839,47 @@ timeToLogical(time) {
     }
     
     async loadMoreHistoricalData() {
-    if (this.isLoadingMore || !this.hasMoreData || !this.chartData.length) return;
-    
-    this.isLoadingMore = true;
-    
-    try {
-        const oldestCandle = this.chartData[0];
-        if (!oldestCandle) {
-            this.isLoadingMore = false;
-            return;
-        }
+        if (this.isLoadingMore || !this.hasMoreData || !this.chartData.length) return;
         
-        const endTime = (oldestCandle.time * 1000) - 1;
+        this.isLoadingMore = true;
         
-        const olderCandles = await DataFetcher.loadMoreKlines(
-            this.currentSymbol, 
-            this.currentInterval, 
-            endTime
-        );
-        
-        if (olderCandles && olderCandles.length > 0) {
-            // ════════════════════════════════════════
-            // ✅ ДОБАВЛЯЕМ ФИЛЬТРАЦИЮ!
-            // ════════════════════════════════════════
-            let uniqueOlder = olderCandles.filter(newCandle => 
-                !this.chartData.some(existing => existing.time === newCandle.time)
+        try {
+            const oldestCandle = this.chartData[0];
+            if (!oldestCandle) {
+                this.isLoadingMore = false;
+                return;
+            }
+            
+            const endTime = (oldestCandle.time * 1000) - 1;
+            
+            const olderCandles = await DataFetcher.loadMoreKlines(
+                this.currentSymbol, 
+                this.currentInterval, 
+                endTime
             );
             
-            // ✅ ВАЛИДАЦИЯ
-            const beforeCount = uniqueOlder.length;
-            uniqueOlder = uniqueOlder.filter(c => this._isValidCandle(c));
-            
-            if (uniqueOlder.length < beforeCount) {
-                console.warn(`⚠️ loadMoreHistory: отфильтровано ${beforeCount - uniqueOlder.length} битых`);
-            }
-            // ════════════════════════════════════════
-            
-            if (uniqueOlder.length > 0) {
-                this.chartData = [...uniqueOlder, ...this.chartData];
-                this.scheduleUpdate();
+            if (olderCandles && olderCandles.length > 0) {
+                const uniqueOlder = olderCandles.filter(newCandle => 
+                    !this.chartData.some(existing => existing.time === newCandle.time)
+                );
+                
+                if (uniqueOlder.length > 0) {
+                    this.chartData = [...uniqueOlder, ...this.chartData];
+                    this.scheduleUpdate();
+                }
                 
                 if (olderCandles.length < 1000) {
                     this.hasMoreData = false;
                 }
+            } else {
+                this.hasMoreData = false;
             }
-        } else {
-            this.hasMoreData = false;
+        } catch (e) {
+            console.error('Ошибка загрузки истории:', e);
+        } finally {
+            this.isLoadingMore = false;
         }
-    } catch (e) {
-        console.error('Ошибка загрузки истории:', e);
-    } finally {
-        this.isLoadingMore = false;
     }
-}
     
   async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
     console.log(`🔄 Фоновое обновление свечей для ${symbol}...`);
@@ -950,7 +922,8 @@ timeToLogical(time) {
                 high: parseFloat(item[2]),
                 low: parseFloat(item[3]),
                 close: parseFloat(item[4]),
-                volume: parseFloat(item[5])
+                volume: parseFloat(item[5]),
+                quoteVolume: parseFloat(item[7])   // ← ДОБАВЛЕНО
             }));
         } else {
             if (data.retCode !== 0 || !data.result?.list) return;
@@ -961,27 +934,12 @@ timeToLogical(time) {
                 high: parseFloat(item[2]),
                 low: parseFloat(item[3]),
                 close: parseFloat(item[4]),
-                volume: parseFloat(item[5] || 0)
+                volume: parseFloat(item[5] || 0),
+                quoteVolume: parseFloat(item[6] || 0)   // ← ДОБАВЛЕНО
             })).filter(c => c !== null);
         }
         
         if (freshCandles.length === 0) return;
-        
-        // ════════════════════════════════════════════════════
-        // ✅✅✅ НОВАЯ ЗАЩИТА: ФИЛЬТРУЕМ ПЕРЕД ДОБАВЛЕНИЕМ! ✅✅✅
-        // ════════════════════════════════════════════════════
-        const beforeFilter = freshCandles.length;
-        freshCandles = freshCandles.filter(c => this._isValidCandle(c));
-        
-        if (freshCandles.length === 0) {
-            console.warn(`⚠️ Все свежие свечи битые (${beforeFilter} шт), пропускаем`);
-            return;
-        }
-        
-        if (freshCandles.length < beforeFilter) {
-            console.warn(`⚠️ Отфильтровано ${beforeFilter - freshCandles.length} битых свежих свечей`);
-        }
-        // ════════════════════════════════════════════════════
         
         const lastCachedTime = this.chartData.length > 0 ? this.chartData[this.chartData.length - 1].time : 0;
         const lastFreshTime = freshCandles[freshCandles.length - 1].time;
@@ -989,33 +947,47 @@ timeToLogical(time) {
         if (lastFreshTime > lastCachedTime) {
             console.log(`📊 Найдены новые свечи: ${lastFreshTime} > ${lastCachedTime}`);
             const newCandles = freshCandles.filter(c => c.time > lastCachedTime);
+            this.chartData.push(...newCandles);
+            this._performUpdate();
             
-            if (newCandles.length > 0) {
-                this.chartData.push(...newCandles);
-                this._performUpdate();
+            if (window.db && window.dbReady) {
+                const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
+                const cached = await window.db.get('candles', key);
                 
-                if (window.db && window.dbReady) {
-                    const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
-                    const cached = await window.db.get('candles', key);
-                    
-                    if (cached) {
-                        const updatedData = [...cached.data, ...newCandles];
-                        if (updatedData.length > 1000) {
-                            updatedData.splice(0, updatedData.length - 1000);
-                        }
-                        await window.db.put('candles', {
-                            ...cached,
-                            key: key,
-                            data: updatedData,
-                            lastUpdate: Date.now(),
-                            lastCandleTime: updatedData[updatedData.length - 1].time,
-                            count: updatedData.length,
-                            version: CACHE_VERSION
-                        });
+                if (cached) {
+                    const updatedData = [...cached.data, ...newCandles];
+                    if (updatedData.length > 1000) {
+                        updatedData.splice(0, updatedData.length - 1000);
                     }
+                    await window.db.put('candles', {
+                        ...cached,
+                        key: key,
+                        data: updatedData,
+                        lastUpdate: Date.now(),
+                        lastCandleTime: updatedData[updatedData.length - 1].time,
+                        count: updatedData.length,
+                        version: CACHE_VERSION
+                    });
+                    console.log(`📦 Кэш обновлён: добавлено ${newCandles.length} свечей`);
+                } else {
+                    const newCache = {
+                        key: key,
+                        symbol: symbol,
+                        exchange: exchange,
+                        marketType: marketType,
+                        interval: interval,
+                        data: freshCandles,
+                        lastUpdate: Date.now(),
+                        firstCandleTime: freshCandles[0].time,
+                        lastCandleTime: freshCandles[freshCandles.length - 1].time,
+                        count: freshCandles.length,
+                        version: CACHE_VERSION
+                    };
+                    await window.db.put('candles', newCache);
+                    console.log(`📦 Создан новый кэш: ${key}`);
                 }
-                this.scrollToLast();
             }
+            this.scrollToLast();
         }
     } catch (error) {
         console.warn('⚠️ Ошибка фонового обновления:', error);
@@ -1518,7 +1490,7 @@ updateCurrentCandle(price) {
             
             if (currentRange) {
                 const visibleBarsCount = currentRange.to - currentRange.from;
-                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 10);
+                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 55);
                 
                 timeScale.setVisibleLogicalRange({
                     from: newFrom,
@@ -1965,7 +1937,7 @@ updateCurrentCandle(price) {
     }
 }
 
-// --- 5. ИСПРАВЛЕННЫЙ fetchKlines с фильтрацией ---
+// --- 5. ИСПРАВЛЕННЫЙ fetchKlines с фильтрацией + quoteVolume ---
 async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
     const bybitIntervalMap = {
         '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
@@ -1997,7 +1969,8 @@ async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
             high: parseFloat(item[2]),
             low: parseFloat(item[3]),
             close: parseFloat(item[4]),
-            volume: parseFloat(item[5])
+            volume: parseFloat(item[5]),
+            quoteVolume: parseFloat(item[7])   // ← ДОБАВЛЕНО
         }));
     } else {
         if (data.retCode !== 0) throw new Error(data.retMsg);
@@ -2007,7 +1980,8 @@ async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
             high: parseFloat(item[2]),
             low: parseFloat(item[3]),
             close: parseFloat(item[4]),
-            volume: parseFloat(item[5] || 0)
+            volume: parseFloat(item[5] || 0),
+            quoteVolume: parseFloat(item[6] || 0)   // ← ДОБАВЛЕНО
         })).filter(c => c !== null).reverse();
     }
     
@@ -2037,7 +2011,6 @@ async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
     
     return validCandles;
 }
-
 }
 if (typeof window !== 'undefined') {
     window.ChartManager = ChartManager;
