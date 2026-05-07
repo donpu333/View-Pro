@@ -1488,7 +1488,7 @@ updateCurrentCandle(price) {
             
             if (currentRange) {
                 const visibleBarsCount = currentRange.to - currentRange.from;
-                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 55);
+                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 10);
                 
                 timeScale.setVisibleLogicalRange({
                     from: newFrom,
