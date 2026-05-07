@@ -30,65 +30,80 @@ class WatchlistManager {
         await this._loadFromStorage();
     }
 
-    async _loadFromStorage() {
-        try {
-            let saved = null;
-            
-            if (this._dbReady) {
+  async _loadFromStorage() {
+    try {
+        let saved = null;
+        
+        if (this._dbReady) {
+            try {
+                const data = await window.db.get('settings', 'watchlists');
+                if (data?.value) {
+                    saved = data.value;
+                    console.log('📋 Вотчлисты загружены из IndexedDB');
+                }
+            } catch (e) {
+                console.warn('⚠️ Ошибка чтения IndexedDB:', e);
+            }
+        }
+        
+        if (!saved) {
+            const localData = localStorage.getItem('watchlists');
+            if (localData) {
                 try {
-                    const data = await window.db.get('settings', 'watchlists');
-                    if (data?.value) {
-                        saved = data.value;
-                        console.log('📋 Вотчлисты загружены из IndexedDB');
-                    }
-                } catch (e) {
-                    console.warn('⚠️ Ошибка чтения IndexedDB:', e);
+                    saved = JSON.parse(localData);
+                    console.log('📋 Вотчлисты загружены из localStorage (fallback)');
+                } catch (parseErr) {
+                    console.error('❌ Ошибка парсинга localStorage:', parseErr);
+                    localStorage.removeItem('watchlists');
                 }
             }
-            
-            if (!saved) {
-                const localData = localStorage.getItem('watchlists');
-                if (localData) {
-                    try {
-                        saved = JSON.parse(localData);
-                        console.log('📋 Вотчлисты загружены из localStorage (fallback)');
-                    } catch (parseErr) {
-                        console.error('❌ Ошибка парсинга localStorage:', parseErr);
-                        localStorage.removeItem('watchlists');
-                    }
-                }
-            }
-            
-            if (saved?.lists) {
-                this.lists = new Map(Object.entries(saved.lists));
-                this.listOrder = saved.listOrder || ['default'];
-                this.activeListId = saved.activeListId || 'default';
-            }
-        } catch (e) {
-            console.warn('⚠️ Ошибка загрузки вотчлистов:', e);
         }
-
-        if (!this.lists.has('default')) {
-            this.lists.set('default', {
-                name: 'Основной',
-                symbols: [],
-                isDefault: true
-            });
+        
+        if (saved?.lists) {
+            this.lists = new Map(Object.entries(saved.lists));
+            this.listOrder = saved.listOrder || ['default'];
+            this.activeListId = saved.activeListId || 'default';
         }
-        if (!this.lists.has(this.activeListId)) {
-            this.activeListId = 'default';
-        }
-
-        const activeList = this.lists.get(this.activeListId);
-        if (this.tickerPanel.state.customSymbols.length > 0) {
-            activeList.symbols = [...this.tickerPanel.state.customSymbols];
-        } else if (activeList && activeList.symbols.length > 0) {
-            this.tickerPanel.state.customSymbols = [...activeList.symbols];
-        }
-
-        this._loaded = true;
+    } catch (e) {
+        console.warn('⚠️ Ошибка загрузки вотчлистов:', e);
     }
 
+    if (!this.lists.has('default')) {
+        this.lists.set('default', {
+            name: 'Основной',
+            symbols: [],
+            isDefault: true
+        });
+    }
+    if (!this.lists.has(this.activeListId)) {
+        this.activeListId = 'default';
+    }
+
+    const activeList = this.lists.get(this.activeListId);
+    
+    // ══════════════════════════════════════════════════════
+    // ✅ ФИКС: Пустые списки не перезаписываются из customSymbols!
+    // ══════════════════════════════════════════════════════
+    
+    if (activeList && activeList.symbols && activeList.symbols.length > 0) {
+        // В списке ЕСТЬ символы → загружаем их в панель
+        this.tickerPanel.state.customSymbols = [...activeList.symbols];
+        console.log(`📥 Загружено ${activeList.symbols.length} символов из "${activeList.name}"`);
+    } else if (this.tickerPanel.state.customSymbols.length > 0) {
+        // Список ПУСТОЙ, но в панели есть символы из localStorage
+        // → сохраняем ТОЛЬКО в default список, остальные оставляем пустыми
+        if (this.activeListId === 'default') {
+            activeList.symbols = [...this.tickerPanel.state.customSymbols];
+            console.log(`📥 Восстановлено ${this.tickerPanel.state.customSymbols.length} в "Основной"`);
+        } else {
+            // Для НЕ-default пустых списков — очищаем customSymbols чтобы не грузить лишнего
+            this.tickerPanel.state.customSymbols = [];
+            console.log(`⏭️ Список "${activeList.name}" пустой — оставляем пустым`);
+        }
+    }
+
+    this._loaded = true;
+}
     async _saveToDB(data) {
         if (this._dbReady && window.db) {
             try {
@@ -116,32 +131,54 @@ class WatchlistManager {
         this._saveNow();
     }
 
-    async _saveNow() {
-        if (!this._loaded) return;
-        const data = {
-            lists: Object.fromEntries(this.lists),
-            listOrder: this.listOrder,
-            activeListId: this.activeListId
+   async _saveNow() {
+    if (!this._loaded) return;
+    
+    // ✅ ЗАЩИТА: Клонируем данные чтобы не мутировать оригиналы
+    const cleanLists = {};
+    this.lists.forEach((list, id) => {
+        // Клонируем массив символов
+        cleanLists[id] = {
+            name: list.name,
+            symbols: [...(list.symbols || [])],  // ✅ Новый массив!
+            isDefault: list.isDefault || false
         };
-        await this._saveToDB(data);
+    });
+    
+    const data = {
+        lists: cleanLists,
+        listOrder: [...this.listOrder],
+        activeListId: this.activeListId
+    };
+    
+    await this._saveToDB(data);
+}
+async syncActiveListFromPanel() {
+    await this._initPromise;
+    const list = this.lists.get(this.activeListId);
+    if (!list) return;
+    
+    const panelSymbols = this.tickerPanel.state.customSymbols;
+    
+    // ══════════════════════════════════════════════════════
+    // ✅ ФИКС: Пустой список не трогаем!
+    // ══════════════════════════════════════════════════════
+    
+    if (!list.symbols || list.symbols.length === 0) {
+        console.log(`⏭️ syncActiveList: "${list.name}" пустой — пропускаем`);
+        return;
     }
+    
+    if (panelSymbols.length === 0) return;
 
-    async syncActiveListFromPanel() {
-        await this._initPromise;
-        const list = this.lists.get(this.activeListId);
-        if (!list) return;
-        
-        const panelSymbols = this.tickerPanel.state.customSymbols;
-        if (panelSymbols.length === 0) return;
-
-        if (JSON.stringify(list.symbols) !== JSON.stringify(panelSymbols)) {
-            list.symbols = [...panelSymbols];
-            this.renderCache.delete(this.activeListId);
-            await this._saveNow();
-            this.renderDropdown();
-        }
+    // Сравниваем только если оба непустые
+    if (JSON.stringify([...list.symbols].sort()) !== JSON.stringify([...panelSymbols].sort())) {
+        list.symbols = [...panelSymbols];
+        this.renderCache.delete(this.activeListId);
+        await this._saveNow();
+        this.renderDropdown();
     }
-
+}
     async createList(name) {
         await this._initPromise;
         const id = `wl_${Date.now()}`;
