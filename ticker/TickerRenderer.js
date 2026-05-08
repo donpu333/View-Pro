@@ -476,45 +476,68 @@ formatPrice(price) {
         }, 30000);
     }
     
-    setupHeaderSorting() {
-        if (this.parent._sortClickHandler) {
-            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-                header.removeEventListener('click', this.parent._sortClickHandler);
-            });
-        }
-        
-        this.parent._sortClickHandler = (e) => {
-            e.stopPropagation();
-            
-            const header = e.currentTarget;
-            const sortBy = header.dataset.sort;
-            
-            if (this.parent.state.sortBy === sortBy) {
-                this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
-            } else {
-                this.parent.state.sortBy = sortBy;
-                this.parent.state.sortDirection = 'desc';
-            }
-            
-            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                icon.className = 'fas fa-sort';
-            });
-            
-            const icon = header.querySelector('i');
-            if (icon) {
-                icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            }
-            
-            this.parent.filterCache = null;
-            this.parent.renderTickerList();
-        };
-        
+   setupHeaderSorting() {
+    if (this.parent._sortClickHandler) {
         document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.addEventListener('click', this.parent._sortClickHandler);
+            header.removeEventListener('click', this.parent._sortClickHandler);
         });
     }
+    
+    // 👇 ВОССТАНОВЛЕНИЕ СОРТИРОВКИ ПРИ ЗАГРУЗКЕ
+    const savedSortBy = localStorage.getItem('tickerSortBy');
+    const savedSortDir = localStorage.getItem('tickerSortDir');
+    
+    if (savedSortBy) {
+        this.parent.state.sortBy = savedSortBy;
+        this.parent.state.sortDirection = savedSortDir || 'desc';
+    }
+    
+    this.parent._sortClickHandler = (e) => {
+        e.stopPropagation();
+        
+        const header = e.currentTarget;
+        const sortBy = header.dataset.sort;
+        
+        if (this.parent.state.sortBy === sortBy) {
+            this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.parent.state.sortBy = sortBy;
+            this.parent.state.sortDirection = 'desc';
+        }
+        
+        // 👇 СОХРАНЯЕМ ВЫБОР В localStorage
+        localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
+        localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
+        
+        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+            icon.className = 'fas fa-sort';
+        });
+        
+        const icon = header.querySelector('i');
+        if (icon) {
+            icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+        }
+        
+        this.parent.filterCache = null;
+        this.parent.renderTickerList();
+    };
+    
+    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+        header.addEventListener('click', this.parent._sortClickHandler);
+    });
+    
+    // 👇 ОБНОВЛЯЕМ ИКОНКУ СОГЛАСНО ВОССТАНОВЛЕННОЙ СОРТИРОВКЕ
+    if (savedSortBy) {
+        const activeHeader = document.querySelector(`.table-header span[data-sort="${savedSortBy}"]`);
+        if (activeHeader) {
+            const icon = activeHeader.querySelector('i');
+            if (icon) {
+                icon.className = savedSortDir === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+            }
+        }
+    }
 }
-
+}
 if (typeof window !== 'undefined') {
     window.TickerRenderer = TickerRenderer;
 }
