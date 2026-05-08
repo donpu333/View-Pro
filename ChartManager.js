@@ -71,15 +71,15 @@ this.chart = LightweightCharts.createChart(container, {
     crosshair: { 
         mode: LightweightCharts.CrosshairMode.Normal 
     },
-    timeScale: { 
-        timeVisible: true, 
-        secondsVisible: false,
-        borderColor: '#333333',
-        barSpacing: 12,
-        minBarSpacing: 3,
-        fixLeftEdge: true,
-        fixRightEdge: false,
-        rightOffset: 10,
+   timeScale: { 
+    timeVisible: true, 
+    secondsVisible: false,
+    borderColor: '#333333',
+    barSpacing: 12,
+    minBarSpacing: 1,        // ← Минимальное расстояние между барами (было 3)
+    fixLeftEdge: false,      // ← Разрешаем скролл влево
+    fixRightEdge: false,     // ← Разрешаем скролл вправо
+    rightOffset: 10,
         tickMarkFormatter: (time) => {
             const mskTime = time + (3 * 3600);
             const date = new Date(mskTime * 1000);
