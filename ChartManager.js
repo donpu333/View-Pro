@@ -28,18 +28,24 @@ console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
         this._pendingUpdates = false;  // 👈 флаг фоновых изменений
 
 this._visibilityHandler = () => {
-    if (!document.hidden) {
-        // Сначала догружаем пропущенные свечи (если есть гэп)
+    if (document.hidden) {
+        // 👇 СОХРАНЯЕМ позицию и масштаб перед уходом
+        this._saveZoomState();
+    } else {
+        // Вернулись на вкладку
         this._syncAfterHidden();
-
-        // Обновляем примитивы
+        
+        // 👇 ВОССТАНАВЛИВАЕМ масштаб после загрузки данных
+        setTimeout(() => {
+            this._restoreZoomState();
+        }, 100);
+        
         if (this.timerManager?._primitive) {
             this.timerManager._primitive.requestRedraw();
         }
         this.scheduleDrawingsUpdate();
     }
 };
-
 document.addEventListener('visibilitychange', this._visibilityHandler);
        
         this._priceUpdateHandler = null;
@@ -518,7 +524,7 @@ getCurrentSymbolKey() {
             this.timerManager._primitive.requestRedraw();
         }
 
-        this.chart.timeScale().fitContent();
+      
     }, 10);
 }
     _subscribeToSymbolChange(callback) {
@@ -1712,6 +1718,54 @@ async _syncAfterHidden() {
     }
 
     this.forceRedraw(); // для перерисовки примитивов (таймер, рисунки)
+}
+
+
+// Сохранить текущий масштаб и позицию
+_saveZoomState() {
+    const timeScale = this.chart.timeScale();
+    if (!timeScale) return;
+    
+    const visibleRange = timeScale.getVisibleLogicalRange();
+    if (visibleRange) {
+        this._savedZoomRange = {
+            from: visibleRange.from,
+            to: visibleRange.to
+        };
+        console.log('💾 Масштаб сохранён:', this._savedZoomRange);
+    }
+}
+
+// Восстановить масштаб и позицию
+_restoreZoomState() {
+    if (!this._savedZoomRange) return;
+    
+    const timeScale = this.chart.timeScale();
+    if (!timeScale) return;
+    
+    // Если данных стало больше, сдвигаем диапазон вправо
+    const dataLength = this.chartData.length;
+    const savedLength = this._savedZoomRange.to - this._savedZoomRange.from;
+    
+    // Если мы были у правого края — остаёмся у правого края
+    const wasAtRightEdge = this._savedZoomRange.to >= dataLength - 10;
+    
+    if (wasAtRightEdge) {
+        // Прилипаем к правому краю
+        timeScale.setVisibleLogicalRange({
+            from: Math.max(0, dataLength - savedLength),
+            to: dataLength
+        });
+    } else {
+        // Восстанавливаем точную позицию
+        timeScale.setVisibleLogicalRange({
+            from: this._savedZoomRange.from,
+            to: Math.min(dataLength, this._savedZoomRange.to)
+        });
+    }
+    
+    console.log('📍 Масштаб восстановлен');
+    this._savedZoomRange = null;
 }
 
    _subscribeToPrice() {
