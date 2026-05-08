@@ -29,12 +29,10 @@ console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
 
 this._visibilityHandler = () => {
     if (!document.hidden) {
-        // Вернулись на вкладку
-        if (this._pendingUpdates) {
-            this._pendingUpdates = false;
-            this.forceRedraw();   // принудительно обновляем график
-        }
-        // Синхронизируем таймер и рисунки
+        // Сначала догружаем пропущенные свечи (если есть гэп)
+        this._syncAfterHidden();
+
+        // Обновляем примитивы
         if (this.timerManager?._primitive) {
             this.timerManager._primitive.requestRedraw();
         }
@@ -1664,43 +1662,93 @@ updateAllIndicators() {
 restoreIndicators() {
     this.indicatorManager.loadIndicators();
 }
-    _subscribeToPrice() {
-        // ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА: Если PriceManager еще не загружен - выходим
-        if (!this.priceManager) return;
-        
-        // Отписываемся от старого символа
-        if (this._priceUpdateHandler) {
-            this.priceManager.unsubscribe(this.currentSymbol, this._updateHandler);
-        }
-        
-        // Создаем новый обработчик (я исправил опечатку lastCaster -> lastCandle)
-        this._priceUpdateHandler = (price, symbol) => {
-            if (symbol === this.currentSymbol) {
-                this.currentRealPrice = price;
-                const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (series) {
-                    const lastCandle = this.chartData[this.chartData.length - 1];
-                    const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-                    const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-                    
-                    series.applyOptions({ 
-                        priceLineSource: price,
-                        priceLineColor: lineColor
-                    });
-                }
-                this.scheduleUpdatePosition();
-            }
-        };
-        
-        // Подписываемся на новый символ
-        this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
-        
-        // Забираем начальную цену из кэша
-        const cachedPrice = this.priceManager.getPrice(this.currentSymbol);
-        if (cachedPrice !== null) {
-            this.currentRealPrice = cachedPrice;
-        }
+
+async _syncAfterHidden() {
+    if (!this.chartData.length) return;
+
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // Длительность одного интервала в секундах
+    const intervalSeconds = {
+        '1m': 60, '3m': 180, '5m': 300, '15m': 900,
+        '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600,
+        '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000
+    }[this.currentInterval] || 3600;
+
+    // Если прошло больше 1.5 интервалов — точно был пропуск
+    if (nowSec - lastCandle.time < intervalSeconds * 1.5) {
+        // Пропусков нет, просто перерисовываем
+        this.forceRedraw();
+        return;
     }
+
+    console.log('🔄 Обнаружен гэп, загружаем пропущенные свечи...');
+    try {
+        const freshCandles = await this.fetchKlines(
+            this.currentSymbol,
+            this.currentExchange,
+            this.currentMarketType,
+            this.currentInterval,
+            1000
+        );
+
+        if (freshCandles && freshCandles.length > 0) {
+            // Оставляем только свечи строго позже последней известной
+            const newCandles = freshCandles.filter(c => c.time > lastCandle.time);
+            if (newCandles.length > 0) {
+                // Удаляем возможные дубли и объединяем
+                const allCandles = [...this.chartData, ...newCandles];
+                this.chartData = allCandles
+                    .filter((v, i, a) => a.findIndex(t => t.time === v.time) === i)
+                    .sort((a, b) => a.time - b.time);
+
+                this._performUpdate();  // обновит свечи и объём
+                console.log(`✅ Добавлено ${newCandles.length} пропущенных свечей`);
+            }
+        }
+    } catch (e) {
+        console.warn('⚠️ Ошибка при синхронизации после скрытия:', e);
+    }
+
+    this.forceRedraw(); // для перерисовки примитивов (таймер, рисунки)
+}
+
+   _subscribeToPrice() {
+    if (!this.priceManager) return;
+    
+    if (this._priceUpdateHandler) {
+        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler); // ← тут была опечатка, исправьте на _priceUpdateHandler
+    }
+    
+    this._priceUpdateHandler = (price, symbol) => {
+        // 👇 ДОБАВЬТЕ ЭТУ ПРОВЕРКУ
+        if (document.hidden) return;
+        
+        if (symbol === this.currentSymbol) {
+            this.currentRealPrice = price;
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (series) {
+                const lastCandle = this.chartData[this.chartData.length - 1];
+                const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+                const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+                
+                series.applyOptions({ 
+                    priceLineSource: price,
+                    priceLineColor: lineColor
+                });
+            }
+            this.scheduleUpdatePosition();
+        }
+    };
+    
+    this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
+    
+    const cachedPrice = this.priceManager.getPrice(this.currentSymbol);
+    if (cachedPrice !== null) {
+        this.currentRealPrice = cachedPrice;
+    }
+}
     
     setSymbol(symbol) {
         if (this.currentSymbol === symbol) return;
