@@ -1147,7 +1147,6 @@ _performUpdate() {
     this.candleSeries.setData(this.chartData);
     this.barSeries.setData(this.chartData);
     
-    // 👇 ДОБАВЬТЕ ОБНОВЛЕНИЕ ОБЪЁМА
     if (this.volumeSeries && this.chartData.length > 0) {
         const volumeData = this.chartData.map(candle => {
             const isBullish = candle.close >= candle.open;
@@ -1158,11 +1157,26 @@ _performUpdate() {
             };
         });
         this.volumeSeries.setData(volumeData);
-        console.log('📊 Volume обновлён при подгрузке истории:', volumeData.length, 'свечей');
     }
     
     if (this.indicatorManager) {
         this.indicatorManager.updateAllIndicators();
+    }
+
+    // 👇 ДОБАВЬТЕ ЭТОТ БЛОК ДЛЯ МГНОВЕННОГО ЦВЕТА ЛИНИИ ЦЕНЫ
+    const price = this.getCurrentPrice();
+    if (price !== null) {
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series) {
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+            const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+            
+            series.applyOptions({
+                priceLineSource: price,
+                priceLineColor: lineColor
+            });
+        }
     }
 }
   updateLastCandle(candle) {
