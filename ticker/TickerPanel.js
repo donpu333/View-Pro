@@ -788,54 +788,122 @@ _updateTickerFromBybit(data, marketType) {
         this.filterCache = null; this.saveState(); star.classList.toggle('favorite', index === -1);
     }
 
-    handleContextMenu(e) {
-        let target = e.target;
-        if (target && target.nodeType === 3) target = target.parentElement;
-        if (!target) return;
+  handleContextMenu(e) {
+    let target = e.target;
+    if (target && target.nodeType === 3) target = target.parentElement;
+    if (!target) return;
 
-        const tickerItem = target.closest('.ticker-item');
-        if (!tickerItem) return;
-        
-        if (target.closest('.flag') || target.closest('.flag-placeholder')) {
-            e.preventDefault(); e.stopPropagation();
-            const contextMenu = document.getElementById('flagContextMenu');
-            if (!contextMenu) return;
-            contextMenu.dataset.symbol = tickerItem.dataset.symbol; contextMenu.dataset.exchange = tickerItem.dataset.exchange; contextMenu.dataset.marketType = tickerItem.dataset.marketType;
-            const x = Math.min(e.pageX, window.innerWidth - 200); const y = Math.min(e.pageY, window.innerHeight - 200);
-            contextMenu.style.display = 'block'; contextMenu.style.left = x + 'px'; contextMenu.style.top = y + 'px';
-            const tickerMenu = document.getElementById('tickerContextMenu');
-            if (tickerMenu) tickerMenu.style.display = 'none';
-            return;
-        }
-        
-        const nameColumn = tickerItem.children[0];
-        if (!nameColumn || !nameColumn.contains(target)) return; 
-        if (target.closest('.star') || target.closest('.market-sup')) return;
-
+    const tickerItem = target.closest('.ticker-item');
+    if (!tickerItem) return;
+    
+    if (target.closest('.flag') || target.closest('.flag-placeholder')) {
         e.preventDefault(); e.stopPropagation();
-        const symbol = tickerItem.dataset.symbol; const exchange = tickerItem.dataset.exchange; const marketType = tickerItem.dataset.marketType;
+        const contextMenu = document.getElementById('flagContextMenu');
+        if (!contextMenu) return;
+        contextMenu.dataset.symbol = tickerItem.dataset.symbol;
+        contextMenu.dataset.exchange = tickerItem.dataset.exchange;
+        contextMenu.dataset.marketType = tickerItem.dataset.marketType;
+        const x = Math.min(e.pageX, window.innerWidth - 200);
+        const y = Math.min(e.pageY, window.innerHeight - 200);
+        contextMenu.style.display = 'block';
+        contextMenu.style.left = x + 'px';
+        contextMenu.style.top = y + 'px';
+        const tickerMenu = document.getElementById('tickerContextMenu');
+        if (tickerMenu) tickerMenu.style.display = 'none';
         
-        let menu = document.getElementById('tickerContextMenu');
-        if (!menu) { menu = document.createElement('div'); menu.id = 'tickerContextMenu'; menu.className = 'context-menu'; document.body.appendChild(menu); }
-        
-        let html = `<div class="context-menu-item" data-action="copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Копировать ${symbol}</div>`;
-        
-        if (this.watchlistManager && this.watchlistManager.lists) { 
-            html += `<div class="context-menu-divider"></div><div class="context-menu-label">Добавить в вотчлист:</div>`; 
-            this.watchlistManager.listOrder.forEach(listId => { 
-                const list = this.watchlistManager.lists.get(listId); 
-                if (list) { 
-                    html += `<div class="context-menu-item" data-action="add-wl" data-list-id="${listId}" data-symbol="${symbol}" data-exchange="${exchange}" data-market-type="${marketType}">${listId === this.watchlistManager.activeListId ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;color:#4caf50;"><path d="m17,15c-4.188,0-6.33,3.499-6.849,4.5.52,1.001,2.661,4.5,6.849,4.5s6.33-3.499,6.849-4.5c-.52-1.001-2.661-4.5-6.849-4.5Zm0,8c-3.302,0-5.033-2.288-5.717-3.5.685-1.212,2.415-3.5,5.717-3.5s5.033,2.288,5.717,3.5c-.685,1.212-2.415,3.5-5.717,3.5Zm-8-12.5h11v1h-11v-1Zm8,7c-1.103,0-2,.897-2,2s.897,2,2,2,2-.897,2-2-.897-2-2-2Zm0,3c-.551,0-1-.448-1-1s.449-1,1-1,1,.448,1,1-.449,1-1,1ZM6,5.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1Zm0,5.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1Zm14-5h-11v-1h11v1Zm-14,10.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1ZM24,2.5v13.684c-.292-.327-.624-.66-1-.981V2.5c0-.827-.673-1.5-1.5-1.5H2.5c-.827,0-1.5.673-1.5,1.5v18.5h7.686c.161.279.377.624.653,1H0V2.5C0,1.122,1.122,0,2.5,0h19c1.378,0,2.5,1.122,2.5,2.5Z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;opacity:0.5;"><path d="M17.5,24H6.5c-2.481,0-4.5-2.019-4.5-4.5V4.5C2,2.019,4.019,0,6.5,0h11c2.481,0,4.5,2.019,4.5,4.5v15c0,2.481-2.019,4.5-4.5,4.5ZM6.5,1c-1.93,0-3.5,1.57-3.5,3.5v15c0,1.93,1.57,3.5,3.5,3.5h11c1.93,0-3.5-1.57-3.5-3.5V4.5c0-1.93-1.57-3.5-3.5-3.5H6.5Zm11.5,4.5c0-.276-.224-.5-.5-.5h-6c-.276,0-.5,.224-.5,.5s.224,.5,.5,.5h6c.276,0,.5-.224,.5-.5Zm0,6c0-.276-.224-.5-.5-.5h-6c-.276,0-.5,.224-.5,.5s.224,.5,.5,.5h6c.276,0,.5-.224,.5-.5Zm0,6c0-.276-.224-.5-.5-.5h-6c-.276,0-.5,.224-.5,.5s.224,.5,.5,.5h6c.276,0,.5-.224,.5-.5ZM8.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5,.5-.5h2c.276,0,.5,.224,.5,.5v2c0,.276-.224,.5-.5,.5Zm-1.5-1h1v-1h-1v1Zm1.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5,.5-.5h2c.276,0,.5,.224,.5,.5v2c0,.276-.224,.5-.5,.5Zm-1.5-1h1v-1h-1v1Zm1.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5,.5-.5h2c.276,0,.5,.224,.5,.5v2c0,.276-.224,.5-.5,.5Zm-1.5-1h1v-1h-1v1Z"/></svg>'}${this.watchlistManager.escapeHtml(list.name)}<span style="margin-left:auto;color:#666;font-size:11px">${list.symbols.length}</span></div>`; 
-                } 
-            }); 
-        }
-        
-        menu.innerHTML = html;
-        const x = Math.min(e.pageX, window.innerWidth - 220); const y = Math.min(e.pageY, window.innerHeight - 200); menu.style.left = x + 'px'; menu.style.top = y + 'px'; menu.style.display = 'block';
-        menu.querySelector('[data-action="copy"]').onclick = () => { navigator.clipboard.writeText(symbol); menu.style.display = 'none'; };
-        menu.querySelectorAll('[data-action="add-wl"]').forEach(item => { item.onclick = async (ev) => { ev.stopPropagation(); const listId = item.dataset.listId; const sym = item.dataset.symbol; const ex = item.dataset.exchange; const mt = item.dataset.marketType; if (this.watchlistManager) { const added = await this.watchlistManager.addSymbolToList(listId, sym, ex, mt); const notif = document.getElementById('alertNotification'); if (notif) { const list = this.watchlistManager.lists.get(listId); notif.innerHTML = `<div>${added ? '✅' : '⚠️'} ${sym} ${added ? '→' : 'уже в'} ${list?.name || 'списке'}</div>`; notif.style.display = 'block'; notif.style.borderLeftColor = added ? '#4caf50' : '#ff9800'; setTimeout(() => notif.style.display = 'none', 2000); } } menu.style.display = 'none'; }; });
-        const flagMenu = document.getElementById('flagContextMenu'); if (flagMenu) flagMenu.style.display = 'none';
+        // ✅ Подгоняем позицию флаг-меню
+        requestAnimationFrame(() => {
+            const rect = contextMenu.getBoundingClientRect();
+            if (rect.bottom > window.innerHeight) {
+                contextMenu.style.top = Math.max(0, window.innerHeight - rect.height - 10) + 'px';
+            }
+            if (rect.right > window.innerWidth) {
+                contextMenu.style.left = Math.max(0, window.innerWidth - rect.width - 10) + 'px';
+            }
+        });
+        return;
     }
+    
+    const nameColumn = tickerItem.children[0];
+    if (!nameColumn || !nameColumn.contains(target)) return; 
+    if (target.closest('.star') || target.closest('.market-sup')) return;
+
+    e.preventDefault(); e.stopPropagation();
+    const symbol = tickerItem.dataset.symbol;
+    const exchange = tickerItem.dataset.exchange;
+    const marketType = tickerItem.dataset.marketType;
+    
+    let menu = document.getElementById('tickerContextMenu');
+    if (!menu) {
+        menu = document.createElement('div');
+        menu.id = 'tickerContextMenu';
+        menu.className = 'context-menu';
+        // ✅ Добавляем max-height через стили, если ещё не прописано в CSS
+        menu.style.maxHeight = '350px';
+        menu.style.overflowY = 'auto';
+        document.body.appendChild(menu);
+    }
+    
+    let html = `<div class="context-menu-item" data-action="copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Копировать ${symbol}</div>`;
+    
+    if (this.watchlistManager && this.watchlistManager.lists) { 
+        html += `<div class="context-menu-divider"></div><div class="context-menu-label">Добавить в вотчлист:</div>`; 
+        this.watchlistManager.listOrder.forEach(listId => { 
+            const list = this.watchlistManager.lists.get(listId); 
+            if (list) { 
+                html += `<div class="context-menu-item" data-action="add-wl" data-list-id="${listId}" data-symbol="${symbol}" data-exchange="${exchange}" data-market-type="${marketType}">${listId === this.watchlistManager.activeListId ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;color:#4caf50;"><path d="m17,15c-4.188,0-6.33,3.499-6.849,4.5.52,1.001,2.661,4.5,6.849,4.5s6.33-3.499,6.849-4.5c-.52-1.001-2.661-4.5-6.849-4.5Zm0,8c-3.302,0-5.033-2.288-5.717-3.5.685-1.212,2.415-3.5,5.717-3.5s5.033,2.288,5.717,3.5c-.685,1.212-2.415,3.5-5.717,3.5Zm-8-12.5h11v1h-11v-1Zm8,7c-1.103,0-2,.897-2,2s.897,2,2,2,2-.897,2-2-.897-2-2-2Zm0,3c-.551,0-1-.448-1-1s.449-1,1-1,1,.448,1,1-.449,1-1,1ZM6,5.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1Zm0,5.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1Zm14-5h-11v-1h11v1Zm-14,10.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1ZM24,2.5v13.684c-.292-.327-.624-.66-1-.981V2.5c0-.827-.673-1.5-1.5-1.5H2.5c-.827,0-1.5.673-1.5,1.5v18.5h7.686c.161.279.377.624.653,1H0V2.5C0,1.122,1.122,0,2.5,0h19c1.378,0,2.5,1.122,2.5,2.5Z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;opacity:0.5;"><path d="M17.5,24H6.5c-2.481,0-4.5-2.019-4.5-4.5V4.5C2,2.019,4.019,0,6.5,0h11c2.481,0,4.5,2.019,4.5,4.5v15c0,2.481-2.019,4.5-4.5,4.5ZM6.5,1c-1.93,0-3.5,1.57-3.5,3.5v15c0,1.93,1.57,3.5,3.5,3.5h11c1.93,0-3.5-1.57-3.5-3.5V4.5c0-1.93-1.57-3.5-3.5-3.5H6.5Zm11.5,4.5c0-.276-.224-.5-.5-.5h-6c-.276,0-.5,.224-.5,.5s.224,.5,.5,.5h6c.276,0,.5-.224,.5-.5Zm0,6c0-.276-.224-.5-.5-.5h-6c-.276,0-.5,.224-.5,.5s.224,.5,.5,.5h6c.276,0,.5-.224,.5-.5Zm0,6c0-.276-.224-.5-.5-.5h-6c-.276,0-.5,.224-.5,.5s.224,.5,.5,.5h6c.276,0,.5-.224,.5-.5ZM8.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5,.5-.5h2c.276,0,.5,.224,.5,.5v2c0,.276-.224,.5-.5,.5Zm-1.5-1h1v-1h-1v1Zm1.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5,.5-.5h2c.276,0,.5,.224,.5,.5v2c0,.276-.224,.5-.5,.5Zm-1.5-1h1v-1h-1v1Zm1.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5,.5-.5h2c.276,0,.5,.224,.5,.5v2c0,.276-.224,.5-.5,.5Zm-1.5-1h1v-1h-1v1Z"/></svg>'}${this.watchlistManager.escapeHtml(list.name)}<span style="margin-left:auto;color:#666;font-size:11px">${list.symbols.length}</span></div>`; 
+            } 
+        }); 
+    }
+    
+    menu.innerHTML = html;
+    const x = Math.min(e.pageX, window.innerWidth - 220);
+    const y = Math.min(e.pageY, window.innerHeight - 200);
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.display = 'block';
+    
+    // ✅ ИСПРАВЛЕНИЕ: Подгоняем меню, чтобы оно не вылезало за экран
+    requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = Math.max(0, window.innerHeight - rect.height - 10) + 'px';
+        }
+        if (rect.right > window.innerWidth) {
+            menu.style.left = Math.max(0, window.innerWidth - rect.width - 10) + 'px';
+        }
+    });
+    
+    menu.querySelector('[data-action="copy"]').onclick = () => {
+        navigator.clipboard.writeText(symbol);
+        menu.style.display = 'none';
+    };
+    
+    menu.querySelectorAll('[data-action="add-wl"]').forEach(item => {
+        item.onclick = async (ev) => {
+            ev.stopPropagation();
+            const listId = item.dataset.listId;
+            const sym = item.dataset.symbol;
+            const ex = item.dataset.exchange;
+            const mt = item.dataset.marketType;
+            if (this.watchlistManager) {
+                const added = await this.watchlistManager.addSymbolToList(listId, sym, ex, mt);
+                const notif = document.getElementById('alertNotification');
+                if (notif) {
+                    const list = this.watchlistManager.lists.get(listId);
+                    notif.innerHTML = `<div>${added ? '✅' : '⚠️'} ${sym} ${added ? '→' : 'уже в'} ${list?.name || 'списке'}</div>`;
+                    notif.style.display = 'block';
+                    notif.style.borderLeftColor = added ? '#4caf50' : '#ff9800';
+                    setTimeout(() => notif.style.display = 'none', 2000);
+                }
+            }
+            menu.style.display = 'none';
+        };
+    });
+    
+    const flagMenu = document.getElementById('flagContextMenu');
+    if (flagMenu) flagMenu.style.display = 'none';
+}
     
     handleDoubleClick(e) {
         const flag = e.target.closest('.flag'); if (!flag) return; e.stopPropagation();
