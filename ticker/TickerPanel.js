@@ -521,34 +521,63 @@ _deduplicateSymbols(symbols) {
         this.saveState();
     }
 
-    addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
-        symbol = symbol.trim().toUpperCase();
-        if (!symbol.endsWith('USDT')) return false;
-        const key = `${symbol}:${exchange}:${marketType}`;
-        
-        // ✅ ИСПРАВЛЕНИЕ: СНАЧАЛА добавляем в вотчлист! Даже если тикер уже есть в памяти.
-        if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
-            this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
-            this.watchlistManager.renderDropdown(); 
-        }
-
-        // Если тикер уже в памяти панели — просто выходим, но он УЖЕ добавлен в лист выше!
-        if (this.tickersMap.has(key)) return true;
-        
-        const newTicker = { symbol, price: 0, change: 0, volume: 0, trades: null, custom: isCustom, prevPrice: 0, exchange, marketType, flag: this.state.flags[key] || null };
-        this.tickers.push(newTicker);
-        this.tickersMap.set(key, newTicker);
-        
-        if (window.priceManagerInstance) window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
-        
-        if (isCustom && !this.state.customSymbols.includes(key)) { this.state.customSymbols.push(key); this.saveState(); }
-        
-        this.filterCache = null;
-        if (!skipInitialFetch) this.fetchInitialDataForSymbol(symbol, exchange, marketType);
-        if (render) this.renderTickerList();
-        return true;
+ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
+    symbol = symbol.trim().toUpperCase();
+    if (!symbol.endsWith('USDT')) return false;
+    const key = `${symbol}:${exchange}:${marketType}`;
+    
+    // Вотчлист
+    if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
+        this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
+        this.watchlistManager.renderDropdown(); 
     }
 
+    // Если УЖЕ в памяти - просто добавляем в рендер
+    if (this.tickersMap.has(key)) {
+        const existingTicker = this.tickersMap.get(key);
+        if (!this.tickers.includes(existingTicker)) {
+            this.tickers.push(existingTicker);
+            this.filterCache = null;
+            if (render) this.renderTickerList();
+        }
+        return true;
+    }
+    
+    // ════════════════════════════════════════
+    // ✅ ФИКС: Создаём НОВЫЙ тикер если нет в памяти!
+    // ════════════════════════════════════════
+    const newTicker = {
+        symbol,
+        price: 0,
+        change: 0,
+        volume: 0,
+        trades: null,
+        custom: true,
+        prevPrice: 0,
+        exchange,
+        marketType,
+        flag: this.state.flags[key] || null
+    };
+    
+    // Добавляем в память И в рендер
+    this.tickers.push(newTicker);
+    this.tickersMap.set(key, newTicker);
+    
+    // Добавляем в customSymbols если нет
+    if (!this.state.customSymbols.includes(key)) {
+        this.state.customSymbols.push(key);
+    }
+    
+    // Подписываемся на цену
+    if (window.priceManagerInstance) {
+        window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
+    }
+    
+    this.filterCache = null;
+    if (render) this.renderTickerList();
+    
+    return true;
+}
     async addSymbolsBatch(symbolsData) {
         if (!symbolsData || symbolsData.length === 0) return;
         
