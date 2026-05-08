@@ -94,55 +94,72 @@ class TickerPanel {
         this.handleKeyDelete = this.handleKeyDelete.bind(this);
         
         this.loadFromLocalStorage();
+        // Восстанавливаем сохранённую сортировку
+const savedSortBy = localStorage.getItem('tickerSortBy');
+const savedSortDir = localStorage.getItem('tickerSortDir');
+if (savedSortBy) {
+    this.state.sortBy = savedSortBy;
+    this.state.sortDirection = savedSortDir || 'desc';
+}
         this.init();
     }
     
     async init() {
-        console.log('📋 TickerPanel: быстрая инициализация');
-        document.getElementById('tickerLoader').style.display = 'block';
-        
-        this.setupFilters();
-        this.setupFlagContextMenu();
-        this.setupUIEventListeners();
-        this.setupClearAllButton();
-        this.setupHeaderSorting();
-        this.setupModal();
-
-        document.addEventListener('contextmenu', (e) => {
-            let target = e.target;
-            if (target && target.nodeType === 3) {
-                target = target.parentElement;
-            }
-            
-            const tickerItem = target.closest('.ticker-item');
-            if (tickerItem) {
-                e.preventDefault(); 
-                this.handleContextMenu(e);
-            }
-        });
-        document.addEventListener('click', (e) => {
-            const tickerMenu = document.getElementById('tickerContextMenu');
-            if (tickerMenu && tickerMenu.style.display === 'block' && !tickerMenu.contains(e.target)) {
-                tickerMenu.style.display = 'none';
-            }
-        });
-
-        if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
-setTimeout(async () => {
-    await this.loadUserData();
-
-    this.initializeDataParallel();
-    this.startCacheCleanup();
-    this.updateModalWithData?.();
-    if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
+    console.log('📋 TickerPanel: быстрая инициализация');
+    document.getElementById('tickerLoader').style.display = 'block';
     
-    // Обновляем кэш раз в 4 часа
-    this._cacheRefreshInterval = setInterval(() => {
-        this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
-    }, 4 * 60 * 60 * 1000);
-}, 100);
-    }
+    this.setupFilters();
+    this.setupFlagContextMenu();
+    this.setupUIEventListeners();
+    this.setupClearAllButton();
+    this.setupHeaderSorting();
+    this.setupModal();
 
+    document.addEventListener('contextmenu', (e) => {
+        let target = e.target;
+        if (target && target.nodeType === 3) {
+            target = target.parentElement;
+        }
+        
+        const tickerItem = target.closest('.ticker-item');
+        if (tickerItem) {
+            e.preventDefault(); 
+            this.handleContextMenu(e);
+        }
+    });
+    document.addEventListener('click', (e) => {
+        const tickerMenu = document.getElementById('tickerContextMenu');
+        if (tickerMenu && tickerMenu.style.display === 'block' && !tickerMenu.contains(e.target)) {
+            tickerMenu.style.display = 'none';
+        }
+    });
+
+    if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
+    
+    setTimeout(async () => {
+        await this.loadUserData();
+
+        // 👇 ГАРАНТИРОВАННОЕ ВОССТАНОВЛЕНИЕ СОРТИРОВКИ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
+        const savedSortBy = localStorage.getItem('tickerSortBy');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        if (savedSortBy) {
+            this.state.sortBy = savedSortBy;
+            this.state.sortDirection = savedSortDir || 'desc';
+            this.filterCache = null;
+            this.renderer.renderTickerList();
+        }
+
+        this.initializeDataParallel();
+        this.startCacheCleanup();
+        this.updateModalWithData?.();
+        if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
+        
+        // Обновляем кэш раз в 4 часа
+        this._cacheRefreshInterval = setInterval(() => {
+            this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
+        }, 4 * 60 * 60 * 1000);
+    }, 100);
+}
     async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
         const loaded = await this.loadFromIndexedDB();
