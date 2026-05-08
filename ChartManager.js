@@ -29,13 +29,13 @@ console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
 
 this._visibilityHandler = () => {
     if (document.hidden) {
-        // 👇 СОХРАНЯЕМ позицию и масштаб перед уходом
+        // Сохраняем позицию перед уходом
         this._saveZoomState();
     } else {
         // Вернулись на вкладку
-        this._syncAfterHidden();
+        this._syncAfterHidden();   // догружаем пропущенные свечи
         
-        // 👇 ВОССТАНАВЛИВАЕМ масштаб после загрузки данных
+        // Восстанавливаем масштаб после загрузки данных
         setTimeout(() => {
             this._restoreZoomState();
         }, 100);
@@ -1750,38 +1750,35 @@ _saveZoomState() {
     }
 }
 
-// Восстановить масштаб и позицию
 _restoreZoomState() {
     if (!this._savedZoomRange) return;
     
     const timeScale = this.chart.timeScale();
     if (!timeScale) return;
     
-    // Если данных стало больше, сдвигаем диапазон вправо
     const dataLength = this.chartData.length;
-    const savedLength = this._savedZoomRange.to - this._savedZoomRange.from;
+    const savedFrom = this._savedZoomRange.from;
+    const savedTo = this._savedZoomRange.to;
+    const savedLength = savedTo - savedFrom;
     
-    // Если мы были у правого края — остаёмся у правого края
-    const wasAtRightEdge = this._savedZoomRange.to >= dataLength - 10;
-    
-    if (wasAtRightEdge) {
-        // Прилипаем к правому краю
+    // Проверяем, не выходит ли сохранённый диапазон за пределы новых данных
+    if (savedFrom >= dataLength) {
+        // Сохранённая позиция была за пределами данных (данные обновились)
+        // Остаёмся у правого края с тем же количеством свечей
         timeScale.setVisibleLogicalRange({
             from: Math.max(0, dataLength - savedLength),
             to: dataLength
         });
     } else {
-        // Восстанавливаем точную позицию
+        // Восстанавливаем точную позицию, усекая до текущего размера данных
         timeScale.setVisibleLogicalRange({
-            from: this._savedZoomRange.from,
-            to: Math.min(dataLength, this._savedZoomRange.to)
+            from: savedFrom,
+            to: Math.min(dataLength, savedTo)
         });
     }
     
-    console.log('📍 Масштаб восстановлен');
     this._savedZoomRange = null;
 }
-
    _subscribeToPrice() {
     if (!this.priceManager) return;
     
