@@ -4084,3 +4084,29 @@ input:checked + .slider:before {
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
+#tickerContextMenu {
+    max-height: 350px;
+    overflow-y: auto;
+    
+    /* Тёмный скролл без рамки */
+    scrollbar-width: thin;
+    scrollbar-color: #555 transparent;
+}
+
+/* WebKit (Chrome, Edge, Safari) */
+#tickerContextMenu::-webkit-scrollbar {
+    width: 4px;
+}
+
+#tickerContextMenu::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#tickerContextMenu::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 2px;
+}
+
+#tickerContextMenu::-webkit-scrollbar-thumb:hover {
+    background: #777;
+}
