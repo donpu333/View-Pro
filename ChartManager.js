@@ -79,7 +79,7 @@ this.chart = LightweightCharts.createChart(container, {
         minBarSpacing: 3,
         fixLeftEdge: true,
         fixRightEdge: false,
-        rightOffset: 5,
+        rightOffset: 10,
         tickMarkFormatter: (time) => {
             const mskTime = time + (3 * 3600);
             const date = new Date(mskTime * 1000);
@@ -416,8 +416,8 @@ scrollToTime(time) {
     if (targetIndex !== -1) {
         const visibleBars = currentRange.to - currentRange.from;
         timeScale.setVisibleLogicalRange({
-            from: Math.max(0, targetIndex - 55),
-            to: Math.max(0, targetIndex - 55) + visibleBars
+            from: Math.max(0, targetIndex - 10),
+            to: Math.max(0, targetIndex - 10) + visibleBars
         });
     } else {
         this.scrollToLast();
@@ -1490,7 +1490,7 @@ updateCurrentCandle(price) {
             
             if (currentRange) {
                 const visibleBarsCount = currentRange.to - currentRange.from;
-                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 55);
+                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 10);
                 
                 timeScale.setVisibleLogicalRange({
                     from: newFrom,
@@ -1504,8 +1504,8 @@ updateCurrentCandle(price) {
                     if (newRange) {
                         const visibleBars = newRange.to - newRange.from;
                         timeScale.setVisibleLogicalRange({
-                            from: this.chartData.length - visibleBars + 35,
-                            to: this.chartData.length + 35
+                            from: this.chartData.length - visibleBars + 10,
+                            to: this.chartData.length + 10
                         });
                     }
                 }, 50);
