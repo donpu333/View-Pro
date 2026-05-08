@@ -2,7 +2,7 @@ class TickerStorage {
     constructor() {
         this.state = {
             favorites: [],
-            customSymbols: [],
+            customSymbols: [],          // теперь всегда синхронизируется с активным вотчлистом
             flags: {},
             activeTab: 'all',
             activeFlagTab: 'red',
@@ -86,10 +86,8 @@ class TickerStorage {
                     this.state.favorites = favorites.value;
                 }
                 
-                const customSymbols = await window.db.get('settings', 'customSymbols');
-                if (customSymbols && customSymbols.value) {
-                    this.state.customSymbols = customSymbols.value;
-                }
+                // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не загружаем из IndexedDB
+                // Управление символами полностью передано WatchlistManager
                 
                 const flags = await window.db.get('settings', 'flags');
                 if (flags && flags.value) {
@@ -118,15 +116,8 @@ class TickerStorage {
         try {
             let loaded = false;
             
-            const customSymbols = localStorage.getItem('customSymbols');
-            if (customSymbols) {
-                const parsed = JSON.parse(customSymbols);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    this.state.customSymbols = parsed;
-                    loaded = true;
-                    console.log('📦 customSymbols из localStorage:', parsed.length);
-                }
-            }
+            // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не загружаем из localStorage
+            // Управление символами полностью передано WatchlistManager
             
             const favorites = localStorage.getItem('favorites');
             if (favorites) {
@@ -203,9 +194,8 @@ class TickerStorage {
         if (this.saveTimeout) clearTimeout(this.saveTimeout);
         
         this.saveTimeout = setTimeout(async () => {
-            // ВСЕГДА сохраняем в localStorage (быстро, синхронно)
+            // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в localStorage
             try {
-                localStorage.setItem('customSymbols', JSON.stringify(this.state.customSymbols));
                 localStorage.setItem('favorites', JSON.stringify(this.state.favorites));
                 localStorage.setItem('flags', JSON.stringify(this.state.flags));
                 localStorage.setItem('currentSymbol', JSON.stringify({
@@ -217,18 +207,12 @@ class TickerStorage {
                 console.warn('Ошибка сохранения в localStorage:', e);
             }
             
-            // Сохраняем в IndexedDB если доступна
+            // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в IndexedDB
             if (window.db && window.dbReady) {
                 try {
                     await window.db.put('settings', {
                         key: 'favorites',
                         value: this.state.favorites,
-                        timestamp: Date.now()
-                    });
-                    
-                    await window.db.put('settings', {
-                        key: 'customSymbols',
-                        value: this.state.customSymbols,
                         timestamp: Date.now()
                     });
                     
@@ -310,31 +294,29 @@ class TickerStorage {
     // ===== ВОТЧЛИСТЫ =====
     
     async loadWatchlists() {
-    if (window.db && window.dbReady) {
-        try {
-            const data = await window.db.get('settings', 'watchlists');
-            if (data?.value) return data.value;
-        } catch (e) {}
-    }
-    const saved = localStorage.getItem('watchlists');
-    return saved ? JSON.parse(saved) : null;
-}
-
-async saveWatchlists(data) {
-    if (window.db && window.dbReady) {
-        try {
-            await window.db.put('settings', { key: 'watchlists', value: data, timestamp: Date.now() });
-            console.log('📋 Вотчлисты сохранены в IndexedDB');
-            localStorage.removeItem('watchlists'); // чистим localStorage, теперь всё в IndexedDB
-            return;
-        } catch (e) {
-            console.error('Ошибка сохранения в IndexedDB:', e);
+        if (window.db && window.dbReady) {
+            try {
+                const data = await window.db.get('settings', 'watchlists');
+                if (data?.value) return data.value;
+            } catch (e) {}
         }
+        const saved = localStorage.getItem('watchlists');
+        return saved ? JSON.parse(saved) : null;
     }
-    localStorage.setItem('watchlists', JSON.stringify(data));
-}
-    
-    
+
+    async saveWatchlists(data) {
+        if (window.db && window.dbReady) {
+            try {
+                await window.db.put('settings', { key: 'watchlists', value: data, timestamp: Date.now() });
+                console.log('📋 Вотчлисты сохранены в IndexedDB');
+                localStorage.removeItem('watchlists'); // чистим localStorage, теперь всё в IndexedDB
+                return;
+            } catch (e) {
+                console.error('Ошибка сохранения в IndexedDB:', e);
+            }
+        }
+        localStorage.setItem('watchlists', JSON.stringify(data));
+    }
     
     // ===== УТИЛИТЫ =====
     
@@ -389,69 +371,64 @@ async saveWatchlists(data) {
         }
     }
     
- updateModalCount() {
-    const exchange = this.state.modalExchange;
-    const marketType = this.state.modalMarketType;
-    
-    let url;
-    if (exchange === 'binance') {
-        url = marketType === 'futures' 
-            ? 'https://fapi.binance.com/fapi/v1/exchangeInfo'
-            : 'https://api.binance.com/api/v3/exchangeInfo';
-    } else {
-        const category = marketType === 'futures' ? 'linear' : 'spot';
-        url = `https://api.bybit.com/v5/market/instruments-info?category=${category}`;
+    updateModalCount() {
+        const exchange = this.state.modalExchange;
+        const marketType = this.state.modalMarketType;
+        
+        let url;
+        if (exchange === 'binance') {
+            url = marketType === 'futures' 
+                ? 'https://fapi.binance.com/fapi/v1/exchangeInfo'
+                : 'https://api.binance.com/api/v3/exchangeInfo';
+        } else {
+            const category = marketType === 'futures' ? 'linear' : 'spot';
+            url = `https://api.bybit.com/v5/market/instruments-info?category=${category}`;
+        }
+        
+        const foundSpan = document.getElementById('modalFoundCount');
+        if (foundSpan) foundSpan.textContent = '...';
+        
+        fetch(url)
+            .then(r => r.json())
+            .then(data => {
+                let count = 0;
+                let realItems = [];
+                
+                if (exchange === 'binance' && data.symbols) {
+                    realItems = data.symbols
+                        .filter(s => s.symbol.endsWith('USDT') && s.status === 'TRADING')
+                        .map(s => ({
+                            symbol: s.symbol,
+                            exchange: 'binance',
+                            marketType: marketType
+                        }));
+                    count = realItems.length;
+                } else if (exchange === 'bybit' && data.result?.list) {
+                    realItems = data.result.list
+                        .filter(s => s.symbol.endsWith('USDT'))
+                        .map(s => ({
+                            symbol: s.symbol,
+                            exchange: 'bybit',
+                            marketType: marketType
+                        }));
+                    count = realItems.length;
+                }
+                
+                if (foundSpan) foundSpan.textContent = count;
+                
+                this._lastModalCountData = {
+                    exchange: exchange,
+                    marketType: marketType,
+                    count: count,
+                    items: realItems,
+                    timestamp: Date.now()
+                };
+            })
+            .catch(() => {
+                if (foundSpan) foundSpan.textContent = '...';
+            });
     }
     
-    const foundSpan = document.getElementById('modalFoundCount');
-    if (foundSpan) foundSpan.textContent = '...';
-    
-    fetch(url)
-        .then(r => r.json())
-        .then(data => {
-            let count = 0;
-            let realItems = [];
-            
-            if (exchange === 'binance' && data.symbols) {
-                // Фильтруем USDT + TRADING
-                realItems = data.symbols
-                    .filter(s => s.symbol.endsWith('USDT') && s.status === 'TRADING')
-                    .map(s => ({
-                        symbol: s.symbol,
-                        exchange: 'binance',
-                        marketType: marketType
-                    }));
-                count = realItems.length;
-                
-            } else if (exchange === 'bybit' && data.result?.list) {
-                // Фильтруем USDT
-                realItems = data.result.list
-                    .filter(s => s.symbol.endsWith('USDT'))
-                    .map(s => ({
-                        symbol: s.symbol,
-                        exchange: 'bybit',
-                        marketType: marketType
-                    }));
-                count = realItems.length;
-            }
-            
-            if (foundSpan) foundSpan.textContent = count;
-            
-            // ✅ ИСПРАВЛЕНИЕ №4: Сохраняем реальные данные для addNextBatch!
-            // Теперь счётчик и "Добавить все" используют один источник
-            this._lastModalCountData = {
-                exchange: exchange,
-                marketType: marketType,
-                count: count,
-                items: realItems,
-                timestamp: Date.now()
-            };
-            
-        })
-        .catch(() => {
-            if (foundSpan) foundSpan.textContent = '...';
-        });
-}
     removeDuplicates(arr, key) {
         const seen = new Map();
         return arr.filter(item => {
@@ -462,10 +439,6 @@ async saveWatchlists(data) {
             return true;
         });
     }
-    // ===== МЕТОДЫ ДЛЯ ВОТЧЛИСТОВ =====
-// ===== ВОТЧЛИСТЫ =====
-
-
 }
 
 if (typeof window !== 'undefined') {
