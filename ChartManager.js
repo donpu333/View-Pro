@@ -1257,18 +1257,13 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         console.log('    Первая свеча:', data[0]);
         console.log('    Последняя свеча:', data[data.length - 1]);
         
-        // ========== ОЧИЩАЕМ СТАРЫЕ ДАННЫЕ ПЕРЕД ЗАГРУЗКОЙ НОВЫХ ==========
+        // ОЧИЩАЕМ СТАРЫЕ ДАННЫЕ
         if (this.candleSeries) this.candleSeries.setData([]);
         if (this.barSeries) this.barSeries.setData([]);
         if (this.volumeSeries) this.volumeSeries.setData([]);
-        // =================================================================
         
-        // ═════════════════════════════════════════════════════
-        // ✅ ЗАЩИТА: Фильтрация битых свечей ПЕРЕД обработкой!
-        // ═════════════════════════════════════════════════════
+        // ФИЛЬТРАЦИЯ
         const beforeFilter = data.length;
-        
-        // Убираем дубли по времени
         const seenTimes = new Set();
         let noDupes = data.filter(c => {
             if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
@@ -1276,15 +1271,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             seenTimes.add(c.time);
             return true;
         });
-        
-        // Валидируем каждую свечу через _isValidCandle
         noDupes = noDupes.filter(c => this._isValidCandle(c));
-        
-        const removedCount = beforeFilter - noDupes.length;
-        if (removedCount > 0) {
-            console.warn(`⚠️ setDataQuick: отфильтровано ${removedCount} битых/дублей из ${beforeFilter}`);
-        }
-        
         data = noDupes;
         
         if (data.length === 0) {
@@ -1293,9 +1280,8 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         }
         
         console.log(`✅ Валидных свечей: ${data.length}`);
-        // ═════════════════════════════════════════════════════
         
-        // ========== ВЫРАВНИВАНИЕ ВРЕМЕНИ ПО НАЧАЛУ ИНТЕРВАЛА ==========
+        // ВЫРАВНИВАНИЕ ВРЕМЕНИ
         const intervalMapSeconds = {
             '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
             '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
@@ -1306,19 +1292,17 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             ...c,
             time: Math.floor(Math.floor(c.time * 1000) / (step * 1000)) * step
         }));
-        // =================================================================
         
-        // 1. СНАЧАЛА СОХРАНЯЕМ ДАННЫЕ
+        // СОХРАНЯЕМ ДАННЫЕ
         this.chartData = data;
         this.currentInterval = interval;
         this.currentSymbol = symbol;
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
-        
         this.hasMoreData = true;
         this.lastCandle = data[data.length - 1];
         
-        // 2. ПРИМЕНЯЕМ ТОЧНОСТЬ ДО ОТРИСОВКИ
+        // ТОЧНОСТЬ ДО ОТРИСОВКИ
         const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
         if (cachedPrecision) {
             this.applyPriceFormat(parseInt(cachedPrecision));
@@ -1326,124 +1310,44 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             this.applyPriceFormat(this._inferPrecisionFromData());
         }
         
-        // 3. РИСУЕМ
+        // РИСУЕМ (ОДИН РАЗ)
         this._performUpdate();
         
-        // ========== ОБНОВЛЯЕМ ОБЪЁМ ==========
+        // ОБЪЁМ
         if (this.volumeSeries && this.chartData.length > 0) {
-            const volumeData = this.chartData.map(candle => {
-                const isBullish = candle.close >= candle.open;
-                return {
-                    time: candle.time,
-                    value: candle.volume || 0,
-                    color: isBullish ? this.bullishColor : this.bearishColor
-                };
-            });
+            const volumeData = this.chartData.map(candle => ({
+                time: candle.time,
+                value: candle.volume || 0,
+                color: candle.close >= candle.open ? this.bullishColor : this.bearishColor
+            }));
             this.volumeSeries.setData(volumeData);
-            console.log('✅ Volume обновлён:', volumeData.length, 'свечей');
         }
         
+        // ИНДИКАТОРЫ
         if (this.indicatorManager) {
-            console.log('📊 setDataQuick: данные загружены, восстанавливаем индикаторы');
             this.indicatorManager.restorePendingIndicators();
             this.indicatorManager.updateAllIndicators();
             this.indicatorManager.loadIndicators();
         }
         
-        // 4. ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (БЕЗ ПЕРЕРИСОВКИ)
+        // ФОНОВАЯ ТОЧНОСТЬ (БЕЗ ПЕРЕРИСОВКИ)
         if (!cachedPrecision) {
             getPrecisionFromExchange(symbol, exchange, marketType)
                 .then(precision => {
-                    const currentSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                    const currentPrecision = currentSeries?.options()?.priceFormat?.precision;
+                    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                    const currentPrecision = series?.options()?.priceFormat?.precision;
                     if (currentPrecision !== precision) {
                         this.applyPriceFormat(precision);
                         localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                        console.log(`✅ Precision updated for ${symbol}: ${precision} decimals`);
                     }
                 })
                 .catch(() => {});
         }
         
-        // 5. ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ (БЕЗ autoScale!)
+        // ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ — ТОЛЬКО РИСУНКИ, БЕЗ autoScale И БЕЗ _updateMainChartHeight
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
-            this._updateMainChartHeight();
         });
-        
-        this._notifySymbolChange();
-        
-    } else {
-        console.warn('setDataQuick: нет данных');
-    }
-    
-    this._lastTimeframe = interval;
-
-    if (!window._dailySeparator) {
-        window._dailySeparator = new DailySeparator(this);
-    } else {
-        window._dailySeparator.redraw();
-    }
-    
-    if (!window._sessionHighlighter) {
-        window._sessionHighlighter = new SessionHighlighter(this);
-    }
-}
-        // Загружаем precision для новой монеты
-        getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
-            console.log(`✅ Precision loaded for ${symbol}: ${precision} decimals`);
-        }).catch(err => {
-            console.warn('❌ Failed to load precision:', err);
-        });
-        
-        this.hasMoreData = true;
-        this.lastCandle = data[data.length - 1];
-        
-        // =================================================================
-        // 2. МГНОВЕННАЯ ТОЧНОСТЬ: ПРИМЕНЯЕМ ДО ОТРИСОВКИ _performUpdate
-        // =================================================================
-        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
-        if (cachedPrecision) {
-            this.applyPriceFormat(parseInt(cachedPrecision));
-        } else {
-            // Если кэша нет — вычисляем из данных за 0.001мс
-            this.applyPriceFormat(this._inferPrecisionFromData());
-        }
-        // =================================================================
-
-        // 3. ТОЛЬКО ТЕПЕРЬ РИСУЕМ (с правильной точностью с первого кадра!)
-        this._performUpdate();
-        
-        // ========== ОБНОВЛЯЕМ ОБЪЁМ ==========
-        if (this.volumeSeries && this.chartData.length > 0) {
-            const volumeData = this.chartData.map(candle => {
-                const isBullish = candle.close >= candle.open;
-                return {
-                    time: candle.time,
-                    value: candle.volume || 0,
-                    color: isBullish ? this.bullishColor : this.bearishColor
-                };
-            });
-            this.volumeSeries.setData(volumeData);
-            console.log('✅ Volume обновлён:', volumeData.length, 'свечей');
-        }
-        
-        if (this.indicatorManager) {
-            console.log('📊 setDataQuick: данные загружены, восстанавливаем индикаторы');
-            this.indicatorManager.restorePendingIndicators();
-            this.indicatorManager.updateAllIndicators();
-            this.indicatorManager.loadIndicators();
-        }
-        
-        // =================================================================
-        // 4. ИСПРАВЛЕНИЕ "ПАЛОК" И MAC: Ждем 1 кадр для автомасштаба
-        // =================================================================
-        requestAnimationFrame(() => {
-            this.autoScale(); 
-            if (window.renderDrawings) window.renderDrawings();
-            this._updateMainChartHeight();
-        });
-        // =================================================================
         
         this._notifySymbolChange();
         
