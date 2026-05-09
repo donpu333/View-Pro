@@ -5075,7 +5075,7 @@ _cleanupOldTriggeredAlerts() {
         console.log(`✅ Очистка завершена. Осталось алертов: ${this._alerts.length}`);
     }
 }
-  _playAlertSound() {
+ _playAlertSound() {
     try {
         const audio = document.getElementById('alertSound');
         
@@ -5088,23 +5088,33 @@ _cleanupOldTriggeredAlerts() {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         if (AudioContext) {
             const ctx = new AudioContext();
-            const oscillator = ctx.createOscillator();
-            const gain = ctx.createGain();
-            
-            oscillator.connect(gain);
-            gain.connect(ctx.destination);
-            
-            oscillator.frequency.value = 800;
-            gain.gain.value = 0.3;
-            
-            oscillator.start();
-            gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.5);
             
             if (ctx.state === 'suspended') {
                 ctx.resume();
             }
-        } else {
-            console.log('AudioContext не поддерживается');
+            
+            const now = ctx.currentTime;
+            
+            // iPhone Calypso
+            const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
+            
+            melody.forEach((freq, i) => {
+                const startTime = now + i * 0.15;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                
+                gain.gain.setValueAtTime(0, startTime);
+                gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(startTime);
+                osc.stop(startTime + 0.2);
+            });
         }
     } catch (e) {
         console.warn('Ошибка воспроизведения звука:', e);
