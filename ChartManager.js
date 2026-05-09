@@ -1144,26 +1144,16 @@ updatePriceLineTimerPosition() {
 _performUpdate() {
     if (!this.chartData.length) return;
     
+    // Обновляем данные свечей
     this.candleSeries.setData(this.chartData);
     this.barSeries.setData(this.chartData);
     
-    if (this.volumeSeries && this.chartData.length > 0) {
-        const volumeData = this.chartData.map(candle => {
-            const isBullish = candle.close >= candle.open;
-            return {
-                time: candle.time,
-                value: candle.volume,
-                color: isBullish ? this.bullishColor : this.bearishColor
-            };
-        });
-        this.volumeSeries.setData(volumeData);
-    }
-    
+    // Индикаторы
     if (this.indicatorManager) {
         this.indicatorManager.updateAllIndicators();
     }
 
-    // 👇 ДОБАВЬТЕ ЭТОТ БЛОК ДЛЯ МГНОВЕННОГО ЦВЕТА ЛИНИИ ЦЕНЫ
+    // Цвет линии цены
     const price = this.getCurrentPrice();
     if (price !== null) {
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -1178,6 +1168,16 @@ _performUpdate() {
             });
         }
     }
+
+    // Таймер
+    if (this.timerManager) {
+        this.timerManager.start(this.currentInterval);
+        if (this.timerManager._primitive && this.timerManager._primitive.isEnabled()) {
+            this.timerManager._primitive.requestRedraw();
+        }
+    }
+
+    this.scheduleUpdatePosition();
 }
   updateLastCandle(candle) {
     if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) {
