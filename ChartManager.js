@@ -26,6 +26,10 @@ console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
         this._lastUpdateTime = 0;
         this._drawingsUpdateRafId = null;
         this._pendingUpdates = false;  // 👈 флаг фоновых изменений
+this._lastLineColor = null;
+
+
+
 
 this._visibilityHandler = () => {
     if (document.hidden) {
@@ -1760,26 +1764,29 @@ _restoreZoomState() {
         this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler); // ← тут была опечатка, исправьте на _priceUpdateHandler
     }
     
-    this._priceUpdateHandler = (price, symbol) => {
-        // 👇 ДОБАВЬТЕ ЭТУ ПРОВЕРКУ
-        if (document.hidden) return;
-        
-        if (symbol === this.currentSymbol) {
-            this.currentRealPrice = price;
-            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (series) {
-                const lastCandle = this.chartData[this.chartData.length - 1];
-                const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-                const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-                
-                series.applyOptions({ 
-                    priceLineSource: price,
-                    priceLineColor: lineColor
-                });
+   this._priceUpdateHandler = (price, symbol) => {
+    if (document.hidden) return;
+    if (symbol === this.currentSymbol) {
+        this.currentRealPrice = price;
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series) {
+            // НЕ применяем applyOptions на каждый тик — только если цвет реально изменился
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+            const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+            
+            // Обновляем цену линии без изменения цвета (если цвет не поменялся)
+            series.applyOptions({ priceLineSource: price });
+            
+            // Цвет меняем ТОЛЬКО если он реально изменился
+            if (this._lastLineColor !== newColor) {
+                this._lastLineColor = newColor;
+                series.applyOptions({ priceLineColor: newColor });
             }
-            this.scheduleUpdatePosition();
         }
-    };
+        this.scheduleUpdatePosition();
+    }
+};
     
     this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
     
