@@ -1289,7 +1289,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         
         if (data.length === 0) {
             console.error('❌ setDataQuick: после фильтрации не осталось валидных свечей!');
-            return; // Выходим — не рисуем пустой график
+            return;
         }
         
         console.log(`✅ Валидных свечей: ${data.length}`);
@@ -1308,13 +1308,87 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         }));
         // =================================================================
         
-        // 1. СНАЧАЛА СОХРАНЯЕМ ДАННЫЕ (чтобы fallback мог их прочитать)
+        // 1. СНАЧАЛА СОХРАНЯЕМ ДАННЫЕ
         this.chartData = data;
         this.currentInterval = interval;
         this.currentSymbol = symbol;
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
         
+        this.hasMoreData = true;
+        this.lastCandle = data[data.length - 1];
+        
+        // 2. ПРИМЕНЯЕМ ТОЧНОСТЬ ДО ОТРИСОВКИ
+        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+        if (cachedPrecision) {
+            this.applyPriceFormat(parseInt(cachedPrecision));
+        } else {
+            this.applyPriceFormat(this._inferPrecisionFromData());
+        }
+        
+        // 3. РИСУЕМ
+        this._performUpdate();
+        
+        // ========== ОБНОВЛЯЕМ ОБЪЁМ ==========
+        if (this.volumeSeries && this.chartData.length > 0) {
+            const volumeData = this.chartData.map(candle => {
+                const isBullish = candle.close >= candle.open;
+                return {
+                    time: candle.time,
+                    value: candle.volume || 0,
+                    color: isBullish ? this.bullishColor : this.bearishColor
+                };
+            });
+            this.volumeSeries.setData(volumeData);
+            console.log('✅ Volume обновлён:', volumeData.length, 'свечей');
+        }
+        
+        if (this.indicatorManager) {
+            console.log('📊 setDataQuick: данные загружены, восстанавливаем индикаторы');
+            this.indicatorManager.restorePendingIndicators();
+            this.indicatorManager.updateAllIndicators();
+            this.indicatorManager.loadIndicators();
+        }
+        
+        // 4. ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (БЕЗ ПЕРЕРИСОВКИ)
+        if (!cachedPrecision) {
+            getPrecisionFromExchange(symbol, exchange, marketType)
+                .then(precision => {
+                    const currentSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                    const currentPrecision = currentSeries?.options()?.priceFormat?.precision;
+                    if (currentPrecision !== precision) {
+                        this.applyPriceFormat(precision);
+                        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                        console.log(`✅ Precision updated for ${symbol}: ${precision} decimals`);
+                    }
+                })
+                .catch(() => {});
+        }
+        
+        // 5. ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ (БЕЗ autoScale!)
+        requestAnimationFrame(() => {
+            if (window.renderDrawings) window.renderDrawings();
+            this._updateMainChartHeight();
+        });
+        
+        this._notifySymbolChange();
+        
+    } else {
+        console.warn('setDataQuick: нет данных');
+    }
+    
+    this._lastTimeframe = interval;
+
+    if (!window._dailySeparator) {
+        window._dailySeparator = new DailySeparator(this);
+    } else {
+        window._dailySeparator.redraw();
+    }
+    
+    if (!window._sessionHighlighter) {
+        window._sessionHighlighter = new SessionHighlighter(this);
+    }
+}
         // Загружаем precision для новой монеты
         getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
             console.log(`✅ Precision loaded for ${symbol}: ${precision} decimals`);
