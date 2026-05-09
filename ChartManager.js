@@ -1330,20 +1330,16 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             this.indicatorManager.loadIndicators();
         }
         
-        // ФОНОВАЯ ТОЧНОСТЬ (БЕЗ ПЕРЕРИСОВКИ)
-        if (!cachedPrecision) {
-            getPrecisionFromExchange(symbol, exchange, marketType)
-                .then(precision => {
-                    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                    const currentPrecision = series?.options()?.priceFormat?.precision;
-                    if (currentPrecision !== precision) {
-                        this.applyPriceFormat(precision);
-                        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                    }
-                })
-                .catch(() => {});
-        }
-        
+       // 4. ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (СОХРАНЯЕМ В КЭШ, НО НЕ ПЕРЕРИСОВЫВАЕМ)
+if (!cachedPrecision) {
+    getPrecisionFromExchange(symbol, exchange, marketType)
+        .then(precision => {
+            // Только сохраняем в кэш для следующей загрузки, но НЕ меняем формат сейчас
+            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+            console.log(`✅ Precision saved for ${symbol}: ${precision} decimals (applied on next load)`);
+        })
+        .catch(() => {});
+}
         // ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ — ТОЛЬКО РИСУНКИ, БЕЗ autoScale И БЕЗ _updateMainChartHeight
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
