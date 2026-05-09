@@ -27,7 +27,9 @@ console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
         this._drawingsUpdateRafId = null;
         this._pendingUpdates = false;  // 👈 флаг фоновых изменений
 this._lastLineColor = null;
-
+ this._redrawLoopRunning = false;
+    this._lastRedrawFrame = 0;
+    this._pendingRedraw = false;
 
 
 this._visibilityHandler = () => {
@@ -59,7 +61,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         this.loadingOverlay = safeElement('loadingOverlay');
         this.loadingProgress = safeElement('loadingProgress');
 this.chart = LightweightCharts.createChart(container, {
-    
+     
     layout: { 
         background: { color: '#000000' }, 
         textColor: '#808080'
@@ -278,8 +280,26 @@ this._initPromise = (async () => {
     
     console.log('✅ ChartManager полностью инициализирован');
 })();
+ 
 this._setupPanelsSync();
+this._startRedrawLoop();
  }
+
+_startRedrawLoop() {
+    const loop = () => {
+        // Один раз за кадр перерисовываем всё, что изменилось
+        this.rayManager?._applyRedrawIfNeeded();
+        this.trendLineManager?._applyRedrawIfNeeded();
+        this.rulerLineManager?._applyRedrawIfNeeded();
+        this.alertLineManager?._applyRedrawIfNeeded();
+        
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+}
+
+
+
 getCurrentPrice() {
     // 1. Сначала из PriceManager (WebSocket)
     if (this.priceManager) {
