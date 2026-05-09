@@ -2519,38 +2519,53 @@ function takeChartScreenshot() {
 </style>
 
 <script>
-    (function() {
-        const fullscreenBtn = document.getElementById('fullscreenBtn');
-        const body = document.body;
-        
-        if (!fullscreenBtn) return;
-
-        // Функция делает ТОЛЬКО одно: просит браузер открыть/закрыть полный экран.
-        // Вся магия подстройки размеров графика происходит автоматически в ChartManager.js через ResizeObserver!
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.error('Ошибка перехода в полный экран:', err);
-                });
-            } else {
-                document.exitFullscreen();
-            }
+   // Горячая клавиша P для полноэкранного режима + кнопка
+(function() {
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const body = document.body;
+    
+    // Функция переключения полноэкранного режима
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.error('Ошибка перехода в полный экран:', err);
+            });
+        } else {
+            document.exitFullscreen();
         }
+    }
 
+    // Обработчик клика по кнопке
+    if (fullscreenBtn) {
         fullscreenBtn.addEventListener('click', toggleFullscreen);
+    }
 
-        // Следим за системным событием смены режима, чтобы подсветить кнопку и накинуть CSS-класс
-        document.addEventListener('fullscreenchange', function() {
+    // Горячая клавиша P
+    document.addEventListener('keydown', function(e) {
+        if ((e.key === 'p' || e.key === 'P') && 
+            document.activeElement.tagName !== 'INPUT' && 
+            document.activeElement.tagName !== 'TEXTAREA' &&
+            document.activeElement.tagName !== 'SELECT') {
+            
+            e.preventDefault();
+            toggleFullscreen();
+        }
+    });
+
+    // Следим за системным событием смены режима
+    document.addEventListener('fullscreenchange', function() {
+        if (fullscreenBtn) {
             fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
-            if (document.fullscreenElement) {
-                body.classList.add('fullscreen-mode');
-            } else {
-                body.classList.remove('fullscreen-mode');
-            }
-        });
+        }
+        if (document.fullscreenElement) {
+            body.classList.add('fullscreen-mode');
+        } else {
+            body.classList.remove('fullscreen-mode');
+        }
+    });
 
-        console.log('✅ Полноэкранный режим подключен (без ручного resize)');
-    })();
+    console.log('✅ Полноэкранный режим: кнопка + горячая клавиша P');
+})();
 </script>
 <!-- СКРИПТ ДЛЯ СКРИНШОТА (ТОЛЬКО ОДИН!) -->
 <script>
