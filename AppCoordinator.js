@@ -449,7 +449,7 @@ async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
             // ==========================================
             
             requestAnimationFrame(async () => {
-                this.chartManager.autoScale();
+                
                 await this.syncAllDrawings();
             });
         }
