@@ -4188,3 +4188,40 @@ input:checked + .slider:before {
 .wl-add-item:hover {
     background: rgba(0, 188, 212, 0.1) !important;
 }
+
+
+/* Тёмный фон для текстовых полей */
+.settings-row input[type="text"],
+.drawing-settings-panel input[type="text"],
+.drawing-settings-panel .hex-input,
+#settingsPriceInput {
+    background: #1E1E1E !important;
+    color: #FFFFFF !important;
+    border: 1px solid #404040 !important;
+}
+
+/* Тёмный фон для выпадающих списков */
+.drawing-settings-panel select,
+.template-select {
+    background: #1E1E1E !important;
+    color: #FFFFFF !important;
+    border: 1px solid #404040 !important;
+}
+
+/* Тёмный фон для самой строки настроек */
+.settings-row {
+    background: #1E1E1E !important;
+    padding: 8px;
+    border-radius: 6px;
+}
+
+/* Кнопка "Применить" */
+.apply-price-btn,
+#applyPriceBtn {
+    background: #404040 !important;
+    color: #fff !important;
+    border: 1px solid #404040 !important;
+}
+.apply-price-btn:hover {
+    background: #4A90E2 !important;
+}
