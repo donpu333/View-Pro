@@ -30,20 +30,12 @@ this._lastLineColor = null;
 
 
 
-
 this._visibilityHandler = () => {
     if (document.hidden) {
-        // Сохраняем позицию перед уходом
-        this._saveZoomState();
+        // this._saveZoomState();   ← ЗАКОММЕНТИРОВАТЬ
     } else {
-        // Вернулись на вкладку
-        this._syncAfterHidden();   // догружаем пропущенные свечи
-        
-        // Восстанавливаем масштаб после загрузки данных
-        setTimeout(() => {
-            this._restoreZoomState();
-        }, 100);
-        
+        this._syncAfterHidden();
+        // setTimeout(() => this._restoreZoomState(), 100);   ← ЗАКОММЕНТИРОВАТЬ
         if (this.timerManager?._primitive) {
             this.timerManager._primitive.requestRedraw();
         }
