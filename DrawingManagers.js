@@ -1115,7 +1115,7 @@ hitTest(x, y) {
             
             const title = document.createElement('span');
             title.textContent = 'Настройки луча';
-            title.style.color = '#FFFFFF';
+            title.style.color = '#c5c3c3';
             title.style.fontSize = '14px';
             title.style.fontWeight = 'bold';
             
@@ -6724,7 +6724,30 @@ hitTest(x, y) {
     syncWithNewTimeframe() {}
 }
 
+// ============================================================
+// Универсальное закрытие ВСЕХ панелей настроек по клику на график
+// ============================================================
+(function() {
+    const container = document.getElementById('chart-container');
+    if (!container) return;
 
+    container.addEventListener('click', function(e) {
+        const panelIds = [
+            'drawingSettings',    // настройки лучей (HorizontalRay)
+            'trendSettings',      // настройки трендовых линий
+            'alertSettings',      // настройки алертов
+            'textSettings',       // настройки текста
+            'rulerSettingsPanel'  // настройки линейки (если есть отдельная панель)
+        ];
+
+        panelIds.forEach(id => {
+            const panel = document.getElementById(id);
+            if (panel && panel.style.display === 'block') {
+                panel.style.display = 'none';
+            }
+        });
+    });
+})();
 
 // ========== ГОРЯЧАЯ КЛАВИША ДЛЯ МАГНИТА ==========
 document.addEventListener('keydown', (e) => {
