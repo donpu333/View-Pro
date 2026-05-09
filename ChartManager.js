@@ -1756,28 +1756,39 @@ _restoreZoomState() {
         this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler); // ← тут была опечатка, исправьте на _priceUpdateHandler
     }
     
-   this._priceUpdateHandler = (price, symbol) => {
+  this._priceUpdateHandler = (price, symbol) => {
     if (document.hidden) return;
-    if (symbol === this.currentSymbol) {
-        this.currentRealPrice = price;
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (series) {
-            // НЕ применяем applyOptions на каждый тик — только если цвет реально изменился
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-            const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-            
-            // Обновляем цену линии без изменения цвета (если цвет не поменялся)
-            series.applyOptions({ priceLineSource: price });
-            
-            // Цвет меняем ТОЛЬКО если он реально изменился
-            if (this._lastLineColor !== newColor) {
-                this._lastLineColor = newColor;
-                series.applyOptions({ priceLineColor: newColor });
-            }
-        }
-        this.scheduleUpdatePosition();
+    if (symbol !== this.currentSymbol) return;
+    
+    this.currentRealPrice = price;
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series) return;
+
+    // 1. Двигаем линию цены — БЕЗ перестроения шкалы
+    series.applyOptions({ priceLineSource: price });
+
+    // 2. Цвет меняем ТОЛЬКО при смене свечи (close пересекает open)
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+    const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+    
+    if (this._lastAppliedColor !== newColor) {
+        this._lastAppliedColor = newColor;
+        series.applyOptions({ priceLineColor: newColor });
     }
+
+    // 3. Обновляем свечу (update, не setData!)
+    if (lastCandle && lastCandle.time) {
+        series.update({
+            time: lastCandle.time,
+            open: lastCandle.open,
+            high: lastCandle.high,
+            low: lastCandle.low,
+            close: price
+        });
+    }
+
+    this.scheduleUpdatePosition();
 };
     
     this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
