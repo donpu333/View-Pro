@@ -1,4 +1,3 @@
-
 class HorizontalRay {
     constructor(price, time, options = {}) {
         this.price = price;
@@ -951,51 +950,47 @@ hitTest(x, y) {
     return bestHit;
 }
     
-    _handleChartClick(event) {
-        if (!this._isDrawingMode) return;
-        
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
-        let anchorCandle = null;
-        
-        if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
-            if (lastCandle) {
-                price = lastCandle.close;
-                time = lastCandle.time;
-            } else {
-                return;
-            }
-        }
-        
-        if (this._magnetEnabled) {
-            const snapped = this._snapToPrice(price, time);
-            price = snapped.price;
-            time = snapped.time;
-            anchorCandle = snapped.anchorCandle;
+ _handleChartClick(event) {
+    if (!this._isDrawingMode) return;
+    
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._chartManager.coordinateToTime(x);
+    let anchorCandle = null;
+    
+    if (price === null || time === null) {
+        const lastCandle = this._chartManager.getLastCandle();
+        if (lastCandle) {
+            price = lastCandle.close;
+            time = lastCandle.time;
         } else {
-            const snappedTime = this._findClosestCandleTime(time);
-            if (snappedTime) {
-                time = snappedTime;
-            }
+            return;
         }
-        
-        this.createRay(price, time, {
-            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#0933e2',
-            lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
-            lineStyle: document.getElementById('templateSelect')?.value || 'solid',
-            opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100,
-            showPrice: true,
-            anchorCandle: anchorCandle
-        });
-        
-        this.setDrawingMode(false);
     }
-
+    
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
+    if (this._magnetEnabled) {
+        const snapped = this._snapToPrice(price, time);
+        price = snapped.price;
+        time = snapped.time;
+        anchorCandle = snapped.anchorCandle;
+    }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+    
+    this.createRay(price, time, {
+        color: document.getElementById('currentColorBox')?.style.backgroundColor || '#0933e2',
+        lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
+        lineStyle: document.getElementById('templateSelect')?.value || 'solid',
+        opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9,
+        showPrice: true,
+        anchorCandle: anchorCandle
+    });
+    
+    this.setDrawingMode(false);
+}
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
         
@@ -2255,43 +2250,88 @@ class TrendLineManager {
         if (e.key === 'Delete' && this._selectedLine) { this.deleteTrendLine(this._selectedLine.id); this._selectedLine = null; }
     }
 
-    _startDrawing(x, y) {
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._getTimeFromCoordinate(x);
-        let anchorCandle = null;
-        if (price === null || time === null) { const lc = this._chartManager.getLastCandle(); if (lc) { price = lc.close; time = lc.time; } else return; }
-        if (this._magnetEnabled) { const s = this._snapToPrice(price, time); price = s.price; time = s.time; anchorCandle = s.anchorCandle; }
-        else { const st = this._findClosestCandleTime(time); if (st) time = st; }
-        this._drawingStartPoint = { price, time, x, y, anchorCandle };
-        this._isDrawingSecondPoint = true; this._tempLine = null; this._requestRedraw();
+  _startDrawing(x, y) {
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._getTimeFromCoordinate(x);
+    let anchorCandle = null;
+    
+    if (price === null || time === null) { 
+        const lc = this._chartManager.getLastCandle(); 
+        if (lc) { price = lc.close; time = lc.time; } 
+        else return; 
     }
+    
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
+    if (this._magnetEnabled) { 
+        const s = this._snapToPrice(price, time); 
+        price = s.price; 
+        time = s.time; 
+        anchorCandle = s.anchorCandle; 
+    }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+    
+    this._drawingStartPoint = { price, time, x, y, anchorCandle };
+    this._isDrawingSecondPoint = true; 
+    this._tempLine = null; 
+    this._requestRedraw();
+}
 
-    _completeDrawing(x, y) {
-        if (!this._drawingStartPoint) return;
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._getTimeFromCoordinate(x);
-        if (price === null || time === null) { const lc = this._chartManager.getLastCandle(); if (lc) { price = lc.close; time = lc.time; } else return; }
-        const startTime = this._drawingStartPoint.time, endTime = time;
-        let point1, point2, ac1, ac2;
-        if (startTime <= endTime) {
-            point1 = { price: this._drawingStartPoint.price, time: startTime };
-            point2 = { price, time: endTime };
-            ac1 = this._drawingStartPoint.anchorCandle; ac2 = null;
-        } else {
-            point1 = { price, time: endTime };
-            point2 = { price: this._drawingStartPoint.price, time: startTime };
-            ac1 = null; ac2 = this._drawingStartPoint.anchorCandle;
-        }
-        this.createTrendLine(point1, point2, { anchorCandle1: ac1, anchorCandle2: ac2,
-            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#4A90E2',
-            lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
-            lineStyle: document.getElementById('templateSelect')?.value || 'solid',
-            opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9
-        });
-        if (this._tempPrimitive) { const s = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries; if (s) try { s.detachPrimitive(this._tempPrimitive); } catch(e) {} this._tempPrimitive = null; }
-        this._drawingStartPoint = null; this._isDrawingSecondPoint = false; this._tempLine = null;
-        this._requestRedraw(); this.setDrawingMode(false);
+_completeDrawing(x, y) {
+    if (!this._drawingStartPoint) return;
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._getTimeFromCoordinate(x);
+    
+    if (price === null || time === null) { 
+        const lc = this._chartManager.getLastCandle(); 
+        if (lc) { price = lc.close; time = lc.time; } 
+        else return; 
     }
+    
+    const startTime = this._drawingStartPoint.time; 
+    const endTime = time;
+    let point1, point2, ac1, ac2;
+    
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН (для второй точки)
+    if (this._magnetEnabled) {
+        const s = this._snapToPrice(price, time);
+        price = s.price;
+        time = s.time;
+        ac2 = s.anchorCandle;
+    }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+    
+    if (startTime <= endTime) {
+        point1 = { price: this._drawingStartPoint.price, time: startTime };
+        point2 = { price, time: endTime };
+        ac1 = this._drawingStartPoint.anchorCandle; 
+        // ac2 уже установлен выше
+    } else {
+        point1 = { price, time: endTime };
+        point2 = { price: this._drawingStartPoint.price, time: startTime };
+        ac1 = ac2;
+        ac2 = this._drawingStartPoint.anchorCandle;
+    }
+    
+    this.createTrendLine(point1, point2, { 
+        anchorCandle1: ac1, 
+        anchorCandle2: ac2,
+        color: document.getElementById('currentColorBox')?.style.backgroundColor || '#4A90E2',
+        lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
+        lineStyle: document.getElementById('templateSelect')?.value || 'solid',
+        opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9
+    });
+    
+    if (this._tempPrimitive) { 
+        const s = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries; 
+        if (s) try { s.detachPrimitive(this._tempPrimitive); } catch(e) {} 
+        this._tempPrimitive = null; 
+    }
+    this._drawingStartPoint = null; 
+    this._isDrawingSecondPoint = false; 
+    this._tempLine = null;
+    this._requestRedraw(); 
+    this.setDrawingMode(false);
+}
 
     hitTest(x, y) {
     // ✅ Приоритет: выбранная линия проверяем первой
@@ -3501,63 +3541,99 @@ class RulerLineManager {
         }
     }
 
-    _startDrawing(x, y) {
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
-        let anchorCandle = null;
-        if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
-            if (lastCandle) { price = lastCandle.close; time = lastCandle.time; } else return;
-        }
-        if (this._magnetEnabled) {
-            const snapped = this._snapToPrice(price, time);
-            price = snapped.price; time = snapped.time; anchorCandle = snapped.anchorCandle;
-       
-        }
-        this._drawingStartPoint = { price, time, x, y, anchorCandle };
-        this._isDrawingSecondPoint = true;
-        this._tempPoint = { price, time, x, y };
-        this._tempLine = null;
-        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-        if (series && !this._tempPointPrimitive) {
-            this._tempPointPrimitive = new TempRulerPointPrimitive(this);
-            try { series.attachPrimitive(this._tempPointPrimitive); } catch (e) {}
-        }
-        this._requestRedraw();
+   _startDrawing(x, y) {
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._chartManager.coordinateToTime(x);
+    let anchorCandle = null;
+    
+    if (price === null || time === null) {
+        const lastCandle = this._chartManager.getLastCandle();
+        if (lastCandle) { 
+            price = lastCandle.close; 
+            time = lastCandle.time; 
+        } else return;
     }
+    
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
+    if (this._magnetEnabled) {
+        const snapped = this._snapToPrice(price, time);
+        price = snapped.price; 
+        time = snapped.time; 
+        anchorCandle = snapped.anchorCandle;
+    }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+    
+    this._drawingStartPoint = { price, time, x, y, anchorCandle };
+    this._isDrawingSecondPoint = true;
+    this._tempPoint = { price, time, x, y };
+    this._tempLine = null;
+    
+    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+    if (series && !this._tempPointPrimitive) {
+        this._tempPointPrimitive = new TempRulerPointPrimitive(this);
+        try { series.attachPrimitive(this._tempPointPrimitive); } catch (e) {}
+    }
+    this._requestRedraw();
+}
 
-    _completeDrawing(x, y) {
-        if (!this._drawingStartPoint) return;
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
-        let anchorCandle = null;
-        if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
-            if (lastCandle) { price = lastCandle.close; time = lastCandle.time; } else return;
-        }
-        if (this._magnetEnabled) {
-            const snapped = this._snapToPrice(price, time);
-            price = snapped.price; time = snapped.time; anchorCandle = snapped.anchorCandle;
-        
-        }
-        const startTime = this._drawingStartPoint.time, endTime = time;
-        let point1, point2, ac1, ac2;
-        if (startTime <= endTime) {
-            point1 = { price: this._drawingStartPoint.price, time: startTime };
-            point2 = { price, time: endTime };
-            ac1 = this._drawingStartPoint.anchorCandle; ac2 = anchorCandle;
-        } else {
-            point1 = { price, time: endTime };
-            point2 = { price: this._drawingStartPoint.price, time: startTime };
-            ac1 = anchorCandle; ac2 = this._drawingStartPoint.anchorCandle;
-        }
-        this.createRuler(point1, point2, { anchorCandle1: ac1, anchorCandle2: ac2 });
-        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-        if (this._tempLinePrimitive) { if (series) try { series.detachPrimitive(this._tempLinePrimitive); } catch(e) {} this._tempLinePrimitive = null; this._tempLine = null; }
-        if (this._tempPointPrimitive) { if (series) try { series.detachPrimitive(this._tempPointPrimitive); } catch(e) {} this._tempPointPrimitive = null; this._tempPoint = null; }
-        this._drawingStartPoint = null; this._isDrawingSecondPoint = false;
-        this._requestRedraw(); this.setDrawingMode(false);
+_completeDrawing(x, y) {
+    if (!this._drawingStartPoint) return;
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._chartManager.coordinateToTime(x);
+    let anchorCandle = null;
+    
+    if (price === null || time === null) {
+        const lastCandle = this._chartManager.getLastCandle();
+        if (lastCandle) { 
+            price = lastCandle.close; 
+            time = lastCandle.time; 
+        } else return;
     }
+    
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
+    if (this._magnetEnabled) {
+        const snapped = this._snapToPrice(price, time);
+        price = snapped.price; 
+        time = snapped.time; 
+        anchorCandle = snapped.anchorCandle;
+    }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+    
+    const startTime = this._drawingStartPoint.time; 
+    const endTime = time;
+    let point1, point2, ac1, ac2;
+    
+    if (startTime <= endTime) {
+        point1 = { price: this._drawingStartPoint.price, time: startTime };
+        point2 = { price, time: endTime };
+        ac1 = this._drawingStartPoint.anchorCandle; 
+        ac2 = anchorCandle;
+    } else {
+        point1 = { price, time: endTime };
+        point2 = { price: this._drawingStartPoint.price, time: startTime };
+        ac1 = anchorCandle; 
+        ac2 = this._drawingStartPoint.anchorCandle;
+    }
+    
+    this.createRuler(point1, point2, { anchorCandle1: ac1, anchorCandle2: ac2 });
+    
+    // Очистка временных примитивов...
+    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+    if (this._tempLinePrimitive) { 
+        if (series) try { series.detachPrimitive(this._tempLinePrimitive); } catch(e) {} 
+        this._tempLinePrimitive = null; 
+        this._tempLine = null; 
+    }
+    if (this._tempPointPrimitive) { 
+        if (series) try { series.detachPrimitive(this._tempPointPrimitive); } catch(e) {} 
+        this._tempPointPrimitive = null; 
+        this._tempPoint = null; 
+    }
+    this._drawingStartPoint = null; 
+    this._isDrawingSecondPoint = false;
+    this._requestRedraw(); 
+    this.setDrawingMode(false);
+}
 
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
@@ -4129,45 +4205,72 @@ class AlertLineManager {
         this._subscribedSymbols.delete(symbol);
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                const container = this._chartManager.chartContainer;
-                const rect = container.getBoundingClientRect();
-                const mouseX = this._lastMouseX !== undefined ? this._lastMouseX : rect.width / 2;
-                const mouseY = this._lastMouseY !== undefined ? this._lastMouseY : rect.height / 2;
-                let price = this._chartManager.coordinateToPrice(mouseY);
-                let time = this._chartManager.coordinateToTime(mouseX);
-                if (price === null || time === null) {
-                    const lastCandle = this._chartManager.getLastCandle();
-                    if (lastCandle) { price = lastCandle.close; time = lastCandle.time; } else return;
+ _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        // Горячая клавиша I — создание алерта
+        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const container = this._chartManager.chartContainer;
+            const rect = container.getBoundingClientRect();
+            
+            // CSS-координаты курсора
+            const mouseX = this._lastMouseX !== undefined ? this._lastMouseX : rect.width / 2;
+            const mouseY = this._lastMouseY !== undefined ? this._lastMouseY : rect.height / 2;
+            
+            let price = this._chartManager.coordinateToPrice(mouseY);
+            // ✅ ИСПРАВЛЕНО: используем _getTimeFromCoordinate вместо coordinateToTime!
+            let time = this._getTimeFromCoordinate(mouseX);
+            let anchorCandle = null;
+            
+            if (price === null || time === null) {
+                const lastCandle = this._chartManager.getLastCandle();
+                if (lastCandle) { 
+                    price = lastCandle.close; 
+                    time = lastCandle.time; 
+                } else {
+                    return;
                 }
-                if (this._magnetEnabled) {
-                    const snapped = this._snapToPrice(price, time);
-                    price = snapped.price;
-                    time = snapped.time;
-                }
-                this.createAlert(price, time, {
-                    color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
-                    lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
-                    lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
-                    opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
-                    showPrice: true,
-                    showBell: document.getElementById('alertShowBell')?.checked || true,
-                    repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
-                    repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1
-                });
             }
-            if (e.key === 'Delete' && this._selectedAlert) {
-                e.preventDefault();
-                this.deleteAlert(this._selectedAlert.id);
-                this._selectedAlert = null;
+            
+            // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
+            if (this._magnetEnabled) {
+                const snapped = this._snapToPrice(price, time);
+                price = snapped.price;
+                time = snapped.time;
+                anchorCandle = snapped.anchorCandle;
             }
-        });
-    }
-
+            // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+            
+            console.log('🔔 Создаём алерт:', {
+                symbol: this._chartManager.currentSymbol,
+                price: price,
+                time: new Date(time * 1000).toLocaleString(),
+                magnet: this._magnetEnabled
+            });
+            
+            this.createAlert(price, time, {
+                color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
+                lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
+                lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
+                opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
+                showPrice: true,
+                showBell: document.getElementById('alertShowBell')?.checked || true,
+                repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
+                repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
+                anchorCandle: anchorCandle
+            });
+        }
+        
+        // Delete — удаление выбранного алерта
+        if (e.key === 'Delete' && this._selectedAlert) {
+            e.preventDefault();
+            this.deleteAlert(this._selectedAlert.id);
+            this._selectedAlert = null;
+        }
+    });
+}
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
@@ -4654,15 +4757,19 @@ checkTimerAlerts() {
         // Ничего не делаем – updateAllViews сам всё обновит
     }
 
- _handleChartClick(event) {
+ _
+
+_handleChartClick(event) {
     if (!this._isDrawingMode) return;
     
     const rect = this._chartManager.chartContainer.getBoundingClientRect();
-    // FIX: Для получения цены/времени используются чистые CSS-координаты
+    
+    // CSS-координаты (НЕ bitmap!)
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     
     let price = this._chartManager.coordinateToPrice(y);
+    // ✅ ИСПРАВЛЕНО: используем _getTimeFromCoordinate!
     let time = this._getTimeFromCoordinate(x);
     let anchorCandle = null;
     
@@ -4676,17 +4783,19 @@ checkTimerAlerts() {
         }
     }
     
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
     if (this._magnetEnabled) {
         const snapped = this._snapToPrice(price, time);
         price = snapped.price;
         time = snapped.time;
         anchorCandle = snapped.anchorCandle;
     }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
     
-    console.log('🔔 Создаём алерт:', {
+    console.log('🔔 Создаём алерт кликом:', {
         symbol: this._chartManager.currentSymbol,
         price: price,
-        time: new Date(time * 1000).toLocaleString()
+        magnet: this._magnetEnabled
     });
     
     this.createAlert(price, time, {
@@ -6363,53 +6472,59 @@ hitTest(x, y) {
     
     return bestHit;
 }
-    _handleChartClick(event) {
-        if (!this._isDrawingMode) return;
-        
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
-        let anchorCandle = null;
-        
-        if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
-            if (lastCandle) {
-                price = lastCandle.close;
-                time = lastCandle.time;
-            } else {
-                return;
-            }
+   _handleChartClick(event) {
+    if (!this._isDrawingMode) return;
+    
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._chartManager.coordinateToTime(x);
+    let anchorCandle = null;
+    
+    if (price === null || time === null) {
+        const lastCandle = this._chartManager.getLastCandle();
+        if (lastCandle) {
+            price = lastCandle.close;
+            time = lastCandle.time;
+        } else {
+            return;
         }
-        
-        if (this._magnetEnabled) {
-            const snapped = this._snapToPrice(price, time);
-            price = snapped.price;
-            time = snapped.time;
-            anchorCandle = snapped.anchorCandle;
-        
-        }
-        
-        const color = document.getElementById('textCurrentColorBox')?.style.backgroundColor || '#FFFFFF';
-        const bgColor = document.getElementById('textBgColorBox')?.style.backgroundColor || '#000000';
-        const fontSize = parseInt(document.getElementById('textFontSize')?.value) || 12;
-        const bold = document.getElementById('textBold')?.checked || false;
-        const opacity = parseInt(document.getElementById('textOpacity')?.value) / 100 || 1;
-        const bgOpacity = parseInt(document.getElementById('textBgOpacity')?.value) / 100 || 0.8;
-        
-        const newText = this.createText('Текст', time, price, {
-            color, bgColor, fontSize, bold, opacity, bgOpacity, anchorCandle
-        });
-        
-        setTimeout(() => {
-            this._showSettings(newText);
-        }, 100);
-        
-        this.setDrawingMode(false);
     }
-
+    
+    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
+    if (this._magnetEnabled) {
+        const snapped = this._snapToPrice(price, time);
+        price = snapped.price;
+        time = snapped.time;
+        anchorCandle = snapped.anchorCandle;
+    }
+    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
+    
+    const color = document.getElementById('textCurrentColorBox')?.style.backgroundColor || '#FFFFFF';
+    const bgColor = document.getElementById('textBgColorBox')?.style.backgroundColor || '#000000';
+    const fontSize = parseInt(document.getElementById('textFontSize')?.value) || 12;
+    const bold = document.getElementById('textBold')?.checked || false;
+    const opacity = parseInt(document.getElementById('textOpacity')?.value) / 100 || 1;
+    const bgOpacity = parseInt(document.getElementById('textBgOpacity')?.value) / 100 || 0.8;
+    
+    const newText = this.createText('Текст', time, price, {
+        color, 
+        bgColor, 
+        fontSize, 
+        bold, 
+        opacity, 
+        bgOpacity, 
+        anchorCandle
+    });
+    
+    setTimeout(() => {
+        this._showSettings(newText);
+    }, 100);
+    
+    this.setDrawingMode(false);
+}
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
         const data = this._chartManager.chartData;
@@ -6749,12 +6864,12 @@ hitTest(x, y) {
     });
 })();
 
-// ========== ГОРЯЧАЯ КЛАВИША ДЛЯ МАГНИТА ==========
+// ========== ГОРЯЧИЕ КЛАВИШИ ==========
 document.addEventListener('keydown', (e) => {
+    // Магнит - клавиша Z
     if (e.code === 'KeyZ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
         
-        // Переключаем магнит во всех менеджерах
         const newState = !window.rayManager?._magnetEnabled;
         
         if (window.rayManager) window.rayManager.setMagnetEnabled(newState);
@@ -6763,7 +6878,6 @@ document.addEventListener('keydown', (e) => {
         if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(newState);
         if (window.textManager) window.textManager.setMagnetEnabled(newState);
         
-        // Меняем стиль кнопки
         const magnetBtn = document.getElementById('toolMagnet');
         if (magnetBtn) {
             if (newState) {
@@ -6774,6 +6888,102 @@ document.addEventListener('keydown', (e) => {
         }
         
         console.log(`Магнит ${newState ? 'включён' : 'выключён'}`);
+    }
+    
+    // Трендовая линия - клавиша U
+    if (e.code === 'KeyU' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        
+        if (window.trendLineManager) {
+            const newState = !window.trendLineManager._isDrawingMode;
+            window.trendLineManager.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            // Меняем стиль кнопки
+            const trendBtn = document.getElementById('toolTrendLine');
+            if (trendBtn) {
+                if (newState) {
+                    trendBtn.style.background = '#4A90E2';
+                    trendBtn.style.color = '#FFFFFF';
+                    trendBtn.classList.add('active');
+                } else {
+                    trendBtn.style.background = '';
+                    trendBtn.style.color = '';
+                    trendBtn.classList.remove('active');
+                }
+            }
+            
+            console.log(`Трендовая линия ${newState ? 'включена' : 'выключена'}`);
+        }
+    }
+    
+    // Линейка - клавиша Y
+    if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        
+        if (window.rulerLineManager) {
+            const newState = !window.rulerLineManager._isDrawingMode;
+            window.rulerLineManager.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            // Меняем стиль кнопки
+            const rulerBtn = document.getElementById('toolRuler');
+            if (rulerBtn) {
+                if (newState) {
+                    rulerBtn.style.background = '#4A90E2';
+                    rulerBtn.style.color = '#FFFFFF';
+                    rulerBtn.classList.add('active');
+                } else {
+                    rulerBtn.style.background = '';
+                    rulerBtn.style.color = '';
+                    rulerBtn.classList.remove('active');
+                }
+            }
+            
+            console.log(`Линейка ${newState ? 'включена' : 'выключена'}`);
+        }
+    }
+    
+    // Текст - клавиша T
+    if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        
+        if (window.textManager) {
+            const newState = !window.textManager._isDrawingMode;
+            window.textManager.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+            
+            // Меняем стиль кнопки
+            const textBtn = document.getElementById('toolText');
+            if (textBtn) {
+                if (newState) {
+                    textBtn.style.background = '#4A90E2';
+                    textBtn.style.color = '#FFFFFF';
+                    textBtn.classList.add('active');
+                } else {
+                    textBtn.style.background = '';
+                    textBtn.style.color = '';
+                    textBtn.classList.remove('active');
+                }
+            }
+            
+            console.log(`Текст ${newState ? 'включён' : 'выключён'}`);
+        }
     }
 });
 
