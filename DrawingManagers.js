@@ -352,7 +352,7 @@ class HorizontalRayManager {
         this._lastMouseY = 0;
         this._potentialDrag = null;
         this._dragThreshold = 5;
-        
+          this._needsRedraw = false;
         this._currentSymbolKey = this._getCurrentSymbolKey();
         this._isLoading = false;
         this._handleContextMenu = this._handleContextMenu.bind(this);
@@ -1296,14 +1296,22 @@ hitTest(x, y) {
         this._requestRedraw();
     }
     
-    _requestRedraw() {
-        const raysForCurrent = this._getRaysForCurrentSymbol();
-        raysForCurrent.forEach(item => { 
+   // ЗАМЕНИТЬ существующий _requestRedraw на этот
+_requestRedraw() {
+    this._needsRedraw = true;
+}
+
+// ДОБАВИТЬ этот метод рядом
+_applyRedrawIfNeeded() {
+    if (this._needsRedraw) {
+        this._needsRedraw = false;
+        this._rays?.forEach(item => { 
             if (item.primitive?.requestRedraw) {
                 item.primitive.requestRedraw();
             }
         });
     }
+}
 
     async _saveRays() {
         if (this._rays.length === 0) return;
@@ -1908,6 +1916,7 @@ class TrendLineManager {
         this._setupHotkeys();
         this._autoLoadTrendLines();
         this._isLoading = false;
+        this._needsRedraw = false;
     }
 
     // FIX: Универсальный метод перевода координат
@@ -2476,8 +2485,22 @@ _completeDrawing(x, y) {
         if (deselectAll) { const nd = deselectAll.cloneNode(true); deselectAll.parentNode.replaceChild(nd, deselectAll); nd.addEventListener('click', () => container.querySelectorAll('input').forEach(c => { c.checked = false; trendLine.timeframeVisibility[c.dataset.timeframe] = false; })); }
     }
 
-    _requestRedraw() { this._trendLines.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); }); if (this._tempPrimitive) this._tempPrimitive.requestRedraw(); }
+    // ЗАМЕНИТЬ существующий _requestRedraw на этот
+_requestRedraw() {
+    this._needsRedraw = true;
+}
 
+// ДОБАВИТЬ этот метод рядом
+_applyRedrawIfNeeded() {
+    if (this._needsRedraw) {
+        this._needsRedraw = false;
+        this._trendLines?.forEach(item => { 
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
+    }
+}
     async _saveTrendLines() {
         if (this._trendLines.length === 0) return;
         const promises = this._trendLines.map(item => window.db.put('drawings', { id: item.trendLine.id, type: 'trendline', symbolKey: item.trendLine.symbolKey, data: { point1: item.trendLine.point1, point2: item.trendLine.point2, options: item.trendLine.options, timeframeVisibility: item.trendLine.timeframeVisibility, anchorCandle1: item.trendLine.anchorCandle1, anchorCandle2: item.trendLine.anchorCandle2, anchorTime1: item.trendLine.anchorTime1, anchorTime2: item.trendLine.anchorTime2 } }).catch(e => console.warn(e)));
@@ -3104,7 +3127,7 @@ class RulerLineManager {
         this._tempLinePrimitive = null;
         this._tempPointPrimitive = null;
         this._magnetEnabled = true;
-
+this._needsRedraw = false;
         this._handleMouseDown = this._handleMouseDown.bind(this);
         this._handleMouseMove = this._handleMouseMove.bind(this);
         this._handleMouseUp = this._handleMouseUp.bind(this);
@@ -3685,12 +3708,24 @@ _completeDrawing(x, y) {
         setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
     }
 
-    _requestRedraw() {
-        this._rulers.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); });
+   // ЗАМЕНИТЬ существующий _requestRedraw на этот
+_requestRedraw() {
+    this._needsRedraw = true;
+}
+
+// ДОБАВИТЬ этот метод рядом
+_applyRedrawIfNeeded() {
+    if (this._needsRedraw) {
+        this._needsRedraw = false;
+        this._rulers?.forEach(item => { 
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
         if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
         if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
     }
-
+}
     async _saveRulers() {
         if (this._rulers.length === 0) return;
         const promises = this._rulers.map(item => window.db.put('drawings', { id: item.ruler.id, type: 'ruler', symbolKey: item.ruler.symbolKey, data: { point1: item.ruler.point1, point2: item.ruler.point2, options: item.ruler.options, timeframeVisibility: item.ruler.timeframeVisibility, anchorCandle1: item.ruler.anchorCandle1, anchorCandle2: item.ruler.anchorCandle2, anchorTime1: item.ruler.anchorTime1, anchorTime2: item.ruler.anchorTime2, symbol: item.ruler.symbol, exchange: item.ruler.exchange, marketType: item.ruler.marketType } }).catch(e => console.warn(e)));
@@ -4123,7 +4158,7 @@ class AlertLineManager {
         this._setupHotkeys();
         this._autoLoadAlerts();
         this._setupSettingsListeners();
-        
+        this._needsRedraw = false;
         // Проверка таймерных алертов каждую секунду
         setInterval(() => { this.checkTimerAlerts(); }, 1000);
         
@@ -5052,14 +5087,22 @@ _setupSettingsListeners() {
         }
     }
 
-    _requestRedraw() {
-        this._alerts.forEach(item => { 
+   // ЗАМЕНИТЬ существующий _requestRedraw на этот
+_requestRedraw() {
+    this._needsRedraw = true;
+}
+
+// ДОБАВИТЬ этот метод рядом
+_applyRedrawIfNeeded() {
+    if (this._needsRedraw) {
+        this._needsRedraw = false;
+        this._alerts?.forEach(item => { 
             if (item.primitive?.requestRedraw) {
                 item.primitive.requestRedraw();
             }
         });
     }
-
+}
   _showAlertNotification(alert, currentPrice, isRepeat = false) {
     const notification = document.getElementById('alertNotification');
     
@@ -5977,6 +6020,7 @@ class TextManager {
         this._setupEventListeners();
         this._setupHotkeys();
         this._autoLoadTexts();
+        this._needsRedraw = false;
     }
 
     // FIX: Универсальный метод перевода координат
@@ -6765,12 +6809,22 @@ hitTest(x, y) {
             newDeselectAll.addEventListener('click', () => { container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; text.timeframeVisibility[cb.dataset.timeframe] = false; }); });
         }
     }
+// ЗАМЕНИТЬ существующий _requestRedraw на этот
+_requestRedraw() {
+    this._needsRedraw = true;
+}
 
-    _requestRedraw() {
-        this._texts.forEach(item => {
-            if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+// ДОБАВИТЬ этот метод рядом
+_applyRedrawIfNeeded() {
+    if (this._needsRedraw) {
+        this._needsRedraw = false;
+        this._texts?.forEach(item => { 
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
         });
     }
+}
 
     async _saveTexts() {
         if (this._texts.length === 0) return;
