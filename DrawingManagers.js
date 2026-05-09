@@ -2107,7 +2107,7 @@ class TrendLineManager {
                     const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
                     if (series && !this._tempPrimitive) { this._tempPrimitive = new TempTrendLinePrimitive(this); try { series.attachPrimitive(this._tempPrimitive); } catch(e) {} }
                 }
-                this._requestRedraw();
+               
             }
             return;
         }
@@ -3384,7 +3384,7 @@ this._needsRedraw = false;
                 } else {
                     this._tempLine.point2 = { price, time };
                 }
-                this._requestRedraw();
+                
             }
             return;
         }
