@@ -2666,43 +2666,57 @@ class RulerLineRenderer {
                 ctx.shadowBlur = 0;
             }
 
-            const infoY = topY - 20 * scope.verticalPixelRatio;
-            if (infoY > 10) {
-                const priceChange = ruler.point2.price - ruler.point1.price;
-                const percentChange = (priceChange / ruler.point1.price) * 100;
-                const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
-                const timeStr = Utils.formatTime(timeDiffSec);
-                const sign = priceChange >= 0 ? '+' : '';
-                const percentStr = `${sign}${percentChange.toFixed(2)}%`;
-                const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
+        // Информационная панель — АДАПТИВНАЯ ПОД RETINA
+const pixelRatio = window.devicePixelRatio || 1;
+const scale = Math.min(pixelRatio, 2); // Не больше 2x
 
-                ctx.font = `bold 12px 'Inter', Arial, sans-serif`;
-                const textWidth = ctx.measureText(infoText).width;
-                const padding = 8 * scope.horizontalPixelRatio;
-                const labelWidth = textWidth + padding * 2;
-                const labelHeight = 20 * scope.verticalPixelRatio;
-                const labelX = leftX + width/2 - labelWidth/2;
-                const labelY = infoY - labelHeight;
+const infoY = topY - 25 * scope.verticalPixelRatio * scale;
+if (infoY > 10) {
+    const priceChange = ruler.point2.price - ruler.point1.price;
+    const percentChange = (priceChange / ruler.point1.price) * 100;
+    const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
+    const timeStr = Utils.formatTime(timeDiffSec);
+    const sign = priceChange >= 0 ? '+' : '';
+    const percentStr = `${sign}${percentChange.toFixed(2)}%`;
+    const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
 
-                this._hitAreaInfo = {
-                    x: labelX, y: labelY,
-                    width: labelWidth, height: labelHeight
-                };
+    // Базовый размер шрифта умножается на scale для Retina
+    const baseFontSize = 12;
+    const fontSize = baseFontSize * scale;
+    ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+    const textWidth = ctx.measureText(infoText).width;
+    
+    const paddingX = 10 * scope.horizontalPixelRatio * scale;
+    const paddingY = 6 * scope.verticalPixelRatio * scale;
+    const labelWidth = textWidth + paddingX * 2;
+    const labelHeight = (fontSize + 10 * scale) * scope.verticalPixelRatio;
+    
+    const labelX = leftX + width/2 - labelWidth/2;
+    const labelY = infoY - labelHeight;
 
-                ctx.fillStyle = '#1E1E1E';
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.beginPath();
-                this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-                ctx.fill();
+    this._hitAreaInfo = {
+        x: labelX, y: labelY,
+        width: labelWidth, height: labelHeight
+    };
 
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = `bold 12px 'Inter', Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
-            }
+    ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
+    ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+    ctx.beginPath();
+    this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
+    ctx.fill();
+    
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
+}
 
             ctx.restore();
         });
@@ -4006,7 +4020,7 @@ class AlertLinePrimitive {
 
 class AlertLineManager {
     constructor(chartManager) {
-        // FIX: убрана проверка на Mac, оставлен только pixelRatio
+        // ... ВЕСЬ СУЩЕСТВУЮЩИЙ КОД КОНСТРУКТОРА ОСТАЁТСЯ БЕЗ ИЗМЕНЕНИЙ ...
         this._pixelRatio = window.devicePixelRatio || 1;
         this._alerts = [];
         this._chartManager = chartManager;
@@ -4033,9 +4047,20 @@ class AlertLineManager {
         this._setupHotkeys();
         this._autoLoadAlerts();
         this._setupSettingsListeners();
+        
+        // Проверка таймерных алертов каждую секунду
         setInterval(() => { this.checkTimerAlerts(); }, 1000);
+        
+        // ✅ НОВОЕ: Очистка старых сработавших алертов каждые 5 минут
+        this._cleanupInterval = setInterval(() => { 
+            this._cleanupOldTriggeredAlerts(); 
+        }, 5 * 60 * 1000);
+        
+        // ✅ НОВОЕ: Первая очистка через 10 секунд после создания
+        setTimeout(() => { 
+            this._cleanupOldTriggeredAlerts(); 
+        }, 10000);
     }
-
     // FIX: Универсальный метод перевода координат
     _toBitmapCoords(cssX, cssY) {
         return {
@@ -4386,8 +4411,56 @@ class AlertLineManager {
     setMagnetEnabled(enabled) {
         this._magnetEnabled = enabled;
     }
-
-  updatePriceForSymbol(symbol, price, exchange = null) {
+checkTimerAlerts() {
+    const now = Date.now();
+    
+    this._alerts.forEach(item => {
+        const alert = item.alert;
+        
+        if (alert.triggered) return;
+        if (!alert.active) return;
+        
+        if (alert.canTriggerAgain() && alert.shouldTriggerByTimer(now)) {
+            const currentPrice = this._lastPrices.get(alert.symbol);
+            
+            if (currentPrice !== undefined) {
+                console.log(`⏰ Таймерный алерт: ${alert.symbol} - срабатывание #${alert.triggerCount + 1}`);
+                
+                alert.triggerCount++;
+                alert.lastTriggerTime = now;
+                
+                // Обновляем UI
+                this._updateAlertsListUI();
+                this._requestRedraw();
+                this._saveAlerts();
+                
+                // Запускаем бесконечное зелёное мерцание
+                this._highlightActiveAlert(alert.id);
+                
+                this._showAlertNotification(alert, currentPrice, true);
+                this._sendTelegramAlert(alert, currentPrice, true);
+                
+                if (!alert.canTriggerAgain()) {
+                    // Останавливаем мерцание
+                    this._stopHighlight(alert.id);
+                    
+                    alert.triggered = true;
+                    
+                    if (item.primitive) {
+                        try {
+                            item.series.detachPrimitive(item.primitive);
+                            item.primitive = null;
+                            item.series = null;
+                        } catch (e) {}
+                    }
+                    
+                    this._updateAlertsListUI();
+                }
+            }
+        }
+    });
+}
+ updatePriceForSymbol(symbol, price, exchange = null) {
     if (!symbol || !price || isNaN(price)) return;
     
     const now = Date.now();
@@ -4420,65 +4493,34 @@ class AlertLineManager {
             alert.lastTriggerTime = now;
             alert.triggerCount = 1;
             
+            // Обновляем UI
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            this._saveAlerts();
+            
+            // ✅ Запускаем бесконечное зелёное мерцание
+            this._highlightActiveAlert(alert.id);
+            
             this._showAlertNotification(alert, price);
             this._sendTelegramAlert(alert, price);
             
             if (!alert.canTriggerAgain()) {
+                // Останавливаем мерцание, если алерт больше не активен
+                this._stopHighlight(alert.id);
+                
                 alert.triggered = true;
                 if (item.primitive && item.series) {
                     try { item.series.detachPrimitive(item.primitive); } catch(e) {}
                     item.primitive = null;
                     item.series = null;
                 }
+                
+                // Обновляем UI ещё раз (алерт переместится в "Сработавшие")
+                this._updateAlertsListUI();
             }
-            
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            this._saveAlerts();
         }
     });
 }
-
-    checkTimerAlerts() {
-        const now = Date.now();
-        
-        this._alerts.forEach(item => {
-            const alert = item.alert;
-            
-            if (alert.triggered) return;
-            if (!alert.active) return;
-            
-            if (alert.canTriggerAgain() && alert.shouldTriggerByTimer(now)) {
-                const currentPrice = this._lastPrices.get(alert.symbol);
-                
-                if (currentPrice !== undefined) {
-                    console.log(`⏰ Таймерный алерт: ${alert.symbol} - срабатывание #${alert.triggerCount + 1}`);
-                    
-                    alert.triggerCount++;
-                    alert.lastTriggerTime = now;
-                    
-                    this._showAlertNotification(alert, currentPrice, true);
-                    this._sendTelegramAlert(alert, currentPrice, true);
-                    
-                    if (!alert.canTriggerAgain()) {
-                        alert.triggered = true;
-                        
-                        if (item.primitive) {
-                            try {
-                                item.series.detachPrimitive(item.primitive);
-                                item.primitive = null;
-                                item.series = null;
-                            } catch (e) {}
-                        }
-                    }
-                    
-                    this._updateAlertsListUI();
-                    this._requestRedraw();
-                    this._saveAlerts();
-                }
-            }
-        });
-    }
 
     createAlert(price, time, options = {}) {
         const defaultVisibility = {
@@ -4525,34 +4567,36 @@ class AlertLineManager {
         return alert;
     }
 
-    deleteAlert(alertId) {
-        const index = this._alerts.findIndex(a => a.alert.id === alertId);
-        if (index !== -1) {
-            const { alert, primitive, series } = this._alerts[index];
-            const symbol = alert.symbol;
-            
-            window.db.delete('drawings', alertId).catch(e => console.warn(e));
-            
-            if (primitive && series) {
-                try { series.detachPrimitive(primitive); } catch (e) {}
-            }
-            this._alerts.splice(index, 1);
-            
-            const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
-            if (!hasOtherAlerts) {
-                this._unsubscribeFromSymbol(symbol);
-            }
-            
-            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
-            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
+   deleteAlert(alertId) {
+    const index = this._alerts.findIndex(a => a.alert.id === alertId);
+    if (index !== -1) {
+        const { alert, primitive, series } = this._alerts[index];
+        const symbol = alert.symbol;
+        
+        // ✅ Останавливаем мерцание перед удалением
+        this._stopHighlight(alertId);
+        
+        window.db.delete('drawings', alertId).catch(e => console.warn(e));
+        
+        if (primitive && series) {
+            try { series.detachPrimitive(primitive); } catch (e) {}
         }
-        return false;
+        this._alerts.splice(index, 1);
+        
+        const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
+        if (!hasOtherAlerts) {
+            this._unsubscribeFromSymbol(symbol);
+        }
+        
+        if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
+        if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+        return true;
     }
-
+    return false;
+}
     deleteAllAlerts() {
         for (const symbol of this._subscribedSymbols) {
             this._unsubscribeFromSymbol(symbol);
@@ -4907,32 +4951,130 @@ _setupSettingsListeners() {
         });
     }
 
-    _showAlertNotification(alert, currentPrice, isRepeat = false) {
-        const notification = document.getElementById('alertNotification');
+  _showAlertNotification(alert, currentPrice, isRepeat = false) {
+    const notification = document.getElementById('alertNotification');
+    
+    const priceFormatted = Utils.formatPrice(currentPrice);
+    const alertPriceFormatted = Utils.formatPrice(alert.price);
+    const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    
+    const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
+    
+    if (notification) {
+        notification.innerHTML = `
+            <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
+            <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
+            <div class="alert-repeat">${timeStr}</div>
+        `;
+        notification.style.display = 'block';
+        notification.style.borderLeftColor = alert.options.color;
+        setTimeout(() => {
+            notification.style.display = 'none';
+        }, 5000);
+    }
+    
+    // ✅ НОВОЕ: Подсветка элемента в списке активных алертов
+    this._highlightActiveAlert(alert.id);
+    
+    this._playAlertSound();
+    this._showSystemNotification(alert, currentPrice, isRepeat);
+}
+
+/**
+ * Подсвечивает элемент алерта в списке "Активные" при срабатывании.
+ * Добавляет CSS-класс alert-triggering для анимации мигания.
+ * 
+ * @param {string} alertId - ID алерта, который нужно подсветить
+ */
+_highlightActiveAlert(alertId) {
+    const content = document.getElementById('alertHistoryContent');
+    if (!content) {
+        console.warn('⚠️ Контейнер alertHistoryContent не найден');
+        return;
+    }
+    
+    // Ищем элемент алерта в DOM
+    const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+    if (!item) {
+        console.warn(`⚠️ Элемент алерта ${alertId} не найден в DOM`);
+        return;
+    }
+    
+    // Удаляем класс, если он уже есть (для повторных срабатываний)
+    item.classList.remove('alert-triggering');
+    
+    // Принудительный reflow для перезапуска анимации
+    void item.offsetWidth;
+    
+    // Добавляем класс для запуска анимации
+    item.classList.add('alert-triggering');
+    
+    console.log(`✨ Подсветка алерта ${alertId} активирована`);
+    
+    // Убираем подсветку через 2 секунды (4 цикла анимации по 0.5с)
+    setTimeout(() => {
+        item.classList.remove('alert-triggering');
+        console.log(`✨ Подсветка алерта ${alertId} завершена`);
+    }, 2000);
+    
+    // Прокручиваем список к этому элементу, если он не виден
+    const container = item.closest('.alert-list');
+    if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const itemRect = item.getBoundingClientRect();
         
-        const priceFormatted = Utils.formatPrice(currentPrice);
-        const alertPriceFormatted = Utils.formatPrice(alert.price);
-        const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        // Проверяем, виден ли элемент
+        if (itemRect.top < containerRect.top || itemRect.bottom > containerRect.bottom) {
+            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+}
+/**
+ * Удаляет сработавшие алерты, которые находятся в списке более 24 часов.
+ * Вызывается автоматически каждые 5 минут.
+ */
+_cleanupOldTriggeredAlerts() {
+    const now = Date.now();
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000; // 24 часа в миллисекундах
+    
+    const idsToDelete = [];
+    
+    for (const item of this._alerts) {
+        const alert = item.alert;
         
-        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
+        // Проверяем только сработавшие алерты
+        if (!alert.triggered) continue;
         
-        if (notification) {
-            notification.innerHTML = `
-                <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
-                <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
-                <div class="alert-repeat">${timeStr}</div>
-            `;
-            notification.style.display = 'block';
-            notification.style.borderLeftColor = alert.options.color;
-            setTimeout(() => {
-                notification.style.display = 'none';
-            }, 5000);
+        // Берем время последнего срабатывания или время создания
+        const triggerTime = alert.lastTriggerTime || alert.createdAt;
+        
+        // Если прошло больше 24 часов — помечаем на удаление
+        if (now - triggerTime > twentyFourHoursMs) {
+            idsToDelete.push(alert.id);
+            
+            // Логируем подробную информацию
+            const hoursPassed = Math.floor((now - triggerTime) / (60 * 60 * 1000));
+            const symbol = alert.symbol;
+            const price = Utils.formatPrice(alert.price);
+            console.log(`🧹 Помечен на удаление: ${symbol} ${price} (прошло ${hoursPassed}ч)`);
+        }
+    }
+    
+    // Удаляем все помеченные алерты
+    if (idsToDelete.length > 0) {
+        console.log(`🗑️ Удаляем ${idsToDelete.length} старых сработавших алертов (старше 24ч)`);
+        
+        for (const id of idsToDelete) {
+            this.deleteAlert(id);
         }
         
-        this._playAlertSound();
-        this._showSystemNotification(alert, currentPrice, isRepeat);
+        // Обновляем UI и сохраняем состояние
+        this._updateAlertsListUI();
+        this._saveAlerts();
+        
+        console.log(`✅ Очистка завершена. Осталось алертов: ${this._alerts.length}`);
     }
-
+}
   _playAlertSound() {
     try {
         const audio = document.getElementById('alertSound');
@@ -5140,92 +5282,249 @@ _setupSettingsListeners() {
     }
 }
 
-    _updateAlertsListUI() {
+   _updateAlertsListUI() {
+    const content = document.getElementById('alertHistoryContent');
+    if (!content) return;
+    
+    const activeAlerts = this._alerts
+        .map(a => a.alert)
+        .filter(alert => !alert.triggered);
+        
+    const triggeredAlerts = this._alerts
+        .map(a => a.alert)
+        .filter(alert => alert.triggered)
+        .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
+    
+    const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
+    
+    let html = '';
+    
+    if (activeTab === 'active') {
+        if (activeAlerts.length === 0) {
+            html = '<div class="empty-alerts">Нет активных алертов</div>';
+        } else {
+            html = '<div class="alert-list">';
+            activeAlerts.forEach(alert => {
+                const priceFormatted = Utils.formatPrice(alert.price);
+                const color = alert.options.color;
+                
+                html += `
+                    <div class="alert-list-item" style="border-left-color: ${color};" data-id="${alert.id}">
+                        <div class="trigger-bell">🔔</div>
+                        <div>
+                            <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
+                            <div class="info">
+                                <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
+                                <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="delete-alert" data-id="${alert.id}" title="Удалить">
+                                <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
+                                    <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
+                                    <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
+                                    <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
+                                    <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+    } else {
+        // ✅ ВКЛАДКА "СРАБОТАВШИЕ" — ПОЛНОСТЬЮ ПЕРЕПИСАНА
+        if (triggeredAlerts.length === 0) {
+            html = '<div class="empty-alerts">Нет сработавших алертов</div>';
+        } else {
+            const now = Date.now();
+            const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+            
+            html = '<div class="alert-list">';
+            triggeredAlerts.forEach(alert => {
+                const priceFormatted = Utils.formatPrice(alert.price);
+                const color = alert.options.color;
+                
+                // ✅ Вычисляем время до удаления
+                const triggerTime = alert.lastTriggerTime || alert.createdAt;
+                const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit' 
+                });
+                const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: '2-digit'
+                });
+                
+                const hoursPassed = (now - triggerTime) / (60 * 60 * 1000);
+                const hoursLeft = Math.max(0, 24 - hoursPassed);
+                
+                let expireText = '';
+                let expireClass = '';
+                
+                if (hoursLeft <= 0) {
+                    expireText = '⚠️ Будет удалён при следующей очистке';
+                    expireClass = 'soon';
+                } else if (hoursLeft < 1) {
+                    const minutesLeft = Math.ceil(hoursLeft * 60);
+                    expireText = `⏳ Удаление через ${minutesLeft} мин`;
+                    expireClass = 'soon';
+                } else if (hoursLeft < 5) {
+                    expireText = `⏳ Удаление через ${Math.ceil(hoursLeft)} ч`;
+                    expireClass = 'soon';
+                } else {
+                    expireText = `⏳ Удаление через ${Math.floor(hoursLeft)} ч`;
+                    expireClass = '';
+                }
+                
+                const repeatInfo = alert.triggerCount > 0 
+                    ? ` (${alert.triggerCount}/${alert.triggerLimit === Infinity ? '∞' : alert.triggerLimit})` 
+                    : '';
+                
+                html += `
+                    <div class="alert-list-item triggered" style="border-left-color: ${color}; opacity: 0.75;" data-id="${alert.id}">
+                        <div>
+                            <div class="price">
+                                <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
+                                ${priceFormatted}${repeatInfo}
+                            </div>
+                            <div class="info">
+                                <span>🕐 ${dateStr} ${timeStr}</span>
+                                <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
+                            </div>
+                            <div class="expire-info ${expireClass}">${expireText}</div>
+                        </div>
+                        <div class="actions">
+                            <button class="delete-alert" data-id="${alert.id}" title="Удалить">
+                                <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
+                                    <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
+                                    <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
+                                    <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
+                                    <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+    }
+    
+    content.innerHTML = html;
+    
+    // Привязываем обработчики удаления
+    content.querySelectorAll('.delete-alert').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = btn.dataset.id;
+            this.deleteAlert(id);
+        });
+    });
+}
+/**
+ * Подсвечивает элемент алерта в списке "Активные" при срабатывании.
+ */
+_highlightActiveAlert(alertId) {
+    setTimeout(() => {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
         
-        const activeAlerts = this._alerts
-            .map(a => a.alert)
-            .filter(alert => !alert.triggered);
-            
-        const triggeredAlerts = this._alerts
-            .map(a => a.alert)
-            .filter(alert => alert.triggered)
-            .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
+        const allItems = content.querySelectorAll('.alert-list-item');
+        let targetItem = null;
         
-        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
-        
-        let html = '';
-        
-        if (activeTab === 'active') {
-            if (activeAlerts.length === 0) {
-                html = '<div class="empty-alerts">Нет активных алертов</div>';
-            } else {
-                html = '<div class="alert-list">';
-                activeAlerts.forEach(alert => {
-                    const priceFormatted = Utils.formatPrice(alert.price);
-                    const color = alert.options.color;
-                    
-                    html += `
-                        <div class="alert-list-item" style="border-left-color: ${color};" data-id="${alert.id}">
-                            <div>
-                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
-                                <div class="info">
-                                    <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
-                                    <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="delete-alert" data-id="${alert.id}" title="Удалить"><svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;"><path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" /><path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" /><path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" /><path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" /></svg></button>
-                            </div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
+        allItems.forEach(item => {
+            if (item.getAttribute('data-id') === alertId) {
+                targetItem = item;
             }
-        } else {
-            if (triggeredAlerts.length === 0) {
-                html = '<div class="empty-alerts">Нет сработавших алертов</div>';
-            } else {
-                html = '<div class="alert-list">';
-                triggeredAlerts.forEach(alert => {
-                    const priceFormatted = Utils.formatPrice(alert.price);
-                    const color = alert.options.color;
-                    const timeStr = alert.lastTriggerTime  
-                        ? new Date(alert.lastTriggerTime).toLocaleTimeString()
-                        : 'только что';
-                    const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}/${alert.triggerLimit === Infinity ? '∞' : alert.triggerLimit})` : '';
-                    
-                    html += `
-                        <div class="alert-list-item triggered" style="border-left-color: ${color};" data-id="${alert.id}">
-                            <div>
-                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}${repeatInfo}</div>
-                                <div class="info">
-                                    <span>Сработал: ${timeStr}</span>
-                                    <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="delete-alert" data-id="${alert.id}" title="Удалить"><svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;"><path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" /><path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" /><path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" /><path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" /></svg></button>
-                            </div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-            }
+        });
+        
+        if (!targetItem) {
+            console.warn(`Не найден элемент с id: ${alertId}`);
+            return;
         }
         
-        content.innerHTML = html;
+        const originalBg = targetItem.style.backgroundColor || '';
+        const originalBoxShadow = targetItem.style.boxShadow || '';
+        const originalBorderColor = targetItem.style.borderLeftColor || '';
+        const originalBorderWidth = targetItem.style.borderLeftWidth || '';
         
-        content.querySelectorAll('.delete-alert').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const id = btn.dataset.id;
-                this.deleteAlert(id);
-            });
-        });
-    }
+        // Флаг для отслеживания состояния подсветки
+        let isHighlighted = false;
+        
+        // Функция мерцания (зелёный цвет)
+        const toggleHighlight = () => {
+            if (!targetItem.isConnected) {
+                // Элемент удалён из DOM — очищаем интервал
+                if (targetItem._blinkInterval) {
+                    clearInterval(targetItem._blinkInterval);
+                }
+                return;
+            }
+            
+            isHighlighted = !isHighlighted;
+            
+            if (isHighlighted) {
+                // ВКЛЮЧИТЬ зелёную подсветку
+                targetItem.style.backgroundColor = 'rgba(0, 255, 100, 0.25)';
+                targetItem.style.boxShadow = 'inset 0 0 30px rgba(0, 255, 100, 0.4), 0 0 20px rgba(0, 255, 100, 0.6)';
+                targetItem.style.borderLeftColor = '#00FF00';
+                targetItem.style.borderLeftWidth = '6px';
+                targetItem.style.transition = 'all 0.3s ease';
+            } else {
+                // ВЫКЛЮЧИТЬ подсветку (возвращаем оригинал)
+                targetItem.style.backgroundColor = originalBg || 'transparent';
+                targetItem.style.boxShadow = originalBoxShadow || 'none';
+                targetItem.style.borderLeftColor = originalBorderColor || '#808080';
+                targetItem.style.borderLeftWidth = originalBorderWidth || '3px';
+                targetItem.style.transition = 'all 0.3s ease';
+            }
+        };
+        
+        // Запускаем первое мерцание сразу
+        toggleHighlight();
+        
+        // Бесконечное мерцание каждые 500мс
+        targetItem._blinkInterval = setInterval(toggleHighlight, 500);
+        
+        // Сохраняем функцию очистки в элементе
+        targetItem._stopBlink = () => {
+            if (targetItem._blinkInterval) {
+                clearInterval(targetItem._blinkInterval);
+                targetItem._blinkInterval = null;
+            }
+            // Возвращаем оригинальные стили
+            targetItem.style.backgroundColor = originalBg || '';
+            targetItem.style.boxShadow = originalBoxShadow || '';
+            targetItem.style.borderLeftColor = originalBorderColor || '';
+            targetItem.style.borderLeftWidth = originalBorderWidth || '';
+            targetItem.style.transition = 'all 0.3s ease';
+        };
+        
+        // Прокручиваем к элементу
+        targetItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+}
 
+/**
+ * Останавливает мерцание алерта (вызывать при удалении или деактивации)
+ */
+_stopHighlight(alertId) {
+    const content = document.getElementById('alertHistoryContent');
+    if (!content) return;
+    
+    const allItems = content.querySelectorAll('.alert-list-item');
+    allItems.forEach(item => {
+        if (item.getAttribute('data-id') === alertId) {
+            if (item._stopBlink) {
+                item._stopBlink();
+            }
+        }
+    });
+}
     _autoLoadAlerts() {
         setTimeout(async () => {
             try {
