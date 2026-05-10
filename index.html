@@ -2380,7 +2380,104 @@ window.applySessionColor = function(sessionName) {
     window._sessionHighlighter.updateSettings({ colors: { [sessionName]: color } });
 };
 })();
-
+// ========== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ ЦВЕТОВОЙ СЕТКИ С УДАЛЕНИЕМ ==========
+function createColorGrid(gridId, colorBoxId, hexInputId, selectedColor, addBtnId) {
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+    
+    const defaultColors = [
+        '#4A90E2','#EF5350','#26A69A','#FFA726','#AB47BC','#5C6BC0',
+        '#66BB6A','#FF7043','#7E57C2','#42A5F5','#EC407A','#FFCA28',
+        '#8D6E63','#B0BEC5','#FFFFFF','#F44336','#E91E63','#9C27B0',
+        '#673AB7','#3F51B5','#2196F3','#03A9F4','#00BCD4','#009688','#4CAF50'
+    ];
+    
+    // Загружаем сохранённые цвета или используем дефолтные
+    let colors = [];
+    try {
+        const saved = localStorage.getItem(`colorGrid_${gridId}`);
+        colors = saved ? JSON.parse(saved) : [...defaultColors];
+    } catch(e) {
+        colors = [...defaultColors];
+    }
+    
+    grid.innerHTML = '';
+    
+    colors.forEach(c => {
+        const s = document.createElement('div');
+        s.className = 'color-square';
+        s.style.backgroundColor = c;
+        if (c === selectedColor) s.classList.add('selected');
+        
+        // Крестик удаления
+        const delBtn = document.createElement('span');
+        delBtn.className = 'delete-color';
+        delBtn.innerHTML = '×';
+        delBtn.onclick = (e) => {
+            e.stopPropagation();
+            s.remove();
+            colors = colors.filter(col => col !== c);
+            localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
+        };
+        s.appendChild(delBtn);
+        
+        s.onclick = () => {
+            grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
+            s.classList.add('selected');
+            const colorBox = document.getElementById(colorBoxId);
+            const hexInput = document.getElementById(hexInputId);
+            if (colorBox) colorBox.style.backgroundColor = c;
+            if (hexInput) hexInput.value = c;
+        };
+        
+        grid.appendChild(s);
+    });
+    
+    // Кнопка добавления цвета
+    const addBtn = document.getElementById(addBtnId);
+    const hexInput = document.getElementById(hexInputId);
+    if (addBtn && hexInput) {
+        addBtn.onclick = () => {
+            let hex = hexInput.value.trim();
+            if (!hex.startsWith('#')) hex = '#' + hex;
+            if (/^#[0-9A-F]{6}$/i.test(hex)) {
+                if (!colors.includes(hex)) {
+                    colors.push(hex);
+                    localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
+                }
+                
+                const s = document.createElement('div');
+                s.className = 'color-square';
+                s.style.backgroundColor = hex;
+                
+                const delBtn = document.createElement('span');
+                delBtn.className = 'delete-color';
+                delBtn.innerHTML = '×';
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    s.remove();
+                    colors = colors.filter(col => col !== hex);
+                    localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
+                };
+                s.appendChild(delBtn);
+                
+                s.onclick = () => {
+                    grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
+                    s.classList.add('selected');
+                    const colorBox = document.getElementById(colorBoxId);
+                    if (colorBox) colorBox.style.backgroundColor = hex;
+                    hexInput.value = hex;
+                };
+                
+                grid.appendChild(s);
+                grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
+                s.classList.add('selected');
+                const colorBox = document.getElementById(colorBoxId);
+                if (colorBox) colorBox.style.backgroundColor = hex;
+            }
+        };
+    }
+}
 // Горячая клавиша Tab для сворачивания/разворачивания панели рисовалок
 (function() {
     let isToolbarVisible = true;
