@@ -4049,41 +4049,6 @@ input:checked + .slider:before {
 }
 
 
-/* ═══════════════════════════════════════════════════
-   СКОРЛЛ КОНТЕКСТНОГО МЕНЮ — ТЁМНАЯ ТЕМА
-   ═══════════════════════════════════════════════════ */
-
-.context-menu-scroll-wrapper {
-    max-height: 260px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    margin: 2px -8px; /* Компенсируем отступы меню */
-    padding: 2px 0;
-}
-
-/* Скроллбар — тонкий, тёмный, без рамок */
-.context-menu-scroll-wrapper::-webkit-scrollbar {
-    width: 4px;
-}
-
-.context-menu-scroll-wrapper::-webkit-scrollbar-track {
-    background: transparent; /* Без фона */
-}
-
-.context-menu-scroll-wrapper::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
-    border-radius: 2px;
-}
-
-.context-menu-scroll-wrapper::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.22);
-}
-
-/* Firefox */
-.context-menu-scroll-wrapper {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
-}
 #tickerContextMenu {
     max-height: 350px;
     overflow-y: auto;
@@ -4110,6 +4075,8 @@ input:checked + .slider:before {
 #tickerContextMenu::-webkit-scrollbar-thumb:hover {
     background: #777;
 }
+
+
 /* ════════════════════════════════════
    🔒 МЕНЮ ВОТЧЛИСТОВ - БЛОКИРОВКА ПРОСВОТЫВАНИЯ
    ════════════════════════════════════ */
@@ -4189,6 +4156,25 @@ input:checked + .slider:before {
     background: rgba(0, 188, 212, 0.1) !important;
 }
 
+.ticker-item {
+    cursor: grab;
+}
+
+.ticker-item:active {
+    cursor: grabbing;
+}
+
+.ticker-item.dragging {
+    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.05);
+    z-index: 1000;
+    position: relative;
+}
+
+.ticker-item.drag-over {
+    border-top: 2px solid #4caf50;
+}
+
 
 /* Тёмный фон для текстовых полей */
 .settings-row input[type="text"],
@@ -4224,4 +4210,177 @@ input:checked + .slider:before {
 }
 .apply-price-btn:hover {
     background: #4A90E2 !important;
+}
+
+/* Тёмный скролл для настроек */
+#trendSettings::-webkit-scrollbar,
+#rulerSettingsPanel::-webkit-scrollbar,
+#alertSettings::-webkit-scrollbar,
+#textSettings::-webkit-scrollbar,
+.settings-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+#trendSettings::-webkit-scrollbar-track,
+#rulerSettingsPanel::-webkit-scrollbar-track,
+#alertSettings::-webkit-scrollbar-track,
+#textSettings::-webkit-scrollbar-track,
+.settings-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#trendSettings::-webkit-scrollbar-thumb,
+#rulerSettingsPanel::-webkit-scrollbar-thumb,
+#alertSettings::-webkit-scrollbar-thumb,
+#textSettings::-webkit-scrollbar-thumb,
+.settings-panel::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+}
+
+#trendSettings::-webkit-scrollbar-thumb:hover,
+#rulerSettingsPanel::-webkit-scrollbar-thumb:hover,
+#alertSettings::-webkit-scrollbar-thumb:hover,
+#textSettings::-webkit-scrollbar-thumb:hover,
+.settings-panel::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* В Firefox */
+#trendSettings,
+#rulerSettingsPanel,
+#alertSettings,
+#textSettings,
+.settings-panel {
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+}
+.color-square {
+    position: relative;
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    margin: 2px;
+    transition: all 0.2s;
+}
+
+.color-square:hover {
+    border-color: #FFFFFF;
+    transform: scale(1.1);
+}
+
+.color-square.selected {
+    border-color: #4A90E2;
+    box-shadow: 0 0 8px rgba(74, 144, 226, 0.6);
+}
+
+/* Кнопка удаления цвета (крестик) */
+.color-square .delete-color {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 14px;
+    height: 14px;
+    background: #ff4444;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 10px;
+    color: #FFFFFF;
+    line-height: 1;
+    border: 1px solid #cc0000;
+}
+
+.color-square:hover .delete-color {
+    display: flex;
+}
+
+.color-square .delete-color:hover {
+    background: #ff0000;
+}
+
+
+/* Сетка цветов */
+.color-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.color-square {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.color-square:hover {
+    border-color: #FFFFFF;
+    transform: scale(1.15);
+    z-index: 2;
+}
+
+.color-square.selected {
+    border-color: #4A90E2;
+    box-shadow: 0 0 8px rgba(74, 144, 226, 0.7);
+}
+
+.delete-color {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 13px;
+    height: 13px;
+    background: #e74c3c;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 9px;
+    color: #FFFFFF;
+    line-height: 1;
+    font-weight: bold;
+    z-index: 3;
+}
+
+.color-square:hover .delete-color {
+    display: flex;
+}
+
+.delete-color:hover {
+    background: #c0392b;
+    transform: scale(1.2);
+}
+#textStylePanel {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+
+#textStylePanel::-webkit-scrollbar {
+    width: 6px;
+}
+
+#textStylePanel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#textStylePanel::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+}
+
+#textStylePanel::-webkit-scrollbar-thumb:hover {
+    background: #555;
 }
