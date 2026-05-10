@@ -1100,7 +1100,7 @@ hitTest(x, y) {
                 e.stopPropagation();
             });
         }
-
+createColorGrid('inlineColorsGrid', 'currentColorBox', 'hexInputInline', ray.options.color, 'addColorInline');
         const hexInput = document.getElementById('hexInputInline');
         if (hexInput) {
             hexInput.addEventListener('contextmenu', (e) => {
@@ -1993,6 +1993,9 @@ this._lastClickTime = 0;
             const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
             this._lastMouseX = x;
             this._lastMouseY = y;
+
+
+            
         });
     }
 
@@ -2530,7 +2533,7 @@ _completeDrawing(x, y) {
         if (extendRightCheckbox) extendRightCheckbox.checked = trendLine.options.extendRight || false;
         const hexInput = document.getElementById('trendHexInputInline');
         if (hexInput) hexInput.addEventListener('contextmenu', (e) => e.stopPropagation());
-        this._renderTrendColors(trendLine.options.color);
+        createColorGrid('trendInlineColorsGrid', 'trendCurrentColorBox', 'trendHexInputInline', trendLine.options.color, 'trendAddColorInline');
         this._renderTimeframeCheckboxes(trendLine);
         settings.style.display = 'block'; settings.style.left = '50%'; settings.style.top = '50%'; settings.style.transform = 'translate(-50%, -50%)';
         let header = settings.querySelector('.settings-header');
@@ -2544,9 +2547,27 @@ _completeDrawing(x, y) {
             closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
             header.appendChild(title); header.appendChild(closeBtn); settings.insertBefore(header, settings.firstChild);
         }
-        const closeOnOutsideClick = (e) => { if (!settings.contains(e.target) && settings.style.display === 'block') { settings.style.display = 'none'; document.removeEventListener('mousedown', closeOnOutsideClick); } };
+       const closeOnOutsideClick = (e) => {
+    if (!settings.style.display || settings.style.display === 'none') {
         document.removeEventListener('mousedown', closeOnOutsideClick);
-        setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
+        return;
+    }
+    
+    // Клик внутри settings — не закрываем
+    if (settings.contains(e.target)) return;
+    
+    // Клик по контекстному меню — не закрываем
+    if (e.target.closest('.drawing-context-menu')) return;
+    
+    // Клик по панели настроек (любой) — не закрываем
+    if (e.target.closest('.drawing-settings-panel')) return;
+    
+    // Всё остальное — закрываем
+    settings.style.display = 'none';
+    document.removeEventListener('mousedown', closeOnOutsideClick);
+};
+document.removeEventListener('mousedown', closeOnOutsideClick);
+document.addEventListener('mousedown', closeOnOutsideClick);
         const stylePanel = document.getElementById('trendStylePanel'), visibilityPanel = document.getElementById('trendVisibilityPanel');
         const tabs = document.querySelectorAll('#trendSettings .settings-tab');
         tabs.forEach(tab => { const nt = tab.cloneNode(true); tab.parentNode.replaceChild(nt, tab); });
@@ -4417,6 +4438,14 @@ this._lastClickTime = 0;
 
        container.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
+
+    if (e.target.closest('#alertSettings') || 
+        e.target.closest('#trendSettings') || 
+        e.target.closest('#textSettings') ||
+        e.target.closest('#rulerSettingsPanel') ||
+        e.target.closest('#drawingSettings')) {
+        return;
+    }
     const rect = container.getBoundingClientRect();
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
@@ -5047,8 +5076,7 @@ _handleChartClick(event) {
         
         return closestCandle.time;
     }
-
-    _showSettings(alert) {
+_showSettings(alert) {
     const settings = document.getElementById('alertSettings');
     if (!settings) return;
     
@@ -5061,6 +5089,9 @@ _handleChartClick(event) {
     
     const bellCheckbox = document.getElementById('alertShowBell');
     if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
+    
+    // ✅ Вызов цветовой сетки
+    createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
     
     const priceInput = document.getElementById('alertSettingsPriceInput');
     if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
@@ -5092,6 +5123,18 @@ _handleChartClick(event) {
         tab.classList.remove('active');
         if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
     });
+    
+    // Закрытие панели при клике вне её
+    settings.onmousedown = (e) => e.stopPropagation();
+    
+    if (!document._alertSettingsCloseHandler) {
+        document._alertSettingsCloseHandler = (e) => {
+            if (!settings.contains(e.target) && settings.style.display === 'block') {
+                settings.style.display = 'none';
+            }
+        };
+        document.addEventListener('mousedown', document._alertSettingsCloseHandler);
+    }
 }
 
 _setupSettingsListeners() {
@@ -6770,7 +6813,8 @@ hitTest(x, y) {
             if (textarea) { textarea.focus(); textarea.select(); }
         }, 200);
         
-        this._renderColorGrid('textInlineColorsGrid', 'textCurrentColorBox', 'textHexInputInline', text.options.color);
+       createColorGrid('textInlineColorsGrid', 'textCurrentColorBox', 'textHexInputInline', text.options.color, 'textAddColorInline');
+createColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor, 'textBgAddColor');
         this._renderColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor);
         this._renderTimeframeCheckboxes(text);
         
@@ -7032,30 +7076,7 @@ _applyRedrawIfNeeded() {
     syncWithNewTimeframe() {}
 }
 
-// ============================================================
-// Универсальное закрытие ВСЕХ панелей настроек по клику на график
-// ============================================================
-(function() {
-    const container = document.getElementById('chart-container');
-    if (!container) return;
 
-    container.addEventListener('click', function(e) {
-        const panelIds = [
-            'drawingSettings',    // настройки лучей (HorizontalRay)
-            'trendSettings',      // настройки трендовых линий
-            'alertSettings',      // настройки алертов
-            'textSettings',       // настройки текста
-            'rulerSettingsPanel'  // настройки линейки (если есть отдельная панель)
-        ];
-
-        panelIds.forEach(id => {
-            const panel = document.getElementById(id);
-            if (panel && panel.style.display === 'block') {
-                panel.style.display = 'none';
-            }
-        });
-    });
-})();
 
 // ========== ГОРЯЧИЕ КЛАВИШИ ==========
 document.addEventListener('keydown', (e) => {
@@ -7179,6 +7200,20 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+(function() {
+    const container = document.getElementById('chart-container');
+    if (!container) return;
+
+    container.addEventListener('click', function(e) {
+        const panelIds = ['drawingSettings', 'trendSettings', 'alertSettings', 'textSettings', 'rulerSettingsPanel'];
+        panelIds.forEach(id => {
+            const panel = document.getElementById(id);
+            if (panel && panel.style.display === 'block' && !panel.contains(e.target)) {
+                panel.style.display = 'none';
+            }
+        });
+    });
+})();
 
 if (typeof window !== 'undefined') {
     window.HorizontalRayManager = HorizontalRayManager;
