@@ -25,6 +25,7 @@ class HorizontalRay {
         this.hovered = false;
         this.dragging = false;
         this.showDragPoint = false;
+        this.readyToDrag = false; 
         this.attached = false;
         this.dragPointX = 0;
         this.dragPointY = 0;
@@ -132,19 +133,19 @@ class HorizontalRayRenderer {
             ctx.lineTo(endPos, yPos + yLength / 2);
             ctx.stroke();
 
-            if (ray.hovered || ray.dragging || ray.selected || ray.attached) {
-                ctx.fillStyle = '#FFFFFF';
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-            }
+           if (ray.readyToDrag || ray.dragging) {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+    ctx.fill();
+    
+    ctx.fillStyle = rgbaColor;
+    ctx.beginPath();
+    ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+    ctx.fill();
+}
 
             if (ray.options.showPrice) {
                 const priceText = Utils.formatPrice(ray.price);
@@ -355,7 +356,7 @@ class HorizontalRayManager {
           this._needsRedraw = false;
         this._currentSymbolKey = this._getCurrentSymbolKey();
         this._isLoading = false;
-        this._handleContextMenu = this._handleContextMenu.bind(this);
+        this._handleDblClick = this._handleDblClickFn.bind(this);
         
         // FIX: убрана привязка к Mac, оставлен только pixelRatio
         this._pixelRatio = window.devicePixelRatio || 1;
@@ -469,9 +470,8 @@ class HorizontalRayManager {
                 this._selectedRay.attached = false;
             }
 
-            hit.ray.selected = true;
-            hit.ray.showDragPoint = true;
-            hit.ray.attached = false;
+           hit.ray.selected = true;
+    hit.ray.attached = false;
 
             let rayX = this._chartManager.timeToCoordinate(hit.ray.time);
             let rayY = this._chartManager.priceToCoordinate(hit.ray.price);
@@ -527,9 +527,10 @@ class HorizontalRayManager {
         }
     }
 
-    _setupEventListeners() {
+   _setupEventListeners() {
         const container = this._chartManager.chartContainer;
-
+        container.addEventListener('dblclick', this._handleDblClick.bind(this));
+        
         container.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return;
 
@@ -541,23 +542,26 @@ class HorizontalRayManager {
                 e.preventDefault();
                 e.stopPropagation();
 
-                if (this._selectedRay && this._selectedRay === hit.ray) {
+                // ✅ ИСПРАВЛЕНО: Если луч в режиме readyToDrag - НЕ сбрасываем!
+                if (this._selectedRay && this._selectedRay === hit.ray && !hit.ray.readyToDrag) {
+                    // Клик по выбранному лучу (НЕ в режиме перетаскивания) - снимаем выделение
                     this._selectedRay.selected = false;
                     this._selectedRay.showDragPoint = false;
+                    this._selectedRay.readyToDrag = false;
                     this._selectedRay.attached = false;
                     this._selectedRay = null;
                     this._requestRedraw();
                     return;
                 }
 
-                if (this._selectedRay) {
+                if (this._selectedRay && this._selectedRay !== hit.ray) {
                     this._selectedRay.selected = false;
                     this._selectedRay.showDragPoint = false;
+                    this._selectedRay.readyToDrag = false;
                     this._selectedRay.attached = false;
                 }
 
                 hit.ray.selected = true;
-                hit.ray.showDragPoint = true;
                 hit.ray.attached = true;
                 this._selectedRay = hit.ray;
 
@@ -568,13 +572,16 @@ class HorizontalRayManager {
                     hit.ray.dragPointY = rayY * this._pixelRatio;
                 }
 
-                this._potentialDrag = {
-                    ray: hit.ray,
-                    startX: x,
-                    startY: y,
-                    startPrice: hit.ray.price,
-                    startTime: hit.ray.time
-                };
+                // ✅ Если луч готов к перетаскиванию - разрешаем drag
+                if (hit.ray.readyToDrag) {
+                    this._potentialDrag = {
+                        ray: hit.ray,
+                        startX: x,
+                        startY: y,
+                        startPrice: hit.ray.price,
+                        startTime: hit.ray.time
+                    };
+                }
 
                 this._requestRedraw();
             } else {
@@ -590,12 +597,14 @@ class HorizontalRayManager {
                 if (this._dragRay) {
                     this._dragRay.selected = false;
                     this._dragRay.showDragPoint = false;
+                    this._dragRay.readyToDrag = false;
                     this._dragRay.attached = false;
                     this._dragRay = null;
                 }
                 if (this._selectedRay) {
                     this._selectedRay.selected = false;
                     this._selectedRay.showDragPoint = false;
+                    this._selectedRay.readyToDrag = false;
                     this._selectedRay.attached = false;
                     this._selectedRay = null;
                 }
@@ -606,16 +615,14 @@ class HorizontalRayManager {
             }
         });
 
-               container.addEventListener('mousemove', (e) => {
+        container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
             const cssX = e.clientX - rect.left;
             const cssY = e.clientY - rect.top;
             
-            // 1. Сохраняем CSS-координаты (нужны для горячих клавиш O и мыши)
             this._lastMouseX = cssX;
             this._lastMouseY = cssY;
 
-            // 2. Переводим в Bitmap ТОЛЬКО для hitTest и перетаскивания
             const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
             if (this._potentialDrag && !this._isDragging) {
@@ -660,6 +667,7 @@ class HorizontalRayManager {
                         this._dragRay.time = newTime;
                         this._dragRay.anchorTime = newTime;
                     }
+                    
                     const newRayX = this._chartManager.timeToCoordinate(this._dragRay.time);
                     const newRayY = this._chartManager.priceToCoordinate(this._dragRay.price);
 
@@ -686,7 +694,7 @@ class HorizontalRayManager {
                 const hitRay = hit ? hit.ray : null;
 
                 if (hitRay) {
-                    container.style.cursor = 'grab';
+                    container.style.cursor = hitRay.readyToDrag ? 'grab' : 'default';
                 } else {
                     container.style.cursor = 'crosshair';
                 }
@@ -703,6 +711,7 @@ class HorizontalRayManager {
                 }
             }
         });
+
         container.addEventListener('mouseup', (e) => {
             this._potentialDrag = null;
 
@@ -720,6 +729,7 @@ class HorizontalRayManager {
                         this._dragRay.anchorTime = newAnchor;
                     }
                     
+                    // ✅ После перетаскивания оставляем readyToDrag/showDragPoint
                     this._saveRays();
                     this._dragRay = null;
                     this._requestRedraw();
@@ -760,6 +770,7 @@ class HorizontalRayManager {
             this._handleContextMenu(e);
         });
 
+        // ✅ Двойной клик - активирует точку перетаскивания
         container.addEventListener('dblclick', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -769,21 +780,28 @@ class HorizontalRayManager {
             const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
             const hit = this.hitTest(x, y);
             
-            if (hit) {
-                this.deleteRay(hit.ray.id);
-                
-                if (this._selectedRay && this._selectedRay.id === hit.ray.id) {
-                    this._selectedRay = null;
-                }
-                if (this._hoveredRay && this._hoveredRay.id === hit.ray.id) {
-                    this._hoveredRay = null;
-                }
-                
+            // Сбрасываем все
+            this._rays.forEach(item => {
+                item.ray.readyToDrag = false;
+                item.ray.showDragPoint = false;
+            });
+            
+            if (hit && hit.ray) {
+                // Активируем выбранный
+                hit.ray.readyToDrag = true;
+                hit.ray.showDragPoint = true;
+                hit.ray.selected = true;
+                this._selectedRay = hit.ray;
+                this._readyToDragRay = hit.ray;
+                this._requestRedraw();
+            } else {
+                this._selectedRay = null;
+                this._readyToDragRay = null;
                 this._requestRedraw();
             }
         });
     }
-
+        
     setDrawingMode(enabled) {
         this._isDrawingMode = enabled;
         
@@ -1317,6 +1335,33 @@ _applyRedrawIfNeeded() {
     }
 }
 
+    _handleDblClickFn(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+    const hit = this.hitTest(x, y);
+    
+    this._rays.forEach(item => {
+        item.ray.readyToDrag = false;
+        item.ray.showDragPoint = false;
+    });
+    
+    if (hit && hit.ray) {
+        hit.ray.readyToDrag = true;
+        hit.ray.showDragPoint = true;
+        hit.ray.selected = true;
+        this._selectedRay = hit.ray;
+        this._readyToDragRay = hit.ray;
+        this._requestRedraw();
+    } else {
+        this._selectedRay = null;
+        this._readyToDragRay = null;
+        this._requestRedraw();
+    }
+}
     async _saveRays() {
         if (this._rays.length === 0) return;
         
@@ -1627,7 +1672,7 @@ class TrendLineRenderer {
                 ctx.stroke();
             }
 
-            if (line.hovered || line.dragging || line.selected) {
+            if (line.editMode) {
                 ctx.shadowColor = 'rgba(0,0,0,0.5)';
                 ctx.shadowBlur = 4;
 
@@ -1921,6 +1966,10 @@ class TrendLineManager {
         this._autoLoadTrendLines();
         this._isLoading = false;
         this._needsRedraw = false;
+        this._dblClickTimer = null;
+this._potentialDblClickTarget = null;
+this._dblClickTimeout = 350;
+this._lastClickTime = 0;
     }
 
     // FIX: Универсальный метод перевода координат
@@ -2036,58 +2085,105 @@ class TrendLineManager {
         this._saveTrendLines(); this._requestRedraw();
     }
 
-    _handleMouseDown(e) {
-        if (e.button !== 0) return;
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+   _handleMouseDown(e) {
+    if (e.button !== 0) return;
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
 
-        const trendMenu = document.getElementById('trendContextMenu');
-        if (trendMenu?.style.display === 'flex') {
-            const mr = trendMenu.getBoundingClientRect();
-            if (e.clientX >= mr.left && e.clientX <= mr.right && e.clientY >= mr.top && e.clientY <= mr.bottom) return;
-        }
+    const trendMenu = document.getElementById('trendContextMenu');
+    if (trendMenu?.style.display === 'flex') {
+        const mr = trendMenu.getBoundingClientRect();
+        if (e.clientX >= mr.left && e.clientX <= mr.right && e.clientY >= mr.top && e.clientY <= mr.bottom) return;
+    }
 
-        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-            this._completeDrawing(x, y); // передаем CSS координаты
-            e.preventDefault(); e.stopPropagation();
+    if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+        this._completeDrawing(x, y);
+        e.preventDefault(); e.stopPropagation();
+        return;
+    }
+
+    const hit = this.hitTest(bmX, bmY);
+    if (hit?.trendLine) {
+        e.preventDefault(); e.stopPropagation();
+        
+        const now = Date.now();
+        
+        if (this._dblClickTimer && this._potentialDblClickTarget === hit.trendLine && now - this._lastClickTime < this._dblClickTimeout) {
+            clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+            this._lastClickTime = 0;
+            
+            if (hit.trendLine.editMode) {
+                hit.trendLine.editMode = false;
+                hit.trendLine.showDragPoint1 = false;
+                hit.trendLine.showDragPoint2 = false;
+            } else {
+                this._trendLines.forEach(item => {
+                    if (item.trendLine !== hit.trendLine) {
+                        item.trendLine.editMode = false;
+                        item.trendLine.showDragPoint1 = false;
+                        item.trendLine.showDragPoint2 = false;
+                    }
+                });
+                hit.trendLine.editMode = true;
+                hit.trendLine.showDragPoint1 = true;
+                hit.trendLine.showDragPoint2 = true;
+                hit.trendLine.selected = true;
+                if (this._selectedLine && this._selectedLine !== hit.trendLine) {
+                    this._selectedLine.selected = false;
+                }
+                this._selectedLine = hit.trendLine;
+            }
+            this._requestRedraw();
             return;
         }
-
-        const hit = this.hitTest(bmX, bmY);
-        if (hit?.trendLine) {
-            e.preventDefault(); e.stopPropagation();
-            if (this._selectedLine && this._selectedLine !== hit.trendLine) {
-                this._selectedLine.selected = false;
-                this._selectedLine.showDragPoint1 = false;
-                this._selectedLine.showDragPoint2 = false;
-            }
-            hit.trendLine.selected = true;
-            this._selectedLine = hit.trendLine;
-            
+        
+        if (this._selectedLine && this._selectedLine !== hit.trendLine) {
+            this._selectedLine.selected = false;
+            this._selectedLine.editMode = false;
+            this._selectedLine.showDragPoint1 = false;
+            this._selectedLine.showDragPoint2 = false;
+        }
+        hit.trendLine.selected = true;
+        this._selectedLine = hit.trendLine;
+        
+        this._potentialDblClickTarget = hit.trendLine;
+        this._lastClickTime = now;
+        if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+        this._dblClickTimer = setTimeout(() => {
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+        }, this._dblClickTimeout);
+        
+        if (hit.trendLine.editMode) {
             this._potentialDrag = { 
                 line: hit.trendLine, pointType: hit.type, startX: bmX, startY: bmY, 
                 startPoint1: { ...hit.trendLine.point1 }, startPoint2: { ...hit.trendLine.point2 } 
             };
-            this._requestRedraw();
-        } else {
-            if (this._isDrawingMode && !this._isDrawingSecondPoint) {
-                this._startDrawing(x, y); // передаем CSS координаты
-                e.preventDefault(); e.stopPropagation();
-                return;
-            }
-            if (this._selectedLine) {
-                this._selectedLine.selected = false;
-                this._selectedLine.showDragPoint1 = false;
-                this._selectedLine.showDragPoint2 = false;
-                this._selectedLine = null;
-                this._requestRedraw();
-            }
-            if (trendMenu) trendMenu.style.display = 'none';
+            this._chartManager.chartContainer.style.cursor = this._potentialDrag ? 'grabbing' : 'crosshair';
         }
+        
+        this._requestRedraw();
+    } else {
+        if (this._isDrawingMode && !this._isDrawingSecondPoint) {
+            this._startDrawing(x, y);
+            e.preventDefault(); e.stopPropagation();
+            return;
+        }
+        if (this._selectedLine) {
+            this._selectedLine.selected = false;
+            this._selectedLine.editMode = false;
+            this._selectedLine.showDragPoint1 = false;
+            this._selectedLine.showDragPoint2 = false;
+            this._selectedLine = null;
+            this._requestRedraw();
+        }
+        if (trendMenu) trendMenu.style.display = 'none';
     }
-
+}
        _handleMouseMove(e) {
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
         const cssX = e.clientX - rect.left;
@@ -2159,57 +2255,62 @@ class TrendLineManager {
             }
         }
     }
-    _handleMouseUp(e) {
-        if (this._isDragging) {
-            e.preventDefault(); e.stopPropagation();
-            this._isDragging = false;
-            if (this._dragLine) {
-                // FIX: Переводим Bitmap координаты обратно в CSS перед получением цены/времени
-                if (this._dragPoint === 'point1' && this._dragLine._tempPixel1) {
-                    const price = this._chartManager.coordinateToPrice(this._dragLine._tempPixel1.y / this._pixelRatio);
-                    const time = this._getTimeFromCoordinate(this._dragLine._tempPixel1.x / this._pixelRatio);
-                    if (price !== null && time !== null) {
-                        if (this._magnetEnabled) { const s = this._snapToPrice(price, time); this._dragLine.point1.price = s.price; this._dragLine.point1.time = s.time; this._dragLine.anchorCandle1 = s.anchorCandle; }
-                        else { this._dragLine.point1.price = price; this._dragLine.point1.time = time; }
-                    }
-                    delete this._dragLine._tempPixel1;
-                } else if (this._dragPoint === 'point2' && this._dragLine._tempPixel2) {
-                    const price = this._chartManager.coordinateToPrice(this._dragLine._tempPixel2.y / this._pixelRatio);
-                    const time = this._getTimeFromCoordinate(this._dragLine._tempPixel2.x / this._pixelRatio);
-                    if (price !== null && time !== null) {
-                        if (this._magnetEnabled) { const s = this._snapToPrice(price, time); this._dragLine.point2.price = s.price; this._dragLine.point2.time = s.time; this._dragLine.anchorCandle2 = s.anchorCandle; }
-                        else { this._dragLine.point2.price = price; this._dragLine.point2.time = time; }
-                    }
-                    delete this._dragLine._tempPixel2;
-                } else if (this._dragPoint === 'line' && this._dragLine._tempPixel1 && this._dragLine._tempPixel2) {
-                    const price1 = this._chartManager.coordinateToPrice(this._dragLine._tempPixel1.y / this._pixelRatio);
-                    const time1 = this._getTimeFromCoordinate(this._dragLine._tempPixel1.x / this._pixelRatio);
-                    const price2 = this._chartManager.coordinateToPrice(this._dragLine._tempPixel2.y / this._pixelRatio);
-                    const time2 = this._getTimeFromCoordinate(this._dragLine._tempPixel2.x / this._pixelRatio);
-                    if (price1 !== null && time1 !== null && price2 !== null && time2 !== null) {
-                        if (this._magnetEnabled) {
-                            const s1 = this._snapToPrice(price1, time1), s2 = this._snapToPrice(price2, time2);
-                            this._dragLine.point1.price = s1.price; this._dragLine.point1.time = s1.time; this._dragLine.anchorCandle1 = s1.anchorCandle;
-                            this._dragLine.point2.price = s2.price; this._dragLine.point2.time = s2.time; this._dragLine.anchorCandle2 = s2.anchorCandle;
-                        } else {
-                            this._dragLine.point1.price = price1; this._dragLine.point1.time = time1;
-                            this._dragLine.point2.price = price2; this._dragLine.point2.time = time2;
-                        }
-                    }
-                    delete this._dragLine._tempPixel1; delete this._dragLine._tempPixel2;
+ _handleMouseUp(e) {
+    if (this._isDragging) {
+        e.preventDefault(); e.stopPropagation();
+        this._isDragging = false;
+        if (this._dragLine) {
+            if (this._dragPoint === 'point1' && this._dragLine._tempPixel1) {
+                const price = this._chartManager.coordinateToPrice(this._dragLine._tempPixel1.y / this._pixelRatio);
+                const time = this._getTimeFromCoordinate(this._dragLine._tempPixel1.x / this._pixelRatio);
+                if (price !== null && time !== null) {
+                    this._dragLine.point1.price = price;
+                    this._dragLine.point1.time = time;
+                    this._dragLine.anchorCandle1 = null;
                 }
-                delete this._dragLine._pixelStart1; delete this._dragLine._pixelStart2;
-                this._dragLine.dragging = false;
-                this._dragLine.anchorTime1 = this._dragLine.point1.time;
-                this._dragLine.anchorTime2 = this._dragLine.point2.time;
-                if (this._selectedLine !== this._dragLine) { this._dragLine.showDragPoint1 = false; this._dragLine.showDragPoint2 = false; }
-                this._saveTrendLines(); this._dragLine = null; this._requestRedraw();
+                delete this._dragLine._tempPixel1;
+            } else if (this._dragPoint === 'point2' && this._dragLine._tempPixel2) {
+                const price = this._chartManager.coordinateToPrice(this._dragLine._tempPixel2.y / this._pixelRatio);
+                const time = this._getTimeFromCoordinate(this._dragLine._tempPixel2.x / this._pixelRatio);
+                if (price !== null && time !== null) {
+                    this._dragLine.point2.price = price;
+                    this._dragLine.point2.time = time;
+                    this._dragLine.anchorCandle2 = null;
+                }
+                delete this._dragLine._tempPixel2;
+            } else if (this._dragPoint === 'line' && this._dragLine._tempPixel1 && this._dragLine._tempPixel2) {
+                const price1 = this._chartManager.coordinateToPrice(this._dragLine._tempPixel1.y / this._pixelRatio);
+                const time1 = this._getTimeFromCoordinate(this._dragLine._tempPixel1.x / this._pixelRatio);
+                const price2 = this._chartManager.coordinateToPrice(this._dragLine._tempPixel2.y / this._pixelRatio);
+                const time2 = this._getTimeFromCoordinate(this._dragLine._tempPixel2.x / this._pixelRatio);
+                if (price1 !== null && time1 !== null && price2 !== null && time2 !== null) {
+                    this._dragLine.point1.price = price1;
+                    this._dragLine.point1.time = time1;
+                    this._dragLine.anchorCandle1 = null;
+                    this._dragLine.point2.price = price2;
+                    this._dragLine.point2.time = time2;
+                    this._dragLine.anchorCandle2 = null;
+                }
+                delete this._dragLine._tempPixel1; 
+                delete this._dragLine._tempPixel2;
             }
-            this._chartManager.chartContainer.style.cursor = 'crosshair';
+            delete this._dragLine._pixelStart1; 
+            delete this._dragLine._pixelStart2;
+            this._dragLine.dragging = false;
+            this._dragLine.anchorTime1 = this._dragLine.point1.time;
+            this._dragLine.anchorTime2 = this._dragLine.point2.time;
+            if (this._selectedLine !== this._dragLine) { 
+                this._dragLine.showDragPoint1 = false; 
+                this._dragLine.showDragPoint2 = false; 
+            }
+            this._saveTrendLines(); 
+            this._dragLine = null; 
+            this._requestRedraw();
         }
-        this._potentialDrag = null;
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
     }
-
+    this._potentialDrag = null;
+}
     _handleMouseLeave() {
         if (this._hoveredLine) { this._hoveredLine.hovered = false; this._hoveredLine = null; this._requestRedraw(); }
         this._chartManager.chartContainer.style.cursor = 'crosshair';
@@ -2304,24 +2405,15 @@ _completeDrawing(x, y) {
     const endTime = time;
     let point1, point2, ac1, ac2;
     
-    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН (для второй точки)
-    if (this._magnetEnabled) {
-        const s = this._snapToPrice(price, time);
-        price = s.price;
-        time = s.time;
-        ac2 = s.anchorCandle;
-    }
-    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
-    
     if (startTime <= endTime) {
         point1 = { price: this._drawingStartPoint.price, time: startTime };
         point2 = { price, time: endTime };
         ac1 = this._drawingStartPoint.anchorCandle; 
-        // ac2 уже установлен выше
+        ac2 = null;
     } else {
         point1 = { price, time: endTime };
         point2 = { price: this._drawingStartPoint.price, time: startTime };
-        ac1 = ac2;
+        ac1 = null;
         ac2 = this._drawingStartPoint.anchorCandle;
     }
     
@@ -2345,7 +2437,6 @@ _completeDrawing(x, y) {
     this._requestRedraw(); 
     this.setDrawingMode(false);
 }
-
     hitTest(x, y) {
     // ✅ Приоритет: выбранная линия проверяем первой
     if (this._selectedLine) {
@@ -2711,7 +2802,7 @@ class RulerLineRenderer {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            if (ruler.hovered || ruler.dragging || ruler.selected) {
+            if (ruler.showDragPoint1 || ruler.showDragPoint2) {
                 ctx.shadowColor = 'rgba(0,0,0,0.5)';
                 ctx.shadowBlur = 4;
 
@@ -3134,6 +3225,10 @@ class RulerLineManager {
         this._tempLinePrimitive = null;
         this._tempPointPrimitive = null;
         this._magnetEnabled = true;
+        this._dblClickTimer = null;
+this._potentialDblClickTarget = null;
+this._dblClickTimeout = 350;
+this._lastClickTime = 0;
 this._needsRedraw = false;
         this._handleMouseDown = this._handleMouseDown.bind(this);
         this._handleMouseMove = this._handleMouseMove.bind(this);
@@ -3304,184 +3399,183 @@ this._needsRedraw = false;
     
     return bestHit;
 }
+_handleMouseDown(e) {
+    if (e.button !== 0) return;
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
 
-    _handleMouseDown(e) {
-        if (e.button !== 0) return;
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+    const rulerMenu = document.getElementById('rulerContextMenu');
+    if (rulerMenu && rulerMenu.style.display === 'flex') {
+        const menuRect = rulerMenu.getBoundingClientRect();
+        const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+        if (isClickInsideMenu) return;
+    }
 
-        const rulerMenu = document.getElementById('rulerContextMenu');
-        if (rulerMenu && rulerMenu.style.display === 'flex') {
-            const menuRect = rulerMenu.getBoundingClientRect();
-            const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-            if (isClickInsideMenu) return;
-        }
+    if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+        this._completeDrawing(x, y);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
 
-        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-            this._completeDrawing(x, y); // передаем CSS координаты
-            e.preventDefault();
-            e.stopPropagation();
-            return;
-        }
-
-        const hit = this.hitTest(bmX, bmY);
-        if (hit && hit.ruler) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (this._selectedRuler && this._selectedRuler !== hit.ruler) {
-                this._selectedRuler.selected = false;
-                this._selectedRuler.showDragPoint1 = false;
-                this._selectedRuler.showDragPoint2 = false;
-            }
-            hit.ruler.selected = true;
-            this._selectedRuler = hit.ruler;
-            if (hit.type === 'point1' || hit.type === 'point2') {
-                hit.ruler.showDragPoint1 = hit.type === 'point1';
-                hit.ruler.showDragPoint2 = hit.type === 'point2';
-            } else {
+    const hit = this.hitTest(bmX, bmY);
+    if (hit && hit.ruler) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const now = Date.now();
+        
+        // ДВОЙНОЙ КЛИК
+        if (this._dblClickTimer && this._potentialDblClickTarget === hit.ruler && now - this._lastClickTime < this._dblClickTimeout) {
+            clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+            this._lastClickTime = 0;
+            
+            if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
                 hit.ruler.showDragPoint1 = false;
                 hit.ruler.showDragPoint2 = false;
+            } else {
+                hit.ruler.showDragPoint1 = true;
+                hit.ruler.showDragPoint2 = true;
             }
-            this._potentialDrag = { ruler: hit.ruler, pointType: hit.type, startX: bmX, startY: bmY, startPoint1: { ...hit.ruler.point1 }, startPoint2: { ...hit.ruler.point2 } };
             this._requestRedraw();
-        } else {
-            if (this._isDrawingMode && !this._isDrawingSecondPoint) {
-                this._startDrawing(x, y); // передаем CSS координаты
-                e.preventDefault();
-                e.stopPropagation();
-                return;
-            }
-            if (this._selectedRuler) {
-                this._selectedRuler.selected = false;
-                this._selectedRuler.showDragPoint1 = false;
-                this._selectedRuler.showDragPoint2 = false;
-                this._selectedRuler = null;
-                this._requestRedraw();
-            }
-            if (rulerMenu) rulerMenu.style.display = 'none';
-        }
-    }
-
-       _handleMouseMove(e) {
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        const cssX = e.clientX - rect.left;
-        const cssY = e.clientY - rect.top;
-        
-        // 1. Сохраняем CSS-координаты (нужны для горячих клавиш)
-        this._lastMouseX = cssX;
-        this._lastMouseY = cssY;
-
-        // 2. Bitmap для логики перетаскивания и хиттеста
-        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
-
-        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-            // Для получения цены/времени при рисовании используем CSS-координаты
-            let price = this._chartManager.coordinateToPrice(cssY);
-            let time = this._chartManager.coordinateToTime(cssX);
-            if (price !== null && time !== null) {
-                if (!this._tempLine) {
-                    this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
-                    if (!this._tempLinePrimitive) {
-                        this._tempLinePrimitive = new TempRulerLinePrimitive(this);
-                        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-                        if (series) series.attachPrimitive(this._tempLinePrimitive);
-                    }
-                } else {
-                    this._tempLine.point2 = { price, time };
-                }
-                
-            }
             return;
         }
-
-        if (this._potentialDrag && !this._isDragging) {
-            const dx = Math.abs(bmX - this._potentialDrag.startX);
-            const dy = Math.abs(bmY - this._potentialDrag.startY);
-            if (dx > 3 || dy > 3) {
-                this._isDragging = true;
-                this._dragRuler = this._potentialDrag.ruler;
-                this._dragPoint = this._potentialDrag.pointType;
-                this._dragRuler.dragging = true;
-                this._dragStartX = this._potentialDrag.startX;
-                this._dragStartY = this._potentialDrag.startY;
-                this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
-                this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
-                this._chartManager.chartContainer.style.cursor = 'grabbing';
-            }
+        
+        // ОДИНОЧНЫЙ КЛИК
+        if (this._selectedRuler && this._selectedRuler !== hit.ruler) {
+            this._selectedRuler.selected = false;
+            this._selectedRuler.showDragPoint1 = false;
+            this._selectedRuler.showDragPoint2 = false;
         }
-
-        if (this._isDragging && this._dragRuler) {
+        hit.ruler.selected = true;
+        this._selectedRuler = hit.ruler;
+        
+        this._potentialDblClickTarget = hit.ruler;
+        this._lastClickTime = now;
+        if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+        this._dblClickTimer = setTimeout(() => {
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+        }, this._dblClickTimeout);
+        
+        // Перетаскивание когда точки показаны
+        if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
+            this._potentialDrag = { ruler: hit.ruler, pointType: hit.type, startX: bmX, startY: bmY, startPoint1: { ...hit.ruler.point1 }, startPoint2: { ...hit.ruler.point2 } };
+        } else {
+            this._potentialDrag = null;
+        }
+        
+        this._requestRedraw();
+    } else {
+        if (this._isDrawingMode && !this._isDrawingSecondPoint) {
+            this._startDrawing(x, y);
             e.preventDefault();
             e.stopPropagation();
-            
-            // FIX: Переводим bitmap-дельту в CSS-дельту, так как методы timeToCoordinate/priceToCoordinate возвращают CSS пиксели
-            const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
-            const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
-
-            if (this._dragPoint === 'point1') {
-                const p1x = this._chartManager.timeToCoordinate(this._dragStartPoint1.time);
-                const p1y = this._chartManager.priceToCoordinate(this._dragStartPoint1.price);
-                if (p1x !== null && p1y !== null) {
-                    const newX = p1x + deltaX;
-                    const newY = p1y + deltaY;
-                    const newPrice = this._chartManager.coordinateToPrice(newY);
-                    const newTime = this._chartManager.coordinateToTime(newX);
-                    if (newPrice !== null) this._dragRuler.point1.price = newPrice;
-                    if (newTime !== null) { this._dragRuler.point1.time = newTime; this._dragRuler.anchorTime1 = newTime; }
-                }
-            } else if (this._dragPoint === 'point2') {
-                const p2x = this._chartManager.timeToCoordinate(this._dragStartPoint2.time);
-                const p2y = this._chartManager.priceToCoordinate(this._dragStartPoint2.price);
-                if (p2x !== null && p2y !== null) {
-                    const newX = p2x + deltaX;
-                    const newY = p2y + deltaY;
-                    const newPrice = this._chartManager.coordinateToPrice(newY);
-                    const newTime = this._chartManager.coordinateToTime(newX);
-                    if (newPrice !== null) this._dragRuler.point2.price = newPrice;
-                    if (newTime !== null) { this._dragRuler.point2.time = newTime; this._dragRuler.anchorTime2 = newTime; }
-                }
-            } else if (this._dragPoint === 'line') {
-                const p1x = this._chartManager.timeToCoordinate(this._dragStartPoint1.time);
-                const p1y = this._chartManager.priceToCoordinate(this._dragStartPoint1.price);
-                const p2x = this._chartManager.timeToCoordinate(this._dragStartPoint2.time);
-                const p2y = this._chartManager.priceToCoordinate(this._dragStartPoint2.price);
-                if (p1x !== null && p1y !== null && p2x !== null && p2y !== null) {
-                    const newX1 = p1x + deltaX;
-                    const newY1 = p1y + deltaY;
-                    const newX2 = p2x + deltaX;
-                    const newY2 = p2y + deltaY;
-                    const newPrice1 = this._chartManager.coordinateToPrice(newY1);
-                    const newTime1 = this._chartManager.coordinateToTime(newX1);
-                    const newPrice2 = this._chartManager.coordinateToPrice(newY2);
-                    const newTime2 = this._chartManager.coordinateToTime(newX2);
-                    if (newPrice1 !== null) this._dragRuler.point1.price = newPrice1;
-                    if (newTime1 !== null) { this._dragRuler.point1.time = newTime1; this._dragRuler.anchorTime1 = newTime1; }
-                    if (newPrice2 !== null) this._dragRuler.point2.price = newPrice2;
-                    if (newTime2 !== null) { this._dragRuler.point2.time = newTime2; this._dragRuler.anchorTime2 = newTime2; }
-                }
-            }
-            const newColor = this._dragRuler._isBullish() ? '#00bcd4' : '#f23645';
-            this._dragRuler.options.color = newColor;
+            return;
+        }
+        if (this._selectedRuler) {
+            this._selectedRuler.selected = false;
+            this._selectedRuler.showDragPoint1 = false;
+            this._selectedRuler.showDragPoint2 = false;
+            this._selectedRuler = null;
             this._requestRedraw();
-        } else {
-            const hit = this.hitTest(bmX, bmY);
-            const hitRuler = hit ? hit.ruler : null;
-            if (hitRuler) {
-                this._chartManager.chartContainer.style.cursor = (hit.type === 'point1' || hit.type === 'point2') ? 'move' : 'grab';
+        }
+        if (rulerMenu) rulerMenu.style.display = 'none';
+    }
+}
+    _handleMouseMove(e) {
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    
+    this._lastMouseX = cssX;
+    this._lastMouseY = cssY;
+
+    const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+    if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+        let price = this._chartManager.coordinateToPrice(cssY);
+        let time = this._chartManager.coordinateToTime(cssX);
+        if (price !== null && time !== null) {
+            if (!this._tempLine) {
+                this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
+                if (!this._tempLinePrimitive) {
+                    this._tempLinePrimitive = new TempRulerLinePrimitive(this);
+                    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                    if (series) series.attachPrimitive(this._tempLinePrimitive);
+                }
             } else {
-                this._chartManager.chartContainer.style.cursor = 'crosshair';
+                this._tempLine.point2 = { price, time };
             }
-            if (this._hoveredRuler !== hitRuler) {
-                if (this._hoveredRuler) this._hoveredRuler.hovered = false;
-                this._hoveredRuler = hitRuler;
-                if (hitRuler) hitRuler.hovered = true;
-                this._requestRedraw();
-            }
+        }
+        return;
+    }
+
+    if (this._potentialDrag && !this._isDragging) {
+        const dx = Math.abs(bmX - this._potentialDrag.startX);
+        const dy = Math.abs(bmY - this._potentialDrag.startY);
+        if (dx > 1 || dy > 1) {
+            this._isDragging = true;
+            this._dragRuler = this._potentialDrag.ruler;
+            this._dragPoint = this._potentialDrag.pointType;
+            this._dragRuler.dragging = true;
+            this._dragStartX = this._potentialDrag.startX;
+            this._dragStartY = this._potentialDrag.startY;
+            this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
+            this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
+            this._chartManager.chartContainer.style.cursor = 'grabbing';
         }
     }
 
+    if (this._isDragging && this._dragRuler) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+        const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+        const startPoint = this._dragPoint === 'point1' ? this._dragStartPoint1 : this._dragStartPoint2;
+        const px = this._chartManager.timeToCoordinate(startPoint.time);
+        const py = this._chartManager.priceToCoordinate(startPoint.price);
+        
+        if (px !== null && py !== null) {
+            const newX = px + deltaX;
+            const newY = py + deltaY;
+            const newPrice = this._chartManager.coordinateToPrice(newY);
+            const newTime = this._chartManager.coordinateToTime(newX);
+            
+            if (this._dragPoint === 'point1') {
+                if (newPrice !== null) this._dragRuler.point1.price = newPrice;
+                if (newTime !== null) { this._dragRuler.point1.time = newTime; this._dragRuler.anchorTime1 = newTime; }
+            } else {
+                if (newPrice !== null) this._dragRuler.point2.price = newPrice;
+                if (newTime !== null) { this._dragRuler.point2.time = newTime; this._dragRuler.anchorTime2 = newTime; }
+            }
+        }
+        
+        const newColor = this._dragRuler._isBullish() ? '#00bcd4' : '#f23645';
+        this._dragRuler.options.color = newColor;
+        this._requestRedraw();
+    } else {
+        const hit = this.hitTest(bmX, bmY);
+        const hitRuler = hit ? hit.ruler : null;
+        if (hitRuler && (hitRuler.showDragPoint1 || hitRuler.showDragPoint2)) {
+            this._chartManager.chartContainer.style.cursor = (hit.type === 'point1' || hit.type === 'point2') ? 'move' : 'crosshair';
+        } else {
+            this._chartManager.chartContainer.style.cursor = 'crosshair';
+        }
+        if (this._hoveredRuler !== hitRuler) {
+            if (this._hoveredRuler) this._hoveredRuler.hovered = false;
+            this._hoveredRuler = hitRuler;
+            if (hitRuler) hitRuler.hovered = true;
+            this._requestRedraw();
+        }
+    }
+}
     _handleMouseUp(e) {
         if (this._isDragging) {
             e.preventDefault();
@@ -3937,7 +4031,7 @@ class AlertLineRenderer {
             ctx.lineTo(endPos, yPos + yLength / 2);
             ctx.stroke();
 
-            if (alert.hovered || alert.dragging || alert.selected || alert.attached) {
+          if (alert.showDragPoint) {
                 ctx.fillStyle = '#FFFFFF';
                 ctx.shadowColor = 'rgba(0,0,0,0.5)';
                 ctx.shadowBlur = 4;
@@ -4161,6 +4255,10 @@ class AlertLineManager {
         this._potentialDrag = null;
         this._dragThreshold = 5;
         this._magnetEnabled = true;
+        this._dblClickTimer = null;
+this._potentialDblClickTarget = null;
+this._dblClickTimeout = 350;
+this._lastClickTime = 0;
         this._handleContextMenu = this._handleContextMenu.bind(this);
         this._setupEventListeners();
         this._setupHotkeys();
@@ -4317,56 +4415,77 @@ class AlertLineManager {
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
-        container.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
-            const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+       container.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const rect = container.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+    
+    const hit = this.hitTest(bmX, bmY);
+    if (hit) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const now = Date.now();
+        
+        // ДВОЙНОЙ КЛИК
+        if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
+            clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+            this._lastClickTime = 0;
             
-            const hit = this.hitTest(bmX, bmY);
-            if (hit) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (this._selectedAlert && this._selectedAlert === hit.alert) {
-                    this._selectedAlert.selected = false;
-                    this._selectedAlert.showDragPoint = false;
-                    this._selectedAlert.attached = false;
-                    this._selectedAlert = null;
-                    this._requestRedraw();
-                    return;
-                }
-                if (this._selectedAlert) {
-                    this._selectedAlert.selected = false;
-                    this._selectedAlert.showDragPoint = false;
-                    this._selectedAlert.attached = false;
-                }
-                hit.alert.selected = true;
-                hit.alert.showDragPoint = true;
-                hit.alert.attached = true;
-                this._selectedAlert = hit.alert;
-                const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
-                const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-                if (alertX !== null && alertY !== null) {
-                    hit.alert.dragPointX = alertX;
-                    hit.alert.dragPointY = alertY;
-                }
-                this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
-                this._requestRedraw();
-            } else {
-                const alertMenu = document.getElementById('alertContextMenu');
-                if (alertMenu && alertMenu.style.display === 'flex') {
-                    const menuRect = alertMenu.getBoundingClientRect();
-                    const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-                    if (isClickInsideMenu) return;
-                }
-                if (this._dragAlert) { this._dragAlert.selected = false; this._dragAlert.showDragPoint = false; this._dragAlert.attached = false; this._dragAlert = null; }
-                if (this._selectedAlert) { this._selectedAlert.selected = false; this._selectedAlert.showDragPoint = false; this._selectedAlert.attached = false; this._selectedAlert = null; }
-                if (alertMenu) alertMenu.style.display = 'none';
-                this._requestRedraw();
+            hit.alert.showDragPoint = !hit.alert.showDragPoint;
+            this._requestRedraw();
+            return;
+        }
+        
+        // ОДИНОЧНЫЙ КЛИК
+        if (this._selectedAlert && this._selectedAlert !== hit.alert) {
+            this._selectedAlert.selected = false;
+            this._selectedAlert.showDragPoint = false;
+        }
+        hit.alert.selected = true;
+        this._selectedAlert = hit.alert;
+        
+        this._potentialDblClickTarget = hit.alert;
+        this._lastClickTime = now;
+        if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+        this._dblClickTimer = setTimeout(() => {
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+        }, this._dblClickTimeout);
+        
+        if (hit.alert.showDragPoint) {
+            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+            if (alertX !== null && alertY !== null) {
+                hit.alert.dragPointX = alertX;
+                hit.alert.dragPointY = alertY;
             }
-        });
-
+            this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
+        } else {
+            this._potentialDrag = null;
+        }
+        
+        this._requestRedraw();
+    } else {
+        const alertMenu = document.getElementById('alertContextMenu');
+        if (alertMenu && alertMenu.style.display === 'flex') {
+            const menuRect = alertMenu.getBoundingClientRect();
+            const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+            if (isClickInsideMenu) return;
+        }
+        if (this._selectedAlert) {
+            this._selectedAlert.selected = false;
+            this._selectedAlert.showDragPoint = false;
+            this._selectedAlert = null;
+        }
+        if (alertMenu) alertMenu.style.display = 'none';
+        this._requestRedraw();
+    }
+});
               container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
             const cssX = e.clientX - rect.left;
@@ -5855,7 +5974,7 @@ class TextRenderer {
             ctx.textBaseline = 'middle';
             ctx.fillText(text.text, rectX + padding, rectY + rectHeight / 2);
 
-            if (text.selected || text.hovered || text.dragging) {
+            if (text.showDragPoint) {
                 ctx.shadowColor = 'rgba(0,0,0,0.5)';
                 ctx.shadowBlur = 4;
                 ctx.fillStyle = '#FFFFFF';
@@ -6026,7 +6145,11 @@ class TextManager {
         this._potentialDrag = null;
         this._dragThreshold = 5;
         this._isLoading = false;
-        this._magnetEnabled = true; // FIX: добавлено по аналогии с остальными
+        this._magnetEnabled = true; 
+        this._dblClickTimer = null;
+this._potentialDblClickTarget = null;
+this._dblClickTimeout = 350;
+this._lastClickTime = 0;
         this._handleContextMenu = this._handleContextMenu.bind(this);
         this._setupEventListeners();
         this._setupHotkeys();
@@ -6153,84 +6276,89 @@ class TextManager {
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
-        container.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
+       container.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
 
-            const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-            const hit = this.hitTest(bmX, bmY);
+    const rect = container.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+    const hit = this.hitTest(bmX, bmY);
 
-            if (hit) {
-                e.preventDefault();
-                e.stopPropagation();
+    if (hit) {
+        e.preventDefault();
+        e.stopPropagation();
 
-                if (this._selectedText && this._selectedText === hit.text) {
-                    this._selectedText.selected = false;
-                    this._selectedText.showDragPoint = false;
-                    this._selectedText.attached = false;
-                    this._selectedText = null;
-                    this._requestRedraw();
-                    return;
-                }
+        const now = Date.now();
+        
+        // ДВОЙНОЙ КЛИК
+        if (this._dblClickTimer && this._potentialDblClickTarget === hit.text && now - this._lastClickTime < this._dblClickTimeout) {
+            clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+            this._lastClickTime = 0;
+            
+            hit.text.showDragPoint = !hit.text.showDragPoint;
+            this._requestRedraw();
+            return;
+        }
 
-                if (this._selectedText) {
-                    this._selectedText.selected = false;
-                    this._selectedText.showDragPoint = false;
-                    this._selectedText.attached = false;
-                }
+        // ОДИНОЧНЫЙ КЛИК
+        if (this._selectedText && this._selectedText !== hit.text) {
+            this._selectedText.selected = false;
+            this._selectedText.showDragPoint = false;
+        }
 
-                hit.text.selected = true;
-                hit.text.showDragPoint = true;
-                hit.text.attached = true;
-                this._selectedText = hit.text;
+        hit.text.selected = true;
+        this._selectedText = hit.text;
+        
+        this._potentialDblClickTarget = hit.text;
+        this._lastClickTime = now;
+        if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+        this._dblClickTimer = setTimeout(() => {
+            this._dblClickTimer = null;
+            this._potentialDblClickTarget = null;
+        }, this._dblClickTimeout);
 
-                const textX = this._chartManager.timeToCoordinate(hit.text.time);
-                const textY = this._chartManager.priceToCoordinate(hit.text.price);
-
-                if (textX !== null && textY !== null) {
-                    hit.text.dragPointX = textX;
-                    hit.text.dragPointY = textY;
-                }
-
-                this._potentialDrag = {
-                    text: hit.text,
-                    startX: bmX,
-                    startY: bmY,
-                    startPrice: hit.text.price,
-                    startTime: hit.text.time
-                };
-
-                this._requestRedraw();
-            } else {
-                const textMenu = document.getElementById('textContextMenu');
-                if (textMenu && textMenu.style.display === 'flex') {
-                    const menuRect = textMenu.getBoundingClientRect();
-                    const isClickInsideMenu = 
-                        e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
-                        e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-                    if (isClickInsideMenu) return;
-                }
-
-                if (this._dragText) {
-                    this._dragText.selected = false;
-                    this._dragText.showDragPoint = false;
-                    this._dragText.attached = false;
-                    this._dragText = null;
-                }
-                if (this._selectedText) {
-                    this._selectedText.selected = false;
-                    this._selectedText.showDragPoint = false;
-                    this._selectedText.attached = false;
-                    this._selectedText = null;
-                }
-                
-                if (textMenu) textMenu.style.display = 'none';
-                this._requestRedraw();
+        if (hit.text.showDragPoint) {
+            const textX = this._chartManager.timeToCoordinate(hit.text.time);
+            const textY = this._chartManager.priceToCoordinate(hit.text.price);
+            if (textX !== null && textY !== null) {
+                hit.text.dragPointX = textX;
+                hit.text.dragPointY = textY;
             }
-        });
+            this._potentialDrag = {
+                text: hit.text,
+                startX: bmX,
+                startY: bmY,
+                startPrice: hit.text.price,
+                startTime: hit.text.time
+            };
+        } else {
+            this._potentialDrag = null;
+        }
 
+        this._requestRedraw();
+    } else {
+        const textMenu = document.getElementById('textContextMenu');
+        if (textMenu && textMenu.style.display === 'flex') {
+            const menuRect = textMenu.getBoundingClientRect();
+            const isClickInsideMenu = 
+                e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
+                e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+            if (isClickInsideMenu) return;
+        }
+
+        if (this._selectedText) {
+            this._selectedText.selected = false;
+            this._selectedText.showDragPoint = false;
+            this._selectedText = null;
+        }
+        
+        if (textMenu) textMenu.style.display = 'none';
+        this._requestRedraw();
+    }
+});
              container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
             const cssX = e.clientX - rect.left;
