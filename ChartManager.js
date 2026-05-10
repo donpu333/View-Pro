@@ -466,44 +466,52 @@ getCurrentSymbolKey() {
             })
             .catch(() => {}); // Игнорируем ошибки сети, чтобы не спамить в консоль
     }
-    setupMaximumSubscriptions() {
-        this.chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-            this.scheduleDrawingsUpdate();
-        });
-        
-        this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-            this.scheduleDrawingsUpdate();
-        });
+  setupMaximumSubscriptions() {
+    this.chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+        this.scheduleDrawingsUpdate();
+    });
+    
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        this.scheduleDrawingsUpdate();
+    });
 
-        const priceScale = this.chart.priceScale('right');
-        if (priceScale && typeof priceScale.subscribeVisibleLogicalRangeChange === 'function') {
-            priceScale.subscribeVisibleLogicalRangeChange(() => {
-                this.scheduleDrawingsUpdate();
-            });
-        }
-
-        this.chartContainer.addEventListener('mousedown', () => {
+    const priceScale = this.chart.priceScale('right');
+    if (priceScale && typeof priceScale.subscribeVisibleLogicalRangeChange === 'function') {
+        priceScale.subscribeVisibleLogicalRangeChange(() => {
             this.scheduleDrawingsUpdate();
-        });
-        
-        this.chartContainer.addEventListener('mouseup', () => {
-            this.scheduleDrawingsUpdate();
-        });
-        
-        this.chartContainer.addEventListener('wheel', () => {
-            this.scheduleDrawingsUpdate();
-        }, { passive: true });
-        
-        const observer = new MutationObserver(() => {
-            this.scheduleDrawingsUpdate();
-        });
-        observer.observe(this.chartContainer, { 
-            attributes: true, 
-            childList: true, 
-            subtree: true,
-            attributeFilter: ['style', 'class', 'width', 'height']
         });
     }
+
+    // ✅ ОСТАВЛЯЕМ wheel - он нужен для зума
+    this.chartContainer.addEventListener('wheel', () => {
+        this.scheduleDrawingsUpdate();
+    }, { passive: true });
+    
+    // ✅ УБИРАЕМ мусор (mousedown/mouseup)
+    // this.chartContainer.addEventListener('mousedown', () => { this.scheduleDrawingsUpdate(); });
+    // this.chartContainer.addEventListener('mouseup', () => { this.scheduleDrawingsUpdate(); });
+    
+    // ✅ ИСПРАВЛЯЕМ MutationObserver - только при реальном изменении размера
+    let resizeTimeout;
+    const observer = new MutationObserver(() => {
+        // Не вызываем при каждом чихе, а только когда изменился размер
+        if (resizeTimeout) return;
+        resizeTimeout = setTimeout(() => {
+            resizeTimeout = null;
+            const currentWidth = this.chartContainer.clientWidth;
+            const currentHeight = this.chartContainer.clientHeight;
+            if (currentWidth !== this._lastWidth || currentHeight !== this._lastHeight) {
+                this._lastWidth = currentWidth;
+                this._lastHeight = currentHeight;
+                this.scheduleDrawingsUpdate();
+            }
+        }, 100);
+    });
+    observer.observe(this.chartContainer, { 
+        attributes: true, 
+        attributeFilter: ['style', 'class']  // ← ТОЛЬКО style и class
+    });
+}
    forceRedraw() {
     if (!this.chartData.length) return;
 
