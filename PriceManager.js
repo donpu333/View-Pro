@@ -264,4 +264,10 @@ class PriceManager {
 
 if (typeof window !== 'undefined') {
     window.PriceManager = PriceManager;
+    
+    // ✅ ДОБАВЬ ЭТО - автоматическое создание экземпляра
+    if (!window.priceManagerInstance) {
+        window.priceManagerInstance = new PriceManager();
+        console.log('✅ PriceManager экземпляр создан автоматически');
+    }
 }
