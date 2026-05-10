@@ -279,8 +279,8 @@ async initDrawingTools() {  // ← ТОЛЬКО ДОБАВИТЬ async
             };
         }
         
-        // Магнит
-      const magnetBtn = document.getElementById('toolMagnet');
+      // Магнит
+const magnetBtn = document.getElementById('toolMagnet');
 if (magnetBtn) {
     magnetBtn.onclick = (e) => {
         e.preventDefault();
@@ -289,17 +289,21 @@ if (magnetBtn) {
         const isActive = magnetBtn.classList.contains('magnet-active');
         const newState = !isActive;
         
-        // ✅ ТОЛЬКО ДЛЯ ЛУЧЕЙ И ТРЕНДОВЫХ ЛИНИЙ
+        // ✅ ДЛЯ ВСЕХ ИНСТРУМЕНТОВ
         if (window.rayManager) window.rayManager.setMagnetEnabled(newState);
         if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(newState);
+        if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(newState);
+        if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(newState);
         
         magnetBtn.classList.toggle('magnet-active', newState);
     };
     
-    // Включаем по умолчанию
+    // Включаем по умолчанию для всех
     magnetBtn.classList.add('magnet-active');
     if (window.rayManager) window.rayManager.setMagnetEnabled(true);
     if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(true);
+    if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(true);
+    if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(true);
 }
 
 // Удалить всё
@@ -319,7 +323,6 @@ if (trashBtn) {
     };
 }
   }  
-    
 // Главный метод для загрузки символа
 async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
     
