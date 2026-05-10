@@ -816,7 +816,7 @@ async waitForSeriesReady() {
         const priceScale = series.priceScale();
         if (!priceScale) return null;
         
-        const height = priceScale.height();
+        const height = priceScale.height;
         const firstValue = priceScale.coordinateToPrice(0);
         const lastValue = priceScale.coordinateToPrice(height);
         
