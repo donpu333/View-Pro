@@ -1296,10 +1296,14 @@ hitTest(x, y) {
         this._requestRedraw();
     }
     
-   // ЗАМЕНИТЬ существующий _requestRedraw на этот
-_requestRedraw() {
-    this._needsRedraw = true;
-}
+  _requestRedraw() {
+        const raysForCurrent = this._getRaysForCurrentSymbol();
+        raysForCurrent.forEach(item => { 
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
+    }
 
 // ДОБАВИТЬ этот метод рядом
 _applyRedrawIfNeeded() {
@@ -2485,10 +2489,13 @@ _completeDrawing(x, y) {
         if (deselectAll) { const nd = deselectAll.cloneNode(true); deselectAll.parentNode.replaceChild(nd, deselectAll); nd.addEventListener('click', () => container.querySelectorAll('input').forEach(c => { c.checked = false; trendLine.timeframeVisibility[c.dataset.timeframe] = false; })); }
     }
 
-    // ЗАМЕНИТЬ существующий _requestRedraw на этот
-_requestRedraw() {
-    this._needsRedraw = true;
-}
+    _requestRedraw() { this._trendLines.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); }); if (this._tempPrimitive) this._tempPrimitive.requestRedraw(); }
+
+    async _saveTrendLines() {
+        if (this._trendLines.length === 0) return;
+        const promises = this._trendLines.map(item => window.db.put('drawings', { id: item.trendLine.id, type: 'trendline', symbolKey: item.trendLine.symbolKey, data: { point1: item.trendLine.point1, point2: item.trendLine.point2, options: item.trendLine.options, timeframeVisibility: item.trendLine.timeframeVisibility, anchorCandle1: item.trendLine.anchorCandle1, anchorCandle2: item.trendLine.anchorCandle2, anchorTime1: item.trendLine.anchorTime1, anchorTime2: item.trendLine.anchorTime2 } }).catch(e => console.warn(e)));
+        await Promise.all(promises);
+    }
 
 // ДОБАВИТЬ этот метод рядом
 _applyRedrawIfNeeded() {
@@ -3708,10 +3715,11 @@ _completeDrawing(x, y) {
         setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
     }
 
-   // ЗАМЕНИТЬ существующий _requestRedraw на этот
-_requestRedraw() {
-    this._needsRedraw = true;
-}
+ _requestRedraw() {
+        this._rulers.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); });
+        if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
+        if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
+    }
 
 // ДОБАВИТЬ этот метод рядом
 _applyRedrawIfNeeded() {
@@ -5087,10 +5095,13 @@ _setupSettingsListeners() {
         }
     }
 
-   // ЗАМЕНИТЬ существующий _requestRedraw на этот
-_requestRedraw() {
-    this._needsRedraw = true;
-}
+  _requestRedraw() {
+        this._alerts.forEach(item => { 
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
+    }
 
 // ДОБАВИТЬ этот метод рядом
 _applyRedrawIfNeeded() {
@@ -6809,11 +6820,11 @@ hitTest(x, y) {
             newDeselectAll.addEventListener('click', () => { container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; text.timeframeVisibility[cb.dataset.timeframe] = false; }); });
         }
     }
-// ЗАМЕНИТЬ существующий _requestRedraw на этот
 _requestRedraw() {
-    this._needsRedraw = true;
-}
-
+        this._texts.forEach(item => {
+            if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+        });
+    }
 // ДОБАВИТЬ этот метод рядом
 _applyRedrawIfNeeded() {
     if (this._needsRedraw) {
