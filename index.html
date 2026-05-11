@@ -2601,6 +2601,9 @@ function takeChartScreenshot() {
     }
 }
 </script> <!-- закрываем основной скрипт -->
+
+
+
 <!-- СКРИПТ ПОЛНОЭКРАННОГО РЕЖИМА (ИДЕАЛЬНЫЙ) -->
 <style>
     /* Эти стили прячут панель тикеров. Из-за этого контейнер графика расширяется, 
@@ -2870,6 +2873,8 @@ if (toolbarOrientationBtn && drawingToolbar) {
         }
     })();
 </script>
+
+
 <script>
 (function() {
     document.addEventListener('keydown', function(e) {
@@ -2884,6 +2889,29 @@ if (toolbarOrientationBtn && drawingToolbar) {
             }
         }
     });
+})();
+</script>
+<script>
+(function() {
+    const toolbar = document.getElementById('drawingToolbar');
+    if (!toolbar) return;
+    
+    // Просто останавливаем события, но НЕ отключаем режим рисования
+    toolbar.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        // НЕ вызываем setDrawingMode(false)
+        // НЕ удаляем active классы
+    });
+    
+    toolbar.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+    
+    toolbar.addEventListener('mouseup', (e) => {  // ← БЫЛО (e) {, СТАЛО (e) => {
+        e.stopPropagation();
+    });
+    
+    console.log('✅ События на панели заблокированы, режим рисования НЕ отключается');
 })();
 </script>
 </body>
