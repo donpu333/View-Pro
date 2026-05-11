@@ -212,7 +212,7 @@ class HorizontalRayRenderer {
 
         // Проверка линии
         if (this._hitArea) {
-            const buffer = 15;
+            const buffer = 20;
             const centerY = this._hitArea.y + this._hitArea.height / 2;
             const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
             const pixelRatio = window.devicePixelRatio || 1;
