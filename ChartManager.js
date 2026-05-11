@@ -806,32 +806,36 @@ async waitForSeriesReady() {
         }
     }
 
-    priceToCoordinateWithFallback(price) {
-        let coord = this.priceToCoordinate(price);
-        if (coord !== null) return coord;
+  priceToCoordinateWithFallback(price) {
+    let coord = this.priceToCoordinate(price);
+    if (coord !== null) return coord;
 
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series) return null;
-        
-        const priceScale = series.priceScale();
-        if (!priceScale) return null;
-        
-        const height = priceScale.height;
-        const firstValue = priceScale.coordinateToPrice(0);
-        const lastValue = priceScale.coordinateToPrice(height);
-        
-        if (firstValue === null || lastValue === null) return null;
-        
-        const minPrice = Math.min(firstValue, lastValue);
-        const maxPrice = Math.max(firstValue, lastValue);
-        const pixelsPerUnit = height / (maxPrice - minPrice);
-        
-        if (price < minPrice) {
-            return 0 - (minPrice - price) * pixelsPerUnit;
-        } else {
-            return height + (price - maxPrice) * pixelsPerUnit;
-        }
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series) return null;
+    
+    const priceScale = series.priceScale();
+    if (!priceScale) return null;
+    
+    // 🔥 ИСПРАВЛЕНО: height - это СВОЙСТВО, а не функция
+    const height = priceScale.height;
+    if (!height || height <= 0) return null;
+    
+    // 🔥 ИСПРАВЛЕНО: priceToCoordinate, а не coordinateToPrice
+    const firstValue = priceScale.priceToCoordinate(0);
+    const lastValue = priceScale.priceToCoordinate(height);
+    
+    if (firstValue === null || lastValue === null) return null;
+    
+    const minPrice = Math.min(firstValue, lastValue);
+    const maxPrice = Math.max(firstValue, lastValue);
+    const pixelsPerUnit = height / (maxPrice - minPrice);
+    
+    if (price < minPrice) {
+        return 0 - (minPrice - price) * pixelsPerUnit;
+    } else {
+        return height + (price - maxPrice) * pixelsPerUnit;
     }
+}
    
 timeToLogical(time) {
     if (!this.chartData || !this.chartData.length) return null;
