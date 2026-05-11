@@ -205,53 +205,53 @@ class HorizontalRayRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ hitTest - возвращает distance
-    hitTest(x, y) {
-        let bestHit = null;
-        let bestDistance = Infinity;
+    // ✅ ИСПРАВЛЕННЫЙ hitTest - возвращает И object, И distance
+hitTest(x, y) {
+    let bestHit = null;
+    let bestDistance = Infinity;
 
-        // Проверка линии
-        if (this._hitArea) {
-            const buffer = 20;
-            const centerY = this._hitArea.y + this._hitArea.height / 2;
-            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-            const pixelRatio = window.devicePixelRatio || 1;
-            const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * pixelRatio;
-            const inX = x >= 0 && x <= chartWidth;
-            
-            if (inX && inY) {
-                const distance = Math.abs(y - centerY);
-                if (distance < bestDistance) {
-                    bestHit = { type: 'line', distance: distance };
-                    bestDistance = distance;
-                }
+    // Проверка линии
+    if (this._hitArea) {
+        const buffer = 15;
+        const centerY = this._hitArea.y + this._hitArea.height / 2;
+        const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+        const pixelRatio = window.devicePixelRatio || 1;
+        const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * pixelRatio;
+        const inX = x >= 0 && x <= chartWidth;
+        
+        if (inX && inY) {
+            const distance = Math.abs(y - centerY);
+            if (distance < bestDistance) {
+                bestHit = { type: 'line', ray: this._ray, distance: distance };  // ← ДОБАВИТЬ ray
+                bestDistance = distance;
             }
         }
-        
-        // Проверка ценовой метки
-        if (this._priceLabelHitArea) {
-            const padding = 15;
-            const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
-            const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
-            
-            const inX = x >= this._priceLabelHitArea.x - padding && 
-                        x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
-            const inY = y >= this._priceLabelHitArea.y - padding && 
-                        y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
-                        
-            if (inX && inY) {
-                const dx = x - centerX;
-                const dy = y - centerY;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance < bestDistance) {
-                    bestHit = { type: 'label', distance: distance };
-                    bestDistance = distance;
-                }
-            }
-        }
-        
-        return bestHit;
     }
+    
+    // Проверка ценовой метки
+    if (this._priceLabelHitArea) {
+        const padding = 15;
+        const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+        const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+        
+        const inX = x >= this._priceLabelHitArea.x - padding && 
+                    x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+        const inY = y >= this._priceLabelHitArea.y - padding && 
+                    y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+                        
+        if (inX && inY) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < bestDistance) {
+                bestHit = { type: 'label', ray: this._ray, distance: distance };  // ← ДОБАВИТЬ ray
+                bestDistance = distance;
+            }
+        }
+    }
+    
+    return bestHit;
+}
 }
 
 class HorizontalRayPaneView {
@@ -529,7 +529,7 @@ class HorizontalRayManager {
 
    _setupEventListeners() {
         const container = this._chartManager.chartContainer;
-        container.addEventListener('dblclick', this._handleDblClick.bind(this));
+       
         
         container.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return;
@@ -770,36 +770,8 @@ class HorizontalRayManager {
             this._handleContextMenu(e);
         });
 
-        // ✅ Двойной клик - активирует точку перетаскивания
-        container.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            
-            const rect = container.getBoundingClientRect();
-            const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
-            const hit = this.hitTest(x, y);
-            
-            // Сбрасываем все
-            this._rays.forEach(item => {
-                item.ray.readyToDrag = false;
-                item.ray.showDragPoint = false;
-            });
-            
-            if (hit && hit.ray) {
-                // Активируем выбранный
-                hit.ray.readyToDrag = true;
-                hit.ray.showDragPoint = true;
-                hit.ray.selected = true;
-                this._selectedRay = hit.ray;
-                this._readyToDragRay = hit.ray;
-                this._requestRedraw();
-            } else {
-                this._selectedRay = null;
-                this._readyToDragRay = null;
-                this._requestRedraw();
-            }
-        });
+       
+        
     }
         
     setDrawingMode(enabled) {
@@ -936,7 +908,6 @@ class HorizontalRayManager {
     }
     
    
-
 hitTest(x, y) {
     const raysForCurrent = this._getRaysForCurrentSymbol();
     
@@ -945,7 +916,7 @@ hitTest(x, y) {
         const selItem = raysForCurrent.find(item => item.ray === this._selectedRay);
         if (selItem && selItem.primitive?._paneView?._renderer) {
             const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-            if (hit) return { ray: this._selectedRay, type: hit.type };
+            if (hit) return { ray: this._selectedRay, type: hit.type, distance: hit.distance };  // ← ДОБАВИТЬ distance!
         }
     }
     
@@ -954,13 +925,12 @@ hitTest(x, y) {
     
     for (const item of raysForCurrent) {
         if (!item.primitive?._paneView?._renderer) continue;
-        if (item.ray === this._selectedRay) continue; // уже проверили
+        if (item.ray === this._selectedRay) continue;
         
         const hit = item.primitive._paneView._renderer.hitTest(x, y);
         
-        // ✅ Выбираем БЛИЖАЙШИЙ объект
         if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-            bestHit = { ray: item.ray, type: hit.type };
+            bestHit = { ray: item.ray, type: hit.type, distance: hit.distance };
             bestDistance = hit.distance;
         }
     }
@@ -1492,6 +1462,21 @@ _applyRedrawIfNeeded() {
         
         this._requestRedraw();
     }
+    deactivateAll() {
+    this._rays.forEach(item => {
+        item.ray.selected = false;
+        item.ray.showDragPoint = false;
+        item.ray.readyToDrag = false;
+    });
+    this._selectedRay = null;
+}
+
+activateObject(ray) {
+    ray.selected = true;
+    ray.showDragPoint = true;
+    ray.readyToDrag = true;
+    this._selectedRay = ray;
+}
 }
 
 class TrendLine {
@@ -1987,7 +1972,7 @@ this._lastClickTime = 0;
         container.addEventListener('mouseup', this._handleMouseUp);
         container.addEventListener('mouseleave', this._handleMouseLeave);
         container.addEventListener('contextmenu', this._handleContextMenu);
-        container.addEventListener('dblclick', this._handleDblClick);
+       
         container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
             const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
@@ -2660,6 +2645,25 @@ _applyRedrawIfNeeded() {
     }
 
     syncWithNewTimeframe() {}
+
+
+    deactivateAll() {
+    this._trendLines.forEach(item => {
+        item.trendLine.selected = false;
+        item.trendLine.editMode = false;
+        item.trendLine.showDragPoint1 = false;
+        item.trendLine.showDragPoint2 = false;
+    });
+    this._selectedLine = null;
+}
+
+activateObject(line) {
+    line.selected = true;
+    line.editMode = true;
+    line.showDragPoint1 = true;
+    line.showDragPoint2 = true;
+    this._selectedLine = line;
+}
 }
               
               
@@ -3280,7 +3284,7 @@ this._needsRedraw = false;
         container.addEventListener('mouseup', this._handleMouseUp);
         container.addEventListener('mouseleave', this._handleMouseLeave);
         container.addEventListener('contextmenu', this._handleContextMenu);
-        container.addEventListener('dblclick', this._handleDblClick);
+       
 
         container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
@@ -3891,6 +3895,22 @@ _applyRedrawIfNeeded() {
     }
 
     syncWithNewTimeframe() {}
+deactivateAll() {
+    this._rulers.forEach(item => {
+        item.ruler.selected = false;
+        item.ruler.showDragPoint1 = false;
+        item.ruler.showDragPoint2 = false;
+    });
+    this._selectedRuler = null;
+}
+
+activateObject(ruler) {
+    ruler.selected = true;
+    ruler.showDragPoint1 = true;
+    ruler.showDragPoint2 = true;
+    this._selectedRuler = ruler;
+}
+
 }
 
 class AlertLine {  
@@ -4128,51 +4148,51 @@ class AlertLineRenderer {
     }
 
     // ✅ ИСПРАВЛЕННЫЙ hitTest - возвращает distance
-    hitTest(x, y) {
-        let bestHit = null;
-        let bestDistance = Infinity;
+   hitTest(x, y) {
+    let bestHit = null;
+    let bestDistance = Infinity;
 
-        // Проверка линии
-        if (this._hitArea) {
-            const buffer = 15;
-            const centerY = this._hitArea.y + this._hitArea.height / 2;
-            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-            const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
-            const inX = x >= 0 && x <= chartWidth;
-            
-            if (inX && inY) {
-                const distance = Math.abs(y - centerY);
-                if (distance < bestDistance) {
-                    bestHit = { type: 'line', distance: distance };
-                    bestDistance = distance;
-                }
+    // Проверка линии
+    if (this._hitArea) {
+        const buffer = 15;
+        const centerY = this._hitArea.y + this._hitArea.height / 2;
+        const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+        const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
+        const inX = x >= 0 && x <= chartWidth;
+        
+        if (inX && inY) {
+            const distance = Math.abs(y - centerY);
+            if (distance < bestDistance) {
+                bestHit = { type: 'line', alert: this._alert, distance: distance };  // ← ray → alert
+                bestDistance = distance;
             }
         }
-
-        // Проверка ценовой метки
-        if (this._priceLabelHitArea) {
-            const padding = 15;
-            const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
-            const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
-            
-            const inX = x >= this._priceLabelHitArea.x - padding && 
-                        x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
-            const inY = y >= this._priceLabelHitArea.y - padding && 
-                        y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
-                        
-            if (inX && inY) {
-                const dx = x - centerX;
-                const dy = y - centerY;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance < bestDistance) {
-                    bestHit = { type: 'label', distance: distance };
-                    bestDistance = distance;
-                }
-            }
-        }
-
-        return bestHit;
     }
+
+    // Проверка ценовой метки
+    if (this._priceLabelHitArea) {
+        const padding = 15;
+        const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+        const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+        
+        const inX = x >= this._priceLabelHitArea.x - padding && 
+                    x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+        const inY = y >= this._priceLabelHitArea.y - padding && 
+                    y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+                    
+        if (inX && inY) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < bestDistance) {
+                bestHit = { type: 'label', alert: this._alert, distance: distance };  // ← ray → alert
+                bestDistance = distance;
+            }
+        }
+    }
+
+    return bestHit;
+}
 }
 
 class AlertLinePaneView {
@@ -4612,21 +4632,7 @@ this._lastClickTime = 0;
 
         container.addEventListener('contextmenu', this._handleContextMenu);
 
-        container.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-            const hit = this.hitTest(bmX, bmY);
-            if (hit) {
-                this.deleteAlert(hit.alert.id);
-                if (this._selectedAlert && this._selectedAlert.id === hit.alert.id) this._selectedAlert = null;
-                if (this._hoveredAlert && this._hoveredAlert.id === hit.alert.id) this._hoveredAlert = null;
-                this._requestRedraw();
-            }
-        });
+       
     }
 
     _handleContextMenu(e) {
@@ -4920,7 +4926,7 @@ checkTimerAlerts() {
         if (selItem && selItem.primitive?._paneView?._renderer) {
             try {
                 const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-                if (hit) return { alert: this._selectedAlert, type: hit.type };
+              if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
             } catch (e) {}
         }
     }
@@ -4936,7 +4942,7 @@ checkTimerAlerts() {
             const hit = item.primitive._paneView._renderer.hitTest(x, y);
             
             if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                bestHit = { alert: item.alert, type: hit.type };
+                bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
                 bestDistance = hit.distance;
             }
         } catch (e) {}
@@ -5882,6 +5888,22 @@ _stopHighlight(alertId) {
             }
         }, 200);
     }
+
+    deactivateAll() {
+    this._alerts.forEach(item => {
+        if (item.alert) {
+            item.alert.selected = false;
+            item.alert.showDragPoint = false;
+        }
+    });
+    this._selectedAlert = null;
+}
+
+activateObject(alert) {
+    alert.selected = true;
+    alert.showDragPoint = true;
+    this._selectedAlert = alert;
+}
 }
 
 class TextDrawing {
@@ -6536,23 +6558,7 @@ this._lastClickTime = 0;
 
         container.addEventListener('contextmenu', this._handleContextMenu);
 
-        container.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-            const hit = this.hitTest(bmX, bmY);
-            
-            if (hit) {
-                this.deleteText(hit.text.id);
-                if (this._selectedText && this._selectedText.id === hit.text.id) this._selectedText = null;
-                if (this._hoveredText && this._hoveredText.id === hit.text.id) this._hoveredText = null;
-                this._requestRedraw();
-            }
-        });
+       
     }
 
     _getTimeFromCoordinate(x) {
@@ -6674,7 +6680,7 @@ hitTest(x, y) {
         if (selItem && selItem.primitive?._paneView?._renderer) {
             try {
                 const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-                if (hit) return { text: this._selectedText, type: hit.type };
+                if (hit) return { text: this._selectedText, type: hit.type, distance: hit.distance };  // ← ДОБАВИТЬ distance!
             } catch (e) {}
         }
     }
@@ -6690,7 +6696,7 @@ hitTest(x, y) {
             const hit = item.primitive._paneView._renderer.hitTest(x, y);
             
             if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                bestHit = { text: item.text, type: hit.type };
+                bestHit = { text: item.text, type: hit.type, distance: hit.distance };  // ← ДОБАВИТЬ distance!
                 bestDistance = hit.distance;
             }
         } catch (e) {}
@@ -7074,6 +7080,20 @@ _applyRedrawIfNeeded() {
     }
 
     syncWithNewTimeframe() {}
+
+    deactivateAll() {
+    this._texts.forEach(item => {
+        item.text.selected = false;
+        item.text.showDragPoint = false;
+    });
+    this._selectedText = null;
+}
+
+activateObject(text) {
+    text.selected = true;
+    text.showDragPoint = true;
+    this._selectedText = text;
+}
 }
 
 
