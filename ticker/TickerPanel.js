@@ -94,6 +94,7 @@ class TickerPanel {
         this.handleKeyDelete = this.handleKeyDelete.bind(this);
         
         this.loadFromLocalStorage();
+        window.tickerPanelInstance = this;
         // Восстанавливаем сохранённую сортировку
 const savedSortBy = localStorage.getItem('tickerSortBy');
 const savedSortDir = localStorage.getItem('tickerSortDir');
@@ -537,7 +538,17 @@ _deduplicateSymbols(symbols) {
         
         this.saveState();
     }
-
+// Синхронизирует customSymbols с активным вотчлистом
+syncWithActiveWatchlist() {
+    if (!this.watchlistManager) return;
+    const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
+    if (activeList) {
+        // Только если есть расхождение
+        if (JSON.stringify(this.state.customSymbols) !== JSON.stringify(activeList.symbols)) {
+            this.state.customSymbols = [...activeList.symbols];
+        }
+    }
+}
  addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
     symbol = symbol.trim().toUpperCase();
     if (!symbol.endsWith('USDT')) return false;
