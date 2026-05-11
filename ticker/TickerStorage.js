@@ -190,46 +190,51 @@ class TickerStorage {
     
     // ===== СОХРАНЕНИЕ =====
     
-    async saveState() {
-        if (this.saveTimeout) clearTimeout(this.saveTimeout);
+   async saveState() {
+    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+    
+    this.saveTimeout = setTimeout(async () => {
+        // ✅ Синхронизируем customSymbols с активным вотчлистом перед сохранением
+        if (window.tickerPanelInstance?.syncWithActiveWatchlist) {
+            window.tickerPanelInstance.syncWithActiveWatchlist();
+        }
         
-        this.saveTimeout = setTimeout(async () => {
-            // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в localStorage
+        // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в localStorage
+        try {
+            localStorage.setItem('favorites', JSON.stringify(this.state.favorites));
+            localStorage.setItem('flags', JSON.stringify(this.state.flags));
+            localStorage.setItem('currentSymbol', JSON.stringify({
+                symbol: this.state.currentSymbol,
+                exchange: this.state.currentExchange,
+                marketType: this.state.currentMarketType
+            }));
+        } catch (e) {
+            console.warn('Ошибка сохранения в localStorage:', e);
+        }
+        
+        // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в IndexedDB
+        if (window.db && window.dbReady) {
             try {
-                localStorage.setItem('favorites', JSON.stringify(this.state.favorites));
-                localStorage.setItem('flags', JSON.stringify(this.state.flags));
-                localStorage.setItem('currentSymbol', JSON.stringify({
-                    symbol: this.state.currentSymbol,
-                    exchange: this.state.currentExchange,
-                    marketType: this.state.currentMarketType
-                }));
-            } catch (e) {
-                console.warn('Ошибка сохранения в localStorage:', e);
+                await window.db.put('settings', {
+                    key: 'favorites',
+                    value: this.state.favorites,
+                    timestamp: Date.now()
+                });
+                
+                await window.db.put('settings', {
+                    key: 'flags',
+                    value: this.state.flags,
+                    timestamp: Date.now()
+                });
+                
+                console.log('✅ Состояние сохранено');
+                
+            } catch (error) {
+                console.warn('❌ Ошибка сохранения в IndexedDB:', error);
             }
-            
-            // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в IndexedDB
-            if (window.db && window.dbReady) {
-                try {
-                    await window.db.put('settings', {
-                        key: 'favorites',
-                        value: this.state.favorites,
-                        timestamp: Date.now()
-                    });
-                    
-                    await window.db.put('settings', {
-                        key: 'flags',
-                        value: this.state.flags,
-                        timestamp: Date.now()
-                    });
-                    
-                    console.log('✅ Состояние сохранено');
-                    
-                } catch (error) {
-                    console.warn('❌ Ошибка сохранения в IndexedDB:', error);
-                }
-            }
-        }, 500);
-    }
+        }
+    }, 500);
+}
     
     async saveCurrentSymbol(symbol, exchange, marketType) {
         // localStorage
