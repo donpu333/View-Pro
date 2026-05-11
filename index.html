@@ -599,14 +599,14 @@
                 </div>
                 
                <!-- ВСЕ КНОПКИ ВЕРНУЛ! -->
-               <button class="tool-btn" id="toolTrash" title="Удалить всё">
+               <button class="tool-btn" id="toolTrash" title="Удалить всё 0">
     <svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
         <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
         <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
         <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
     </svg>
-    <span class="tooltip">Удалить всё</span>
+    <span class="tooltip">Удалить всё 0</span>
 </button>
              
              <button class="tool-btn" id="toolHorizontalRay" title="Горизонтальный луч (O)">
@@ -2869,6 +2869,22 @@ if (toolbarOrientationBtn && drawingToolbar) {
             main();
         }
     })();
+</script>
+<script>
+(function() {
+    document.addEventListener('keydown', function(e) {
+        // Горячая клавиша для кнопки "Удалить всё" - клавиша 0 (ноль)
+        if (e.code === 'Digit0' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            
+            // ПРОСТО НАХОДИМ КНОПКУ И КЛИКАЕМ ПО НЕЙ
+            const trashBtn = document.getElementById('toolTrash');
+            if (trashBtn) {
+                trashBtn.click();  // ← ВЫЗЫВАЕМ ТОТ ЖЕ САМЫЙ КОД, ЧТО И ПРИ КЛИКЕ
+            }
+        }
+    });
+})();
 </script>
 </body>
 </html> 
