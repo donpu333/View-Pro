@@ -190,6 +190,7 @@ async initDrawingTools() {  // ← ТОЛЬКО ДОБАВИТЬ async
     
     // Настраиваем кнопки инструментов (этот метод уже есть ниже)
     this.setupToolButtons();
+
 }
     
     setupToolButtons() {
@@ -607,7 +608,57 @@ async syncAllDrawings() {
     if (window.alertLineManager) await window.alertLineManager.loadAlerts();
     if (window.textManager) await window.textManager.loadTexts();
 } 
+
 }
 if (typeof window !== 'undefined') {
     window.AppCoordinator = AppCoordinator;
 }
+(function setupGlobalDblClick() {
+    const container = document.getElementById('chart-container');
+    if (!container) return;
+    if (container._dblClickSetupDone) return;
+    container._dblClickSetupDone = true;
+    
+    const pixelRatio = window.devicePixelRatio || 1;
+    
+    container.addEventListener('dblclick', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const rect = container.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * pixelRatio;
+        const y = (e.clientY - rect.top) * pixelRatio;
+        
+        const managers = [
+            window.rayManager,
+            window.trendLineManager,
+            window.rulerLineManager,
+            window.alertLineManager,
+            window.textManager
+        ].filter(m => m && typeof m.hitTest === 'function');
+        
+        let bestHit = null;
+        let bestDist = Infinity;
+        
+        for (const m of managers) {
+            const hit = m.hitTest(x, y);
+            if (hit && hit.distance !== undefined && hit.distance < bestDist) {
+                bestHit = { manager: m, hit: hit };
+                bestDist = hit.distance;
+            }
+        }
+        
+        for (const m of managers) {
+            if (m.deactivateAll) m.deactivateAll();
+        }
+        
+        if (bestHit && bestHit.manager.activateObject) {
+            const obj = bestHit.hit.ray || bestHit.hit.trendLine || bestHit.hit.ruler || bestHit.hit.alert || bestHit.hit.text;
+            if (obj) bestHit.manager.activateObject(obj);
+        }
+        
+        for (const m of managers) {
+            if (m._requestRedraw) m._requestRedraw();
+        }
+    }, true);
+})();
