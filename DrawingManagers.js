@@ -212,7 +212,7 @@ class HorizontalRayRenderer {
 
         // Проверка линии
         if (this._hitArea) {
-            const buffer = 10;
+            const buffer = 15;
             const centerY = this._hitArea.y + this._hitArea.height / 2;
             const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
             const pixelRatio = window.devicePixelRatio || 1;
@@ -2852,7 +2852,7 @@ class RulerLineRenderer {
 const pixelRatio = window.devicePixelRatio || 1;
 const scale = Math.min(pixelRatio, 2); // Не больше 2x
 
-const infoY = topY - 25 * scope.verticalPixelRatio * scale;
+const infoY = topY - 5 * scope.verticalPixelRatio * scale;
 if (infoY > 10) {
     const priceChange = ruler.point2.price - ruler.point1.price;
     const percentChange = (priceChange / ruler.point1.price) * 100;
@@ -7168,6 +7168,10 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
+
+    
+
+
     // Текст - клавиша T
     if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
@@ -7198,6 +7202,7 @@ document.addEventListener('keydown', (e) => {
             
             console.log(`Текст ${newState ? 'включён' : 'выключён'}`);
         }
+        
     }
 });
 (function() {
