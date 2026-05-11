@@ -58,11 +58,12 @@ class WatchlistManager {
         }
         if (!this.lists.has(this.activeListId)) this.activeListId = 'default';
 
+        // ✅ ИСПРАВЛЕНИЕ: Вотчлист — единственный источник истины
         const activeList = this.lists.get(this.activeListId);
-        if (this.tickerPanel.state.customSymbols.length > 0) {
-            activeList.symbols = [...this.tickerPanel.state.customSymbols];
-        } else if (activeList && activeList.symbols.length > 0) {
+        if (activeList) {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
+        } else {
+            this.tickerPanel.state.customSymbols = [];
         }
         this._loaded = true;
     }
@@ -90,6 +91,11 @@ class WatchlistManager {
 
     async _saveNow() {
         if (!this._loaded) return;
+        // ✅ Синхронизируем панель с активным списком перед сохранением
+        const activeList = this.lists.get(this.activeListId);
+        if (activeList) {
+            this.tickerPanel.state.customSymbols = [...activeList.symbols];
+        }
         await this._saveToDB({
             lists: Object.fromEntries(this.lists),
             listOrder: this.listOrder,
@@ -105,15 +111,15 @@ class WatchlistManager {
         const panelSymbols = this.tickerPanel.state.customSymbols;
         if (panelSymbols.length === 0) return;
         if (JSON.stringify([...list.symbols].sort()) === JSON.stringify([...panelSymbols].sort())) return;
-        list.symbols = [...panelSymbols];
+        // ✅ Панель не должна перезаписывать вотчлист — наоборот
+        this.tickerPanel.state.customSymbols = [...list.symbols];
         this.renderCache.delete(this.activeListId);
-        await this._saveNow();
         this.renderDropdown();
     }
 
     async createList(name) {
         await this._initPromise;
-        const id = `wl_${Date.now()}`;
+        const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         this.lists.set(id, { name: name || `Список ${this.lists.size}`, symbols: [], isDefault: false });
         this.listOrder.push(id);
         this.renderCache.delete(id);
@@ -150,6 +156,7 @@ class WatchlistManager {
         if (!this.lists.has(listId)) return;
         if (this.activeListId === listId) { this.closeDropdown(); return; }
 
+        // ✅ Сохраняем старый список
         const oldList = this.lists.get(this.activeListId);
         if (oldList) {
             oldList.symbols = [...this.tickerPanel.state.customSymbols];
@@ -157,13 +164,17 @@ class WatchlistManager {
         }
 
         this.activeListId = listId;
-        this.saveToStorageImmediate();
         this._switchCooldown = true;
-        setTimeout(() => { this._switchCooldown = false; }, 2000);
+        setTimeout(() => { this._switchCooldown = false; }, 500);
 
         const newList = this.lists.get(listId);
         if (!newList) return;
 
+        // ✅ Проверяем текущий открытый тикер
+        const currentKey = `${this.tickerPanel.state.currentSymbol}:${this.tickerPanel.state.currentExchange}:${this.tickerPanel.state.currentMarketType}`;
+        const isCurrentInNewList = newList.symbols.includes(currentKey);
+
+        // ✅ Очищаем панель
         this.tickerPanel.state.customSymbols = [...newList.symbols];
         this.tickerPanel.tickers = [];
         this.tickerPanel.tickerElements.clear();
@@ -182,7 +193,10 @@ class WatchlistManager {
             const [symbol, exchange, marketType] = parts;
 
             if (this.tickerPanel.tickersMap.has(symbolKey)) {
-                this.tickerPanel.tickers.push(this.tickerPanel.tickersMap.get(symbolKey));
+                const ticker = this.tickerPanel.tickersMap.get(symbolKey);
+                if (!this.tickerPanel.tickers.includes(ticker)) {
+                    this.tickerPanel.tickers.push(ticker);
+                }
             } else {
                 const newTicker = { 
                     symbol, price: 0, change: 0, volume: 0, trades: null, 
@@ -200,33 +214,54 @@ class WatchlistManager {
         this.renderDropdown();
         this.closeDropdown();
 
-        if (needsPriceFetch.length > 0) setTimeout(() => this.fetchPricesForActiveList(), 50);
+        // ✅ Если текущий тикер не в новом списке — очищаем график
+        if (!isCurrentInNewList) {
+            this.tickerPanel.state.currentSymbol = '';
+            this.tickerPanel.state.currentExchange = 'binance';
+            this.tickerPanel.state.currentMarketType = 'futures';
+            const pairDisplay = document.getElementById('pairDisplay');
+            if (pairDisplay) pairDisplay.textContent = '';
+            const exchangeDisplay = document.getElementById('exchangeDisplay');
+            if (exchangeDisplay) exchangeDisplay.textContent = '';
+            const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+            if (contractTypeDisplay) contractTypeDisplay.textContent = '';
+            if (this.tickerPanel.coordinator?.clearChart) {
+                this.tickerPanel.coordinator.clearChart();
+            }
+        } else {
+            setTimeout(() => {
+                const el = document.querySelector(
+                    `.ticker-item[data-symbol="${this.tickerPanel.state.currentSymbol}"]` +
+                    `[data-exchange="${this.tickerPanel.state.currentExchange}"]` +
+                    `[data-market-type="${this.tickerPanel.state.currentMarketType}"]`
+                );
+                if (el) {
+                    document.querySelectorAll('.ticker-item.active').forEach(a => a.classList.remove('active'));
+                    el.classList.add('active');
+                }
+            }, 100);
+        }
+
+        this.saveToStorageImmediate();
+
+        if (needsPriceFetch.length > 0) {
+            setTimeout(() => this.fetchPricesForActiveList(), 50);
+        }
     }
 
-    // ════════════════════════════════════════════════════════
-    // ✅ ИСПРАВЛЕНО: loadSymbolsFromList вместо ручного добавления!
-    // ════════════════════════════════════════════════════════
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
         if (!list) return false;
 
         const key = `${symbol}:${exchange}:${marketType}`;
-        
-        if (list.symbols.includes(key)) {
-            console.log('⚠️ Уже есть:', key);
-            return false;
-        }
+        if (list.symbols.includes(key)) return false;
 
-        // Добавляем в данные
         list.symbols.push(key);
         this.renderCache.delete(listId);
         this.saveToStorage();
         this.renderDropdown();
 
-        // ════════════════════════════════════════════════════
-        // ✅ ФИКС: Полная перезагрузка панели если активный список!
-        // ════════════════════════════════════════════════════
         if (listId === this.activeListId) {
             this.loadSymbolsFromList(listId);
             setTimeout(() => this.fetchPricesForActiveList(), 100);
@@ -247,8 +282,6 @@ class WatchlistManager {
         this.renderCache.delete(this.activeListId);
         this.saveToStorage();
         this.renderDropdown();
-
-        // ✅ ФИКС: Полная перезагрузка!
         this.loadSymbolsFromList(this.activeListId);
         setTimeout(() => this.fetchPricesForActiveList(), 100);
     }
@@ -282,35 +315,148 @@ class WatchlistManager {
         this.loadSymbolsFromList(this.activeListId);
     }
 
-    showNotification(message, type = 'success') {
-        document.querySelectorAll('.wl-toast-notification').forEach(t => t.remove());
-        const toast = document.createElement('div');
-        toast.className = 'wl-toast-notification';
-        toast.textContent = message;
-        const colors = { success: '#4caf50', warning: '#ff9800', error: '#f44336', info: '#2196f3' };
-        toast.style.cssText = `
-            position: fixed; bottom: 80px; right: 24px;
-            background: ${colors[type] || colors.success}; color: white;
-            padding: 12px 24px; border-radius: 10px; font-size: 13px;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            z-index: 99999; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-            animation: wl-toast-in 0.3s ease, wl-toast-out 0.3s ease 1.7s forwards;
-        `;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 2000);
+    loadSymbolsFromList(listId) {
+        const list = this.lists.get(listId);
+        if (!list) return;
+
+        this.tickerPanel.tickers = [];
+        this.tickerPanel.state.customSymbols = [];
+        this.tickerPanel.tickerElements.clear();
+        this.tickerPanel.displayedTickers = [];
+        this.tickerPanel.totalItems = 0;
+        this.tickerPanel.filterCache = null;
+
+        const container = document.getElementById('tickerListContainer');
+        if (container) container.innerHTML = '';
+
+        this.tickerPanel.state.customSymbols = [...list.symbols];
+
+        list.symbols.forEach(symbolKey => {
+            const parts = symbolKey.split(':');
+            if (parts.length === 3) {
+                const [symbol, exchange, marketType] = parts;
+                if (this.tickerPanel.tickersMap.has(symbolKey)) {
+                    this.tickerPanel.tickers.push(this.tickerPanel.tickersMap.get(symbolKey));
+                } else {
+                    this.tickerPanel.addSymbol(symbol, true, exchange, marketType, false, true, true);
+                }
+            }
+        });
+        this.tickerPanel.renderTickerList();
     }
 
-    highlightDropdown() {
-        const btn = document.querySelector('.wl-dropdown-btn');
-        const count = document.querySelector('.wl-btn-count');
-        if (btn) {
-            btn.style.background = 'rgba(76, 175, 80, 0.2)';
-            if (count) { count.style.background = '#4caf50'; count.style.color = 'white'; count.style.transform = 'scale(1.2)'; }
-            setTimeout(() => {
-                btn.style.background = '';
-                if (count) { count.style.background = ''; count.style.color = ''; count.style.transform = ''; }
-            }, 1500);
+    async fetchPricesForActiveList() {
+        const activeList = this.lists.get(this.activeListId);
+        if (!activeList || activeList.symbols.length === 0) return;
+
+        const binanceFutures = [];
+        const binanceSpot = [];
+        const bybitFutures = [];
+        const bybitSpot = [];
+
+        activeList.symbols.forEach(key => {
+            const parts = key.split(':');
+            if (parts.length !== 3) return;
+            const [symbol, exchange, marketType] = parts;
+            if (exchange === 'binance') {
+                if (marketType === 'futures') binanceFutures.push(symbol);
+                else binanceSpot.push(symbol);
+            } else if (exchange === 'bybit') {
+                if (marketType === 'futures') bybitFutures.push(symbol);
+                else bybitSpot.push(symbol);
+            }
+        });
+
+        const promises = [];
+
+        // Binance Futures
+        if (binanceFutures.length > 0) {
+            const set = new Set(binanceFutures);
+            promises.push(
+                fetch('https://fapi.binance.com/fapi/v1/ticker/24hr')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (Array.isArray(data)) data.forEach(t => {
+                            if (set.has(t.symbol)) {
+                                const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:futures`);
+                                if (ticker) {
+                                    ticker.price = parseFloat(t.lastPrice) || 0;
+                                    ticker.change = parseFloat(t.priceChangePercent) || 0;
+                                    ticker.volume = parseFloat(t.quoteVolume) || 0;
+                                    ticker.trades = parseInt(t.count) || 0;
+                                }
+                            }
+                        });
+                    }).catch(() => {})
+            );
         }
+
+        // Binance Spot
+        if (binanceSpot.length > 0) {
+            const set = new Set(binanceSpot);
+            promises.push(
+                fetch('https://api.binance.com/api/v3/ticker/24hr')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (Array.isArray(data)) data.forEach(t => {
+                            if (set.has(t.symbol)) {
+                                const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:spot`);
+                                if (ticker) {
+                                    ticker.price = parseFloat(t.lastPrice) || 0;
+                                    ticker.change = parseFloat(t.priceChangePercent) || 0;
+                                    ticker.volume = parseFloat(t.quoteVolume) || 0;
+                                    ticker.trades = parseInt(t.count) || 0;
+                                }
+                            }
+                        });
+                    }).catch(() => {})
+            );
+        }
+
+        // Bybit Futures
+        if (bybitFutures.length > 0) {
+            const set = new Set(bybitFutures);
+            promises.push(
+                fetch('https://api.bybit.com/v5/market/tickers?category=linear')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data?.retCode === 0 && data.result?.list) data.result.list.forEach(t => {
+                            if (set.has(t.symbol)) {
+                                const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:futures`);
+                                if (ticker) {
+                                    ticker.price = parseFloat(t.lastPrice) || 0;
+                                    ticker.change = (parseFloat(t.price24hPcnt) || 0) * 100;
+                                    ticker.volume = (parseFloat(t.volume24h) || 0) * (parseFloat(t.lastPrice) || 0);
+                                }
+                            }
+                        });
+                    }).catch(() => {})
+            );
+        }
+
+        // Bybit Spot
+        if (bybitSpot.length > 0) {
+            const set = new Set(bybitSpot);
+            promises.push(
+                fetch('https://api.bybit.com/v5/market/tickers?category=spot')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data?.retCode === 0 && data.result?.list) data.result.list.forEach(t => {
+                            if (set.has(t.symbol)) {
+                                const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:spot`);
+                                if (ticker) {
+                                    ticker.price = parseFloat(t.lastPrice) || 0;
+                                    ticker.change = (parseFloat(t.price24hPcnt) || 0) * 100;
+                                    ticker.volume = (parseFloat(t.volume24h) || 0) * (parseFloat(t.lastPrice) || 0);
+                                }
+                            }
+                        });
+                    }).catch(() => {})
+            );
+        }
+
+        await Promise.allSettled(promises);
+        this.tickerPanel.renderTickerList();
     }
 
     renderDropdown() {
@@ -337,10 +483,9 @@ class WatchlistManager {
                 const isActive = listId === this.activeListId;
                 html += `
                     <div class="wl-dropdown-item ${isActive ? 'active' : ''}" data-list-id="${listId}">
-                       <span class="wl-item-icon">${isActive ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color:#4caf50;"><path d="m17,15c-4.188,0-6.33,3.499-6.849,4.5.52,1.001,2.661,4.5,6.849,4.5s6.33-3.499,6.849-4.5c-.52-1.001-2.661-4.5-6.849-4.5Zm0,8c-3.302,0-5.033-2.288-5.717-3.5.685-1.212,2.415-3.5,5.717-3.5s5.033,2.288,5.717,3.5c-.685,1.212-2.415,3.5-5.717,3.5Zm-8-12.5h11v1h-11v-1Zm8,7c-1.103,0-2,.897-2,2s.897,2,2,2,2-.897,2-2-.897-2-2-2Zm0,3c-.551,0-1-.448-1-1s.449-1,1-1,1.448,1-1,1ZM6,5.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1,.448,1,1Zm0,5.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1.448,1,1Zm14-5h-11v-1h11v1Zm-14,10.5c0,.552-.448,1-1,1s-1-.448-1-1,.448-1,1-1,1.448,1,1ZM24,2.5v13.684c-.292-.327-.624-.66-1-.981V2.5c0-.827-.673-1.5-1.5-1.5H2.5c-.827,0-1.5.673-1.5,1.5v18.5h7.686c.161.279.377.624.653,1H0V2.5C0,1.122,1.122,0,2.5,0h19c1.378,0,2.5,1.122,2.5,2.5Z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5;"><path d="M17.5,24H6.5c-2.481,0-4.5-2.019-4.5-4.5V4.5C2,2.019,4.019,0,6.5,0h11c2.481,0,4.5,2.019,4.5,4.5v15c0,2.481-2.019,4.5-4.5,4.5ZM6.5,1c-1.93,0-3.5,1.57-3.5,3.5v15c0,1.93,1.57,3.5,3.5,3.5h11c1.93,0-3.5-1.57-3.5-3.5V4.5c0-1.93-1.57-3.5-3.5-3.5H6.5Zm11.5,4.5c0-.276-.224-.5-.5-.5h-6c-.276,0-.5.224-.5.5s.224,.5.5.5h6c.276,0,.5-.224,.5-.5Zm0,6c0-.276-.224-.5-.5-.5h-6c-.276,0-.5.224-.5.5s.224,.5.5.5h6c.276,0,.5-.224,.5-.5Zm0,6c0-.276-.224-.5-.5-.5h-6c-.276,0-.5.224-.5.5s.224,.5.5.5h6c.276,0,.5-.224,.5-.5ZM8.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5.5-.5h2c.276,0,.5.224,.5.5v2c0,.276-.224,.5-.5.5Zm-1.5-1h1v-1h-1v1Zm1.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5.5-.5h2c.276,0,.5.224,.5.5v2c0,.276-.224,.5-.5.5Zm-1.5-1h1v-1h-1v1Zm1.5,7h-2c-.276,0-.5-.224-.5-.5v-2c0-.276,.224-.5.5-.5h2c.276,0,.5.224,.5.5v2c0,.276-.224,.5-.5.5Zm-1.5-1h1v-1h-1v1Z"/></svg>'}</span>
-                        <span class="wl-item-name">${this.escapeHtml(list.name)}</span>
-                        <span class="wl-item-count">${list.symbols.length}</span>
-                        <span class="wl-item-actions">
+                       <span class="wl-item-name">${this.escapeHtml(list.name)}</span>
+                       <span class="wl-item-count">${list.symbols.length}</span>
+                       <span class="wl-item-actions">
                             ${!list.isDefault ? `<span class="wl-item-edit" data-action="edit" title="Переименовать">✎</span>` : ''}
                             ${!list.isDefault ? `<span class="wl-item-delete" data-action="delete" title="Удалить">×</span>` : ''}
                         </span>
@@ -351,8 +496,7 @@ class WatchlistManager {
             html += `
                 <div class="wl-dropdown-divider"></div>
                 <div class="wl-dropdown-item wl-add-item" data-action="add">
-                    <span class="wl-item-icon">+</span>
-                    <span class="wl-item-name">Создать новый список</span>
+                    + Создать новый список
                 </div>
             `;
 
@@ -445,134 +589,6 @@ class WatchlistManager {
         } else if (panelHasTickers) {
             await this.fetchPricesForActiveList();
         }
-    }
-
-    async fetchPricesForActiveList() {
-        const activeList = this.lists.get(this.activeListId);
-        if (!activeList || activeList.symbols.length === 0) return;
-
-        const binanceSymbols = [];
-        const bybitFuturesSymbols = [];
-        const bybitSpotSymbols = [];
-
-        activeList.symbols.forEach(key => {
-            const parts = key.split(':');
-            if (parts.length !== 3) return;
-            const [symbol, exchange, marketType] = parts;
-            if (exchange === 'binance') binanceSymbols.push(symbol);
-            else if (exchange === 'bybit') {
-                if (marketType === 'futures') bybitFuturesSymbols.push(symbol);
-                else bybitSpotSymbols.push(symbol);
-            }
-        });
-
-        const promises = [];
-
-        if (binanceSymbols.length > 0) {
-            const set = new Set(binanceSymbols);
-            promises.push(
-                fetch('https://fapi.binance.com/fapi/v1/ticker/24hr')
-                    .then(r => r.json())
-                    .then(data => {
-                        if (!Array.isArray(data)) return;
-                        data.forEach(t => {
-                            if (set.has(t.symbol)) {
-                                this.tickerPanel.tickersMap.forEach(ticker => {
-                                    if (ticker.symbol === t.symbol && ticker.exchange === 'binance') {
-                                        ticker.price = parseFloat(t.lastPrice);
-                                        ticker.change = parseFloat(t.priceChangePercent);
-                                        ticker.volume = parseFloat(t.quoteVolume);
-                                        ticker.trades = parseInt(t.count);
-                                    }
-                                });
-                            }
-                        });
-                    })
-                    .catch(e => {})
-            );
-        }
-
-        if (bybitFuturesSymbols.length > 0) {
-            const set = new Set(bybitFuturesSymbols);
-            promises.push(
-                fetch('https://api.bybit.com/v5/market/tickers?category=linear')
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.retCode !== 0 || !data.result?.list) return;
-                        data.result.list.forEach(t => {
-                            if (set.has(t.symbol)) {
-                                this.tickerPanel.tickersMap.forEach(ticker => {
-                                    if (ticker.symbol === t.symbol && ticker.exchange === 'bybit' && ticker.marketType === 'futures') {
-                                        ticker.price = parseFloat(t.lastPrice);
-                                        ticker.change = parseFloat(t.price24hPcnt) * 100;
-                                        ticker.volume = parseFloat(t.volume24h) * parseFloat(t.lastPrice);
-                                        ticker.trades = 0;
-                                    }
-                                });
-                            }
-                        });
-                    })
-                    .catch(e => {})
-            );
-        }
-
-        if (bybitSpotSymbols.length > 0) {
-            const set = new Set(bybitSpotSymbols);
-            promises.push(
-                fetch('https://api.bybit.com/v5/market/tickers?category=spot')
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.retCode !== 0 || !data.result?.list) return;
-                        data.result.list.forEach(t => {
-                            if (set.has(t.symbol)) {
-                                this.tickerPanel.tickersMap.forEach(ticker => {
-                                    if (ticker.symbol === t.symbol && ticker.exchange === 'bybit' && ticker.marketType === 'spot') {
-                                        ticker.price = parseFloat(t.lastPrice);
-                                        ticker.change = parseFloat(t.price24hPcnt) * 100;
-                                        ticker.volume = parseFloat(t.volume24h) * parseFloat(t.lastPrice);
-                                        ticker.trades = 0;
-                                    }
-                                });
-                            }
-                        });
-                    })
-                    .catch(e => {})
-            );
-        }
-
-        await Promise.allSettled(promises);
-        this.tickerPanel.renderTickerList();
-    }
-
-    loadSymbolsFromList(listId) {
-        const list = this.lists.get(listId);
-        if (!list) return;
-
-        this.tickerPanel.tickers = [];
-        this.tickerPanel.state.customSymbols = [];
-        this.tickerPanel.tickerElements.clear();
-        this.tickerPanel.displayedTickers = [];
-        this.tickerPanel.totalItems = 0;
-        this.tickerPanel.filterCache = null;
-
-        const container = document.getElementById('tickerListContainer');
-        if (container) container.innerHTML = '';
-
-        this.tickerPanel.state.customSymbols = [...list.symbols];
-
-        list.symbols.forEach(symbolKey => {
-            const parts = symbolKey.split(':');
-            if (parts.length === 3) {
-                const [symbol, exchange, marketType] = parts;
-                
-                if (this.tickerPanel.tickersMap.has(symbolKey)) {
-                    this.tickerPanel.tickers.push(this.tickerPanel.tickersMap.get(symbolKey));
-                } else {
-                    this.tickerPanel.addSymbol(symbol, true, exchange, marketType, false, true, true);
-                }
-            }
-        });
-        this.tickerPanel.renderTickerList();
     }
 
     escapeHtml(text) {
