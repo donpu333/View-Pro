@@ -124,14 +124,12 @@ class EMAIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    _createEmptySeries() {
-        this.series.forEach(s => { try { this.manager.chartManager.chart.removeSeries(s); } catch(e) {} });
-        this.series = [];
-        this.series = [
-            this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
-        ];
-    }
-    
+   _createEmptySeries() {
+    this._removeAllSeries();
+    this.series = [
+        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
+    ];
+}
     updateSeriesData(data) {
         if (!data || !data.length) return;
         if (this.series[0]) this.series[0].setData(this.manager._filterData(data));
@@ -345,42 +343,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         document.getElementById('multiatr-toggle').addEventListener('mousedown', (e) => e.stopPropagation());
         document.getElementById('multiatr-toggle').addEventListener('click', () => this._toggleBody(body));
         document.getElementById('multiatr-close').addEventListener('mousedown', (e) => e.stopPropagation());
-        document.getElementById('multiatr-close').addEventListener('click', () => {
-            if (this._fallbackTimer) {
-                clearInterval(this._fallbackTimer);
-                this._fallbackTimer = null;
-            }
-            
-            const table = document.getElementById('multiatr-full-table');
-            if (table) table.remove();
-            
-            this.visible = false;
-            
-            if (this.manager) {
-                if (this.manager.indicators && Array.isArray(this.manager.indicators)) {
-                    const idx = this.manager.indicators.indexOf(this);
-                    if (idx !== -1) {
-                        this.manager.indicators.splice(idx, 1);
-                    }
-                } else if (this.manager._indicators && Array.isArray(this.manager._indicators)) {
-                    const idx = this.manager._indicators.indexOf(this);
-                    if (idx !== -1) {
-                        this.manager._indicators.splice(idx, 1);
-                    }
-                }
-                
-                if (this.manager._saveIndicators) {
-                    this.manager._saveIndicators();
-                }
-                if (this.manager.renderIndicatorsList) {
-                    this.manager.renderIndicatorsList();
-                } else if (this.manager._renderIndicatorsList) {
-                    this.manager._renderIndicatorsList();
-                } else if (this.manager.updateIndicatorsUI) {
-                    this.manager.updateIndicatorsUI();
-                }
-            }
-        });
+      document.getElementById('multiatr-close').addEventListener('click', () => {
+    if (this.manager) {
+        const index = this.manager.activeIndicators?.indexOf(this);
+        if (index !== undefined && index !== -1) {
+            this.manager.removeIndicator(index);
+        }
+    }
+});
         body.addEventListener('click', (e) => this._handleCopy(e));
     }
 
@@ -828,9 +798,8 @@ try {
     }
     
     _createEmptySeries() {
-        this.series.forEach(s => { try { this.manager.chartManager.chart.removeSeries(s); } catch(e) {} });
-        this.series = [];
-    }
+    this._removeAllSeries();
+}
     
     updateSeriesData(data) {
         if (data && data.length) {
@@ -895,24 +864,31 @@ class Volume24HIndicator extends BaseIndicator {
         this._tooltipEl = el;
     }
 
-    _bindCrosshair() {
-        try {
-            const pm = this.manager.panelManager;
-            const panel = pm.panels.get(this.data.panel);
-            
-            if (!panel || !panel.chart) {
-                setTimeout(() => this._bindCrosshair(), 500);
-                return;
-            }
-            
-            panel.chart.subscribeCrosshairMove((param) => {
-                this._handleCrosshairMove(param);
-            });
-            
-        } catch (e) {
-            console.error('volume24h crosshair error:', e);
-        }
+   _bindCrosshair(attempts = 0) {
+    const MAX_ATTEMPTS = 20;
+    
+    if (attempts >= MAX_ATTEMPTS) {
+        console.warn('❌ Volume24H: не удалось привязать кроссхейр после 20 попыток');
+        return;
     }
+    
+    try {
+        const pm = this.manager.panelManager;
+        const panel = pm.panels.get(this.data.panel);
+        
+        if (!panel || !panel.chart) {
+            this._crosshairTimer = setTimeout(() => this._bindCrosshair(attempts + 1), 500);
+            return;
+        }
+        
+        panel.chart.subscribeCrosshairMove((param) => {
+            this._handleCrosshairMove(param);
+        });
+        
+    } catch (e) {
+        console.error('volume24h crosshair error:', e);
+    }
+}
     
     _handleCrosshairMove(param) {
         if (!param?.time || !this._tooltipEl) {
@@ -1040,13 +1016,17 @@ class Volume24HIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
 
-    destroy() {
-        if (this._tooltipEl) {
-            this._tooltipEl.remove();
-            this._tooltipEl = null;
-        }
-        super.destroy();
+   destroy() {
+    if (this._crosshairTimer) {
+        clearTimeout(this._crosshairTimer);
+        this._crosshairTimer = null;
     }
+    if (this._tooltipEl) {
+        this._tooltipEl.remove();
+        this._tooltipEl = null;
+    }
+    super.destroy();
+}
 }
 
 window.Volume24HIndicator = Volume24HIndicator;
@@ -1134,9 +1114,11 @@ class SMAIndicator extends BaseIndicator {
     }
     
     _createEmptySeries() {
-        this.series.forEach(s => { try { this.manager.chartManager.chart.removeSeries(s); } catch(e) {} });
-        this.series = [ this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth }) ];
-    }
+    this._removeAllSeries();
+    this.series = [
+        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
+    ];
+}
     
     updateSeriesData(data) {
         if (!data || !data.length) return;
@@ -1229,6 +1211,7 @@ function bootIndicators() {
     window.IndicatorRegistry.set('atr', ATRIndicator);
     window.IndicatorRegistry.set('multiatr', MultiTimeframeATRIndicator);
     window.IndicatorRegistry.set('volume24h', Volume24HIndicator);
+   
     console.log('✅ Зарегистрировано индикаторов:', window.IndicatorRegistry.size);
 }
 bootIndicators();
@@ -1243,4 +1226,6 @@ if (typeof window !== 'undefined') {
     window.ADXIndicator = ADXIndicator;
     window.ATRIndicator = ATRIndicator;
     window.MultiTimeframeATRIndicator = MultiTimeframeATRIndicator;
+    window.Volume24HIndicator = Volume24HIndicator;
+ 
 }
