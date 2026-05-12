@@ -205,29 +205,30 @@ class HorizontalRayRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ hitTest - возвращает И object, И distance
-hitTest(x, y) {
+  hitTest(x, y) {
     let bestHit = null;
     let bestDistance = Infinity;
 
     // Проверка линии
     if (this._hitArea) {
-        const buffer = 15;
+        const buffer = 10;
         const centerY = this._hitArea.y + this._hitArea.height / 2;
         const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-        const pixelRatio = window.devicePixelRatio || 1;
-        const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * pixelRatio;
-        const inX = x >= 0 && x <= chartWidth;
         
-        if (inX && inY) {
+        // ✅ УБИРАЕМ ОГРАНИЧЕНИЕ ПО X — линия бесконечна влево/вправо
+        // const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
+        // const inX = x >= 0 && x <= chartWidth;
+        
+        // if (inX && inY) {
+        if (inY) {  // ← ТОЛЬКО ПРОВЕРКА ПО Y
             const distance = Math.abs(y - centerY);
             if (distance < bestDistance) {
-                bestHit = { type: 'line', ray: this._ray, distance: distance };  // ← ДОБАВИТЬ ray
+                bestHit = { type: 'line', ray: this._ray, distance: distance };
                 bestDistance = distance;
             }
         }
     }
-    
+
     // Проверка ценовой метки
     if (this._priceLabelHitArea) {
         const padding = 15;
@@ -238,22 +239,21 @@ hitTest(x, y) {
                     x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
         const inY = y >= this._priceLabelHitArea.y - padding && 
                     y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
-                        
+                    
         if (inX && inY) {
             const dx = x - centerX;
             const dy = y - centerY;
             const distance = Math.sqrt(dx * dx + dy * dy);
             if (distance < bestDistance) {
-                bestHit = { type: 'label', ray: this._ray, distance: distance };  // ← ДОБАВИТЬ ray
+                bestHit = { type: 'label', ray: this._ray, distance: distance };
                 bestDistance = distance;
             }
         }
     }
-    
+
     return bestHit;
 }
 }
-
 class HorizontalRayPaneView {
     constructor(ray, chartManager) {
         this._ray = ray;
@@ -1715,7 +1715,7 @@ class TrendLineRenderer {
 
         // Line (расстояние до отрезка через проекцию)
         if (this._hitAreaLine) {
-            const buffer = 15;
+            const buffer = 10;
             const x1 = this._hitAreaLine.x1;
             const y1 = this._hitAreaLine.y1;
             const x2 = this._hitAreaLine.x2;
@@ -2951,7 +2951,7 @@ if (infoY > 10) {
 
         // Line (расстояние до отрезка)
         if (this._hitAreaLine) {
-            const buffer = 15;
+            const buffer = 10;
             const x1 = this._hitAreaLine.x1;
             const y1 = this._hitAreaLine.y1;
             const x2 = this._hitAreaLine.x2;
@@ -4154,7 +4154,7 @@ class AlertLineRenderer {
 
     // Проверка линии
     if (this._hitArea) {
-        const buffer = 15;
+        const buffer = 10;
         const centerY = this._hitArea.y + this._hitArea.height / 2;
         const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
         const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
@@ -5920,7 +5920,7 @@ class TextDrawing {
             fontSize: options.fontSize || 12,
             bold: options.bold || false,
             opacity: options.opacity !== undefined ? options.opacity : 1,
-            bgOpacity: options.bgOpacity !== undefined ? options.bgOpacity : 0.8,
+            bgOpacity: options.bgOpacity !== undefined ? options.bgOpacity : 0,
             ...options
         };
         this.anchorCandle = options.anchorCandle || null;
