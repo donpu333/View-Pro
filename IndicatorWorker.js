@@ -197,9 +197,7 @@ function calculateVolume24H(data, params) {
     return result;
 }
 
-function volume24h(data, params) {
-    return calculateVolume24H(data, params);
-}
+
 function smoothArray(arr, period) {
     if (arr.length < period) return [];
     const smoothed = [];
@@ -221,6 +219,7 @@ function stochrsi(data, p) { return calculateStochRSI(data, p.period, p.k, p.d);
 function macd(data, p) { return calculateMACD(data, p.fastPeriod, p.slowPeriod, p.signalPeriod); }
 function adx(data, p) { return calculateADX(data, p.period); }
 function atr(data, p) { return calculateATR(data, p.period); }
+function volume24h(data, p) { return calculateVolume24H(data, p); }
 `;
 
 let indicatorWorker = null;
