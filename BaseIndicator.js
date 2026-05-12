@@ -93,6 +93,22 @@ class BaseIndicator {
         return this.series;
     }
     
+       _removeAllSeries() {
+        this.series.forEach(s => {
+            if (!s) return;
+            try {
+                if (this.data.panel === 'main') {
+                    this.manager.chartManager.chart.removeSeries(s);
+                } else {
+                    this.manager.panelManager.removeSeries(this.data.panel, s);
+                }
+            } catch(e) {
+                console.warn('Ошибка удаления серии:', e);
+            }
+        });
+        this.series = [];
+    }
+    
     _createEmptySeries() {
         // Переопределяется в наследниках
     }
@@ -121,7 +137,12 @@ class BaseIndicator {
         
         this.updateSettings(newSettings);
     }
+         destroy() {
+        this._removeAllSeries();
+        this.manager = null;
+    }
 }
+
 if (typeof window !== 'undefined') {
     window.BaseIndicator = BaseIndicator;
 }
