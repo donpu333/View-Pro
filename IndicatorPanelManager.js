@@ -93,12 +93,7 @@ class IndicatorPanelManager {
             this._syncPanelWithMainChart(chart);
         setTimeout(() => { if (this.chartManager?._updateMainChartHeight) this.chartManager._updateMainChartHeight(); }, 50);
         console.log(`🔗 Вызываю _syncPanelWithMainChart для: ${id}`);
-    this._syncPanelWithMainChart(chart);
-    
-    setTimeout(() => { 
-        if (this.chartManager?._updateMainChartHeight) 
-            this.chartManager._updateMainChartHeight(); 
-    }, 50);
+   
         return panel;
     }
     
@@ -221,7 +216,7 @@ class IndicatorPanelManager {
         });
     }
 _syncPanelWithMainChart(panelChart) {
-    const cm = window.top?.app?.chartManager;
+    const cm = this.chartManager;
     if (!cm?.chart) return;
     
     const mainChart = cm.chart;
