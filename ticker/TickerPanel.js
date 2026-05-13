@@ -476,8 +476,8 @@ startTickerPanelPriceEngine() {
             if (ticker.exchange === 'bybit' && ticker.marketType === 'spot') bySpotSymbols.push(ticker.symbol);
         }
         
-        const BATCH_SIZE = 50;
-        const BATCH_DELAY = 500; // ✅ 200 → 500мс
+        const BATCH_SIZE = 25;   // ✅ 50 → 25
+        const BATCH_DELAY = 800; // ✅ 500 → 800мс
         
         // Binance Futures батчами
         for (let i = 0; i < bnFutSymbols.length; i += BATCH_SIZE) {
@@ -505,7 +505,7 @@ startTickerPanelPriceEngine() {
         
         // ✅ ПАУЗА МЕЖДУ FUTURES И SPOT
         if (bnFutSymbols.length > 0 && bnSpotSymbols.length > 0) {
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 2000)); // ✅ 1000 → 2000мс
         }
         
         // Binance Spot батчами
@@ -534,7 +534,7 @@ startTickerPanelPriceEngine() {
         
         // ✅ ПАУЗА ПЕРЕД BYBIT
         if ((bnFutSymbols.length > 0 || bnSpotSymbols.length > 0) && (byFutSymbols.length > 0 || bySpotSymbols.length > 0)) {
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 1000)); // ✅ 500 → 1000мс
         }
         
         // Bybit Futures (один запрос)
@@ -583,7 +583,7 @@ startTickerPanelPriceEngine() {
     };
 
     pollRestData();
-    this._restPollingInterval = setInterval(pollRestData, 30000);
+   this._restPollingInterval = setInterval(pollRestData, 300000);
 }
 
     clearAllSymbols() {
