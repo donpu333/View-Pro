@@ -2208,9 +2208,11 @@ function loadSeparatorSettings() {
     document.getElementById('separatorOpacity').value = sepOpacity;
     document.getElementById('separatorOpacityValue').textContent = sepOpacity + '%';
 }
-function fillColorGrid(gridId, colors, selectedColor) {
-    const grid = document.getElementById(gridId);
-    grid.innerHTML = '';
+function fillColorGrid() {
+    const element = document.getElementById('...'); // найди какой элемент
+    if (!element) return; // ← добавь эту проверку
+    element.innerHTML = '...';
+
     
     colors.forEach(color => {
         const square = document.createElement('div');
