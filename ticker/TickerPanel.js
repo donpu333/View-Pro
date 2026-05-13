@@ -348,51 +348,81 @@ _deduplicateSymbols(symbols) {
 }
 
 addInitialSymbols() {
+    // 1. Сначала добавляем сохраненные символы (если есть)
     const savedSymbols = this.state.customSymbols;
-    savedSymbols.forEach(symbolKey => {
-        const parts = symbolKey.split(':');
-        if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
-    });
+    if (savedSymbols && savedSymbols.length > 0) {
+        savedSymbols.forEach(symbolKey => {
+            const parts = symbolKey.split(':');
+            if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
+        });
+    }
     this.updateModalCount();
     
-    // Собираем USDT-символы, которые есть в панели
-    const bnFutSymbols = [...this.tickersMap.keys()]
-        .filter(k => k.endsWith(':binance:futures'))
-        .map(k => k.split(':')[0]);
-    const bnSpotSymbols = [...this.tickersMap.keys()]
-        .filter(k => k.endsWith(':binance:spot'))
-        .map(k => k.split(':')[0]);
-
-    const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
-
-    const bnFutPromises = bnFutSymbols.length > 0 
-        ? chunk(bnFutSymbols, 100).map(batch => 
-            fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${batch.map(s => `"${s}"`).join(',')}]`)
-                .then(r => r.json()).catch(() => [])
-          )
-        : [Promise.resolve([])];
-
-    const bnSpotPromises = bnSpotSymbols.length > 0 
-        ? chunk(bnSpotSymbols, 100).map(batch => 
-            fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${batch.map(s => `"${s}"`).join(',')}]`)
-                .then(r => r.json()).catch(() => [])
-          )
-        : [Promise.resolve([])];
-
-    const byFutPromise = fetch('https://api.bybit.com/v5/market/tickers?category=linear').then(r => r.json()).catch(() => null);
-    const bySpotPromise = fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).catch(() => null);
-
-    Promise.all([
-        Promise.all(bnFutPromises).then(chunks => chunks.flat()),
-        Promise.all(bnSpotPromises).then(chunks => chunks.flat()),
-        byFutPromise,
-        bySpotPromise
-    ]).then(([bnF, bnS, byF, byS]) => {
-        if (Array.isArray(bnF)) bnF.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:binance:futures`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); tk.trades=parseInt(t.count); }});
-        if (Array.isArray(bnS)) bnS.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:binance:spot`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); tk.trades=parseInt(t.count); }});
-        if (byF?.retCode === 0) byF.result.list.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:bybit:futures`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h)*parseFloat(t.lastPrice); }});
-        if (byS?.retCode === 0) byS.result.list.forEach(t => { const tk=this.tickersMap.get(`${t.symbol}:bybit:spot`); if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h); }});
-
+    // 2. Определяем, какие биржи нужны для тикеров (цены)
+    const needBnFut = [...this.tickersMap.keys()].some(k => k.includes(':binance:futures'));
+    const needBnSpot = [...this.tickersMap.keys()].some(k => k.includes(':binance:spot'));
+    const needByFut = [...this.tickersMap.keys()].some(k => k.includes(':bybit:futures'));
+    const needBySpot = [...this.tickersMap.keys()].some(k => k.includes(':bybit:spot'));
+    
+    // 3. Запрашиваем цены для уже загруженных символов
+    const promises = [];
+    if (needBnFut) promises.push(fetch('https://fapi.binance.com/fapi/v1/ticker/24hr').then(r => r.json()).catch(() => []));
+    if (needBnSpot) promises.push(fetch('https://api.binance.com/api/v3/ticker/24hr').then(r => r.json()).catch(() => []));
+    if (needByFut) promises.push(fetch('https://api.bybit.com/v5/market/tickers?category=linear').then(r => r.json()).catch(() => null));
+    if (needBySpot) promises.push(fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).catch(() => null));
+    
+    if (promises.length > 0) {
+        Promise.allSettled(promises).then(results => {
+            let idx = 0;
+            
+            if (needBnFut && results[idx]?.status === 'fulfilled') {
+                Array.isArray(results[idx].value) && results[idx].value.forEach(t => {
+                    const tk = this.tickersMap.get(`${t.symbol}:binance:futures`);
+                    if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); }
+                });
+                idx++;
+            }
+            if (needBnSpot && results[idx]?.status === 'fulfilled') {
+                Array.isArray(results[idx].value) && results[idx].value.forEach(t => {
+                    const tk = this.tickersMap.get(`${t.symbol}:binance:spot`);
+                    if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.priceChangePercent); tk.volume=parseFloat(t.quoteVolume); }
+                });
+                idx++;
+            }
+            if (needByFut && results[idx]?.status === 'fulfilled') {
+                const data = results[idx].value;
+                if (data?.retCode === 0 && data.result?.list) {
+                    data.result.list.forEach(t => {
+                        const tk = this.tickersMap.get(`${t.symbol}:bybit:futures`);
+                        if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h)*parseFloat(t.lastPrice); }
+                    });
+                }
+                idx++;
+            }
+            if (needBySpot && results[idx]?.status === 'fulfilled') {
+                const data = results[idx].value;
+                if (data?.retCode === 0 && data.result?.list) {
+                    data.result.list.forEach(t => {
+                        const tk = this.tickersMap.get(`${t.symbol}:bybit:spot`);
+                        if(tk) { tk.price=parseFloat(t.lastPrice); tk.change=parseFloat(t.price24hPcnt)*100; tk.volume=parseFloat(t.volume24h); }
+                    });
+                }
+            }
+            
+            this.renderTickerList();
+            requestAnimationFrame(() => {
+                const container = document.getElementById('tickerListContainer');
+                const loader = document.getElementById('tickerLoader');
+                if (container) container.classList.add('ready');
+                if (loader) loader.style.display = 'none';
+            });
+            
+            this._blockDOMUpdates = false; 
+            this.updatePriceElements(); 
+            this.startTickerPanelPriceEngine(); 
+        });
+    } else {
+        // Без запросов просто рендерим
         this.renderTickerList();
         requestAnimationFrame(() => {
             const container = document.getElementById('tickerListContainer');
@@ -403,9 +433,8 @@ addInitialSymbols() {
         
         this._blockDOMUpdates = false; 
         this.updatePriceElements(); 
-        this.startTickerPanelPriceEngine(); 
-        
-    }).catch(e => console.error('❌ Ошибка загрузки:', e));
+        this.startTickerPanelPriceEngine();
+    }
     
     this.setupDelegatedEvents();
 }
