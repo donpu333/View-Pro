@@ -16,71 +16,84 @@ class PriceManager {
         console.log('✅ PriceManager инициализирован');
     }
     
-    _initBinance() {
-        if (this.binanceReconnectTimer) {
-            clearTimeout(this.binanceReconnectTimer);
-            this.binanceReconnectTimer = null;
-        }
-        if (this.wsBinance) {
-            try { 
-                this.wsBinance.onclose = null; 
-                this.wsBinance.onerror = null; 
-                this.wsBinance.onmessage = null; 
-                this.wsBinance.close(); 
-            } catch(e) {}
-            this.wsBinance = null;
-        }
-        
-        const ws = new WebSocket('wss://fstream.binance.com/ws/!ticker@arr');
-        
-        ws.onopen = () => {
-            console.log('✅ PriceManager: Binance подключен');
-            this.wsBinance = ws;
-        };
-        
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                const tickers = Array.isArray(data) ? data : [data];
-                
-                tickers.forEach(ticker => {
-                    if (!ticker.s || !ticker.c) return;
-                    
-                    const symbol = ticker.s;
-                    const price = parseFloat(ticker.c);
-                    
-                    if (isNaN(price)) return;
-                    
-                    this.prices.set(symbol, {
-                        price: price,
-                        time: Date.now(),
-                        exchange: 'binance'
-                    });
-                    
-                    if (this.subscribers.has(symbol)) {
-                        const cbs = this.subscribers.get(symbol);
-                        for (let i = 0; i < cbs.length; i++) {
-                            try { 
-                                cbs[i](price, symbol); 
-                            } catch(e) {}
-                        }
-                    }
-                });
-            } catch (error) {}
-        };
-        
-        ws.onclose = (event) => {
-            console.log('❌ PriceManager: Binance закрыт, переподключение...');
-            this.binanceReconnectTimer = setTimeout(() => {
-                this._initBinance();
-            }, 3000);
-        };
-        
-        ws.onerror = (error) => {
-            console.warn('⚠️ PriceManager: Binance ошибка');
-        };
+ _initBinance() {
+    if (this.binanceReconnectTimer) {
+        clearTimeout(this.binanceReconnectTimer);
+        this.binanceReconnectTimer = null;
     }
-        
+    if (this.wsBinance) {
+        try { 
+            this.wsBinance.onclose = null; 
+            this.wsBinance.onerror = null; 
+            this.wsBinance.onmessage = null; 
+            this.wsBinance.close(); 
+        } catch(e) {}
+        this.wsBinance = null;
+    }
+    
+    const ws = new WebSocket('wss://fstream.binance.com/ws/!ticker@arr');
+    
+    // 👇 ФИЛЬТРЫ ДЛЯ ПЛАВНОСТИ ЦЕНЫ
+    let _lastBatchUpdate = 0;
+    const _lastPrices = new Map();
+    
+    ws.onopen = () => {
+        console.log('✅ PriceManager: Binance подключен');
+        this.wsBinance = ws;
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            const tickers = Array.isArray(data) ? data : [data];
+            
+            // 👇 ФИЛЬТР 1: Throttle 100мс на весь батч
+            const now = Date.now();
+            if (now - _lastBatchUpdate < 100) return;
+            _lastBatchUpdate = now;
+            
+            tickers.forEach(ticker => {
+                if (!ticker.s || !ticker.c) return;
+                
+                const symbol = ticker.s;
+                const price = parseFloat(ticker.c);
+                
+                if (isNaN(price)) return;
+                
+                // 👇 ФИЛЬТР 2: Мин. изменение $0.01 для этого символа
+                const lastPrice = _lastPrices.get(symbol);
+                if (lastPrice !== undefined && Math.abs(price - lastPrice) < 0.01) return;
+                _lastPrices.set(symbol, price);
+                
+                this.prices.set(symbol, {
+                    price: price,
+                    time: Date.now(),
+                    exchange: 'binance'
+                });
+                
+                if (this.subscribers.has(symbol)) {
+                    const cbs = this.subscribers.get(symbol);
+                    for (let i = 0; i < cbs.length; i++) {
+                        try { 
+                            cbs[i](price, symbol); 
+                        } catch(e) {}
+                    }
+                }
+            });
+        } catch (error) {}
+    };
+    
+    ws.onclose = (event) => {
+        console.log('❌ PriceManager: Binance закрыт, переподключение...');
+        this.binanceReconnectTimer = setTimeout(() => {
+            this._initBinance();
+        }, 3000);
+    };
+    
+    ws.onerror = (error) => {
+        console.warn('⚠️ PriceManager: Binance ошибка');
+    };
+}
     _initBybit() {
         if (this.bybitReconnectTimer) {
             clearTimeout(this.bybitReconnectTimer);
