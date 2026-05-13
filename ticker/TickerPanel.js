@@ -645,8 +645,10 @@ syncWithActiveWatchlist() {
     
     return true;
 }
-   async addSymbolsBatch(symbolsData) {
+ async addSymbolsBatch(symbolsData) {
     if (!symbolsData || symbolsData.length === 0) return;
+    
+    const addedKeys = [];
     
     symbolsData.forEach(({ symbol, exchange, marketType }) => {
         if (!symbol) return; 
@@ -654,12 +656,6 @@ syncWithActiveWatchlist() {
         if (!symbol.endsWith('USDT')) return;
         const key = `${symbol}:${exchange}:${marketType}`; 
         
-        // ✅ Добавляем в вотчлист перед проверкой
-        if (this.watchlistManager) {
-            this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType);
-        }
-        
-        // Если тикера нет в памяти — добавляем
         if (!this.tickersMap.has(key)) {
             const newTicker = { 
                 symbol, price: 0, change: 0, volume: 0, trades: null, 
@@ -668,9 +664,7 @@ syncWithActiveWatchlist() {
             };
             this.tickers.push(newTicker); 
             this.tickersMap.set(key, newTicker);
-            
-            // ❗️ НЕ ПУШИМ В customSymbols НАПРЯМУЮ — вотчлист сам разрулит
-            // if (!this.state.customSymbols.includes(key)) this.state.customSymbols.push(key);
+            addedKeys.push(key);
             
             if (window.priceManagerInstance) {
                 window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
@@ -678,31 +672,48 @@ syncWithActiveWatchlist() {
         }
     });
     
-    // ✅ СИНХРОНИЗИРУЕМ customSymbols С ВОТЧЛИСТОМ
-    this.syncWithActiveWatchlist();
+    if (addedKeys.length === 0) return;
     
-    // Сохраняем и рендерим
+    // ✅ ОДИН раз обновляем вотчлист
+    if (this.watchlistManager) {
+        const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
+        if (list) {
+            for (const key of addedKeys) {
+                if (!list.symbols.includes(key)) {
+                    list.symbols.push(key);
+                }
+            }
+            this.watchlistManager.renderCache.delete(this.watchlistManager.activeListId);
+            this.watchlistManager.saveToStorage();
+            this.watchlistManager.renderDropdown();
+        }
+    }
+    
+    this.syncWithActiveWatchlist();
     this.saveState();
-    if (this.watchlistManager) this.watchlistManager.renderDropdown();
     this.filterCache = null; 
     this.tickerElements.clear();
     this.renderTickerList();
+    
+    // ✅ Загружаем цены после рендера
+    setTimeout(() => {
+        if (this.pollRestData) {
+            this.pollRestData();
+        }
+    }, 1000);
 }
-   // В TickerPanel — уже есть, но убедимся что он работает правильно:
+
 async fetchBatchSnapshots(symbols) {
     if (!symbols || symbols.length === 0) return;
     
-    const BATCH_SIZE = 50;    // Binance: макс 100, но 50 безопаснее
-    const BATCH_DELAY = 200;  // 200мс между батчами
+    const BATCH_SIZE = 25;
+    const BATCH_DELAY = 800;
     
     const bnFutures = symbols.filter(s => s.exchange === 'binance' && s.marketType === 'futures');
     const bnSpot = symbols.filter(s => s.exchange === 'binance' && s.marketType === 'spot');
     const byFutures = symbols.filter(s => s.exchange === 'bybit' && s.marketType === 'futures');
     const bySpot = symbols.filter(s => s.exchange === 'bybit' && s.marketType === 'spot');
     
-    // ════════════════════════════════════════
-    // BINANCE: батчевые запросы ТОЛЬКО нужных символов
-    // ════════════════════════════════════════
     const fetchBinanceBatched = async (symbolList, marketType) => {
         for (let i = 0; i < symbolList.length; i += BATCH_SIZE) {
             const batch = symbolList.slice(i, i + BATCH_SIZE);
@@ -721,20 +732,14 @@ async fetchBatchSnapshots(symbols) {
                         this._updateTickerFromBinance(t, marketType);
                     });
                 }
-            } catch (e) {
-                console.warn(`Binance batch ${i}-${i + BATCH_SIZE} error:`, e);
-            }
+            } catch (e) {}
             
-            // Задержка между батчами (кроме последнего)
             if (i + BATCH_SIZE < symbolList.length) {
                 await new Promise(r => setTimeout(r, BATCH_DELAY));
             }
         }
     };
     
-    // ════════════════════════════════════════
-    // BYBIT: один bulk-запрос (не банит)
-    // ════════════════════════════════════════
     const fetchBybitBulk = async (symbolList, marketType) => {
         if (symbolList.length === 0) return;
         try {
@@ -751,12 +756,9 @@ async fetchBatchSnapshots(symbols) {
                     }
                 });
             }
-        } catch (e) {
-            console.warn('Bybit bulk error:', e);
-        }
+        } catch (e) {}
     };
     
-    // Запускаем параллельно
     await Promise.all([
         fetchBinanceBatched(bnFutures, 'futures'),
         fetchBinanceBatched(bnSpot, 'spot'),
@@ -766,6 +768,7 @@ async fetchBatchSnapshots(symbols) {
     
     this.renderer?.updatePriceElements();
 }
+
 // ✅ Вспомогательный метод (можно добавить если нет)
 _updateTickerFromBinance(data, marketType) {
     const key = `${data.symbol}:binance:${marketType}`;
