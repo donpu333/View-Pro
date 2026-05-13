@@ -59,7 +59,7 @@ class WebSocketManager {
             }
         };
         
-      ws.onmessage = (event) => {
+     ws.onmessage = (event) => {
     try {
         const data = JSON.parse(event.data);
         let price = null;
@@ -82,10 +82,12 @@ class WebSocketManager {
             '1h':3600,'4h':14400,'6h':21600,'12h':43200,
             '1d':86400,'1w':604800,'1M':2592000 
         };
-        const step = stepMap[this._currentInterval] || 3600;
+        const step = stepMap[this.currentInterval] || 3600;
         const aligned = Math.floor(nowSec / step) * step;
 
-        if (aligned > last.time) {
+        // Создаём новую свечу ТОЛЬКО если прошёл полный интервал
+        // Для всех ТФ: 1m, 5m, 1h, 1d, 1w, 1M — единое правило
+        if (aligned > last.time && (aligned - last.time) >= step) {
             const next = { 
                 time: aligned, open: price, high: price, 
                 low: price, close: price, volume: 0 
@@ -95,6 +97,7 @@ class WebSocketManager {
             const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
             series?.update(next);
         } else {
+            // Обновляем текущую свечу
             last.close = price;
             if (price > last.high) last.high = price;
             if (price < last.low) last.low = price;
@@ -103,7 +106,7 @@ class WebSocketManager {
             series?.update(last);
         }
 
-        // ТОЛЬКО ОДИН РАЗ обновляем цену и цвет
+        // Обновляем цену и цвет
         cm.currentRealPrice = price;
         
         const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
@@ -120,7 +123,6 @@ class WebSocketManager {
         }
     } catch(e) {}
 };
-        
         ws.onclose = () => {
             console.log('❌ Trade WebSocket закрыт, переподключение...');
             if (this.currentSymbol === symbol) {
