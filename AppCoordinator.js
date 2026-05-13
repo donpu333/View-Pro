@@ -489,7 +489,8 @@ async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
         }
     }
 }
-   async _fetchSymbolData(symbol, exchange, marketType, externalSignal = null) {
+  // Исправленный _fetchSymbolData - без Binance REST!
+async _fetchSymbolData(symbol, exchange, marketType, externalSignal = null) {
     const interval = this.chartManager.currentInterval;
     
     // Маппинг интервалов для Bybit
@@ -499,102 +500,172 @@ async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
         '1d': 'D', '1w': 'W', '1M': 'M'
     };
     
-    let url;
+    // ✅ BINANCE - НЕ ДЕЛАЕМ REST ЗАПРОСОВ! ЖДЕМ WEBSOCKET
     if (exchange === 'binance') {
-        if (marketType === 'futures') {
-            url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=1000`;
-        } else {
-            url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=1000`;
-        }
-    } else {
-        const bybitInterval = bybitIntervalMap[interval] || interval;
-        const category = marketType === 'futures' ? 'linear' : 'spot';
-        url = `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${symbol}&interval=${bybitInterval}&limit=200`;
+        console.log(`⚠️ Binance: пропускаем REST запрос для ${symbol}, ждем WebSocket`);
+        
+        // Возвращаем пустой массив - график покажет "загрузка"
+        // Данные придут через WebSocket
+        return [];
     }
     
-    console.log('URL загрузки:', url);
-    
-    // ✅ СОЗДАЁМ ВНУТРЕННИЙ КОНТРОЛЛЕР
-    const internalController = new AbortController();
-    const timeoutId = setTimeout(() => internalController.abort(), 10000);
-    
-    // ✅ ОБЪЕДИНЯЕМ ВНЕШНИЙ И ВНУТРЕННИЙ СИГНАЛЫ
-    const combinedSignal = (() => {
-        if (!externalSignal) return internalController.signal;
+    // ✅ BYBIT - можно оставить (он не банит)
+    if (exchange === 'bybit') {
+        const bybitInterval = bybitIntervalMap[interval] || interval;
+        const category = marketType === 'futures' ? 'linear' : 'spot';
+        const url = `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${symbol}&interval=${bybitInterval}&limit=200`;
         
-        const combinedController = new AbortController();
+        console.log('URL загрузки (Bybit):', url);
         
-        const onAbort = () => {
-            combinedController.abort();
-            externalSignal.removeEventListener('abort', onAbort);
-            internalController.abort();
-        };
+        const internalController = new AbortController();
+        const timeoutId = setTimeout(() => internalController.abort(), 10000);
         
-        externalSignal.addEventListener('abort', onAbort);
+        const combinedSignal = (() => {
+            if (!externalSignal) return internalController.signal;
+            const combinedController = new AbortController();
+            const onAbort = () => {
+                combinedController.abort();
+                externalSignal.removeEventListener('abort', onAbort);
+                internalController.abort();
+            };
+            externalSignal.addEventListener('abort', onAbort);
+            internalController.signal.addEventListener('abort', () => {
+                combinedController.abort();
+                externalSignal.removeEventListener('abort', onAbort);
+            });
+            return combinedController.signal;
+        })();
         
-        internalController.signal.addEventListener('abort', () => {
-            combinedController.abort();
-            externalSignal.removeEventListener('abort', onAbort);
-        });
-        
-        return combinedController.signal;
-    })();
-    
-    try {
-        const response = await fetch(url, { signal: combinedSignal });
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (combinedSignal.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-        }
-        
-        if (exchange === 'binance') {
-            if (!Array.isArray(data)) {
-                throw new Error('Binance: неверный формат ответа');
-            }
+        try {
+            const response = await fetch(url, { signal: combinedSignal });
+            clearTimeout(timeoutId);
             
-            return data.map(item => ({
-                time: Math.floor(item[0] / 1000),
-                open: parseFloat(item[1]),
-                high: parseFloat(item[2]),
-                low: parseFloat(item[3]),
-                close: parseFloat(item[4]),
-                volume: parseFloat(item[5])
-            }));
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
-        } else {
-            if (data.retCode !== 0) {
-                throw new Error(`Bybit error: ${data.retMsg}`);
-            }
+            const data = await response.json();
             
-            if (!data.result || !data.result.list) {
-                throw new Error('Bybit: нет данных');
-            }
+            if (combinedSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+            if (data.retCode !== 0) throw new Error(`Bybit error: ${data.retMsg}`);
+            if (!data.result || !data.result.list) throw new Error('Bybit: нет данных');
             
             const candles = data.result.list;
-            
-            const formatted = candles.map(item => ({
+            return candles.map(item => ({
                 time: Math.floor(parseInt(item[0]) / 1000),
                 open: parseFloat(item[1]),
                 high: parseFloat(item[2]),
                 low: parseFloat(item[3]),
                 close: parseFloat(item[4]),
                 volume: parseFloat(item[5] || 0)
-            })).filter(c => c !== null);
+            })).filter(c => c !== null).reverse();
             
-            return formatted.reverse();
+        } catch (error) {
+            clearTimeout(timeoutId);
+            throw error;
+        }
+    }
+    
+    return [];
+}
+
+// Исправленный loadSymbol
+async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
+    console.log(`📊 Загрузка символа: ${symbol} (${exchange} ${marketType})`);
+    
+    if (this.chartManager) {
+        this.chartManager.clearChart();
+        // Показываем сообщение о загрузке
+        this.chartManager.showLoadingMessage?.(`Загрузка ${symbol}...`);
+    }
+    
+    if (this._currentRequest && this._currentRequest.abort) {
+        this._currentRequest.abort();
+    }
+    
+    const abortController = new AbortController();
+    const finalSignal = externalSignal || abortController.signal;
+    this._currentRequest = abortController;
+    
+    if (this._isLoading) {
+        this._pendingSymbol = { symbol, exchange, marketType };
+        return;
+    }
+    
+    this._isLoading = true;
+    
+    try {
+        // Обновляем символы
+        this.chartManager.setSymbol(symbol);
+        this.chartManager.currentSymbol = symbol;
+        this.chartManager.currentExchange = exchange;
+        this.chartManager.currentMarketType = marketType;
+        
+        // Обновляем WebSocket для свечей
+        if (this.wsManager) {
+            this.wsManager.updateSymbolAndTimeframe(symbol, this.chartManager.currentInterval, exchange, marketType);
+        }
+        
+        // Обновляем UI
+        document.getElementById('pairDisplay').textContent = symbol;
+        document.getElementById('exchangeDisplay').textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
+        document.getElementById('contractTypeDisplay').textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+        
+        // Для Binance - не ждем REST данные, они придут через WebSocket
+        if (exchange === 'binance') {
+            console.log(`🔄 Binance ${symbol}: ждем данные от WebSocket`);
+            
+            // Очищаем график и показываем сообщение
+            if (this.chartManager && this.chartManager.setDataQuick) {
+                this.chartManager.setDataQuick([], this.chartManager.currentInterval, symbol, exchange, marketType);
+            }
+            
+            // Таймер перезапускаем
+            if (this.timerManager) {
+                this.timerManager.start(this.chartManager.currentInterval);
+            }
+            
+            // Синхронизируем рисунки
+            requestAnimationFrame(async () => {
+                await this.syncAllDrawings();
+            });
+            
+        } else {
+            // For Bybit - можно загрузить через REST
+            const data = await this._fetchSymbolData(symbol, exchange, marketType, finalSignal);
+            
+            if (finalSignal.aborted) return;
+            
+            if (data && data.length > 0) {
+                const cacheKey = `${symbol}_${exchange}_${marketType}_${this.chartManager.currentInterval}`;
+                this.symbolCache.set(cacheKey, {
+                    data: data,
+                    timestamp: Date.now()
+                });
+                
+                this.chartManager.setDataQuick(data, this.chartManager.currentInterval, symbol, exchange, marketType);
+            }
+            
+            if (this.timerManager) {
+                this.timerManager.start(this.chartManager.currentInterval);
+            }
+            
+            requestAnimationFrame(async () => {
+                await this.syncAllDrawings();
+            });
         }
         
     } catch (error) {
-        clearTimeout(timeoutId);
-        throw error;
+        if (error.name !== 'AbortError') {
+            console.error('❌ Ошибка загрузки символа:', error);
+            this.chartManager?.showLoadingMessage?.(`Ошибка: ${error.message}`);
+        }
+    } finally {
+        this._isLoading = false;
+        
+        if (this._pendingSymbol) {
+            const pending = this._pendingSymbol;
+            this._pendingSymbol = null;
+            setTimeout(() => this.loadSymbol(pending.symbol, pending.exchange, pending.marketType), 100);
+        }
     }
 }
 async syncAllDrawings() {
