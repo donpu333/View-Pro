@@ -294,19 +294,25 @@ async addNextBatch() {
     
     const modalAddAllBtn = document.getElementById('modalAddAllBtn');
     
-    // ✅ ИСПРАВЛЕНИЕ №1: Берём данные из modalAllResults (то что ОТОБРАЖАЕТСЯ),
-    // а не из глобального кэша который может быть неполным/устаревшим!
-    let allPairs;
+    // ✅ БЕРЕМ ДАННЫЕ ИЗ КЭША (он точный и полный)
+    let allPairs = [];
     
-    if (this.modalAllResults && this.modalAllResults.length > 0) {
-        // Приоритет: берём то, что сейчас отфильтровано и показано в модалке
-        allPairs = this.modalAllResults.map(r => ({
-            symbol: r.symbol,
-            exchange: r.exchange,
-            marketType: r.marketType
-        }));
+    if (this.parent.state.modalExchange === 'binance') {
+        if (this.parent.state.modalMarketType === 'futures') {
+            allPairs = this.parent.allBinanceFutures || [];
+        } else {
+            allPairs = this.parent.allBinanceSpot || [];
+        }
     } else {
-        // Fallback: берём из кэша (если modalAllResults пустой)
+        if (this.parent.state.modalMarketType === 'futures') {
+            allPairs = this.parent.allBybitFutures || [];
+        } else {
+            allPairs = this.parent.allBybitSpot || [];
+        }
+    }
+    
+    // Если все еще пусто - берем из общих кэшей
+    if (allPairs.length === 0) {
         const cache = this.parent.state.modalExchange === 'binance' 
             ? this.parent.binanceSymbolsCache 
             : this.parent.bybitSymbolsCache;
@@ -319,96 +325,90 @@ async addNextBatch() {
     }
     
     // Если нечего добавлять — выходим
-    if (allPairs.length === 0) return;
+    if (allPairs.length === 0) {
+        console.warn('Нет символов для добавления');
+        this.parent.state.isAddingAllInProgress = false;
+        if (modalAddAllBtn) {
+            modalAddAllBtn.classList.remove('loading');
+            modalAddAllBtn.innerHTML = '✅ Все';
+        }
+        return;
+    }
     
     this.parent.state.isAddingAllInProgress = true;
-    this.parent.state.addingAllOffset = 0;
+    this.parent.state.addingAllOffset = this.parent.state.addingAllOffset || 0;
+    
     modalAddAllBtn.classList.add('loading');
     modalAddAllBtn.innerHTML = '<i class="fas fa-spinner"></i> Загрузка...';
     
     this._doAddNextBatch(allPairs); // ✅ Передаём массив явно
 }
 
-// ✅ НОВЫЙ вспомогательный метод — получает массив как параметр
-async _doAddNextBatch(allPairs) {
-    if (!this.parent.state.isAddingAllInProgress) return;
-    
-    const modalAddAllBtn = document.getElementById('modalAddAllBtn');
-    
-    const batchSize = this.parent.state.addingAllBatchSize;
+// Добавь этот метод если его нет
+_doAddNextBatch(allPairs) {
+    const BATCH_SIZE = 50;
     const start = this.parent.state.addingAllOffset;
-    const end = Math.min(start + batchSize, allPairs.length);
+    const end = Math.min(start + BATCH_SIZE, allPairs.length);
+    const batch = allPairs.slice(start, end);
     
-    const batchToAdd = [];
-    for (let i = start; i < end; i++) {
-        const symbolData = allPairs[i];
-        if (symbolData && symbolData.symbol) {
-            const key = `${symbolData.symbol}:${symbolData.exchange}:${symbolData.marketType}`;
-            if (!this.parent.tickersMap.has(key)) {
-                batchToAdd.push({
-                    symbol: symbolData.symbol,
-                    exchange: symbolData.exchange,
-                    marketType: symbolData.marketType
-                });
-            }
-        }
-    }
-    
-    if (batchToAdd.length > 0) {
-        await this.parent.addSymbolsBatch(batchToAdd);
-    }
-    
-    this.parent.state.addingAllOffset = end;
-    const progress = Math.round((end / allPairs.length) * 100);
-    
-    if (modalAddAllBtn) {
-        modalAddAllBtn.innerHTML = `<i class="fas fa-spinner"></i> Загружено ${end}/${allPairs.length} (${progress}%)`;
-    }
-    
-    if (end < allPairs.length) {
-        // Продолжаем следующий батч
-        setTimeout(() => this._doAddNextBatch(allPairs), 50);
-    } else {
-        // ════════════════════════════════════════════════════════
-        // ✅ ВСЕ БАТЧИ ЗАВЕРШЕНЫ — ЗАГРУЖАЕМ ЦЕНЫ!
-        // ════════════════════════════════════════════════════════
-        
+    if (batch.length === 0 || start >= allPairs.length) {
+        // Завершили добавление
         this.parent.state.isAddingAllInProgress = false;
+        this.parent.state.addingAllOffset = 0;
         
+        const modalAddAllBtn = document.getElementById('modalAddAllBtn');
         if (modalAddAllBtn) {
             modalAddAllBtn.classList.remove('loading');
-            modalAddAllBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
+            modalAddAllBtn.innerHTML = '✅ Все';
         }
         
-        this.parent.updateModalCount();
-        this.updateModalResults(true);
+        // Обновляем список и сохраняем
+        this.parent.renderTickerList();
+        this.parent.saveState();
         
-        // ✅ ИСПРАВЛЕНИЕ: Явно загружаем цены для ВСЕХ добавленных тикеров!
-        setTimeout(async () => {
-            // 1. Обновляем UI
-            this.parent.filterCache = null;
-            this.parent.renderTickerList();
-            
-            // 2. Загружаем цены через REST API (быстро!)
-            console.log(`🔄 Загрузка цен для ${allPairs.length} тикеров...`);
-            await this.parent.fetchBatchSnapshots(allPairs);
-            
-            // 3. Переподключаем WebSocket (чтобы получать live-обновления)
-            this.parent.setupWebSockets();
-            
-            // 4. Финальное обновление UI с реальными ценами
-            setTimeout(() => {
-                this.parent.renderer?.updatePriceElements();
-                
-                if (this.parent.ws && this.parent.ws.forceSubscribeAll) {
-                    this.parent.ws.forceSubscribeAll();
-                }
-                
-                console.log('✅ Все цены загружены!');
-            }, 500);
-            
-        }, 300); // Небольшая пауза чтобы DOM успел обновиться
+        // Уведомление
+        const notification = document.getElementById('alertNotification');
+        if (notification) {
+            notification.innerHTML = `<div class="alert-title">✅ Добавлено</div><div class="alert-price">${allPairs.length} символов</div>`;
+            notification.style.display = 'block';
+            notification.style.borderLeftColor = '#4caf50';
+            setTimeout(() => notification.style.display = 'none', 2000);
+        }
+        return;
     }
+    
+    // Добавляем текущую партию
+    batch.forEach(item => {
+        if (item.symbol) {
+            this.parent.addSymbol(
+                item.symbol, 
+                true, 
+                item.exchange || this.parent.state.modalExchange, 
+                item.marketType || this.parent.state.modalMarketType, 
+                false,  // render = false (отрендерим один раз в конце)
+                false, 
+                false
+            );
+        }
+    });
+    
+    // Сохраняем прогресс
+    this.parent.state.addingAllOffset = end;
+    this.parent.saveState();
+    
+    // Обновляем счетчик
+    const modalAddAllBtn = document.getElementById('modalAddAllBtn');
+    if (modalAddAllBtn) {
+        modalAddAllBtn.innerHTML = `<i class="fas fa-spinner"></i> ${end}/${allPairs.length}`;
+    }
+    
+    // Рендерим каждые 5 батчей (чтобы не тормозить)
+    if (Math.floor(start / BATCH_SIZE) % 5 === 0) {
+        this.parent.renderTickerList();
+    }
+    
+    // Следующий батч через 100ms (чтобы не фризить UI)
+    setTimeout(() => this._doAddNextBatch(allPairs), 100);
 }
     
     updateModalButtons() {
