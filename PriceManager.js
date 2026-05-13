@@ -6,7 +6,7 @@ class PriceManager {
         this.wsBybit = null;
         this.binanceReconnectTimer = null;
         this.bybitReconnectTimer = null;
-        this._subscribedBybitSymbols = new Set(['BTCUSDT']); // Запоминаем, на что подписаны
+        this._subscribedBybitSymbols = new Set(['BTCUSDT']);
         this._init();
     }
     
@@ -16,84 +16,83 @@ class PriceManager {
         console.log('✅ PriceManager инициализирован');
     }
     
- _initBinance() {
-    if (this.binanceReconnectTimer) {
-        clearTimeout(this.binanceReconnectTimer);
-        this.binanceReconnectTimer = null;
-    }
-    if (this.wsBinance) {
-        try { 
-            this.wsBinance.onclose = null; 
-            this.wsBinance.onerror = null; 
-            this.wsBinance.onmessage = null; 
-            this.wsBinance.close(); 
-        } catch(e) {}
-        this.wsBinance = null;
-    }
-    
-    const ws = new WebSocket('wss://fstream.binance.com/ws/!ticker@arr');
-    
-    // 👇 ФИЛЬТРЫ ДЛЯ ПЛАВНОСТИ ЦЕНЫ
-    let _lastBatchUpdate = 0;
-    const _lastPrices = new Map();
-    
-    ws.onopen = () => {
-        console.log('✅ PriceManager: Binance подключен');
-        this.wsBinance = ws;
-    };
-    
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            const tickers = Array.isArray(data) ? data : [data];
-            
-            // 👇 ФИЛЬТР 1: Throttle 100мс на весь батч
-            const now = Date.now();
-            if (now - _lastBatchUpdate < 100) return;
-            _lastBatchUpdate = now;
-            
-            tickers.forEach(ticker => {
-                if (!ticker.s || !ticker.c) return;
+    _initBinance() {
+        if (this.binanceReconnectTimer) {
+            clearTimeout(this.binanceReconnectTimer);
+            this.binanceReconnectTimer = null;
+        }
+        if (this.wsBinance) {
+            try { 
+                this.wsBinance.onclose = null; 
+                this.wsBinance.onerror = null; 
+                this.wsBinance.onmessage = null; 
+                this.wsBinance.close(); 
+            } catch(e) {}
+            this.wsBinance = null;
+        }
+        
+        const ws = new WebSocket('wss://fstream.binance.com/ws/!ticker@arr');
+        
+        // ФИЛЬТРЫ ДЛЯ ПЛАВНОСТИ ЦЕНЫ
+        let _lastBatchUpdate = 0;
+        const _lastPrices = new Map();
+        
+        ws.onopen = () => {
+            console.log('✅ PriceManager: Binance подключен');
+            this.wsBinance = ws;
+        };
+        
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                const tickers = Array.isArray(data) ? data : [data];
                 
-                const symbol = ticker.s;
-                const price = parseFloat(ticker.c);
+                const now = Date.now();
+                if (now - _lastBatchUpdate < 100) return;
+                _lastBatchUpdate = now;
                 
-                if (isNaN(price)) return;
-                
-                // 👇 ФИЛЬТР 2: Мин. изменение $0.01 для этого символа
-                const lastPrice = _lastPrices.get(symbol);
-                if (lastPrice !== undefined && Math.abs(price - lastPrice) < 0.01) return;
-                _lastPrices.set(symbol, price);
-                
-                this.prices.set(symbol, {
-                    price: price,
-                    time: Date.now(),
-                    exchange: 'binance'
-                });
-                
-                if (this.subscribers.has(symbol)) {
-                    const cbs = this.subscribers.get(symbol);
-                    for (let i = 0; i < cbs.length; i++) {
-                        try { 
-                            cbs[i](price, symbol); 
-                        } catch(e) {}
+                tickers.forEach(ticker => {
+                    if (!ticker.s || !ticker.c) return;
+                    
+                    const symbol = ticker.s;
+                    const price = parseFloat(ticker.c);
+                    
+                    if (isNaN(price)) return;
+                    
+                    const lastPrice = _lastPrices.get(symbol);
+                    if (lastPrice !== undefined && Math.abs(price - lastPrice) < 0.01) return;
+                    _lastPrices.set(symbol, price);
+                    
+                    this.prices.set(symbol, {
+                        price: price,
+                        time: Date.now(),
+                        exchange: 'binance'
+                    });
+                    
+                    if (this.subscribers.has(symbol)) {
+                        const cbs = this.subscribers.get(symbol);
+                        for (let i = 0; i < cbs.length; i++) {
+                            try { 
+                                cbs[i](price, symbol); 
+                            } catch(e) {}
+                        }
                     }
-                }
-            });
-        } catch (error) {}
-    };
+                });
+            } catch (error) {}
+        };
+        
+        ws.onclose = (event) => {
+            console.log('❌ PriceManager: Binance закрыт, переподключение...');
+            this.binanceReconnectTimer = setTimeout(() => {
+                this._initBinance();
+            }, 3000);
+        };
+        
+        ws.onerror = (error) => {
+            console.warn('⚠️ PriceManager: Binance ошибка');
+        };
+    }
     
-    ws.onclose = (event) => {
-        console.log('❌ PriceManager: Binance закрыт, переподключение...');
-        this.binanceReconnectTimer = setTimeout(() => {
-            this._initBinance();
-        }, 3000);
-    };
-    
-    ws.onerror = (error) => {
-        console.warn('⚠️ PriceManager: Binance ошибка');
-    };
-}
     _initBybit() {
         if (this.bybitReconnectTimer) {
             clearTimeout(this.bybitReconnectTimer);
@@ -178,7 +177,6 @@ class PriceManager {
         
         this.subscribers.get(symbol).push(callback);
         
-        // ЕДИНСТВЕННОЕ ДОБАВЛЕНИЕ: Если это Bybit и мы еще не подписаны - подписываемся!
         const cached = this.prices.get(symbol);
         if (!cached && this.wsBybit && this.wsBybit.readyState === WebSocket.OPEN) {
             const symbolUpper = symbol.toUpperCase();
@@ -278,7 +276,6 @@ class PriceManager {
 if (typeof window !== 'undefined') {
     window.PriceManager = PriceManager;
     
-    // ✅ ДОБАВЬ ЭТО - автоматическое создание экземпляра
     if (!window.priceManagerInstance) {
         window.priceManagerInstance = new PriceManager();
         console.log('✅ PriceManager экземпляр создан автоматически');
