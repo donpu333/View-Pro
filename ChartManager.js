@@ -1340,7 +1340,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         
         // РИСУЕМ (ОДИН РАЗ)
         this._performUpdate();
-        
+        this._updatePageTitle();
         // ОБЪЁМ
         if (this.volumeSeries && this.chartData.length > 0) {
             const volumeData = this.chartData.map(candle => ({
@@ -1793,6 +1793,7 @@ _restoreZoomState() {
     if (symbol !== this.currentSymbol) return;
     
     this.currentRealPrice = price;
+    this._updatePageTitle();
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (!series) return;
 
@@ -2139,6 +2140,30 @@ async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
     validCandles.sort((a, b) => a.time - b.time);
     
     return validCandles;
+}
+_updatePageTitle() {
+    const symbol = this.currentSymbol || '';
+    const price = this.currentRealPrice;
+    
+    if (!symbol) {
+        document.title = 'График';
+        return;
+    }
+    
+    if (price != null && !isNaN(price) && price > 0) {
+        // Точность из текущего формата
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const precision = series?.options()?.priceFormat?.precision || 2;
+        
+        // Определяем цвет (стрелка)
+        const lastCandle = this.chartData?.[this.chartData.length - 1];
+        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+        const arrow = isBullish ? '▲' : '▼';
+        
+        document.title = `${arrow} ${symbol} ${price.toFixed(precision)}`;
+    } else {
+        document.title = `${symbol}`;
+    }
 }
 }
 if (typeof window !== 'undefined') {
