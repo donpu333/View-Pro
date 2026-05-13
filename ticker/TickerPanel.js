@@ -504,7 +504,7 @@ _deduplicateSymbols(symbols) {
         };
 
         pollRestData();
-        this._restPollingInterval = setInterval(pollRestData, 5000);
+        this._restPollingInterval = setInterval(pollRestData, 30000);
     }
 
     clearAllSymbols() {
