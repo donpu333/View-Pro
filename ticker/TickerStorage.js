@@ -376,64 +376,39 @@ class TickerStorage {
         }
     }
     
-    updateModalCount() {
-        const exchange = this.state.modalExchange;
-        const marketType = this.state.modalMarketType;
-        
-        let url;
-        if (exchange === 'binance') {
-            url = marketType === 'futures' 
-                ? 'https://fapi.binance.com/fapi/v1/exchangeInfo'
-                : 'https://api.binance.com/api/v3/exchangeInfo';
-        } else {
-            const category = marketType === 'futures' ? 'linear' : 'spot';
-            url = `https://api.bybit.com/v5/market/instruments-info?category=${category}`;
-        }
-        
-        const foundSpan = document.getElementById('modalFoundCount');
-        if (foundSpan) foundSpan.textContent = '...';
-        
-        fetch(url)
-            .then(r => r.json())
-            .then(data => {
-                let count = 0;
-                let realItems = [];
-                
-                if (exchange === 'binance' && data.symbols) {
-                    realItems = data.symbols
-                        .filter(s => s.symbol.endsWith('USDT') && s.status === 'TRADING')
-                        .map(s => ({
-                            symbol: s.symbol,
-                            exchange: 'binance',
-                            marketType: marketType
-                        }));
-                    count = realItems.length;
-                } else if (exchange === 'bybit' && data.result?.list) {
-                    realItems = data.result.list
-                        .filter(s => s.symbol.endsWith('USDT'))
-                        .map(s => ({
-                            symbol: s.symbol,
-                            exchange: 'bybit',
-                            marketType: marketType
-                        }));
-                    count = realItems.length;
-                }
-                
-                if (foundSpan) foundSpan.textContent = count;
-                
-                this._lastModalCountData = {
-                    exchange: exchange,
-                    marketType: marketType,
-                    count: count,
-                    items: realItems,
-                    timestamp: Date.now()
-                };
-            })
-            .catch(() => {
-                if (foundSpan) foundSpan.textContent = '...';
-            });
+ updateModalCount() {
+    const exchange = this.state.modalExchange;
+    const marketType = this.state.modalMarketType;
+    const foundSpan = document.getElementById('modalFoundCount');
+    
+    if (!foundSpan) return;
+    
+    // ✅ Используем кэш из памяти (без запроса к API!)
+    let source;
+    if (exchange === 'binance') {
+        source = marketType === 'futures' 
+            ? this.allBinanceFutures 
+            : this.allBinanceSpot;
+    } else {
+        source = marketType === 'futures' 
+            ? this.allBybitFutures 
+            : this.allBybitSpot;
     }
     
+    if (source && source.length > 0) {
+        // Фильтруем по поиску если есть
+        const query = this.state.modalSearchQuery?.toUpperCase() || '';
+        let count;
+        if (query) {
+            count = source.filter(s => s.symbol.includes(query)).length;
+        } else {
+            count = source.length;
+        }
+        foundSpan.textContent = count;
+    } else {
+        foundSpan.textContent = '...';
+    }
+}
     removeDuplicates(arr, key) {
         const seen = new Map();
         return arr.filter(item => {
