@@ -59,65 +59,67 @@ class WebSocketManager {
             }
         };
         
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                let price = null;
-                
-                if (exchange === 'bybit') {
-                    if (data.topic?.startsWith('publicTrade.') && data.data?.length) {
-                        price = parseFloat(data.data[0].p);
-                    }
-                } else {
-                    price = parseFloat(data.p);
-                }
-                
-                if (!price || !this.chartManager?.chartData?.length) return;
-                
-                const cm = this.chartManager;
-                const last = cm.chartData[cm.chartData.length - 1];
-                const nowSec = Math.floor(Date.now() / 1000);
-                const stepMap = { 
-                    '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,
-                    '1h':3600,'4h':14400,'6h':21600,'12h':43200,
-                    '1d':86400,'1w':604800,'1M':2592000 
-                };
-                const step = stepMap[interval] || 3600;
-                const aligned = Math.floor(nowSec / step) * step;
+      ws.onmessage = (event) => {
+    try {
+        const data = JSON.parse(event.data);
+        let price = null;
+        
+        if (exchange === 'bybit') {
+            if (data.topic?.startsWith('publicTrade.') && data.data?.length) {
+                price = parseFloat(data.data[0].p);
+            }
+        } else {
+            price = parseFloat(data.p);
+        }
+        
+        if (!price || !this.chartManager?.chartData?.length) return;
 
-                if (aligned > last.time) {
-                    const next = { 
-                        time: aligned, open: price, high: price, 
-                        low: price, close: price, volume: 0 
-                    };
-                    cm.chartData.push(next);
-                    cm.lastCandle = next;
-                    const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-                    series?.update(next);
-                } else {
-                    last.close = price;
-                    if (price > last.high) last.high = price;
-                    if (price < last.low) last.low = price;
-                    cm.lastCandle = last;
-                    const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-                    series?.update(last);
-                }
-
-                cm.currentRealPrice = price;
-                
-                // ИСПРАВЛЕНИЕ 2: Берем цвет ТОЛЬКО из обновленной lastCandle, чтобы не было рассинхрона
-                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-                if (series) {
-                    const activeCandle = cm.lastCandle;
-                    // ИСПРАВЛЕНИЕ 3: Если close == open (дожатие), считаем красной
-                    const isBullish = activeCandle.close > activeCandle.open;
-                    const lineColor = isBullish 
-                        ? (cm.bullishColor || '#00bcd4') 
-                        : (cm.bearishColor || '#f23645');
-                    series.applyOptions({ priceLineColor: lineColor });
-                }
-            } catch(e) {}
+        const cm = this.chartManager;
+        const last = cm.chartData[cm.chartData.length - 1];
+        const nowSec = Math.floor(Date.now() / 1000);
+        const stepMap = { 
+            '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,
+            '1h':3600,'4h':14400,'6h':21600,'12h':43200,
+            '1d':86400,'1w':604800,'1M':2592000 
         };
+        const step = stepMap[this._currentInterval] || 3600;
+        const aligned = Math.floor(nowSec / step) * step;
+
+        if (aligned > last.time) {
+            const next = { 
+                time: aligned, open: price, high: price, 
+                low: price, close: price, volume: 0 
+            };
+            cm.chartData.push(next);
+            cm.lastCandle = next;
+            const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+            series?.update(next);
+        } else {
+            last.close = price;
+            if (price > last.high) last.high = price;
+            if (price < last.low) last.low = price;
+            cm.lastCandle = last;
+            const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+            series?.update(last);
+        }
+
+        // ТОЛЬКО ОДИН РАЗ обновляем цену и цвет
+        cm.currentRealPrice = price;
+        
+        const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+        if (series) {
+            const activeCandle = cm.lastCandle;
+            const isBullish = activeCandle.close > activeCandle.open;
+            const lineColor = isBullish 
+                ? (cm.bullishColor || '#00bcd4') 
+                : (cm.bearishColor || '#f23645');
+            series.applyOptions({ 
+                priceLineSource: price,
+                priceLineColor: lineColor 
+            });
+        }
+    } catch(e) {}
+};
         
         ws.onclose = () => {
             console.log('❌ Trade WebSocket закрыт, переподключение...');
