@@ -411,7 +411,7 @@ _deduplicateSymbols(symbols) {
     this.setupDelegatedEvents();
     
 }
-  startTickerPanelPriceEngine() {
+startTickerPanelPriceEngine() {
     if (this._priceEngineStarted) return;
     this._priceEngineStarted = true;
     console.log('🚀 TickerPriceEngine: Запуск (WS + REST батчами)...');
@@ -461,11 +461,9 @@ _deduplicateSymbols(symbols) {
     connectBinanceWs('binance-futures', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
     connectBinanceWs('binance-spot', 'wss://stream.binance.com/ws/!miniTicker@arr', 'spot');
 
-    // ✅ НОВЫЙ pollRestData — только нужные тикеры, батчами
     const pollRestData = async () => {
         if (this.tickersMap.size === 0) return;
         
-        // Собираем только символы, которые есть в панели
         const bnFutSymbols = [];
         const bnSpotSymbols = [];
         const byFutSymbols = [];
@@ -479,7 +477,7 @@ _deduplicateSymbols(symbols) {
         }
         
         const BATCH_SIZE = 50;
-        const BATCH_DELAY = 200;
+        const BATCH_DELAY = 500; // ✅ 200 → 500мс
         
         // Binance Futures батчами
         for (let i = 0; i < bnFutSymbols.length; i += BATCH_SIZE) {
@@ -505,6 +503,11 @@ _deduplicateSymbols(symbols) {
             }
         }
         
+        // ✅ ПАУЗА МЕЖДУ FUTURES И SPOT
+        if (bnFutSymbols.length > 0 && bnSpotSymbols.length > 0) {
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        
         // Binance Spot батчами
         for (let i = 0; i < bnSpotSymbols.length; i += BATCH_SIZE) {
             const batch = bnSpotSymbols.slice(i, i + BATCH_SIZE);
@@ -527,6 +530,11 @@ _deduplicateSymbols(symbols) {
             if (i + BATCH_SIZE < bnSpotSymbols.length) {
                 await new Promise(r => setTimeout(r, BATCH_DELAY));
             }
+        }
+        
+        // ✅ ПАУЗА ПЕРЕД BYBIT
+        if ((bnFutSymbols.length > 0 || bnSpotSymbols.length > 0) && (byFutSymbols.length > 0 || bySpotSymbols.length > 0)) {
+            await new Promise(r => setTimeout(r, 500));
         }
         
         // Bybit Futures (один запрос)
@@ -575,7 +583,6 @@ _deduplicateSymbols(symbols) {
     };
 
     pollRestData();
-    // ❗️ Увеличил интервал до 30 секунд (было 5)
     this._restPollingInterval = setInterval(pollRestData, 30000);
 }
 
