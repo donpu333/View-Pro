@@ -1781,48 +1781,25 @@ _restoreZoomState() {
     
     this._savedZoomRange = null;
 }
-   _subscribeToPrice() {
+ _subscribeToPrice() {
     if (!this.priceManager) return;
     
     if (this._priceUpdateHandler) {
-        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler); // ← тут была опечатка, исправьте на _priceUpdateHandler
+        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
     }
     
-  this._priceUpdateHandler = (price, symbol) => {
-    if (document.hidden) return;
-    if (symbol !== this.currentSymbol) return;
-    
-    this.currentRealPrice = price;
-    this._updatePageTitle();
-    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-    if (!series) return;
-
-    // 1. Двигаем линию цены — БЕЗ перестроения шкалы
-    series.applyOptions({ priceLineSource: price });
-
-    // 2. Цвет меняем ТОЛЬКО при смене свечи (close пересекает open)
-    const lastCandle = this.chartData[this.chartData.length - 1];
-    const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-    const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-    
-    if (this._lastAppliedColor !== newColor) {
-        this._lastAppliedColor = newColor;
-        series.applyOptions({ priceLineColor: newColor });
-    }
-
-    // 3. Обновляем свечу (update, не setData!)
-    if (lastCandle && lastCandle.time) {
-        series.update({
-            time: lastCandle.time,
-            open: lastCandle.open,
-            high: lastCandle.high,
-            low: lastCandle.low,
-            close: price
-        });
-    }
-
-    this.scheduleUpdatePosition();
-};
+    this._priceUpdateHandler = (price, symbol) => {
+        if (document.hidden) return;
+        if (symbol !== this.currentSymbol) return;
+        
+        // Только сохраняем цену и обновляем заголовок
+        this.currentRealPrice = price;
+        this._updatePageTitle();
+        
+        // ВСЁ! Больше ничего не делаем.
+        // Свечи обновляет WebSocketManager.js
+        // Линию цены обновляет WebSocketManager.js
+    };
     
     this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
     
