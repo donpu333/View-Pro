@@ -4,9 +4,11 @@ class TimerRenderer {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this.enabled = true;
+        this._lastY = null;
+        this._lastX = null;
     }
 
-        draw(target) {
+    draw(target) {
         if (!this.enabled) return;
         
         target.useBitmapCoordinateSpace(scope => {
@@ -17,22 +19,19 @@ class TimerRenderer {
             const timerText = this._timerManager._timerElement?.textContent || '';
             if (!timerText) return;
             
-            // === ПРАВИЛЬНАЯ МАТЕМАТИКА ДЛЯ RETINA (MAC) ===
-            const hpr = scope.horizontalPixelRatio; // Обычно 2 на Mac, 1 на Windows
+            const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
             
-            const fontSize = 11 * vpr; // Увеличиваем шрифт для четкости Mac
+            const fontSize = 11 * vpr;
             ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-            const textWidth = ctx.measureText(timerText).width; // Теперь меряем в физических пикселях
+            const textWidth = ctx.measureText(timerText).width;
             
             const padding = 8 * hpr;
             const rectWidth = textWidth + padding * 2;
             const rectHeight = fontSize + 8 * vpr;
             
-            // Ширина canvas в ФИЗИЧЕСКИХ пикселях
-            const canvasWidth = scope.mediaSize.width * hpr; 
-            const rectX = canvasWidth - rectWidth - 5 * hpr; // Теперь ПРИЖАТ К ПРАВОМУ КРАЮ!
-            // ================================================
+            const canvasWidth = scope.mediaSize.width * hpr;
+            let rectX = canvasWidth - rectWidth - 5 * hpr;
             
             let price = chartManager.currentRealPrice;
             if (!price || isNaN(price) || price <= 0) {
@@ -50,13 +49,22 @@ class TimerRenderer {
 
             let rawYCoord = activeSeries.priceToCoordinate(price);
 
-            // ИСПРАВЛЕНИЕ: Не даём уйти в бесконечный цикл (Баг 1)
             if (rawYCoord === null || isNaN(rawYCoord)) {
                 return; 
             }
             
-            // Правильно переводим логическую высоту цены в физическую
             let rectY = (rawYCoord * vpr) - rectHeight / 2;
+            
+            // 👇 ПЛАВНОЕ ДВИЖЕНИЕ
+            if (this._lastY !== null) {
+                rectY = this._lastY + (rectY - this._lastY) * 0.4;
+            }
+            this._lastY = rectY;
+
+            if (this._lastX !== null) {
+                rectX = this._lastX + (rectX - this._lastX) * 0.4;
+            }
+            this._lastX = rectX;
             
             const lastCandle = chartManager.getLastCandle();
             const isBullish = lastCandle ? lastCandle.close > lastCandle.open : true;
@@ -163,8 +171,6 @@ class TimerManager {
         this._primitive = null;
         this._timerElement = { textContent: '' };
         
-       
-        
         chartManager.timerManager = this;
         setTimeout(() => this._createPrimitive(), 500);
     }
@@ -186,12 +192,6 @@ class TimerManager {
                 if (this._isDayTimeframe(this._currentTf)) {
                     this._primitive.setEnabled(false);
                 }
-                
-                series.subscribeDataChanged(() => {
-                    if (this._primitive && this._primitive.isEnabled()) {
-                        this._primitive.requestRedraw();
-                    }
-                });
                 
                 console.log('✅ TimerManager: примитив создан');
             } catch (e) {
