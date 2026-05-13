@@ -329,7 +329,7 @@ async addNextBatch() {
     this._doAddNextBatch(allPairs); // ✅ Передаём массив явно
 }
 
-/// ✅ НОВЫЙ вспомогательный метод — получает массив как параметр
+// ✅ НОВЫЙ вспомогательный метод — получает массив как параметр
 async _doAddNextBatch(allPairs) {
     if (!this.parent.state.isAddingAllInProgress) return;
     
@@ -366,13 +366,8 @@ async _doAddNextBatch(allPairs) {
     }
     
     if (end < allPairs.length) {
-        // ✅ ИЗМЕНЕНИЕ 1: 50мс → 500мс между батчами
         setTimeout(() => this._doAddNextBatch(allPairs), 500);
     } else {
-        // ════════════════════════════════════════════════════════
-        // ✅ ВСЕ БАТЧИ ЗАВЕРШЕНЫ
-        // ════════════════════════════════════════════════════════
-        
         this.parent.state.isAddingAllInProgress = false;
         
         if (modalAddAllBtn) {
@@ -383,13 +378,20 @@ async _doAddNextBatch(allPairs) {
         this.parent.updateModalCount();
         this.updateModalResults(true);
         
-        // ✅ ИЗМЕНЕНИЕ 2: убрал fetchBatchSnapshots и setupWebSockets
-        // ✅ ИЗМЕНЕНИЕ 3: убрал вложенные setTimeout
         setTimeout(() => {
             this.parent.filterCache = null;
             this.parent.renderTickerList();
-            this.parent.renderer?.updatePriceElements();
-            console.log(`✅ ${allPairs.length} тикеров добавлено, цены подтянутся через WebSocket`);
+            
+            // ✅ ЗАГРУЖАЕМ ЦЕНЫ ОДНИМ БАТЧЕВЫМ ЗАПРОСОМ
+            if (this.parent.pollRestData) {
+                this.parent.pollRestData().then(() => {
+                    this.parent.renderer?.updatePriceElements();
+                    console.log(`✅ ${allPairs.length} тикеров добавлено, цены загружены`);
+                });
+            } else {
+                this.parent.renderer?.updatePriceElements();
+                console.log(`✅ ${allPairs.length} тикеров добавлено, цены подтянутся через WebSocket`);
+            }
         }, 100);
     }
 }
