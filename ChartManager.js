@@ -1357,10 +1357,17 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         
         // ТОЧНОСТЬ ДО ОТРИСОВКИ
         const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
-        if (cachedPrecision) {
+        const inferredPrecision = this._inferPrecisionFromData();
+        
+        // Используем кэш только если он НЕ МЕНЬШЕ реальной точности
+        if (cachedPrecision && parseInt(cachedPrecision) >= inferredPrecision) {
             this.applyPriceFormat(parseInt(cachedPrecision));
         } else {
-            this.applyPriceFormat(this._inferPrecisionFromData());
+            if (cachedPrecision) {
+                console.warn(`⚠️ Кэш precision устарел (${cachedPrecision} < ${inferredPrecision}), исправляем`);
+            }
+            this.applyPriceFormat(inferredPrecision);
+            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
         }
         
         // РИСУЕМ (ОДИН РАЗ)
@@ -1384,16 +1391,16 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             this.indicatorManager.loadIndicators();
         }
         
-        // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (применяем сразу, если изменилась)
-     // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (только сохраняем, не применяем)
-if (!cachedPrecision) {
-    getPrecisionFromExchange(symbol, exchange, marketType)
-        .then(precision => {
-            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-            console.log(`✅ Precision saved for ${symbol}: ${precision} decimals`);
-        })
-        .catch(() => {});
-}
+        // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (только сохраняем, не применяем)
+        if (!cachedPrecision || parseInt(cachedPrecision) < inferredPrecision) {
+            getPrecisionFromExchange(symbol, exchange, marketType)
+                .then(precision => {
+                    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                    console.log(`✅ Precision saved for ${symbol}: ${precision} decimals`);
+                })
+                .catch(() => {});
+        }
+        
         // ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
