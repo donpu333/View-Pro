@@ -122,11 +122,7 @@ this.candleSeries = this.chart.addSeries(LightweightCharts.CandlestickSeries, {
     wickUpColor: CONFIG.colors.bullish,
     wickDownColor: CONFIG.colors.bearish,
     priceScaleId: 'right',
-    priceFormat: {
-        type: 'price',
-        precision: 2,
-        minMove: 0.01
-    }
+    // priceFormat убран — будет задан позже через applyPriceFormat
 });
 
 // Создаём барную серию
@@ -136,11 +132,7 @@ this.barSeries = this.chart.addSeries(LightweightCharts.BarSeries, {
     openVisible: true,
     thinBars: true,
     priceScaleId: 'right',
-    priceFormat: {
-        type: 'price',
-        precision: 2,
-        minMove: 0.01
-    }
+    // priceFormat убран
 });
 
 // Включаем встроенную линию цены
@@ -161,6 +153,8 @@ this.barSeries.applyOptions({
     priceLineWidth: 1,
     priceLineStyle: LightweightCharts.LineStyle.Dashed
 });
+
+
 // В конструкторе ChartManager, после создания candleSeries и barSeries
 const savedBg = localStorage.getItem('chartBgColor');
 const savedBullish = localStorage.getItem('chartBullishColor');
@@ -1197,12 +1191,16 @@ _performUpdate() {
         }
     }
 
-    // 👇 ЗАЩИТА ОТ СБРОСА ФОРМАТА ЦЕНЫ
+    // ЗАЩИТА ОТ СБРОСА ФОРМАТА ЦЕНЫ
     const cachedPrecision = localStorage.getItem(`precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`);
     if (cachedPrecision) {
-        const currentFormat = this.candleSeries.options().priceFormat;
-        if (currentFormat.precision !== parseInt(cachedPrecision)) {
-            this.applyPriceFormat(parseInt(cachedPrecision));
+        const p = parseInt(cachedPrecision);
+        const fmt = { type: 'price', precision: p, minMove: Math.pow(10, -p) };
+        this.candleSeries.applyOptions({ priceFormat: fmt });
+        this.barSeries.applyOptions({ priceFormat: fmt });
+        const priceScale = this.chart.priceScale('right');
+        if (priceScale) {
+            priceScale.applyOptions({ priceFormat: fmt, autoScale: true });
         }
     }
 
@@ -1881,7 +1879,6 @@ _inferPrecisionFromData() {
 // Обновленный метод с обработкой ошибок и принудительным обновлением
 applyPriceFormat(precision) {
     try {
-        // 1. Если precision не пришел или ошибка - вычисляем сами из данных
         if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
             console.warn('⚠️ Precision не получен, вычисляем из данных графика...');
             precision = this._inferPrecisionFromData();
@@ -1894,14 +1891,13 @@ applyPriceFormat(precision) {
         if (this.candleSeries) this.candleSeries.applyOptions({ priceFormat });
         if (this.barSeries) this.barSeries.applyOptions({ priceFormat });
 
-        // 3. ПРИНУДИТЕЛЬНО заставляем шкалу пересчитаться
+        // 3. Применяем к шкале ОДНИМ вызовом
         const priceScale = this.chart.priceScale('right');
         if (priceScale) {
             priceScale.applyOptions({ 
-                priceFormat: priceFormat,  // 👈 ВОТ ЭТО ДОБАВЬ
-                autoScale: false 
+                priceFormat: priceFormat,
+                autoScale: true 
             });
-            priceScale.applyOptions({ autoScale: true });
         }
 
         console.log(`✅ Формат цены применен: ${precision} знаков`);
@@ -1911,9 +1907,7 @@ applyPriceFormat(precision) {
         console.error('❌ КРИТИЧЕСКАЯ ОШИБКА applyPriceFormat:', error);
         return this._inferPrecisionFromData();
     }
-
-}
-// --- 1. ВАЛИДАТОР: проверяет что свеча корректна ---
+} 
 _isValidCandle(candle) {
     if (!candle || typeof candle !== 'object') return false;
     
