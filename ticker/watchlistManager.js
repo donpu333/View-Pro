@@ -86,6 +86,7 @@ class WatchlistManager {
     saveToStorageImmediate() {
         if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
         this._saveNow();
+        
     }
 
     async _saveNow() {
@@ -199,8 +200,14 @@ async createList(name) {
     this.closeDropdown();
 
     this.saveToStorageImmediate();
-}
 
+    // ✅ Загружаем change/volume/trades для нового списка (батчами, безопасно)
+    setTimeout(() => {
+        if (this.tickerPanel.pollRestData) {
+            this.tickerPanel.pollRestData();
+        }
+    }, 200);
+}
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
