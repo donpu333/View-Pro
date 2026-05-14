@@ -1197,6 +1197,15 @@ _performUpdate() {
         }
     }
 
+    // 👇 ЗАЩИТА ОТ СБРОСА ФОРМАТА ЦЕНЫ
+    const cachedPrecision = localStorage.getItem(`precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`);
+    if (cachedPrecision) {
+        const currentFormat = this.candleSeries.options().priceFormat;
+        if (currentFormat.precision !== parseInt(cachedPrecision)) {
+            this.applyPriceFormat(parseInt(cachedPrecision));
+        }
+    }
+
     // Таймер
     if (this.timerManager) {
         this.timerManager.start(this.currentInterval);
