@@ -250,10 +250,7 @@ class WatchlistManager {
         this._schedulePriceLoadForList(newList.symbols);
     }
 
-    // ============================================
-    // ✅✅✅ УМНАЯ ЗАГРУЗКА ЦЕН ДЛЯ СПИСКА ✅✅✅
-    // ============================================
-    // В WatchlistManager:
+  
 
 _schedulePriceLoadForList(symbols) {
     if (!symbols || symbols.length === 0) return;
