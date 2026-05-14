@@ -11,6 +11,7 @@ class WatchlistManager {
         this._dbReady = false;
         this._initPromise = this._waitForDBAndLoad();
         this._switchCooldown = false;
+        this._priceLoadScheduled = false; // ← Новый флаг
     }
 
     async _waitForDBAndLoad() {
@@ -18,10 +19,7 @@ class WatchlistManager {
             console.log('⏳ WatchlistManager: жду IndexedDB...');
             await new Promise((resolve) => {
                 const check = setInterval(() => {
-                    if (window.db && window.dbReady) {
-                        clearInterval(check);
-                        resolve();
-                    }
+                    if (window.db && window.dbReady) { clearInterval(check); resolve(); }
                 }, 100);
                 setTimeout(() => { clearInterval(check); resolve(); }, 10000);
             });
@@ -61,6 +59,7 @@ class WatchlistManager {
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
+            console.log(`📦 Загружен список "${activeList.name}" с ${activeList.symbols.length} символами`);
         } else {
             this.tickerPanel.state.customSymbols = [];
         }
@@ -86,7 +85,6 @@ class WatchlistManager {
     saveToStorageImmediate() {
         if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
         this._saveNow();
-        
     }
 
     async _saveNow() {
@@ -110,22 +108,26 @@ class WatchlistManager {
         const panelSymbols = this.tickerPanel.state.customSymbols;
         if (panelSymbols.length === 0) return;
         if (JSON.stringify([...list.symbols].sort()) === JSON.stringify([...panelSymbols].sort())) return;
-        this.tickerPanel.state.customSymbols = [...list.symbols];
+        // Синхронизируем: панель имеет приоритет
+        list.symbols = [...panelSymbols];
         this.renderCache.delete(this.activeListId);
         this.renderDropdown();
     }
 
-async createList(name) {
-    await this._initPromise;
-    const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    this.lists.set(id, { name: name || `Список ${this.lists.size}`, symbols: [], isDefault: false });
-    this.listOrder.push(id);
-    this.renderCache.delete(id);
-    this.saveToStorage();
-    this.renderDropdown();
-    await this.activateList(id);  // активируем пустой список
-    return id;
-}
+    // ============================================
+    // ✅ СОЗДАНИЕ СПИСКА
+    // ============================================
+    async createList(name) {
+        await this._initPromise;
+        const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        this.lists.set(id, { name: name || `Список ${this.lists.size}`, symbols: [], isDefault: false });
+        this.listOrder.push(id);
+        this.renderCache.delete(id);
+        this.saveToStorage();
+        this.renderDropdown();
+        await this.activateList(id);
+        return id;
+    }
 
     async deleteList(listId) {
         await this._initPromise;
@@ -147,67 +149,231 @@ async createList(name) {
         this.renderCache.delete(listId);
         this.saveToStorage();
         this.renderDropdown();
-        return true;
+        return false;
     }
 
-   async activateList(listId) {
-    await this._initPromise;
-    if (!this.lists.has(listId)) return;
-    if (this.activeListId === listId) { this.closeDropdown(); return; }
+    // ============================================
+    // ✅✅✅ ПЕРЕКЛЮЧЕНИЕ (ВИРТУАЛЬНЫЙ СКРОЛЛ + ФОНОВАЯ ЗАГРУЗКА) ✅✅✅
+    // ============================================
+    async activateList(listId) {
+        await this._initPromise;
+        if (!this.lists.has(listId)) return;
+        if (this.activeListId === listId) { this.closeDropdown(); return; }
 
-    const oldList = this.lists.get(this.activeListId);
-    if (oldList) {
-        oldList.symbols = [...this.tickerPanel.state.customSymbols];
-        this.renderCache.delete(this.activeListId);
-    }
+        // Сохраняем текущий
+        const oldList = this.lists.get(this.activeListId);
+        if (oldList) {
+            oldList.symbols = [...this.tickerPanel.state.customSymbols];
+            this.renderCache.delete(this.activeListId);
+        }
 
-    this.activeListId = listId;
-    this._switchCooldown = true;
-    setTimeout(() => { this._switchCooldown = false; }, 500);
+        this.activeListId = listId;
+        this._switchCooldown = true;
+        setTimeout(() => { this._switchCooldown = false; }, 500);
 
-    const newList = this.lists.get(listId);
-    if (!newList) return;
+        const newList = this.lists.get(listId);
+        if (!newList) return;
 
-    // Очищаем всё
-    this.tickerPanel.state.customSymbols = [...newList.symbols];
-    this.tickerPanel.tickers = [];
-    this.tickerPanel.tickerElements.clear();
-    this.tickerPanel.displayedTickers = [];
-    this.tickerPanel.totalItems = 0;
-    this.tickerPanel.filterCache = null;
+        console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
 
-    const container = document.getElementById('tickerListContainer');
-    if (container) container.innerHTML = '';
+        const startTime = performance.now();
 
-    // Добавляем символы из нового списка
-    for (const symbolKey of newList.symbols) {
-        const parts = symbolKey.split(':');
-        if (parts.length !== 3) continue;
-        const [symbol, exchange, marketType] = parts;
-        if (this.tickerPanel.tickersMap.has(symbolKey)) {
-            const ticker = this.tickerPanel.tickersMap.get(symbolKey);
-            if (!this.tickerPanel.tickers.includes(ticker)) {
-                this.tickerPanel.tickers.push(ticker);
+        // ============================================
+        // 1. ПОЛНАЯ ОЧИСТКА
+        // ============================================
+        this.tickerPanel.state.customSymbols = [...newList.symbols];
+        this.tickerPanel.tickers = [];
+        this.tickerPanel.tickersMap.clear();
+        this.tickerPanel.tickerElements?.clear();
+        this.tickerPanel.displayedTickers = [];
+        this.tickerPanel.totalItems = newList.symbols.length;
+        this.tickerPanel.filterCache = null;
+
+        const container = document.getElementById('tickerListContainer');
+        if (container) {
+            container.innerHTML = '';
+            container.scrollTop = 0;
+        }
+
+        // ============================================
+        // 2. БЫСТРОЕ СОЗДАНИЕ ТИКЕРОВ (без DOM)
+        // ============================================
+        for (const symbolKey of newList.symbols) {
+            const parts = symbolKey.split(':');
+            if (parts.length !== 3) continue;
+            const [symbol, exchange, marketType] = parts;
+            
+            const flag = this.tickerPanel.state.flags[symbolKey] || null;
+            
+            const t = { 
+                symbol, price: 0, change: 0, volume: 0, 
+                trades: null, custom: true, prevPrice: 0, 
+                exchange, marketType, flag 
+            };
+            
+            this.tickerPanel.tickers.push(t);
+            this.tickerPanel.tickersMap.set(symbolKey, t);
+            
+            // Подписка на WS
+            if (window.priceManagerInstance) {
+                window.priceManagerInstance.subscribe(symbol, (price) => {
+                    if (this.tickerPanel._onPriceUpdate) {
+                        this.tickerPanel._onPriceUpdate(symbol, price);
+                    }
+                });
             }
-        } else {
-            this.tickerPanel.addSymbol(symbol, true, exchange, marketType, false, false, true);
         }
+
+        // ============================================
+        // 3. ВИРТУАЛЬНЫЙ РЕНДЕР (только видимые!)
+        // ============================================
+        this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
+        
+        const renderTime = performance.now() - startTime;
+        console.log(`⚡ Рендер за ${renderTime.toFixed(0)}мс`);
+
+        // ============================================
+        // 4. UI обновления
+        // ============================================
+        this.tickerPanel.updateModalCount();
+        this.renderDropdown();
+        this.closeDropdown();
+        this.saveToStorageImmediate();
+
+        // Скрываем лоадер если был
+        const loader = document.getElementById('tickerLoader');
+        if (loader) loader.style.display = 'none';
+
+        // ============================================
+        // 5. ✅✅✅ ФОНОВАЯ ЗАГРУЗКА ЦЕН (пакетами!) ✅✅✅
+        // ============================================
+        this._schedulePriceLoadForList(newList.symbols);
     }
 
-    this.tickerPanel.renderTickerList();
-    this.tickerPanel.updateModalCount();
-    this.renderDropdown();
-    this.closeDropdown();
+    // ============================================
+    // ✅✅✅ УМНАЯ ЗАГРУЗКА ЦЕН ДЛЯ СПИСКА ✅✅✅
+    // ============================================
+    _schedulePriceLoadForList(symbols) {
+        if (this._priceLoadScheduled) return; // Уже запланировано
+        if (!symbols || symbols.length === 0) return;
 
-    this.saveToStorageImmediate();
+        this._priceLoadScheduled = true;
+        
+        console.log(`⏳ Планирую загрузку цен для ${symbols.length} символов...`);
+        
+        // Даём время на рендер, потом грузим
+        requestAnimationFrame(() => {
+            setTimeout(async () => {
+                this._priceLoadScheduled = false;
+                
+                // Используем pollRestData если он есть
+                if (this.tickerPanel.pollRestData) {
+                    console.log('⚡ Запуск pollRestData...');
+                    await this.tickerPanel.pollRestData();
+                } else {
+                    // Fallback: используем свой метод
+                    await this.fetchPricesForActiveList();
+                }
+                
+                console.log('✅ Цены загружены!');
+            }, 200); // 200мс пауза после рендера
+        });
+    }
 
-    // ✅ Загружаем change/volume/trades для нового списка (батчами, безопасно)
-    setTimeout(() => {
-        if (this.tickerPanel.pollRestData) {
-            this.tickerPanel.pollRestData();
+    // ============================================
+    // ✅ ЗАГРУЗКА ЦЕН (Fallback)
+    // ============================================
+    async fetchPricesForActiveList() {
+        const activeList = this.lists.get(this.activeListId);
+        if (!activeList || activeList.symbols.length === 0) return;
+
+        const bnFut = [], bnSpot = [], byFut = [], bySpot = [];
+
+        activeList.symbols.forEach(key => {
+            const parts = key.split(':');
+            if (parts.length !== 3) return;
+            const [s, ex, mt] = parts;
+            if (ex === 'binance') { mt === 'futures' ? bnFut.push(s) : bnSpot.push(s); }
+            else if (ex === 'bybit') { mt === 'futures' ? byFut.push(s) : bySpot.push(s); }
+        });
+
+        const BATCH = 25;
+        const DELAY = 800;
+
+        // Binance Futures
+        for (let i = 0; i < bnFut.length; i += BATCH) {
+            const batch = bnFut.slice(i, i + BATCH);
+            try {
+                const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${batch.map(s=>`"${s}"`).join(',')}]`);
+                const d = await r.json();
+                if (Array.isArray(d)) d.forEach(t => {
+                    const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:futures`);
+                    if (tk) { tk.price=+t.lastPrice; tk.change=+t.priceChangePercent; tk.volume=+t.quoteVolume; tk.trades=+t.count||0; }
+                });
+                this.tickerPanel.renderer?.updatePriceElements?.();
+            } catch(e){}
+            if (i+BATCH < bnFut.length) await new Promise(r=>setTimeout(r, DELAY));
         }
-    }, 200);
-}
+
+        // Binance Spot
+        if (bnFut.length>0 && bnSpot.length>0) await new Promise(r=>setTimeout(r, 1500));
+        
+        for (let i = 0; i < bnSpot.length; i += BATCH) {
+            const batch = bnSpot.slice(i, i + BATCH);
+            try {
+                const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${batch.map(s=>`"${s}"`).join(',')}]`);
+                const d = await r.json();
+                if (Array.isArray(d)) d.forEach(t => {
+                    const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:spot`);
+                    if (tk) { tk.price=+t.lastPrice; tk.change=+t.priceChangePercent; tk.volume=+t.quoteVolume; tk.trades=+t.count||0; }
+                });
+                this.tickerPanel.renderer?.updatePriceElements?.();
+            } catch(e){}
+            if (i+BATCH < bnSpot.length) await new Promise(r=>setTimeout(r, DELAY));
+        }
+
+        // Bybit
+        if ((bnFut.length>0||bnSpot.length>0) && (byFut.length>0||bySpot.length>0)) 
+            await new Promise(r=>setTimeout(r, 1000));
+
+        if (byFut.length>0) {
+            try {
+                const r = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
+                const d = await r.json();
+                if (d?.retCode===0) {
+                    const set = new Set(byFut);
+                    d.result.list.forEach(t => {
+                        if (set.has(t.symbol)) {
+                            const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:futures`);
+                            if (tk) { tk.price=+t.lastPrice; tk.change=+(t.price24hPcnt||0)*100; tk.volume=+(t.volume24h||0)*+(t.lastPrice||0); }
+                        }
+                    });
+                }
+            } catch(e){}
+        }
+
+        if (bySpot.length>0) {
+            try {
+                const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot');
+                const d = await r.json();
+                if (d?.retCode===0) {
+                    const set = new Set(bySpot);
+                    d.result.list.forEach(t => {
+                        if (set.has(t.symbol)) {
+                            const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:spot`);
+                            if (tk) { tk.price=+t.lastPrice; tk.change=+(t.price24hPcnt||0)*100; tk.volume=+(t.volume24h||0)*+(t.lastPrice||0); }
+                        }
+                    });
+                }
+            } catch(e){}
+        }
+
+        this.tickerPanel.renderer?.updatePriceElements?.();
+    }
+
+    // ============================================
+    // ✅ ДОБАВЛЕНИЕ В СПИСОК
+    // ============================================
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
@@ -222,25 +388,15 @@ async createList(name) {
         this.renderDropdown();
 
         if (listId === this.activeListId) {
-            await this.loadSymbolsFromList(listId);
+            if (!this.tickerPanel.tickersMap.has(key)) {
+                this.tickerPanel.addSymbol(symbol, true, exchange, marketType, true, false, true);
+            }
         }
-
         return true;
     }
 
     async addSymbolToActiveList(symbol, exchange, marketType) {
-        await this._initPromise;
-        const list = this.lists.get(this.activeListId);
-        if (!list) return;
-
-        const key = `${symbol}:${exchange}:${marketType}`;
-        if (list.symbols.includes(key)) return;
-
-        list.symbols.push(key);
-        this.renderCache.delete(this.activeListId);
-        this.saveToStorage();
-        this.renderDropdown();
-        await this.loadSymbolsFromList(this.activeListId);
+        return this.addSymbolToList(this.activeListId, symbol, exchange, marketType);
     }
 
     async removeSymbolFromActiveList(symbol, exchange, marketType) {
@@ -256,7 +412,7 @@ async createList(name) {
             this.renderCache.delete(this.activeListId);
             this.saveToStorage();
             this.renderDropdown();
-            await this.loadSymbolsFromList(this.activeListId);
+            this.tickerPanel.removeSymbol(symbol, exchange, marketType);
         }
     }
 
@@ -269,165 +425,79 @@ async createList(name) {
         this.renderCache.delete(this.activeListId);
         this.saveToStorage();
         this.renderDropdown();
-        await this.loadSymbolsFromList(this.activeListId);
+        this.tickerPanel.clearAllSymbols();
     }
 
+    // ============================================
+    // ✅ ЗАГРУЗКА СИМВОЛОВ (для initializeWithPriority)
+    // ============================================
     loadSymbolsFromList(listId) {
-    const list = this.lists.get(listId);
-    if (!list) return;
+        const list = this.lists.get(listId);
+        if (!list) return;
 
-    // Полностью очищаем всё, что связано с тикерами
-    this.tickerPanel.tickers = [];
-    this.tickerPanel.tickerElements.clear();
-    this.tickerPanel.displayedTickers = [];
-    this.tickerPanel.totalItems = 0;
-    this.tickerPanel.filterCache = null;
-    this.tickerPanel.state.customSymbols = [...list.symbols];
+        console.log(`📋 Загрузка списка: ${list.name}`);
 
-    const container = document.getElementById('tickerListContainer');
-    if (container) container.innerHTML = '';
+        // Полная очистка
+        this.tickerPanel.tickers = [];
+        this.tickerPanel.tickersMap.clear();
+        this.tickerPanel.tickerElements?.clear();
+        this.tickerPanel.displayedTickers = [];
+        this.tickerPanel.totalItems = list.symbols.length;
+        this.tickerPanel.filterCache = null;
+        this.tickerPanel.state.customSymbols = [...list.symbols];
 
-    // Заново создаём тикеры для каждого символа в списке
-    for (const symbolKey of list.symbols) {
-        const parts = symbolKey.split(':');
-        if (parts.length !== 3) continue;
-        const [symbol, exchange, marketType] = parts;
+        const container = document.getElementById('tickerListContainer');
+        if (container) { container.innerHTML = ''; container.scrollTop = 0; }
 
-        if (this.tickerPanel.tickersMap.has(symbolKey)) {
-            const ticker = this.tickerPanel.tickersMap.get(symbolKey);
-            if (!this.tickerPanel.tickers.includes(ticker)) {
-                this.tickerPanel.tickers.push(ticker);
-            }
-        } else {
-            this.tickerPanel.addSymbol(symbol, true, exchange, marketType, false, true, true);
-        }
-    }
-
-    // Принудительная перерисовка списка
-    this.tickerPanel.renderTickerList();
-    this.tickerPanel.updateModalCount();
-}
-
-    async fetchPricesForActiveList() {
-        const activeList = this.lists.get(this.activeListId);
-        if (!activeList || activeList.symbols.length === 0) return;
-
-        const binanceFutures = [];
-        const binanceSpot = [];
-        const bybitFutures = [];
-        const bybitSpot = [];
-
-        activeList.symbols.forEach(key => {
-            const parts = key.split(':');
-            if (parts.length !== 3) return;
+        // Создаём тикеры
+        for (const symbolKey of list.symbols) {
+            const parts = symbolKey.split(':');
+            if (parts.length !== 3) continue;
             const [symbol, exchange, marketType] = parts;
-            if (exchange === 'binance') {
-                if (marketType === 'futures') binanceFutures.push(symbol);
-                else binanceSpot.push(symbol);
-            } else if (exchange === 'bybit') {
-                if (marketType === 'futures') bybitFutures.push(symbol);
-                else bybitSpot.push(symbol);
-            }
-        });
-
-        const BATCH_SIZE = 50;
-        const BATCH_DELAY = 200;
-
-        for (let i = 0; i < binanceFutures.length; i += BATCH_SIZE) {
-            const batch = binanceFutures.slice(i, i + BATCH_SIZE);
-            const symbolsParam = batch.map(s => `"${s}"`).join(',');
-            try {
-                const url = `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]`;
-                const response = await fetch(url);
-                const data = await response.json();
-                if (Array.isArray(data)) {
-                    data.forEach(t => {
-                        const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:futures`);
-                        if (ticker) {
-                            ticker.price = parseFloat(t.lastPrice) || 0;
-                            ticker.change = parseFloat(t.priceChangePercent) || 0;
-                            ticker.volume = parseFloat(t.quoteVolume) || 0;
-                            ticker.trades = parseInt(t.count) || 0;
-                        }
-                    });
-                }
-            } catch (e) {}
-            if (i + BATCH_SIZE < binanceFutures.length) {
-                await new Promise(r => setTimeout(r, BATCH_DELAY));
-            }
+            
+            const flag = this.tickerPanel.state.flags[symbolKey] || null;
+            const t = { symbol, price: 0, change: 0, volume: 0, trades: null, custom: true, prevPrice: 0, exchange, marketType, flag };
+            this.tickerPanel.tickers.push(t);
+            this.tickerPanel.tickersMap.set(symbolKey, t);
         }
 
-        if (binanceFutures.length > 0 && binanceSpot.length > 0) {
-            await new Promise(r => setTimeout(r, 500));
-        }
+        // Виртуальный рендер
+        this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
+        this.tickerPanel.updateModalCount();
 
-        for (let i = 0; i < binanceSpot.length; i += BATCH_SIZE) {
-            const batch = binanceSpot.slice(i, i + BATCH_SIZE);
-            const symbolsParam = batch.map(s => `"${s}"`).join(',');
-            try {
-                const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`;
-                const response = await fetch(url);
-                const data = await response.json();
-                if (Array.isArray(data)) {
-                    data.forEach(t => {
-                        const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:spot`);
-                        if (ticker) {
-                            ticker.price = parseFloat(t.lastPrice) || 0;
-                            ticker.change = parseFloat(t.priceChangePercent) || 0;
-                            ticker.volume = parseFloat(t.quoteVolume) || 0;
-                            ticker.trades = parseInt(t.count) || 0;
-                        }
-                    });
-                }
-            } catch (e) {}
-            if (i + BATCH_SIZE < binanceSpot.length) {
-                await new Promise(r => setTimeout(r, BATCH_DELAY));
-            }
-        }
-
-        if (bybitFutures.length > 0) {
-            const set = new Set(bybitFutures);
-            try {
-                const response = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
-                const data = await response.json();
-                if (data?.retCode === 0 && data.result?.list) {
-                    data.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
-                            const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:futures`);
-                            if (ticker) {
-                                ticker.price = parseFloat(t.lastPrice) || 0;
-                                ticker.change = (parseFloat(t.price24hPcnt) || 0) * 100;
-                                ticker.volume = (parseFloat(t.volume24h) || 0) * (parseFloat(t.lastPrice) || 0);
-                            }
-                        }
-                    });
-                }
-            } catch (e) {}
-        }
-
-        if (bybitSpot.length > 0) {
-            const set = new Set(bybitSpot);
-            try {
-                const response = await fetch('https://api.bybit.com/v5/market/tickers?category=spot');
-                const data = await response.json();
-                if (data?.retCode === 0 && data.result?.list) {
-                    data.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
-                            const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:spot`);
-                            if (ticker) {
-                                ticker.price = parseFloat(t.lastPrice) || 0;
-                                ticker.change = (parseFloat(t.price24hPcnt) || 0) * 100;
-                                ticker.volume = (parseFloat(t.volume24h) || 0) * (parseFloat(t.lastPrice) || 0);
-                            }
-                        }
-                    });
-                }
-            } catch (e) {}
-        }
-
-        this.tickerPanel.renderTickerList();
+        // Фоновая загрузка цен
+        this._schedulePriceLoadForList(list.symbols);
     }
 
+    // ============================================
+    // ✅ ИНИЦИАЛИЗАЦИЯ
+    // ============================================
+    async initializeWithPriority() {
+        await this._initPromise;
+        this.renderDropdown();
+        
+        const activeList = this.lists.get(this.activeListId);
+        const panelHasTickers = this.tickerPanel.tickers.length > 0;
+
+        console.log(`🔍 initializeWithPriority: panelHasTickers=${panelHasTickers}, listSize=${activeList?.symbols?.length||0}`);
+
+        // Всегда загружаем если список не пустой!
+        if (activeList && activeList.symbols.length > 0) {
+            // Если панель пустая ИЛИ тикеры не совпадают со списком - перезагружаем
+            if (!panelHasTickers || this.tickerPanel.tickers.length !== activeList.symbols.length) {
+                console.log('📦 Загружаем символы из списка...');
+                await this.loadSymbolsFromList(this.activeListId);
+            } else {
+                console.log('✅ Тикеры уже загружены, пропускаем');
+                // Но всё равно планируем обновление цен
+                this._schedulePriceLoadForList(activeList.symbols);
+            }
+        }
+    }
+
+    // ============================================
+    // ✅ DROPDOWN UI
+    // ============================================
     renderDropdown() {
         const container = document.getElementById('watchlistDropdown');
         if (!container) { this.createDropdownContainer(); return; }
@@ -464,9 +534,7 @@ async createList(name) {
 
             html += `
                 <div class="wl-dropdown-divider"></div>
-                <div class="wl-dropdown-item wl-add-item" data-action="add">
-                    + Создать новый список
-                </div>
+                <div class="wl-dropdown-item wl-add-item" data-action="add">+ Создать новый список</div>
             `;
 
             dropdown.innerHTML = html;
@@ -543,18 +611,6 @@ async createList(name) {
         const list = this.lists.get(listId);
         if (!list) return;
         if (confirm(`Удалить список «${list.name}»?`)) this.deleteList(listId);
-    }
-
-    async initializeWithPriority() {
-        await this._initPromise;
-        this.renderDropdown();
-        const activeList = this.lists.get(this.activeListId);
-        const panelHasTickers = this.tickerPanel.tickers.length > 0;
-
-        if (!panelHasTickers && activeList && activeList.symbols.length > 0) {
-            await this.loadSymbolsFromList(this.activeListId);
-            this.tickerPanel.renderTickerList();
-        }
     }
 
     escapeHtml(text) {
