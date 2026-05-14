@@ -436,10 +436,9 @@ startTickerPanelPriceEngine() {
             if (ticker.exchange === 'bybit' && ticker.marketType === 'spot') bySpotSymbols.push(ticker.symbol);
         }
         
-        const BATCH_SIZE = 25;   // ✅ 50 → 25
-        const BATCH_DELAY = 800; // ✅ 500 → 800мс
+        const BATCH_SIZE = 25;
+        const BATCH_DELAY = 800;
         
-        // Binance Futures батчами
         for (let i = 0; i < bnFutSymbols.length; i += BATCH_SIZE) {
             const batch = bnFutSymbols.slice(i, i + BATCH_SIZE);
             const symbolsParam = batch.map(s => `"${s}"`).join(',');
@@ -463,12 +462,10 @@ startTickerPanelPriceEngine() {
             }
         }
         
-        // ✅ ПАУЗА МЕЖДУ FUTURES И SPOT
         if (bnFutSymbols.length > 0 && bnSpotSymbols.length > 0) {
-            await new Promise(r => setTimeout(r, 2000)); // ✅ 1000 → 2000мс
+            await new Promise(r => setTimeout(r, 2000));
         }
         
-        // Binance Spot батчами
         for (let i = 0; i < bnSpotSymbols.length; i += BATCH_SIZE) {
             const batch = bnSpotSymbols.slice(i, i + BATCH_SIZE);
             const symbolsParam = batch.map(s => `"${s}"`).join(',');
@@ -492,12 +489,10 @@ startTickerPanelPriceEngine() {
             }
         }
         
-        // ✅ ПАУЗА ПЕРЕД BYBIT
         if ((bnFutSymbols.length > 0 || bnSpotSymbols.length > 0) && (byFutSymbols.length > 0 || bySpotSymbols.length > 0)) {
-            await new Promise(r => setTimeout(r, 1000)); // ✅ 500 → 1000мс
+            await new Promise(r => setTimeout(r, 1000));
         }
         
-        // Bybit Futures (один запрос)
         if (byFutSymbols.length > 0) {
             try {
                 const response = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
@@ -518,7 +513,6 @@ startTickerPanelPriceEngine() {
             } catch(e) {}
         }
         
-        // Bybit Spot (один запрос)
         if (bySpotSymbols.length > 0) {
             try {
                 const response = await fetch('https://api.bybit.com/v5/market/tickers?category=spot');
@@ -542,8 +536,11 @@ startTickerPanelPriceEngine() {
         this.renderer.updatePriceElements();
     };
 
+    // ✅ Сохраняем ссылку для вызова извне (activateList, _doAddNextBatch)
+    this.pollRestData = pollRestData;
+
     pollRestData();
-   this._restPollingInterval = setInterval(pollRestData, 300000);
+    this._restPollingInterval = setInterval(pollRestData, 300000);
 }
 
     clearAllSymbols() {
