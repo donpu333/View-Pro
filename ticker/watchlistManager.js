@@ -253,33 +253,33 @@ class WatchlistManager {
     // ============================================
     // ✅✅✅ УМНАЯ ЗАГРУЗКА ЦЕН ДЛЯ СПИСКА ✅✅✅
     // ============================================
-    _schedulePriceLoadForList(symbols) {
-        if (this._priceLoadScheduled) return; // Уже запланировано
-        if (!symbols || symbols.length === 0) return;
+    // В WatchlistManager:
 
-        this._priceLoadScheduled = true;
-        
-        console.log(`⏳ Планирую загрузку цен для ${symbols.length} символов...`);
-        
-        // Даём время на рендер, потом грузим
-        requestAnimationFrame(() => {
-            setTimeout(async () => {
-                this._priceLoadScheduled = false;
-                
-                // Используем pollRestData если он есть
-                if (this.tickerPanel.pollRestData) {
-                    console.log('⚡ Запуск pollRestData...');
-                    await this.tickerPanel.pollRestData();
-                } else {
-                    // Fallback: используем свой метод
-                    await this.fetchPricesForActiveList();
-                }
-                
-                console.log('✅ Цены загружены!');
-            }, 200); // 200мс пауза после рендера
-        });
+_schedulePriceLoadForList(symbols) {
+    if (!symbols || symbols.length === 0) return;
+    
+    // ✅ Защита от множественных вызовов
+    if (this._priceLoadTimer) {
+        clearTimeout(this._priceLoadTimer);
     }
-
+    
+    this._priceLoadTimer = setTimeout(async () => {
+        this._priceLoadTimer = null;
+        
+        // ✅ Проверяем что не запущено
+        if (this.tickerPanel._isRestRunning) {
+            console.log('⏳ REST уже работает, не запускаем повторно');
+            return;
+        }
+        
+        console.log(`⚡ Планирую загрузку цен (${symbols.length} шт.)...`);
+        
+        if (this.tickerPanel.pollRestData) {
+            await this.tickerPanel.pollRestData();
+        }
+        
+    }, 1000); // 1 секунда debounce
+}
     // ============================================
     // ✅ ЗАГРУЗКА ЦЕН (Fallback)
     // ============================================
