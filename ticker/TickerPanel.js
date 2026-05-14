@@ -105,7 +105,7 @@ if (savedSortBy) {
         this.init();
     }
     
-    async init() {
+   async init() {
     console.log('📋 TickerPanel: быстрая инициализация');
     document.getElementById('tickerLoader').style.display = 'block';
     
@@ -118,16 +118,11 @@ if (savedSortBy) {
 
     document.addEventListener('contextmenu', (e) => {
         let target = e.target;
-        if (target && target.nodeType === 3) {
-            target = target.parentElement;
-        }
-        
+        if (target && target.nodeType === 3) target = target.parentElement;
         const tickerItem = target.closest('.ticker-item');
-        if (tickerItem) {
-            e.preventDefault(); 
-            this.handleContextMenu(e);
-        }
+        if (tickerItem) { e.preventDefault(); this.handleContextMenu(e); }
     });
+    
     document.addEventListener('click', (e) => {
         const tickerMenu = document.getElementById('tickerContextMenu');
         if (tickerMenu && tickerMenu.style.display === 'block' && !tickerMenu.contains(e.target)) {
@@ -136,25 +131,31 @@ if (savedSortBy) {
     });
 
     if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
-    
+
     setTimeout(async () => {
-        await this.loadUserData();
-
-        // 👇 ГАРАНТИРОВАННОЕ ВОССТАНОВЛЕНИЕ СОРТИРОВКИ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
-        const savedSortBy = localStorage.getItem('tickerSortBy');
-        const savedSortDir = localStorage.getItem('tickerSortDir');
-        if (savedSortBy) {
-            this.state.sortBy = savedSortBy;
-            this.state.sortDirection = savedSortDir || 'desc';
-            this.filterCache = null;
-            this.renderer.renderTickerList();
+        // ============================================
+        // ✅✅✅ ЖДЁМ ЗАГРУЗКИ WATCHLIST ИЗ DB! ✅✅✅
+        // ============================================
+        console.log('⏳ Ожидание загрузки Watchlist...');
+        
+        if (this.watchlistManager) {
+            await this.watchlistManager._initPromise; // ← ДОЖДАЁМСЯ!
+            console.log('✅ Watchlist загружен, customSymbols:', this.state.customSymbols?.length);
         }
-
+        
+        await this.loadUserData();
+        
+        if (this.watchlistManager) {
+            // ✅ Синхронизируем activeList с панелью
+            this.watchlistManager.syncActiveListFromPanel();
+        }
+        
         this.initializeDataParallel();
         this.startCacheCleanup();
         this.updateModalWithData?.();
-        if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
         
+        if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
+
         // Обновляем кэш раз в 4 часа
         this._cacheRefreshInterval = setInterval(() => {
             this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
