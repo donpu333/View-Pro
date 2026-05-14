@@ -1378,28 +1378,15 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         }
         
         // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (применяем сразу, если изменилась)
-        if (!cachedPrecision) {
-            getPrecisionFromExchange(symbol, exchange, marketType)
-                .then(precision => {
-                    // Сохраняем в кеш
-                    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                    
-                    // Применяем к текущему графику, если precision отличается
-                    const currentSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                    const currentPrecision = currentSeries?.options()?.priceFormat?.precision;
-                    if (currentPrecision !== precision) {
-                        this.applyPriceFormat(precision);
-                        // Обновляем только шкалу цены, не меняя видимый диапазон
-                        const priceScale = this.chart.priceScale('right');
-                        if (priceScale) {
-                            priceScale.applyOptions({ autoScale: true });
-                        }
-                        console.log(`✅ Precision applied for ${symbol}: ${precision} decimals`);
-                    }
-                })
-                .catch(() => {});
-        }
-        
+     // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (только сохраняем, не применяем)
+if (!cachedPrecision) {
+    getPrecisionFromExchange(symbol, exchange, marketType)
+        .then(precision => {
+            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+            console.log(`✅ Precision saved for ${symbol}: ${precision} decimals`);
+        })
+        .catch(() => {});
+}
         // ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
@@ -1867,9 +1854,10 @@ _inferPrecisionFromData() {
     
     const str = lastPrice.toString();
     if (str.includes('.')) {
-        return str.split('.')[1].length; // Считаем знаки после запятой
+        const decimals = str.split('.')[1].length;
+        return Math.min(decimals, 8);
     }
-    return 2; // Дефолт для целых чисел
+    return 2;
 }
 
 // Обновленный метод с обработкой ошибок и принудительным обновлением
