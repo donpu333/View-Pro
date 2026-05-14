@@ -4394,3 +4394,38 @@ input:checked + .slider:before {
     position: relative;
     z-index: 100001;
 }
+/* ============================================
+   ✅ АНИМАЦИЯ ЦЕНЫ (Flash-эффект)
+   ============================================ */
+
+/* Цена выросла — зелёная вспышка */
+.ticker-item.price-flash-up {
+    animation: flashGreen 0.4s ease-out;
+}
+
+/* Цена упала — красная вспышка */
+.ticker-item.price-flash-down {
+    animation: flashRed 0.4s ease-out;
+}
+
+@keyframes flashGreen {
+    0% { 
+        background-color: rgba(76, 175, 80, 0.35);  /* Зелёный фон */
+        box-shadow: inset 0 0 20px rgba(76, 175, 80, 0.3);
+    }
+    100% { 
+        background-color: transparent;
+        box-shadow: none;
+    }
+}
+
+@keyframes flashRed {
+    0% { 
+        background-color: rgba(244, 54, 69, 0.35);   /* Красный фон */
+        box-shadow: inset 0 0 20px rgba(244, 54, 69, 0.3);
+    }
+    100% { 
+        background-color: transparent;
+        box-shadow: none;
+    }
+}
