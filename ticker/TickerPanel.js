@@ -348,306 +348,405 @@ _deduplicateSymbols(symbols) {
     });
 }
 
- addInitialSymbols() {
+addInitialSymbols() {
     const savedSymbols = this.state.customSymbols;
     savedSymbols.forEach(symbolKey => {
         const parts = symbolKey.split(':');
         if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
     });
+    
     this.updateModalCount();
     
-    // Рендерим тикеры сразу (цены будут 0.00)
+    // ✅ СНАЧАЛА РЕНЕР (цены будут 0.00)
     this.renderTickerList();
+    
     requestAnimationFrame(() => {
         const container = document.getElementById('tickerListContainer');
         const loader = document.getElementById('tickerLoader');
         if (container) container.classList.add('ready');
         if (loader) loader.style.display = 'none';
+        
+        // ✅ Разблокировка
+        this._blockDOMUpdates = false;
+        
+        // ✅ Запускаем движок
+        this.startTickerPanelPriceEngine();
+        
+        this.setupDelegatedEvents();
+        
+        // ✅✅✅ ПЕРЕРИСОВКА ПОСЛЕ ЗАГРУЗКИ!
+        setTimeout(() => {
+            console.log('🔄 Принудительное обновление UI...');
+            if (this.renderer) {
+                this.renderer.updatePriceElements?.();
+                this.renderTickerList();
+            }
+        }, 1500);
     });
-    
-    this._blockDOMUpdates = false;
-    this.setupDelegatedEvents();
-    
-    // ✅ Запускаем движок цен (WebSocket мгновенно + REST раз в 5 минут)
-    // ✅ НЕ делаем fetch здесь — pollRestData сам всё загрузит с задержками
-    this.startTickerPanelPriceEngine();
 }
 
 startTickerPanelPriceEngine() {
     if (this._priceEngineStarted) return;
     this._priceEngineStarted = true;
-    console.log('🚀 TickerPriceEngine: Запуск (WS + REST с защитой от бана)...');
+    console.log('🚀 TickerPriceEngine: Запуск...');
     
     this._wsConnections = {};
-    this._restQueue = [];           // Очередь запросов
-    this._isRestRunning = false;    // Флаг: работает ли сейчас
-
-    // ========== WEBSOCKET (без изменений) ==========
-    const connectBinanceWs = (id, url, marketType) => {
-        if (this._wsConnections[id]) return;
-        try {
-            const ws = new WebSocket(url);
-            this._wsConnections[id] = ws;
-
-            ws.onopen = () => console.log(`%c✅ [WS] ${id} УСПЕШНО ПОДКЛЮЧЕН!`, 'color: #4caf50; font-weight:bold;');
-
-            ws.onmessage = (event) => {
-                try {
-                    const tickers = JSON.parse(event.data);
-                    if (!Array.isArray(tickers)) return;
-                    
-                    let updated = 0;
-                    tickers.forEach(t => {
-                        if (!t.s || !t.c) return;
-                        const key = `${t.s}:binance:${marketType}`;
-                        const tk = this.tickersMap.get(key);
-                        if (tk) {
-                            const newPrice = parseFloat(t.c);
-                            if (tk.price !== newPrice) {
-                                tk.prevPrice = tk.price;
-                                tk.price = newPrice;
-                                updated++;
-                            }
-                        }
-                    });
-                    
-                    if (updated > 0) this.renderer.updatePriceElements();
-                } catch(e) {}
-            };
-
-            ws.onclose = () => { 
-                this._wsConnections[id] = null; 
-                setTimeout(() => connectBinanceWs(id, url, marketType), 5000); 
-            };
-            ws.onerror = () => ws.close();
-        } catch(e) {}
-    };
-
-    connectBinanceWs('binance-futures', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
-    connectBinanceWs('binance-spot', 'wss://stream.binance.com/ws/!miniTicker@arr', 'spot');
+    this._restQueue = [];           
+    this._isRestRunning = false;    
 
     // ============================================
-    // ✅✅✅ БЕЗОПАСНЫЙ FETCH С RETRY ✅✅✅
+    // ✅ REST МЕТОДЫ
     // ============================================
+    
     this._safeFetch = async (url, retries = 3) => {
         for (let i = 0; i < retries; i++) {
             try {
-                // Если был бан - ждём перед retry
-                if (i > 0) {
-                    const waitTime = Math.min(5000 * i, 20000); // 5с, 10с, 20с
-                    console.warn(`⏳ Retry ${i}/${retries-1}, жду ${waitTime}мс...`);
-                    await new Promise(r => setTimeout(r, waitTime));
-                }
-                
+                if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
-                
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
                 const response = await fetch(url, { signal: controller.signal });
                 clearTimeout(timeoutId);
-                
-                // Rate limited!
-                if (response.status === 418 || response.status === 429) {
-                    console.warn(`⚠️ BAN (${response.status}), retry ${i+1}/${retries}`);
-                    continue;
-                }
-                
+                if (response.status === 418 || response.status === 429) continue;
                 if (!response.ok) return null;
                 return await response.json();
-                
             } catch (e) {
-                if (e.name === 'AbortError') {
-                    console.warn(`⚠️ Timeout, retry...`);
-                    continue;
-                }
+                if (e.name !== 'AbortError') continue;
             }
         }
-        console.error('❌ Все попытки исчерпаны:', url);
         return null;
     };
 
-    // ============================================
-    // ✅✅✅ ОБРАБОТКА ОЧЕРЕДИ (1 запрос за раз!) ✅✅✅
-    // ============================================
     this._processRestQueue = async () => {
-        if (this._isRestRunning) {
-            console.log('⏳ Очередь уже обрабатывается...');
-            return;
-        }
-        
+        if (this._isRestRunning) return;
         this._isRestRunning = true;
-        let requestCount = 0;
-        
+        let count = 0;
         while (this._restQueue.length > 0) {
             const task = this._restQueue.shift();
-            requestCount++;
-            
-            console.log(`📦 Запрос ${requestCount}/${this._restQueue.length + 1}...`);
-            
+            count++;
             await task();
-            
-            // Пауза между запросами КРИТИЧНА!
-            await new Promise(r => setTimeout(r, 1500)); // 1.5 секунды между пакетами
+            await new Promise(r => setTimeout(r, 1000));
         }
-        
         this._isRestRunning = false;
-        console.log(`✅ REST завершён (${requestCount} запросов)`);
+        
+        console.log(`✅ REST завершён (${count} запросов)`);
+        
+        if (!this._blockDOMUpdates) {
+            this.renderTickerList();
+            this.updatePriceElements?.();
+        }
     };
 
-    // ============================================
-    // ✅✅✅ ОСНОВНОЙ МЕТОД ЗАГРУЗКИ ✅✅✅
-    // ============================================
-    const pollRestData = async () => {
-        if (this.tickersMap.size === 0) {
-            console.log('📭 Нет тикеров для загрузки');
-            return;
-        }
-        
-        // Защита от двойного запуска
-        if (this._isRestRunning) {
-            console.log('⏳ REST уже работает, пропускаем...');
-            return;
-        }
+    /**
+     * ✅ ЗАГРУЗКА ЦЕН + МЕТРИКОВ
+     */
+    const loadAllData = async () => {
+        if (this.tickersMap.size === 0) return;
 
-        console.log(`📡 Сбор данных для ${this.tickersMap.size} тикеров...`);
-
-        const bnFutSymbols = [];
-        const bnSpotSymbols = [];
-        const byFutSymbols = [];
-        const bySpotSymbols = [];
-        
-        for (const [key, ticker] of this.tickersMap) {
-            if (ticker.exchange === 'binance' && ticker.marketType === 'futures') bnFutSymbols.push(ticker.symbol);
-            if (ticker.exchange === 'binance' && ticker.marketType === 'spot') bnSpotSymbols.push(ticker.symbol);
-            if (ticker.exchange === 'bybit' && ticker.marketType === 'futures') byFutSymbols.push(ticker.symbol);
-            if (ticker.exchange === 'bybit' && ticker.marketType === 'spot') bySpotSymbols.push(ticker.symbol);
+        const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
+        for (const [k, t] of this.tickersMap) {
+            if (t.exchange === 'binance' && t.marketType === 'futures') groups.bnFut.push(t.symbol);
+            if (t.exchange === 'binance' && t.marketType === 'spot') groups.bnSpot.push(t.symbol);
+            // ✅ ИСПРАВЛЕНО: убрано t *
+            if (t.exchange === 'bybit' && t.marketType === 'futures') groups.byFut.push(t.symbol);
+            if (t.exchange === 'bybit' && t.marketType === 'spot') groups.bySpot.push(t.symbol);
         }
 
-        const BATCH_SIZE = 12; // Было 25 → 12 (меньше шанс бана!)
+        const BATCH = 12;
+        this._restQueue = [];
 
-        // ======== BINANCE FUTURES ========
-        for (let i = 0; i < bnFutSymbols.length; i += BATCH_SIZE) {
-            const batch = bnFutSymbols.slice(i, i + BATCH_SIZE);
+        // Binance Futures (ЦЕНА + метрики!)
+        for (let i = 0; i < groups.bnFut.length; i += BATCH) {
+            const batch = groups.bnFut.slice(i, i + BATCH);
             const symbolsParam = batch.map(s => `"${s}"`).join(',');
             
             this._restQueue.push(async () => {
                 const data = await this._safeFetch(
                     `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]`
                 );
-                if (Array.isArray(data)) {
-                    data.forEach(t => {
-                        const tk = this.tickersMap.get(`${t.symbol}:binance:futures`);
-                        if (tk) {
-                            tk.price = parseFloat(t.lastPrice) || 0;
-                            tk.change = parseFloat(t.priceChangePercent) || 0;
-                            tk.volume = parseFloat(t.quoteVolume) || 0;
-                            tk.trades = parseInt(t.count) || 0;
-                        }
-                    });
-                    this.renderer?.updatePriceElements?.();
-                }
+                if (Array.isArray(data)) data.forEach(t => { 
+                    const tk = this.tickersMap.get(`${t.symbol}:binance:futures`);
+                    if (tk) { 
+                        tk.price = parseFloat(t.lastPrice)||0; 
+                        tk.change = parseFloat(t.priceChangePercent)||0; 
+                        tk.volume = parseFloat(t.quoteVolume)||0; 
+                        tk.trades = parseInt(t.count)||0; 
+                    } 
+                });
+                this.renderer?.updatePriceElements?.();
             });
+            
+            // ✅ ИСПРАВЛЕНО: добавлена скобка
+            if (i + BATCH < groups.bnFut.length) {
+                this._restQueue.push(() => new Promise(r => setTimeout(r, 1000)));
+            }
         }
 
-        // Пауза между Futures и Spot
-        if (bnFutSymbols.length > 0 && bnSpotSymbols.length > 0) {
-            this._restQueue.push(() => new Promise(r => setTimeout(r, 2000)));
-        }
-
-        // ======== BINANCE SPOT ========
-        for (let i = 0; i < bnSpotSymbols.length; i += BATCH_SIZE) {
-            const batch = bnSpotSymbols.slice(i, i + BATCH_SIZE);
+        // Binance Spot (ЦЕНА + метрики!)
+        for (let i = 0; i < groups.bnSpot.length; i += BATCH) {
+            const batch = groups.bnSpot.slice(i, i + BATCH);
             const symbolsParam = batch.map(s => `"${s}"`).join(',');
             
             this._restQueue.push(async () => {
                 const data = await this._safeFetch(
                     `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`
                 );
-                if (Array.isArray(data)) {
-                    data.forEach(t => {
-                        const tk = this.tickersMap.get(`${t.symbol}:binance:spot`);
-                        if (tk) {
-                            tk.price = parseFloat(t.lastPrice) || 0;
-                            tk.change = parseFloat(t.priceChangePercent) || 0;
-                            tk.volume = parseFloat(t.quoteVolume) || 0;
-                            tk.trades = parseInt(t.count) || 0;
-                        }
-                    });
-                    this.renderer?.updatePriceElements?.();
-                }
+                if (Array.isArray(data)) data.forEach(t => { 
+                    const tk = this.tickersMap.get(`${t.symbol}:binance:spot`);
+                    if (tk) { 
+                        tk.price = parseFloat(t.lastPrice)||0; 
+                        tk.change = parseFloat(t.priceChangePercent)||0; 
+                        tk.volume = parseFloat(t.quoteVolume)||0; 
+                        tk.trades = parseInt(t.count)||0; 
+                    } 
+                });
+                this.renderer?.updatePriceElements?.();
             });
+            
+            // ✅ ИСПРАВЛЕНО: добавлена скобка
+            if (i + BATCH < groups.bnSpot.length) {
+                this._restQueue.push(() => new Promise(r => setTimeout(r, 1000)));
+            }
         }
 
         // Пауза перед Bybit
-        if ((bnFutSymbols.length > 0 || bnSpotSymbols.length > 0) && 
-            (byFutSymbols.length > 0 || bySpotSymbols.length > 0)) {
+        if (groups.bnFut.length > 0 || groups.bnSpot.length > 0) {
             this._restQueue.push(() => new Promise(r => setTimeout(r, 1500)));
         }
 
-        // ======== BYBIT FUTURES ========
-        if (byFutSymbols.length > 0) {
+        // Bybit Futures (ЦЕНА + метрики!)
+        if (groups.byFut.length > 0) {
             this._restQueue.push(async () => {
                 const data = await this._safeFetch(
                     'https://api.bybit.com/v5/market/tickers?category=linear'
                 );
-                if (data?.retCode === 0 && data.result?.list) {
-                    const set = new Set(byFutSymbols);
-                    data.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
+                if (data?.retCode === 0 && data.result?.list) { 
+                    const set = new Set(groups.byFut);
+                    data.result.list.forEach(t => { 
+                        if (set.has(t.symbol)) { 
                             const tk = this.tickersMap.get(`${t.symbol}:bybit:futures`);
-                            if (tk) {
-                                tk.price = parseFloat(t.lastPrice) || 0;
-                                tk.change = (parseFloat(t.price24hPcnt) || 0) * 100;
-                                tk.volume = (parseFloat(t.volume24h) || 0) * (parseFloat(t.lastPrice) || 0);
-                            }
-                        }
+                            if (tk) { 
+                                tk.price = parseFloat(t.lastPrice)||0; 
+                                tk.change = (parseFloat(t.price24hPcnt)||0)*100; 
+                                tk.volume = (parseFloat(t.volume24h)||0)*(parseFloat(t.lastPrice)||0); 
+                            } 
+                        } 
                     });
-                    this.renderer?.updatePriceElements?.();
                 }
+                this.renderer?.updatePriceElements?.();
             });
         }
 
-        // ======== BYBIT SPOT ========
-        if (bySpotSymbols.length > 0) {
+        // Bybit Spot (ЦЕНА + метрики!)
+        if (groups.bySpot.length > 0) {
             this._restQueue.push(async () => {
                 const data = await this._safeFetch(
                     'https://api.bybit.com/v5/market/tickers?category=spot'
                 );
-                if (data?.retCode === 0 && data.result?.list) {
-                    const set = new Set(bySpotSymbols);
-                    data.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
+                if (data?.retCode === 0 && data.result?.list) { 
+                    const set = new Set(groups.bySpot);
+                    data.result.list.forEach(t => { 
+                        if (set.has(t.symbol)) { 
                             const tk = this.tickersMap.get(`${t.symbol}:bybit:spot`);
-                            if (tk) {
-                                tk.price = parseFloat(t.lastPrice) || 0;
-                                tk.change = (parseFloat(t.price24hPcnt) || 0) * 100;
-                                tk.volume = (parseFloat(t.volume24h) || 0) * (parseFloat(t.lastPrice) || 0);
-                            }
-                        }
+                            if (tk) { 
+                                tk.price = parseFloat(t.lastPrice)||0; 
+                                tk.change = (parseFloat(t.price24hPcnt)||0)*100; 
+                                tk.volume = (parseFloat(t.volume24h)||0)*(parseFloat(t.lastPrice)||0); 
+                            } 
+                        } 
                     });
-                    this.renderer?.updatePriceElements?.();
                 }
+                this.renderer?.updatePriceElements?.();
             });
         }
 
-        // Запускаем очередь!
+        // ⏸️ ВЫПОЛНЯЕМ ОЧЕРЕДЬ!
         await this._processRestQueue();
+        
+        console.log(`💰 Загружено ${this.tickersMap.size} тикеров с ценами!`);
+        
+        if (!this._blockDOMUpdates) {
+            this.renderTickerList();
+            this.updateModalCount?.();
+        }
     };
 
-    // Сохраняем ссылку
-    this.pollRestData = pollRestData;
+    // ============================================
+    // ✅ WEBSOCKET
+    // ============================================
+    
+    const connectBinanceWs = (id, url, marketType) => {
+        if (this._wsConnections[id]) return;
+        
+        var ws = new WebSocket(url);
+        this._wsConnections[id] = ws;
 
-    // Первый запуск (с небольшой задержкой)
-    setTimeout(() => pollRestData(), 2000);
+        ws.onopen = function() {
+            console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;');
+        };
 
-    // Интервал (раз в 5 минут, с проверкой!)
-    this._restPollingInterval = setInterval(() => {
+        ws.onmessage = (event) => {
+            try {
+                var tickers = JSON.parse(event.data);
+                if (!Array.isArray(tickers)) return;
+                
+                var now = Date.now();
+                
+                for (var i = 0; i < tickers.length; i++) {
+                    var t = tickers[i];
+                    if (!t.s || !t.c) continue;
+                    
+                    var key = t.s + ':binance:' + marketType;
+                    var tk = this.tickersMap.get(key);
+                    
+                    if (tk) {
+                        var newPrice = parseFloat(t.c);
+                        if (tk.price !== newPrice) {
+                            tk.prevPrice = tk.price || newPrice;
+                            tk.price = newPrice;
+                            tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
+                            tk._flashTime = now;
+                        }
+                    }
+                }
+                
+                if (!this._blockDOMUpdates) {
+                    this.renderer.updatePriceElements();
+                    this._flashUpdatedRows(now);
+                }
+            } catch(e) {}
+        };
+
+        ws.onclose = function() { 
+            this._wsConnections[id] = null; 
+            setTimeout(function() { 
+                connectBinanceWs(id, url, marketType); 
+            }, 5000); 
+        };
+        ws.onerror = function() { ws.close(); };
+    };
+
+    const connectBybitWs = (id, url, marketType) => {
+        if (this._wsConnections[id]) return;
+        
+        var ws = new WebSocket(url);
+        this._wsConnections[id] = ws;
+
+        ws.onopen = function() {
+            console.log('%c✅ [WS] ' + id, 'color:#F7A600;font-weight:bold;');
+            
+            var topic = marketType === 'futures' ? 'tickers.linear' : 'tickers.spot';
+            ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                var msg = JSON.parse(event.data);
+                var data = msg.data;
+                
+                if (!data || !data.topic || !data.topic.startsWith('tickers.')) return;
+                
+                var d = data.data;
+                if (!d) return;
+                
+                var symbol = d.s || d.symbol;
+                var newPrice = parseFloat(d.lastPrice || d.c || d.p);
+                
+                if (!symbol || isNaN(newPrice)) return;
+                
+                // ✅ ИСПРАВЛЕНО: 'fferences' → 'futures'
+                var mt = data.topic.includes('linear') ? 'futures' : 'spot';
+                var key = symbol + ':bybit:' + mt;
+                
+                var tk = this.tickersMap.get(key);
+                
+                if (tk && tk.price !== newPrice) {
+                    var now = Date.now();
+                    tk.prevPrice = tk.price || newPrice;
+                    tk.price = newPrice;
+                    tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
+                    tk._flashTime = now;
+                    
+                    if (!this._blockDOMUpdates) {
+                        this.renderer.updatePriceElements();
+                        this._flashUpdatedRows(now);
+                    }
+                }
+            } catch(e) {}
+        };
+
+       ws.onclose = () => { 
+    if (this._wsConnections) {
+        this._wsConnections[id] = null; 
+    }
+    setTimeout(() => { 
+        connectBybitWs(id, url, marketType); 
+    }, 5000); 
+};
+        ws.onerror = function() { ws.close(); };
+    };
+
+    // ============================================
+    // ✅ ПОДКЛЮЧЕНИЕ
+    // ============================================
+    
+    connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
+    connectBinanceWs('bn-spot', 'wss://stream.binance.com/ws/!miniTicker@arr', 'spot');
+    connectBybitWs('by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures');
+    connectBybitWs('by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot');
+
+    // ============================================
+    // ✅ ПЕРВАЯ ЗАГРУЗКА
+    // ============================================
+    console.log('⏳ Первичная загрузка...');
+    
+    setTimeout(() => loadAllData(), 500);
+
+    // Каждые 5 мин — метрики
+    setInterval(() => {
         if (!this._isRestRunning && this._restQueue.length === 0) {
-            pollRestData().catch(e => console.warn('⚠️ Poll error:', e));
-        } else {
-            console.log('⏳ Пропускаем polling - уже работает');
+            // ✅ ИСПРАВЛЕНО: убран аргумент false
+            loadAllData().catch(e => console.warn('⚠️ Ошибка:', e));
         }
     }, 300000);
+
+    // Сохраняем ссылку
+    this.loadAllData = loadAllData;
 }
+
+// ============================================
+// ✅ АНИМАЦИЯ
+// ============================================
+
+_flashUpdatedRows(flashTime) {
+    var container = document.getElementById('tickerListContainer');
+    if (!container) return;
+    
+    for (var key of this.tickersMap.keys()) {
+        var ticker = this.tickersMap.get(key);
+        
+        if (ticker && ticker._flashTime === flashTime) {
+            var row = container.querySelector(
+                '.ticker-item[data-symbol="' + ticker.symbol + '"][data-exchange="' + ticker.exchange + '"][data-market-type="' + ticker.marketType + '"]'
+            );
+            
+            if (row) {
+                row.classList.remove('price-flash-up', 'price-flash-down');
+                void row.offsetWidth;
+                row.classList.add(ticker._flashDir === 'up' ? 'price-flash-up' : 'price-flash-down');
+                
+                setTimeout(function() {
+                    row.classList.remove('price-flash-up', 'price-flash-down');
+                }, 400);
+            }
+            
+            delete ticker._flashTime;
+            delete ticker._flashDir;
+        }
+    }
+}
+
+
+
     clearAllSymbols() {
         this.tickers = []; 
         this.tickersMap.clear(); 
