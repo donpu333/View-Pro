@@ -1197,15 +1197,6 @@ _performUpdate() {
         }
     }
 
-    // 👇 ЗАЩИТА ОТ СБРОСА ФОРМАТА ЦЕНЫ
-    const cachedPrecision = localStorage.getItem(`precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`);
-    if (cachedPrecision) {
-        const currentFormat = this.candleSeries.options().priceFormat;
-        if (currentFormat.precision !== parseInt(cachedPrecision)) {
-            this.applyPriceFormat(parseInt(cachedPrecision));
-        }
-    }
-
     // Таймер
     if (this.timerManager) {
         this.timerManager.start(this.currentInterval);
@@ -1330,24 +1321,6 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             time: Math.floor(Math.floor(c.time * 1000) / (step * 1000)) * step
         }));
         
-        // 👇 ДОБАВЛЯЕМ ТЕКУЩУЮ НЕЗАКРЫТУЮ СВЕЧУ
-        const nowSec = Math.floor(Date.now() / 1000);
-        const currentAligned = Math.floor(nowSec / step) * step;
-        const lastDataCandle = data[data.length - 1];
-        
-        if (lastDataCandle && lastDataCandle.time < currentAligned) {
-            const currentCandle = {
-                time: currentAligned,
-                open: lastDataCandle.close,
-                high: lastDataCandle.close,
-                low: lastDataCandle.close,
-                close: lastDataCandle.close,
-                volume: 0
-            };
-            data.push(currentCandle);
-            console.log('📌 Добавлена текущая незакрытая свеча:', new Date(currentAligned * 1000));
-        }
-        
         // СОХРАНЯЕМ ДАННЫЕ
         this.chartData = data;
         this.currentInterval = interval;
@@ -1367,7 +1340,6 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         
         // РИСУЕМ (ОДИН РАЗ)
         this._performUpdate();
-        this._updatePageTitle();
         
         // ОБЪЁМ
         if (this.volumeSeries && this.chartData.length > 0) {
@@ -1386,17 +1358,17 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             this.indicatorManager.loadIndicators();
         }
         
-        // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (применяем сразу, если изменилась)
-     // ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (только сохраняем, не применяем)
+       // 4. ФОНОВАЯ ЗАГРУЗКА ТОЧНОСТИ (СОХРАНЯЕМ В КЭШ, НО НЕ ПЕРЕРИСОВЫВАЕМ)
 if (!cachedPrecision) {
     getPrecisionFromExchange(symbol, exchange, marketType)
         .then(precision => {
+            // Только сохраняем в кэш для следующей загрузки, но НЕ меняем формат сейчас
             localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-            console.log(`✅ Precision saved for ${symbol}: ${precision} decimals`);
+            console.log(`✅ Precision saved for ${symbol}: ${precision} decimals (applied on next load)`);
         })
         .catch(() => {});
 }
-        // ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ
+        // ОТЛОЖЕННЫЕ ОБНОВЛЕНИЯ — ТОЛЬКО РИСУНКИ, БЕЗ autoScale И БЕЗ _updateMainChartHeight
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
         });
@@ -1809,11 +1781,11 @@ _restoreZoomState() {
     
     this._savedZoomRange = null;
 }
- _subscribeToPrice() {
+   _subscribeToPrice() {
     if (!this.priceManager) return;
     
     if (this._priceUpdateHandler) {
-        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
+        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler); // ← тут была опечатка, исправьте на _priceUpdateHandler
     }
     
   this._priceUpdateHandler = (price, symbol) => {
@@ -1824,8 +1796,10 @@ _restoreZoomState() {
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (!series) return;
 
+    // 1. Двигаем линию цены — БЕЗ перестроения шкалы
     series.applyOptions({ priceLineSource: price });
 
+    // 2. Цвет меняем ТОЛЬКО при смене свечи (close пересекает open)
     const lastCandle = this.chartData[this.chartData.length - 1];
     const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
     const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
@@ -1835,6 +1809,7 @@ _restoreZoomState() {
         series.applyOptions({ priceLineColor: newColor });
     }
 
+    // 3. Обновляем свечу (update, не setData!)
     if (lastCandle && lastCandle.time) {
         series.update({
             time: lastCandle.time,
@@ -1846,7 +1821,14 @@ _restoreZoomState() {
     }
 
     this.scheduleUpdatePosition();
-}
+};
+    
+    this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
+    
+    const cachedPrice = this.priceManager.getPrice(this.currentSymbol);
+    if (cachedPrice !== null) {
+        this.currentRealPrice = cachedPrice;
+    }
 }
     
     setSymbol(symbol) {
@@ -1863,10 +1845,9 @@ _inferPrecisionFromData() {
     
     const str = lastPrice.toString();
     if (str.includes('.')) {
-        const decimals = str.split('.')[1].length;
-        return Math.min(decimals, 8);
+        return str.split('.')[1].length; // Считаем знаки после запятой
     }
-    return 2;
+    return 2; // Дефолт для целых чисел
 }
 
 // Обновленный метод с обработкой ошибок и принудительным обновлением
@@ -1888,11 +1869,8 @@ applyPriceFormat(precision) {
         // 3. ПРИНУДИТЕЛЬНО заставляем шкалу пересчитаться
         const priceScale = this.chart.priceScale('right');
         if (priceScale) {
-            priceScale.applyOptions({ 
-                priceFormat: priceFormat,  // 👈 ВОТ ЭТО ДОБАВЬ
-                autoScale: false 
-            });
-            priceScale.applyOptions({ autoScale: true });
+            priceScale.applyOptions({ autoScale: false }); // Выключаем
+            priceScale.applyOptions({ autoScale: true });  // Включаем - это заставит шкалу перерисоваться с новой точностью
         }
 
         console.log(`✅ Формат цены применен: ${precision} знаков`);
@@ -1900,10 +1878,16 @@ applyPriceFormat(precision) {
 
     } catch (error) {
         console.error('❌ КРИТИЧЕСКАЯ ОШИБКА applyPriceFormat:', error);
+        // Экстренный fallback
         return this._inferPrecisionFromData();
     }
-
 }
+
+  // ══════════════════════════════════════════════════════════════════
+// 🔒 ЗАЩИТА ОТ БИТЫХ СВЕЧЕЙ ("ПАЛОК")
+// Вставь этот блок в класс ChartManager (перед закрывающей скобкой })
+// ══════════════════════════════════════════════════════════════════
+
 // --- 1. ВАЛИДАТОР: проверяет что свеча корректна ---
 _isValidCandle(candle) {
     if (!candle || typeof candle !== 'object') return false;
@@ -2155,30 +2139,6 @@ async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
     validCandles.sort((a, b) => a.time - b.time);
     
     return validCandles;
-}
-_updatePageTitle() {
-    const symbol = this.currentSymbol || '';
-    const price = this.currentRealPrice;
-    
-    if (!symbol) {
-        document.title = 'График';
-        return;
-    }
-    
-    if (price != null && !isNaN(price) && price > 0) {
-        // Точность из текущего формата
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        const precision = series?.options()?.priceFormat?.precision || 2;
-        
-        // Определяем цвет (стрелка)
-        const lastCandle = this.chartData?.[this.chartData.length - 1];
-        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-        const arrow = isBullish ? '▲' : '▼';
-        
-        document.title = `${arrow} ${symbol} ${price.toFixed(precision)}`;
-    } else {
-        document.title = `${symbol}`;
-    }
 }
 }
 if (typeof window !== 'undefined') {
