@@ -1888,8 +1888,11 @@ applyPriceFormat(precision) {
         // 3. ПРИНУДИТЕЛЬНО заставляем шкалу пересчитаться
         const priceScale = this.chart.priceScale('right');
         if (priceScale) {
-            priceScale.applyOptions({ autoScale: false }); // Выключаем
-            priceScale.applyOptions({ autoScale: true });  // Включаем - это заставит шкалу перерисоваться с новой точностью
+            priceScale.applyOptions({ 
+                priceFormat: priceFormat,  // 👈 ВОТ ЭТО ДОБАВЬ
+                autoScale: false 
+            });
+            priceScale.applyOptions({ autoScale: true });
         }
 
         console.log(`✅ Формат цены применен: ${precision} знаков`);
@@ -1897,16 +1900,10 @@ applyPriceFormat(precision) {
 
     } catch (error) {
         console.error('❌ КРИТИЧЕСКАЯ ОШИБКА applyPriceFormat:', error);
-        // Экстренный fallback
         return this._inferPrecisionFromData();
     }
+
 }
-
-  // ══════════════════════════════════════════════════════════════════
-// 🔒 ЗАЩИТА ОТ БИТЫХ СВЕЧЕЙ ("ПАЛОК")
-// Вставь этот блок в класс ChartManager (перед закрывающей скобкой })
-// ══════════════════════════════════════════════════════════════════
-
 // --- 1. ВАЛИДАТОР: проверяет что свеча корректна ---
 _isValidCandle(candle) {
     if (!candle || typeof candle !== 'object') return false;
