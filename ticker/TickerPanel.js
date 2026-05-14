@@ -648,7 +648,6 @@ startTickerPanelPriceEngine() {
         }
     }, 300000);
 }
-
     clearAllSymbols() {
         this.tickers = []; 
         this.tickersMap.clear(); 
