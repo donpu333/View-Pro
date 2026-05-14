@@ -152,105 +152,82 @@ class WatchlistManager {
         return false;
     }
 
-    // ============================================
-    // ✅✅✅ ПЕРЕКЛЮЧЕНИЕ (ВИРТУАЛЬНЫЙ СКРОЛЛ + ФОНОВАЯ ЗАГРУЗКА) ✅✅✅
-    // ============================================
-    async activateList(listId) {
-        await this._initPromise;
-        if (!this.lists.has(listId)) return;
-        if (this.activeListId === listId) { this.closeDropdown(); return; }
+ async activateList(listId) {
+    await this._initPromise;
+    if (!this.lists.has(listId)) return;
+    if (this.activeListId === listId) { this.closeDropdown(); return }
 
-        // Сохраняем текущий
-        const oldList = this.lists.get(this.activeListId);
-        if (oldList) {
-            oldList.symbols = [...this.tickerPanel.state.customSymbols];
-            this.renderCache.delete(this.activeListId);
-        }
-
-        this.activeListId = listId;
-        this._switchCooldown = true;
-        setTimeout(() => { this._switchCooldown = false; }, 500);
-
-        const newList = this.lists.get(listId);
-        if (!newList) return;
-
-        console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
-
-        const startTime = performance.now();
-
-        // ============================================
-        // 1. ПОЛНАЯ ОЧИСТКА
-        // ============================================
-        this.tickerPanel.state.customSymbols = [...newList.symbols];
-        this.tickerPanel.tickers = [];
-        this.tickerPanel.tickersMap.clear();
-        this.tickerPanel.tickerElements?.clear();
-        this.tickerPanel.displayedTickers = [];
-        this.tickerPanel.totalItems = newList.symbols.length;
-        this.tickerPanel.filterCache = null;
-
-        const container = document.getElementById('tickerListContainer');
-        if (container) {
-            container.innerHTML = '';
-            container.scrollTop = 0;
-        }
-
-        // ============================================
-        // 2. БЫСТРОЕ СОЗДАНИЕ ТИКЕРОВ (без DOM)
-        // ============================================
-        for (const symbolKey of newList.symbols) {
-            const parts = symbolKey.split(':');
-            if (parts.length !== 3) continue;
-            const [symbol, exchange, marketType] = parts;
-            
-            const flag = this.tickerPanel.state.flags[symbolKey] || null;
-            
-            const t = { 
-                symbol, price: 0, change: 0, volume: 0, 
-                trades: null, custom: true, prevPrice: 0, 
-                exchange, marketType, flag 
-            };
-            
-            this.tickerPanel.tickers.push(t);
-            this.tickerPanel.tickersMap.set(symbolKey, t);
-            
-            // Подписка на WS
-            if (window.priceManagerInstance) {
-                window.priceManagerInstance.subscribe(symbol, (price) => {
-                    if (this.tickerPanel._onPriceUpdate) {
-                        this.tickerPanel._onPriceUpdate(symbol, price);
-                    }
-                });
-            }
-        }
-
-        // ============================================
-        // 3. ВИРТУАЛЬНЫЙ РЕНДЕР (только видимые!)
-        // ============================================
-        this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
-        
-        const renderTime = performance.now() - startTime;
-        console.log(`⚡ Рендер за ${renderTime.toFixed(0)}мс`);
-
-        // ============================================
-        // 4. UI обновления
-        // ============================================
-        this.tickerPanel.updateModalCount();
-        this.renderDropdown();
-        this.closeDropdown();
-        this.saveToStorageImmediate();
-
-        // Скрываем лоадер если был
-        const loader = document.getElementById('tickerLoader');
-        if (loader) loader.style.display = 'none';
-
-        // ============================================
-        // 5. ✅✅✅ ФОНОВАЯ ЗАГРУЗКА ЦЕН (пакетами!) ✅✅✅
-        // ============================================
-        this._schedulePriceLoadForList(newList.symbols);
+    const oldList = this.lists.get(this.activeListId);
+    if (oldList) {
+        oldList.symbols = [...this.tickerPanel.state.customSymbols];
+        this.renderCache.delete(this.activeListId);
     }
 
-  
+    this.activeListId = listId;
+    this._switchCooldown = true;
+    setTimeout(() => { this._switchCooldown = false; }, 500);
+
+    const newList = this.lists.get(listId);
+    if (!newList) return;
+
+    console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
+
+    // Очищаем
+    this.tickerPanel.state.customSymbols = [...newList.symbols];
+    this.tickerPanel.tickers = [];
+    this.tickerPanel.tickersMap.clear();
+    this.tickerPanel.tickerElements?.clear();
+    this.tickerPanel.displayedTickers = [];
+    this.tickerPanel.totalItems = newList.symbols.length;
+    this.tickerPanel.filterCache = null;
+
+    const container = document.getElementById('tickerListContainer');
+    if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+
+    // Создаём тикеры
+    for (const symbolKey of newList.symbols) {
+        const parts = symbolKey.split(':');
+        if (parts.length !== 3) continue;
+        const [symbol, exchange, marketType] = parts;
+        
+        const flag = this.tickerPanel.state.flags[symbolKey] || null;
+        const t = { 
+            symbol, price: 0, change: 0, volume: 0, 
+            trades: null, custom: true, prevPrice: 0, 
+            exchange, marketType, flag 
+        };
+        
+        this.tickerPanel.tickers.push(t);
+        this.tickerPanel.tickersMap.set(symbolKey, t);
+    }
+
+    // UI
+    this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
+    this.tickerPanel.updateModalCount();
+    this.renderDropdown();
+    this.closeDropdown();
+    this.saveToStorageImmediate();
+
+    // ✅ Разблокировка + запуск
+    this.tickerPanel._blockDOMUpdates = false;
+
+    // ✅ Запуск или перезапуск
+    if (!this.tickerPanel._priceEngineStarted) {
+        this.tickerPanel.startTickerPanelPriceEngine();
+    } else {
+        // Если WS уже работал — перезагружаем данные
+        setTimeout(() => {
+            if (this.tickerPanel.loadAllData) {
+                this.tickerPanel.loadAllData(true);
+            }
+        }, 200);
+    }
+
+    // Метрики позже
+    setTimeout(() => {
+        this._schedulePriceLoadForList(newList.symbols);
+    }, 10000);
+}
 
 _schedulePriceLoadForList(symbols) {
     if (!symbols || symbols.length === 0) return;
@@ -427,48 +404,74 @@ _schedulePriceLoadForList(symbols) {
 
     // ============================================
     // ✅ ЗАГРУЗКА СИМВОЛОВ (для initializeWithPriority)
-    // ============================================
-    loadSymbolsFromList(listId) {
-        const list = this.lists.get(listId);
-        if (!list) return;
+ // ============================================
+loadSymbolsFromList(listId) {
+    const list = this.lists.get(listId);
+    if (!list) return;
 
-        console.log(`📋 Загрузка списка: ${list.name}`);
+    console.log(`📋 Загрузка списка: ${list.name} (${list.symbols.length} шт.)`);
 
-        // Полная очистка
-        this.tickerPanel.tickers = [];
-        this.tickerPanel.tickersMap.clear();
-        this.tickerPanel.tickerElements?.clear();
-        this.tickerPanel.displayedTickers = [];
-        this.tickerPanel.totalItems = list.symbols.length;
-        this.tickerPanel.filterCache = null;
-        this.tickerPanel.state.customSymbols = [...list.symbols];
+    // Полная очистка
+    this.tickerPanel.tickers = [];
+    this.tickerPanel.tickersMap.clear();
+    this.tickerPanel.tickerElements?.clear();
+    this.tickerPanel.displayedTickers = [];
+    this.tickerPanel.totalItems = list.symbols.length;
+    this.tickerPanel.filterCache = null;
+    this.tickerPanel.state.customSymbols = [...list.symbols];
 
-        const container = document.getElementById('tickerListContainer');
-        if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+    const container = document.getElementById('tickerListContainer');
+    if (container) { container.innerHTML = ''; container.scrollTop = 0; }
 
-        // Создаём тикеры
-        for (const symbolKey of list.symbols) {
-            const parts = symbolKey.split(':');
-            if (parts.length !== 3) continue;
-            const [symbol, exchange, marketType] = parts;
-            
-            const flag = this.tickerPanel.state.flags[symbolKey] || null;
-            const t = { symbol, price: 0, change: 0, volume: 0, trades: null, custom: true, prevPrice: 0, exchange, marketType, flag };
-            this.tickerPanel.tickers.push(t);
-            this.tickerPanel.tickersMap.set(symbolKey, t);
+    // 🔥🔥🔥 PriceManager для подписок 🔥🔥🔥
+    const pm = window.priceManagerInstance;
+
+    // Создаём тикеры + ПОДПИСЫВАЕМ КАЖДЫЙ!
+    for (const symbolKey of list.symbols) {
+        const parts = symbolKey.split(':');
+        if (parts.length !== 3) continue;
+        const [symbol, exchange, marketType] = parts;
+        
+        const flag = this.tickerPanel.state.flags[symbolKey] || null;
+        const t = { 
+            symbol, price: 0, change: 0, volume: 0, 
+            trades: null, custom: true, prevPrice: 0, 
+            exchange, marketType, flag 
+        };
+        
+        this.tickerPanel.tickers.push(t);
+        this.tickerPanel.tickersMap.set(symbolKey, t);
+        
+        // ✅✅✅ ВОТ ОН! Подписка на обновления цен!
+        if (pm) {
+            pm.subscribe(symbol, (price) => {
+                // Обновляем ВСЕ тикеры с этим symbol (futures + spot)
+                for (const [key, ticker] of this.tickerPanel.tickersMap.entries()) {
+                    if (key.startsWith(symbol + ':')) {
+                        if (ticker.price !== price) {
+                            ticker.prevPrice = ticker.price;
+                            ticker.price = price;
+                        }
+                    }
+                }
+                // Обновляем DOM
+                if (!this.tickerPanel._blockDOMUpdates) {
+                    this.tickerPanel.updatePriceElements?.();
+                }
+            });
         }
-
-        // Виртуальный рендер
-        this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
-        this.tickerPanel.updateModalCount();
-
-        // Фоновая загрузка цен
-        this._schedulePriceLoadForList(list.symbols);
     }
 
-    // ============================================
-    // ✅ ИНИЦИАЛИЗАЦИЯ
-    // ============================================
+    console.log(`✅ Создано ${this.tickerPanel.tickersMap.size} тикеров, ВСЕ подписаны`);
+
+    // Виртуальный рендер
+    this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
+    this.tickerPanel.updateModalCount();
+
+    // Фоновая загрузка цен (REST для первоначальных данных)
+    this._schedulePriceLoadForList(list.symbols);
+}
+
     async initializeWithPriority() {
         await this._initPromise;
         this.renderDropdown();
