@@ -1948,28 +1948,42 @@ _subscribeToPrice() {
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series) return;
 
-        // 1. Двигаем линию цены
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (lastCandle && lastCandle.time) {
+            // ✅ ПРОВЕРКА: если цена ушла далеко — не плавно, а МГНОВЕННО!
+            const priceDiff = Math.abs(price - lastCandle.close) / lastCandle.close;
+            
+            if (priceDiff > 0.1) {
+                // Цена изменилась >10% — это новый символ! Обновляем мгновенно!
+                lastCandle.close = price;
+                lastCandle.high = Math.max(lastCandle.high, price);
+                lastCandle.low = Math.min(lastCandle.low, price);
+            } else {
+                // Нормальное движение — плавно
+                if (price > lastCandle.high) lastCandle.high = price;
+                if (price < lastCandle.low) lastCandle.low = price;
+                
+                const smoothClose = lastCandle.close + (price - lastCandle.close) * 0.3;
+                lastCandle.close = smoothClose;
+            }
+            
+            series.update({
+                time: lastCandle.time,
+                open: lastCandle.open,
+                high: lastCandle.high,
+                low: lastCandle.low,
+                close: lastCandle.close
+            });
+        }
+
         series.applyOptions({ priceLineSource: price });
 
-        // 2. Цвет меняем ТОЛЬКО при смене свечи
-        const lastCandle = this.chartData[this.chartData.length - 1];
         const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
         const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
         
         if (this._lastAppliedColor !== newColor) {
             this._lastAppliedColor = newColor;
             series.applyOptions({ priceLineColor: newColor });
-        }
-
-        // 3. Обновляем свечу
-        if (lastCandle && lastCandle.time) {
-            series.update({
-                time: lastCandle.time,
-                open: lastCandle.open,
-                high: lastCandle.high,
-                low: lastCandle.low,
-                close: price
-            });
         }
 
         this.scheduleUpdatePosition();
