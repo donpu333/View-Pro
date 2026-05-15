@@ -6,82 +6,80 @@ class TimerRenderer {
         this.enabled = true;
     }
 
-       draw(target) {
-    if (!this.enabled) return;
-    
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const chartManager = this._timerManager._chartManager;
-        if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
+        draw(target) {
+        if (!this.enabled) return;
         
-        const timerText = this._timerManager._timerElement?.textContent || '';
-        if (!timerText) return;
-        
-        const hpr = scope.horizontalPixelRatio;
-        const vpr = scope.verticalPixelRatio;
-        
-        const fontSize = 11 * vpr;
-        ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-        const textWidth = ctx.measureText(timerText).width;
-        
-        const padding = 8 * hpr;
-        const rectWidth = textWidth + padding * 2;
-        const rectHeight = fontSize + 8 * vpr;
-        
-        const canvasWidth = scope.mediaSize.width * hpr; 
-        const rectX = canvasWidth - rectWidth - 5 * hpr;
-        
-        let price = chartManager.currentRealPrice;
-        if (!price || isNaN(price) || price <= 0) {
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const chartManager = this._timerManager._chartManager;
+            if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
+            
+            const timerText = this._timerManager._timerElement?.textContent || '';
+            if (!timerText) return;
+            
+            // === ПРАВИЛЬНАЯ МАТЕМАТИКА ДЛЯ RETINA (MAC) ===
+            const hpr = scope.horizontalPixelRatio; // Обычно 2 на Mac, 1 на Windows
+            const vpr = scope.verticalPixelRatio;
+            
+            const fontSize = 11 * vpr; // Увеличиваем шрифт для четкости Mac
+            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+            const textWidth = ctx.measureText(timerText).width; // Теперь меряем в физических пикселях
+            
+            const padding = 8 * hpr;
+            const rectWidth = textWidth + padding * 2;
+            const rectHeight = fontSize + 8 * vpr;
+            
+            // Ширина canvas в ФИЗИЧЕСКИХ пикселях
+            const canvasWidth = scope.mediaSize.width * hpr; 
+            const rectX = canvasWidth - rectWidth - 5 * hpr; // Теперь ПРИЖАТ К ПРАВОМУ КРАЮ!
+            // ================================================
+            
+            let price = chartManager.currentRealPrice;
+            if (!price || isNaN(price) || price <= 0) {
+                const lastCandle = chartManager.getLastCandle();
+                price = lastCandle ? lastCandle.close : null;
+            }
+
+            if (!price) return;
+
+            const activeSeries = chartManager.currentChartType === 'candle' 
+                ? chartManager.candleSeries 
+                : chartManager.barSeries;
+            
+            if (!activeSeries) return;
+
+            let rawYCoord = activeSeries.priceToCoordinate(price);
+
+            // ИСПРАВЛЕНИЕ: Не даём уйти в бесконечный цикл (Баг 1)
+            if (rawYCoord === null || isNaN(rawYCoord)) {
+                return; 
+            }
+            
+            // Правильно переводим логическую высоту цены в физическую
+            let rectY = (rawYCoord * vpr) - rectHeight / 2;
+            
             const lastCandle = chartManager.getLastCandle();
-            price = lastCandle ? lastCandle.close : null;
-        }
-
-        if (!price) return;
-
-        const activeSeries = chartManager.currentChartType === 'candle' 
-            ? chartManager.candleSeries 
-            : chartManager.barSeries;
-        
-        if (!activeSeries) return;
-
-        let rawYCoord = activeSeries.priceToCoordinate(price);
-
-        if (rawYCoord === null || isNaN(rawYCoord)) {
-            return; 
-        }
-        
-        let rectY = (rawYCoord * vpr) - rectHeight / 2;
-        
-        // 👇 ПЛАВНОЕ ДВИЖЕНИЕ — догоняем новую позицию на 30% за кадр
-        if (this._lastY === null || this._lastY === undefined) {
-            this._lastY = rectY;
-        }
-        this._lastY = this._lastY + (rectY - this._lastY) * 0.15;
-        rectY = this._lastY;
-        
-        const lastCandle = chartManager.getLastCandle();
-        const isBullish = lastCandle ? lastCandle.close > lastCandle.open : true;
-        const bullishColor = chartManager.bullishColor || '#00bcd4';
-        const bearishColor = chartManager.bearishColor || '#f23645';
-        const bgColor = isBullish ? bullishColor : bearishColor;
-        
-        ctx.save();
-        ctx.fillStyle = bgColor;
-        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.shadowBlur = 4 * hpr;
-        ctx.beginPath();
-        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 4 * hpr);
-        ctx.fill();
-        
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
-        ctx.restore();
-    });
-}
+            const isBullish = lastCandle ? lastCandle.close > lastCandle.open : true;
+            const bullishColor = chartManager.bullishColor || '#00bcd4';
+            const bearishColor = chartManager.bearishColor || '#f23645';
+            const bgColor = isBullish ? bullishColor : bearishColor;
+            
+            ctx.save();
+            ctx.fillStyle = bgColor;
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4 * hpr;
+            ctx.beginPath();
+            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 4 * hpr);
+            ctx.fill();
+            
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
+            ctx.restore();
+        });
+    }
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -156,7 +154,6 @@ class TimerPrimitive {
 }
 
 // ========== ОСНОВНОЙ КЛАСС ==========
-// ========== ОСНОВНОЙ КЛАСС ==========
 
 class TimerManager { 
     constructor(chartManager) {
@@ -165,7 +162,8 @@ class TimerManager {
         this._currentTf = CONFIG.defaultInterval || '1h';
         this._primitive = null;
         this._timerElement = { textContent: '' };
-        this._lastY = null; // 👈 для плавного движения
+        
+       
         
         chartManager.timerManager = this;
         setTimeout(() => this._createPrimitive(), 500);
@@ -189,12 +187,11 @@ class TimerManager {
                     this._primitive.setEnabled(false);
                 }
                 
-                // ❌ УБИРАЕМ subscribeDataChanged — он вызывает лишние перерисовки
-                // series.subscribeDataChanged(() => {
-                //     if (this._primitive && this._primitive.isEnabled()) {
-                //         this._primitive.requestRedraw();
-                //     }
-                // });
+                series.subscribeDataChanged(() => {
+                    if (this._primitive && this._primitive.isEnabled()) {
+                        this._primitive.requestRedraw();
+                    }
+                });
                 
                 console.log('✅ TimerManager: примитив создан');
             } catch (e) {
@@ -207,28 +204,23 @@ class TimerManager {
         return ['1d', '1w', '1M'].includes(interval);
     }
 
-   start(interval) {
-    if (this._disabled) return;
-    
-    this._currentTf = interval;
-    
-    if (this._isDayTimeframe(interval)) {
-        this._timerElement.textContent = '';
-        if (this._primitive) this._primitive.setEnabled(false);
+    start(interval) {
+        if (this._disabled) return;
+        
+        this._currentTf = interval;
+        
+        if (this._isDayTimeframe(interval)) {
+            this._timerElement.textContent = '';
+            if (this._primitive) this._primitive.setEnabled(false);
+            this.stop();
+            return;
+        }
+        
+        this._updateTimer();
         this.stop();
-        return;
+        this._interval = setInterval(() => this._updateTimer(), 250);
     }
-    
-    this._updateTimer();
-    this.stop();
-    this._interval = setInterval(() => this._updateTimer(), 250);
-}
-stop() {
-    if (this._interval) {
-        clearInterval(this._interval);
-        this._interval = null;
-    }
-}
+
     _updateTimer() {
         if (this._disabled) return;
         
@@ -305,6 +297,7 @@ stop() {
         this._timerElement = null;
     }
 }
+
 if (typeof window !== 'undefined') {
     window.TimerManager = TimerManager;
 }
