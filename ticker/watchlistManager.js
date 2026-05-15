@@ -199,6 +199,11 @@ async activateList(listId) {
         this.tickerPanel.tickersMap.set(symbolKey, t);
     }
 
+    // ✅ Очистить кэш цен алертов
+    if (window.alertLineManager) {
+        window.alertLineManager._lastPrices.clear();
+    }
+
     this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
     this.tickerPanel.updateModalCount();
     this.renderDropdown();
@@ -207,134 +212,11 @@ async activateList(listId) {
 
     this.tickerPanel._blockDOMUpdates = false;
 
-    // ✅ Перезапуск движка цен
-    if (this.tickerPanel._priceEngineStarted) {
-        // Остановить текущий опрос
-        this.tickerPanel._isRestRunning = false;
-        this.tickerPanel._restQueue = [];
-    }
-    
-    // Запустить движок (WS переподключится, REST загрузит данные)
-    this.tickerPanel._priceEngineStarted = false;
-    this.tickerPanel.startTickerPanelPriceEngine();
+    // ✅ НЕ сбрасываем движок — используем fetchPricesForActiveList
+    setTimeout(() => {
+        this.fetchPricesForActiveList();
+    }, 500);
 }
-
-_schedulePriceLoadForList(symbols) {
-    if (!symbols || symbols.length === 0) return;
-    
-    // ✅ Защита от множественных вызовов
-    if (this._priceLoadTimer) {
-        clearTimeout(this._priceLoadTimer);
-    }
-    
-    this._priceLoadTimer = setTimeout(async () => {
-        this._priceLoadTimer = null;
-        
-        // ✅ Проверяем что не запущено
-        if (this.tickerPanel._isRestRunning) {
-            console.log('⏳ REST уже работает, не запускаем повторно');
-            return;
-        }
-        
-        console.log(`⚡ Планирую загрузку цен (${symbols.length} шт.)...`);
-        
-        if (this.tickerPanel.pollRestData) {
-            await this.tickerPanel.pollRestData();
-        }
-        
-    }, 1000); // 1 секунда debounce
-}
-    // ============================================
-    // ✅ ЗАГРУЗКА ЦЕН (Fallback)
-    // ============================================
-    async fetchPricesForActiveList() {
-        const activeList = this.lists.get(this.activeListId);
-        if (!activeList || activeList.symbols.length === 0) return;
-
-        const bnFut = [], bnSpot = [], byFut = [], bySpot = [];
-
-        activeList.symbols.forEach(key => {
-            const parts = key.split(':');
-            if (parts.length !== 3) return;
-            const [s, ex, mt] = parts;
-            if (ex === 'binance') { mt === 'futures' ? bnFut.push(s) : bnSpot.push(s); }
-            else if (ex === 'bybit') { mt === 'futures' ? byFut.push(s) : bySpot.push(s); }
-        });
-
-        const BATCH = 25;
-        const DELAY = 800;
-
-        // Binance Futures
-        for (let i = 0; i < bnFut.length; i += BATCH) {
-            const batch = bnFut.slice(i, i + BATCH);
-            try {
-                const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${batch.map(s=>`"${s}"`).join(',')}]`);
-                const d = await r.json();
-                if (Array.isArray(d)) d.forEach(t => {
-                    const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:futures`);
-                    if (tk) { tk.price=+t.lastPrice; tk.change=+t.priceChangePercent; tk.volume=+t.quoteVolume; tk.trades=+t.count||0; }
-                });
-                this.tickerPanel.renderer?.updatePriceElements?.();
-            } catch(e){}
-            if (i+BATCH < bnFut.length) await new Promise(r=>setTimeout(r, DELAY));
-        }
-
-        // Binance Spot
-        if (bnFut.length>0 && bnSpot.length>0) await new Promise(r=>setTimeout(r, 1500));
-        
-        for (let i = 0; i < bnSpot.length; i += BATCH) {
-            const batch = bnSpot.slice(i, i + BATCH);
-            try {
-                const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${batch.map(s=>`"${s}"`).join(',')}]`);
-                const d = await r.json();
-                if (Array.isArray(d)) d.forEach(t => {
-                    const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:binance:spot`);
-                    if (tk) { tk.price=+t.lastPrice; tk.change=+t.priceChangePercent; tk.volume=+t.quoteVolume; tk.trades=+t.count||0; }
-                });
-                this.tickerPanel.renderer?.updatePriceElements?.();
-            } catch(e){}
-            if (i+BATCH < bnSpot.length) await new Promise(r=>setTimeout(r, DELAY));
-        }
-
-        // Bybit
-        if ((bnFut.length>0||bnSpot.length>0) && (byFut.length>0||bySpot.length>0)) 
-            await new Promise(r=>setTimeout(r, 1000));
-
-        if (byFut.length>0) {
-            try {
-                const r = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
-                const d = await r.json();
-                if (d?.retCode===0) {
-                    const set = new Set(byFut);
-                    d.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
-                            const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:futures`);
-                            if (tk) { tk.price=+t.lastPrice; tk.change=+(t.price24hPcnt||0)*100; tk.volume=+(t.volume24h||0)*+(t.lastPrice||0); }
-                        }
-                    });
-                }
-            } catch(e){}
-        }
-
-        if (bySpot.length>0) {
-            try {
-                const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot');
-                const d = await r.json();
-                if (d?.retCode===0) {
-                    const set = new Set(bySpot);
-                    d.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
-                            const tk = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:spot`);
-                            if (tk) { tk.price=+t.lastPrice; tk.change=+(t.price24hPcnt||0)*100; tk.volume=+(t.volume24h||0)*+(t.lastPrice||0); }
-                        }
-                    });
-                }
-            } catch(e){}
-        }
-
-        this.tickerPanel.renderer?.updatePriceElements?.();
-    }
-
     // ============================================
     // ✅ ДОБАВЛЕНИЕ В СПИСОК
     // ============================================
