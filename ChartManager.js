@@ -1933,16 +1933,30 @@ _restoreZoomState() {
     
     this._savedZoomRange = null;
 }
+
 _subscribeToPrice() {
     if (!this.priceManager) return;
     
+    // ✅ ОТПИСЫВАЕМСЯ ОТ ВСЕХ СТАРЫХ ОБРАБОТЧИКОВ
     if (this._priceUpdateHandler) {
-        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
+        // Удаляем из всех символов
+        if (this.priceManager.subscribers) {
+            this.priceManager.subscribers.forEach((callbacks, sym) => {
+                const idx = callbacks.indexOf(this._priceUpdateHandler);
+                if (idx !== -1) {
+                    callbacks.splice(idx, 1);
+                    console.log(`🗑️ Отписался от ${sym}`);
+                }
+            });
+        }
     }
     
     this._priceUpdateHandler = (price, symbol) => {
         if (document.hidden) return;
-        if (symbol !== this.currentSymbol) return;
+        
+        if (symbol !== this.currentSymbol) {
+            return;
+        }
         
         this.currentRealPrice = price;
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -1950,22 +1964,10 @@ _subscribeToPrice() {
 
         const lastCandle = this.chartData[this.chartData.length - 1];
         if (lastCandle && lastCandle.time) {
-            // ✅ ПРОВЕРКА: если цена ушла далеко — не плавно, а МГНОВЕННО!
-            const priceDiff = Math.abs(price - lastCandle.close) / lastCandle.close;
+            if (price > lastCandle.high) lastCandle.high = price;
+            if (price < lastCandle.low) lastCandle.low = price;
             
-            if (priceDiff > 0.1) {
-                // Цена изменилась >10% — это новый символ! Обновляем мгновенно!
-                lastCandle.close = price;
-                lastCandle.high = Math.max(lastCandle.high, price);
-                lastCandle.low = Math.min(lastCandle.low, price);
-            } else {
-                // Нормальное движение — плавно
-                if (price > lastCandle.high) lastCandle.high = price;
-                if (price < lastCandle.low) lastCandle.low = price;
-                
-                const smoothClose = lastCandle.close + (price - lastCandle.close) * 0.3;
-                lastCandle.close = smoothClose;
-            }
+            lastCandle.close = lastCandle.close + (price - lastCandle.close) * 0.3;
             
             series.update({
                 time: lastCandle.time,
@@ -1977,15 +1979,6 @@ _subscribeToPrice() {
         }
 
         series.applyOptions({ priceLineSource: price });
-
-        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-        const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-        
-        if (this._lastAppliedColor !== newColor) {
-            this._lastAppliedColor = newColor;
-            series.applyOptions({ priceLineColor: newColor });
-        }
-
         this.scheduleUpdatePosition();
     };
     
