@@ -2012,15 +2012,15 @@ _inferPrecisionFromData() {
 // Обновленный метод с обработкой ошибок и принудительным обновлением
 applyPriceFormat(precision) {
     try {
-        // ✅ ЗАЩИТА ОТ null/undefined/NaN
+        // ✅ ЗАЩИТА
         if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
-            console.warn('⚠️ Precision не получен, вычисляем из данных графика...');
+            console.warn('⚠️ Precision не получен, вычисляем из данных...');
             precision = this._inferPrecisionFromData();
         }
         
-        // ✅ ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА
-        if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
-            console.error('❌ Не удалось получить precision, отмена');
+        // ✅ ЕЩЁ ОДНА ЗАЩИТА
+        if (!precision || precision < 0) {
+            console.error('❌ Не удалось получить precision');
             return;
         }
 
@@ -2043,8 +2043,7 @@ applyPriceFormat(precision) {
 
     } catch (error) {
         console.error('❌ КРИТИЧЕСКАЯ ОШИБКА applyPriceFormat:', error);
-        // ✅ НЕ ВЫЗЫВАЕМ _inferPrecisionFromData повторно при ошибке!
-        return 2; // fallback
+        return 2;
     }
 }
 _isValidCandle(candle) {
