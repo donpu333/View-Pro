@@ -1501,7 +1501,7 @@ async loadDrawingsForCurrentSymbol() {
         }
     }
 }
- updateRealPrice(price) {
+updateRealPrice(price) {
     this.currentRealPrice = price;
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (series) {
@@ -1515,6 +1515,11 @@ async loadDrawingsForCurrentSymbol() {
         });
     }
     this.scheduleUpdatePosition();
+    
+    // 👇 ДОБАВЬ ЭТУ СТРОКУ
+    if (this.timerManager?._primitive) {
+        this.timerManager._primitive.requestRedraw();
+    }
 }
     scrollToLast() {
         if (this.chart && this.chartData.length > 0) {
@@ -1799,6 +1804,7 @@ _restoreZoomState() {
     
     this._savedZoomRange = null;
 }
+
 _subscribeToPrice() {
     if (!this.priceManager) return;
     
@@ -1811,13 +1817,15 @@ _subscribeToPrice() {
         if (symbol !== this.currentSymbol) return;
         
         this.currentRealPrice = price;
+        this._updatePageTitle();
+        
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series) return;
 
-        // 1. Двигаем линию цены
+        // Только линия цены
         series.applyOptions({ priceLineSource: price });
 
-        // 2. Цвет меняем ТОЛЬКО при смене свечи
+        // Цвет
         const lastCandle = this.chartData[this.chartData.length - 1];
         const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
         const newColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
@@ -1827,16 +1835,7 @@ _subscribeToPrice() {
             series.applyOptions({ priceLineColor: newColor });
         }
 
-        // 3. Обновляем свечу
-        if (lastCandle && lastCandle.time) {
-            series.update({
-                time: lastCandle.time,
-                open: lastCandle.open,
-                high: lastCandle.high,
-                low: lastCandle.low,
-                close: price
-            });
-        }
+        // ❌ series.update убран — свечу обновляет WebSocketManager
 
         this.scheduleUpdatePosition();
     };
@@ -2040,13 +2039,24 @@ updateLastCandle(candle) {
 
 updateCurrentCandle(price) {
     if (!this.chartData || this.chartData.length === 0) return;
+    
     const lastCandle = this.chartData[this.chartData.length - 1];
     if (!lastCandle) return;
     
     if (typeof price !== 'number' || isNaN(price) || !isFinite(price) || price <= 0) return;
     
-    // Плавное движение (30% в сторону новой цены)
-    const smoothPrice = lastCandle.close + (price - lastCandle.close) * 0.3;
+    // 👇 ДВОЙНОЕ СГЛАЖИВАНИЕ ДЛЯ СУПЕР-ПЛАВНОСТИ
+    if (!this._smoothTarget) this._smoothTarget = lastCandle.close;
+    
+    // Фильтр микроизменений
+    if (Math.abs(price - this._lastRawPrice) < 0.000001) return;
+    this._lastRawPrice = price;
+    
+    // Медленно догоняем реальную цену
+    this._smoothTarget = this._smoothTarget + (price - this._smoothTarget) * 0.15;
+    
+    // Свеча плавно идёт к цели
+    const smoothPrice = lastCandle.close + (this._smoothTarget - lastCandle.close) * 0.2;
     
     lastCandle.close = smoothPrice;
     if (smoothPrice > lastCandle.high) lastCandle.high = smoothPrice;
