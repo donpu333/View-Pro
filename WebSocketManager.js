@@ -59,7 +59,7 @@ class WebSocketManager {
             }
         };
         
- ws.onmessage = (event) => {
+  ws.onmessage = (event) => {
     try {
         const data = JSON.parse(event.data);
         let price = null;
@@ -85,17 +85,6 @@ class WebSocketManager {
         const step = stepMap[this.currentInterval] || 3600;
         const aligned = Math.floor(nowSec / step) * step;
 
-        // 👇 ФИЛЬТР 1: Throttle по времени (не чаще 80мс)
-        if (!cm._lastWsTime) cm._lastWsTime = 0;
-        const now = Date.now();
-        if (now - cm._lastWsTime < 80) return;
-        cm._lastWsTime = now;
-
-        // 👇 ФИЛЬТР 2: Минимальное изменение цены
-        if (!cm._lastWsPrice) cm._lastWsPrice = price;
-        if (Math.abs(price - cm._lastWsPrice) < 0.000001) return;
-        cm._lastWsPrice = price;
-
         if (aligned > last.time && (aligned - last.time) >= step) {
             const next = { 
                 time: aligned, open: price, high: price, 
@@ -106,11 +95,8 @@ class WebSocketManager {
             const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
             series?.update(next);
         } else {
-            // 👇 ПЛАВНОСТЬ: Накопительная интерполяция
-            if (!cm._smoothTarget) cm._smoothTarget = last.close;
-            cm._smoothTarget = cm._smoothTarget + (price - cm._smoothTarget) * 0.15;
-            
-            const smoothPrice = last.close + (cm._smoothTarget - last.close) * 0.2;
+            // 👇 ПЛАВНАЯ ИНТЕРПОЛЯЦИЯ (30% в сторону новой цены)
+            const smoothPrice = last.close + (price - last.close) * 0.3;
             
             last.close = smoothPrice;
             if (smoothPrice > last.high) last.high = smoothPrice;
@@ -120,6 +106,7 @@ class WebSocketManager {
             series?.update(last);
         }
 
+        // Обновляем цену и цвет
         cm.currentRealPrice = price;
         
         const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
