@@ -348,7 +348,6 @@ class TickerRenderer {
     }
     
   // Заменить ВЕСЬ метод formatPrice в TickerRenderer на этот:
-
 formatPrice(price) {
     if (!price || price <= 0) return '...';
     
@@ -360,30 +359,30 @@ formatPrice(price) {
     
     let result;
     
+    // ✅ Подстрочная нотация ТОЛЬКО для цен с 4+ нулями после запятой
+    // 0.00002534 → 4 нуля → "0.0₄2534"
+    // 0.00000089 → 6 нулей → "0.0₆89"
     if (price < 0.001) {
-        // Подстрочная нотация: 0.00000647 → 0.0₅647
         const priceStr = price.toFixed(10);
         const match = priceStr.match(/^0\.(0+)(.+)$/);
-        if (match) {
+        if (match && match[1].length >= 3) { // минимум 3 нуля (0.000...)
             const zeros = match[1].length;
             const digits = match[2].replace(/0+$/, '');
             if (digits.length === 0) {
-                // Цена как 0.00000000 → показываем как обычно
-                result = price.toFixed(8);
+                // Все нули (0.00000000) → показываем как есть
+                result = price.toFixed(zeros + 2);
             } else {
                 const subScript = '₀₁₂₃₄₅₆₇₈₉';
                 const zeroSub = String(zeros).split('').map(d => subScript[parseInt(d)]).join('');
                 result = `0.0${zeroSub}${digits}`;
             }
         } else {
-            result = price.toFixed(8);
+            // Для цен вроде 0.001...0.999 → показываем как приходит
+            result = this._formatAsIs(price);
         }
-    } else if (price < 1) {
-        result = price.toFixed(4);
-    } else if (price < 1000) {
-        result = price.toFixed(2);
     } else {
-        result = price.toFixed(2);
+        // ✅ Все цены ≥ 1 → показываем КАК ПРИХОДЯТ от биржи
+        result = this._formatAsIs(price);
     }
     
     this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
@@ -394,7 +393,22 @@ formatPrice(price) {
     
     return result;
 }
-    
+
+// ✅ Новый метод: форматирует "как приходит" без лишних нулей
+_formatAsIs(price) {
+    // Убираем конечные нули, но оставляем минимум 2 знака
+    let str = price.toFixed(8); // берём с запасом
+    str = str.replace(/\.?0+$/, ''); // убираем .0000
+    if (!str.includes('.')) {
+        str += '.00'; // если целое → добавляем .00
+    } else {
+        const parts = str.split('.');
+        if (parts[1].length < 2) {
+            str = str.padEnd(str.length + (2 - parts[1].length), '0'); // минимум 2 знака
+        }
+    }
+    return str;
+}
     formatChange(change) {
         if (change === undefined || change === null) return '0.00';
         
