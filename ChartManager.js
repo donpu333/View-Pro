@@ -31,6 +31,12 @@ this._lastLineColor = null;
     this._lastRedrawFrame = 0;
     this._pendingRedraw = false;
 
+this._targetPrice = null;
+this._currentAnimatedPrice = null;
+this._animationFrameId = null;
+this._animationActive = false;
+this._lastAnimatedPrice = null;
+
 
 this._visibilityHandler = () => {
     if (document.hidden) {
@@ -1582,6 +1588,68 @@ async loadDrawingsForCurrentSymbol() {
     }
     this.scheduleUpdatePosition();
 }
+
+startPriceAnimation(targetPrice) {
+    // Инициализация начальной анимированной цены
+    if (this._currentAnimatedPrice === null || this._currentAnimatedPrice === undefined) {
+        this._currentAnimatedPrice = this.currentRealPrice || targetPrice;
+    }
+    
+    this._targetPrice = targetPrice;
+    
+    // Если анимация уже идет - просто обновляем цель
+    if (this._animationActive) return;
+    
+    this._animationActive = true;
+    
+    const animate = () => {
+        if (this._targetPrice === null || this._targetPrice === undefined) {
+            this._animationActive = false;
+            return;
+        }
+        
+        // Проверка на валидность текущей цены
+        if (this._currentAnimatedPrice === null || this._currentAnimatedPrice === undefined) {
+            this._currentAnimatedPrice = this._targetPrice;
+        }
+        
+        // Вычисляем разницу
+        const diff = this._targetPrice - this._currentAnimatedPrice;
+        
+        // Если разница очень маленькая - останавливаем анимацию
+        const precision = this._inferPrecisionFromData();
+        const epsilon = Math.pow(10, -precision - 2); // Чуть точнее чем precision
+        
+        if (Math.abs(diff) < epsilon) {
+            this._currentAnimatedPrice = this._targetPrice;
+            this.updateRealPrice(this._currentAnimatedPrice);
+            this._animationActive = false;
+            this._animationFrameId = null;
+            return;
+        }
+        
+        // 🔥 КЛЮЧЕВОЙ ПАРАМЕТР: шаг анимации (5% от разницы за кадр)
+        // Меньше = плавнее, но больше отставание
+        const smoothness = 0.05; // 8% - хороший баланс (можно 0.05 для очень плавно)
+        const step = diff * smoothness;
+        
+        this._currentAnimatedPrice += step;
+        
+        // Обновляем линию цены с анимированным значением
+        this.updateRealPrice(this._currentAnimatedPrice);
+        
+        // Продолжаем анимацию
+        this._animationFrameId = requestAnimationFrame(animate);
+    };
+    
+    // Отменяем предыдущую анимацию если есть
+    if (this._animationFrameId) {
+        cancelAnimationFrame(this._animationFrameId);
+    }
+    
+    this._animationFrameId = requestAnimationFrame(animate);
+}
+
     scrollToLast() {
         if (this.chart && this.chartData.length > 0) {
             const timeScale = this.chart.timeScale();
@@ -1944,19 +2012,24 @@ _inferPrecisionFromData() {
 // Обновленный метод с обработкой ошибок и принудительным обновлением
 applyPriceFormat(precision) {
     try {
+        // ✅ ЗАЩИТА ОТ null/undefined/NaN
         if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
             console.warn('⚠️ Precision не получен, вычисляем из данных графика...');
             precision = this._inferPrecisionFromData();
+        }
+        
+        // ✅ ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА
+        if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
+            console.error('❌ Не удалось получить precision, отмена');
+            return;
         }
 
         const minMove = Math.pow(10, -precision);
         const priceFormat = { type: 'price', precision: precision, minMove: minMove };
 
-        // 2. Применяем к сериям
         if (this.candleSeries) this.candleSeries.applyOptions({ priceFormat });
         if (this.barSeries) this.barSeries.applyOptions({ priceFormat });
 
-        // 3. Применяем к шкале ОДНИМ вызовом
         const priceScale = this.chart.priceScale('right');
         if (priceScale) {
             priceScale.applyOptions({ 
@@ -1970,9 +2043,10 @@ applyPriceFormat(precision) {
 
     } catch (error) {
         console.error('❌ КРИТИЧЕСКАЯ ОШИБКА applyPriceFormat:', error);
-        return this._inferPrecisionFromData();
+        // ✅ НЕ ВЫЗЫВАЕМ _inferPrecisionFromData повторно при ошибке!
+        return 2; // fallback
     }
-} 
+}
 _isValidCandle(candle) {
     if (!candle || typeof candle !== 'object') return false;
     
@@ -2110,7 +2184,7 @@ updateCurrentCandle(price) {
     if (typeof price !== 'number' || isNaN(price) || !isFinite(price) || price <= 0) return;
     
     // Плавное движение (30% в сторону новой цены)
-    const smoothPrice = lastCandle.close + (price - lastCandle.close) * 0.3;
+    const smoothPrice = lastCandle.close + (price - lastCandle.close) * 0.1;
     
     lastCandle.close = smoothPrice;
     if (smoothPrice > lastCandle.high) lastCandle.high = smoothPrice;
