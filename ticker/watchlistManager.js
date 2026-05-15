@@ -249,7 +249,7 @@ class WatchlistManager {
         // ============================================
         setTimeout(() => {
     this.fetchPricesForActiveList();
-}, 500);
+}, 200);
     }
 
   
