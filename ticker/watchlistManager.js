@@ -212,14 +212,11 @@ async activateList(listId) {
 
     this.tickerPanel._blockDOMUpdates = false;
 
-    // ✅ НЕ сбрасываем движок — используем fetchPricesForActiveList
+    // ✅ НЕ перезапускаем движок — используем fetchPricesForActiveList
     setTimeout(() => {
         this.fetchPricesForActiveList();
     }, 500);
 }
-    // ============================================
-    // ✅ ДОБАВЛЕНИЕ В СПИСОК
-    // ============================================
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
