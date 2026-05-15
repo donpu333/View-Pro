@@ -247,7 +247,9 @@ class WatchlistManager {
         // ============================================
         // 5. ✅✅✅ ФОНОВАЯ ЗАГРУЗКА ЦЕН (пакетами!) ✅✅✅
         // ============================================
-        this._schedulePriceLoadForList(newList.symbols);
+        setTimeout(() => {
+    this.fetchPricesForActiveList();
+}, 500);
     }
 
   
