@@ -59,7 +59,7 @@ class WebSocketManager {
             }
         };
         
-     ws.onmessage = (event) => {
+  ws.onmessage = (event) => {
     try {
         const data = JSON.parse(event.data);
         let price = null;
@@ -85,8 +85,6 @@ class WebSocketManager {
         const step = stepMap[this.currentInterval] || 3600;
         const aligned = Math.floor(nowSec / step) * step;
 
-        // Создаём новую свечу ТОЛЬКО если прошёл полный интервал
-        // Для всех ТФ: 1m, 5m, 1h, 1d, 1w, 1M — единое правило
         if (aligned > last.time && (aligned - last.time) >= step) {
             const next = { 
                 time: aligned, open: price, high: price, 
@@ -97,10 +95,12 @@ class WebSocketManager {
             const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
             series?.update(next);
         } else {
-            // Обновляем текущую свечу
-            last.close = price;
-            if (price > last.high) last.high = price;
-            if (price < last.low) last.low = price;
+            // 👇 ПЛАВНАЯ ИНТЕРПОЛЯЦИЯ (30% в сторону новой цены)
+            const smoothPrice = last.close + (price - last.close) * 0.3;
+            
+            last.close = smoothPrice;
+            if (smoothPrice > last.high) last.high = smoothPrice;
+            if (smoothPrice < last.low) last.low = smoothPrice;
             cm.lastCandle = last;
             const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
             series?.update(last);
