@@ -152,10 +152,10 @@ class WatchlistManager {
         return false;
     }
 
- async activateList(listId) {
+async activateList(listId) {
     await this._initPromise;
     if (!this.lists.has(listId)) return;
-    if (this.activeListId === listId) { this.closeDropdown(); return }
+    if (this.activeListId === listId) { this.closeDropdown(); return; }
 
     const oldList = this.lists.get(this.activeListId);
     if (oldList) {
@@ -172,7 +172,6 @@ class WatchlistManager {
 
     console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
 
-    // Очищаем
     this.tickerPanel.state.customSymbols = [...newList.symbols];
     this.tickerPanel.tickers = [];
     this.tickerPanel.tickersMap.clear();
@@ -184,7 +183,6 @@ class WatchlistManager {
     const container = document.getElementById('tickerListContainer');
     if (container) { container.innerHTML = ''; container.scrollTop = 0; }
 
-    // Создаём тикеры
     for (const symbolKey of newList.symbols) {
         const parts = symbolKey.split(':');
         if (parts.length !== 3) continue;
@@ -201,32 +199,24 @@ class WatchlistManager {
         this.tickerPanel.tickersMap.set(symbolKey, t);
     }
 
-    // UI
     this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
     this.tickerPanel.updateModalCount();
     this.renderDropdown();
     this.closeDropdown();
     this.saveToStorageImmediate();
 
-    // ✅ Разблокировка + запуск
     this.tickerPanel._blockDOMUpdates = false;
 
-    // ✅ Запуск или перезапуск
-    if (!this.tickerPanel._priceEngineStarted) {
-        this.tickerPanel.startTickerPanelPriceEngine();
-    } else {
-        // Если WS уже работал — перезагружаем данные
-        setTimeout(() => {
-            if (this.tickerPanel.loadAllData) {
-                this.tickerPanel.loadAllData(true);
-            }
-        }, 200);
+    // ✅ Перезапуск движка цен
+    if (this.tickerPanel._priceEngineStarted) {
+        // Остановить текущий опрос
+        this.tickerPanel._isRestRunning = false;
+        this.tickerPanel._restQueue = [];
     }
-
-    // Метрики позже
-    setTimeout(() => {
-        this._schedulePriceLoadForList(newList.symbols);
-    }, 10000);
+    
+    // Запустить движок (WS переподключится, REST загрузит данные)
+    this.tickerPanel._priceEngineStarted = false;
+    this.tickerPanel.startTickerPanelPriceEngine();
 }
 
 _schedulePriceLoadForList(symbols) {
