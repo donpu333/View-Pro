@@ -31,7 +31,8 @@ class PriceManager {
             this.wsBinance = null;
         }
         
-        const ws = new WebSocket('wss://fstream.binance.com/ws/!miniTicker@arr');        
+        const ws = new WebSocket('wss://fstream.binance.com/ws/!ticker@arr');
+        
         // ФИЛЬТРЫ ДЛЯ ПЛАВНОСТИ ЦЕНЫ
         let _lastBatchUpdate = 0;
         const _lastPrices = new Map();
