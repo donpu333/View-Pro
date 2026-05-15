@@ -1019,7 +1019,7 @@ timeToLogical(time) {
     }
 }
     
-    setupEventListeners() {
+  setupEventListeners() {
     let resizeTimeout;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimeout);
@@ -1049,7 +1049,7 @@ timeToLogical(time) {
             }
             
             this.scheduleDrawingsUpdate();
-        }, 150); // ✅ 100 → 150
+        }, 80);
     });
 }
     
