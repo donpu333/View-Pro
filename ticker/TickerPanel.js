@@ -734,13 +734,11 @@ syncWithActiveWatchlist() {
     if (!symbol.endsWith('USDT')) return false;
     const key = `${symbol}:${exchange}:${marketType}`;
     
-    // Вотчлист
     if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
         this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
         this.watchlistManager.renderDropdown(); 
     }
 
-    // Если УЖЕ в памяти - просто добавляем в рендер
     if (this.tickersMap.has(key)) {
         const existingTicker = this.tickersMap.get(key);
         if (!this.tickers.includes(existingTicker)) {
@@ -751,9 +749,6 @@ syncWithActiveWatchlist() {
         return true;
     }
     
-    // ════════════════════════════════════════
-    // ✅ ФИКС: Создаём НОВЫЙ тикер если нет в памяти!
-    // ════════════════════════════════════════
     const newTicker = {
         symbol,
         price: 0,
@@ -767,22 +762,26 @@ syncWithActiveWatchlist() {
         flag: this.state.flags[key] || null
     };
     
-    // Добавляем в память И в рендер
     this.tickers.push(newTicker);
     this.tickersMap.set(key, newTicker);
     
-    // Добавляем в customSymbols если нет
     if (!this.state.customSymbols.includes(key)) {
         this.state.customSymbols.push(key);
     }
     
-    // Подписываемся на цену
     if (window.priceManagerInstance) {
         window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
     }
     
     this.filterCache = null;
     if (render) this.renderTickerList();
+    
+    // ✅ Загрузить данные для нового тикера
+    setTimeout(() => {
+        if (this.pollRestData && !this._isRestRunning) {
+            this.pollRestData();
+        }
+    }, 300);
     
     return true;
 }
