@@ -148,7 +148,10 @@ class HorizontalRayRenderer {
 }
 
             if (ray.options.showPrice) {
-                const priceText = Utils.formatPrice(ray.price);
+                // ✅ Precision из графика — без запросов к бирже
+const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
+const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
+const priceText = ray.price.toFixed(precision);
 
                 ctx.font = `bold ${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
                 const textMetrics = ctx.measureText(priceText);
