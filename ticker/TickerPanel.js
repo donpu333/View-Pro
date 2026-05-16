@@ -996,28 +996,67 @@ _updateTickerFromBybit(data, marketType) {
         }
     }
 
-    handleTickerClick(e) {
-        const star = e.target.closest('.star');
-        if (star) { e.preventDefault(); e.stopPropagation(); const symbol = star.dataset.symbol; if (!symbol) return; const index = this.state.favorites.indexOf(symbol); if (index === -1) { this.state.favorites.push(symbol); star.classList.add('favorite'); } else { this.state.favorites.splice(index, 1); star.classList.remove('favorite'); } this.saveState(); this.filterCache = null; return; }
-        const flag = e.target.closest('.flag');
-        if (flag) { e.preventDefault(); e.stopPropagation(); return; }
-        const tickerItem = e.target.closest('.ticker-item');
-        if (tickerItem && tickerItem.dataset.symbol) {
-            const symbol = tickerItem.dataset.symbol, exchange = tickerItem.dataset.exchange, marketType = tickerItem.dataset.marketType;
-            if (this.state.currentSymbol === symbol && this.state.currentExchange === exchange && this.state.currentMarketType === marketType) return;
-            if (this._currentLoadAbortController) this._currentLoadAbortController.abort();
-            this._currentLoadAbortController = new AbortController();
-            this.state.currentSymbol = symbol; this.state.currentExchange = exchange; this.state.currentMarketType = marketType;
-            this.saveCurrentSymbol(symbol, exchange, marketType);
-            document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
-            tickerItem.classList.add('active');
-            if (this.coordinator) this.coordinator.loadSymbol(symbol, exchange, marketType, this._currentLoadAbortController.signal).catch(err => { if (err.name === 'AbortError') console.log('⏸️ Загрузка прервана'); });
-            const pairDisplay = document.getElementById('pairDisplay'); if (pairDisplay) pairDisplay.textContent = symbol;
-            const exchangeDisplay = document.getElementById('exchangeDisplay'); if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
-            const contractTypeDisplay = document.getElementById('contractTypeDisplay'); if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+  handleTickerClick(e) {
+    const star = e.target.closest('.star');
+    if (star) {
+        e.preventDefault();
+        e.stopPropagation();
+        const symbol = star.dataset.symbol;
+        if (!symbol) return;
+        const index = this.state.favorites.indexOf(symbol);
+        if (index === -1) {
+            this.state.favorites.push(symbol);
+            star.classList.add('favorite');
+        } else {
+            this.state.favorites.splice(index, 1);
+            star.classList.remove('favorite');
         }
+        this.saveState();
+        this.filterCache = null;
+        return;
     }
-
+    
+    const flag = e.target.closest('.flag');
+    if (flag) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
+    
+    const tickerItem = e.target.closest('.ticker-item');
+    if (tickerItem && tickerItem.dataset.symbol) {
+        const symbol = tickerItem.dataset.symbol;
+        const exchange = tickerItem.dataset.exchange;
+        const marketType = tickerItem.dataset.marketType;
+        
+        if (this.state.currentSymbol === symbol && 
+            this.state.currentExchange === exchange && 
+            this.state.currentMarketType === marketType) return;
+        
+        this.state.currentSymbol = symbol;
+        this.state.currentExchange = exchange;
+        this.state.currentMarketType = marketType;
+        this.saveCurrentSymbol(symbol, exchange, marketType);
+        
+        // ✅ СНАЧАЛА подсветка
+        document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
+        tickerItem.classList.add('active');
+        
+        // ✅ ПОТОМ асинхронное переключение
+        if (this.coordinator?.chartManager) {
+            this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
+        }
+        
+        const pairDisplay = document.getElementById('pairDisplay');
+        if (pairDisplay) pairDisplay.textContent = symbol;
+        
+        const exchangeDisplay = document.getElementById('exchangeDisplay');
+        if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
+        
+        const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+        if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+    }
+}
     handleStarClick(star) {
         const symbol = star.dataset.symbol; if (!symbol) return;
         const index = this.state.favorites.indexOf(symbol);
@@ -1152,18 +1191,45 @@ _updateTickerFromBybit(data, marketType) {
     }
 
     focusOnSymbol(symbol, exchange, marketType) {
-        this.state.currentSymbol = symbol; this.state.currentExchange = exchange; this.state.currentMarketType = marketType;
-        this.saveCurrentSymbol(symbol, exchange, marketType);
-        document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
-        const key = `${symbol}:${exchange}:${marketType}`, ticker = this.tickersMap.get(key);
-        if (ticker && this.renderer) { const index = this.renderer.displayedTickers.indexOf(ticker); if (index !== -1) { const container = document.getElementById('tickerListContainer'); container.scrollTop = Math.max(0, index * (this.renderer.rowHeight || 36) - container.clientHeight / 2); setTimeout(() => { this.renderer.renderVisibleTickers(); const el = document.querySelector(`.ticker-item[data-symbol="${symbol}"][data-exchange="${exchange}"][data-market-type="${marketType}"]`); if (el) el.classList.add('active'); }, 100); } }
-        if (this.coordinator) { this.coordinator.loadSymbol(symbol, exchange, marketType); setTimeout(() => { if (this.coordinator.chartManager) this.coordinator.chartManager.autoScale(); }, 500); }
-        const pairDisplay = document.getElementById('pairDisplay'); if (pairDisplay) pairDisplay.textContent = symbol;
-        const exchangeDisplay = document.getElementById('exchangeDisplay'); if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
-        const contractTypeDisplay = document.getElementById('contractTypeDisplay'); if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
-        document.getElementById('addInstrumentModal').classList.remove('show');
+    this.state.currentSymbol = symbol;
+    this.state.currentExchange = exchange;
+    this.state.currentMarketType = marketType;
+    this.saveCurrentSymbol(symbol, exchange, marketType);
+    
+    document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
+    
+    const key = `${symbol}:${exchange}:${marketType}`;
+    const ticker = this.tickersMap.get(key);
+    
+    if (ticker && this.renderer) {
+        const index = this.renderer.displayedTickers.indexOf(ticker);
+        if (index !== -1) {
+            const container = document.getElementById('tickerListContainer');
+            container.scrollTop = Math.max(0, index * (this.renderer.rowHeight || 36) - container.clientHeight / 2);
+            setTimeout(() => {
+                this.renderer.renderVisibleTickers();
+                const el = document.querySelector(`.ticker-item[data-symbol="${symbol}"][data-exchange="${exchange}"][data-market-type="${marketType}"]`);
+                if (el) el.classList.add('active');
+            }, 100);
+        }
     }
-
+    
+    // ✅ ЕДИНСТВЕННОЕ ИЗМЕНЕНИЕ — эта строка:
+    if (this.coordinator?.chartManager) {
+        this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
+    }
+    
+    const pairDisplay = document.getElementById('pairDisplay');
+    if (pairDisplay) pairDisplay.textContent = symbol;
+    
+    const exchangeDisplay = document.getElementById('exchangeDisplay');
+    if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
+    
+    const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+    if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+    
+    document.getElementById('addInstrumentModal').classList.remove('show');
+}
     handleFlagSelect(e) {
         e.stopPropagation(); const contextMenu = document.getElementById('flagContextMenu'), symbol = contextMenu.dataset.symbol, exchange = contextMenu.dataset.exchange, marketType = contextMenu.dataset.marketType, flag = e.currentTarget.dataset.flag;
         if (!symbol || !exchange || !marketType) return; const key = `${symbol}:${exchange}:${marketType}`; this.state.flags[key] = flag;
