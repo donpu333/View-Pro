@@ -448,9 +448,7 @@ _schedulePriceLoadForList(symbols) {
         this.tickerPanel.clearAllSymbols();
     }
 
-    // ============================================
-    // ✅ ЗАГРУЗКА СИМВОЛОВ (для initializeWithPriority)
-    // ============================================
+
     loadSymbolsFromList(listId) {
         const list = this.lists.get(listId);
         if (!list) return;
@@ -489,9 +487,7 @@ _schedulePriceLoadForList(symbols) {
         this._schedulePriceLoadForList(list.symbols);
     }
 
-    // ============================================
-    // ✅ ИНИЦИАЛИЗАЦИЯ
-    // ============================================
+  
     async initializeWithPriority() {
         await this._initPromise;
         this.renderDropdown();
@@ -515,9 +511,7 @@ _schedulePriceLoadForList(symbols) {
         }
     }
 
-    // ============================================
-    // ✅ DROPDOWN UI
-    // ============================================
+
     renderDropdown() {
         const container = document.getElementById('watchlistDropdown');
         if (!container) { this.createDropdownContainer(); return; }
