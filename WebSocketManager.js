@@ -59,8 +59,11 @@ class WebSocketManager {
             }
         };
         
-  ws.onmessage = (event) => {
+ws.onmessage = (event) => {
     try {
+        // ✅ ЗАЩИТА: если тикер поменялся пока висел WebSocket — игнорируем
+        if (symbol !== this.currentSymbol) return;
+        
         const data = JSON.parse(event.data);
         let price = null;
         
@@ -75,7 +78,13 @@ class WebSocketManager {
         if (!price || !this.chartManager?.chartData?.length) return;
 
         const cm = this.chartManager;
+        
+        // ✅ ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: проверяем что данные графика соответствуют текущему символу
+        if (cm.currentSymbol !== symbol) return;
+        
         const last = cm.chartData[cm.chartData.length - 1];
+        if (!last) return;
+        
         const nowSec = Math.floor(Date.now() / 1000);
         const stepMap = { 
             '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,
