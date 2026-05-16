@@ -1266,118 +1266,114 @@ updateLastCandle(candle) {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
-        console.log('🔵 setDataQuick: получено свечей', data.length);
+ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
+    console.log('🔵 setDataQuick: получено свечей', data.length);
+    
+    if (data.length > 0) {
+        console.log('    Первая свеча:', data[0]);
+        console.log('    Последняя свеча:', data[data.length - 1]);
         
-        if (data.length > 0) {
-            console.log('    Первая свеча:', data[0]);
-            console.log('    Последняя свеча:', data[data.length - 1]);
-            
-            if (this.candleSeries) this.candleSeries.setData([]);
-            if (this.barSeries) this.barSeries.setData([]);
-            if (this.volumeSeries) this.volumeSeries.setData([]);
-            
-            const beforeFilter = data.length;
-            const seenTimes = new Set();
-            let noDupes = data.filter(c => {
-                if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
-                if (seenTimes.has(c.time)) return false;
-                seenTimes.add(c.time);
-                return true;
-            });
-            noDupes = noDupes.filter(c => this._isValidCandle(c));
-            data = noDupes;
-            
-            if (data.length === 0) {
-                console.error('❌ setDataQuick: после фильтрации не осталось валидных свечей!');
-                return;
-            }
-            
-            console.log(`✅ Валидных свечей: ${data.length}`);
-            
-            const intervalMapSeconds = {
-                '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-                '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
-                '1d': 86400, '1w': 604800, '1M': 2592000
-            };
-            const step = intervalMapSeconds[interval] || 3600;
-            data = data.map(c => ({
-                ...c,
-                time: Math.floor(Math.floor(c.time * 1000) / (step * 1000)) * step
+        if (this.candleSeries) this.candleSeries.setData([]);
+        if (this.barSeries) this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
+        
+        const beforeFilter = data.length;
+        const seenTimes = new Set();
+        let noDupes = data.filter(c => {
+            if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
+            if (seenTimes.has(c.time)) return false;
+            seenTimes.add(c.time);
+            return true;
+        });
+        noDupes = noDupes.filter(c => this._isValidCandle(c));
+        data = noDupes;
+        
+        if (data.length === 0) {
+            console.error('❌ setDataQuick: после фильтрации не осталось валидных свечей!');
+            return;
+        }
+        
+        console.log(`✅ Валидных свечей: ${data.length}`);
+        
+        const intervalMapSeconds = {
+            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+            '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+            '1d': 86400, '1w': 604800, '1M': 2592000
+        };
+        const step = intervalMapSeconds[interval] || 3600;
+        data = data.map(c => ({
+            ...c,
+            time: Math.floor(Math.floor(c.time * 1000) / (step * 1000)) * step
+        }));
+        
+  
+        this.chartData = data;
+        this.currentInterval = interval;
+        this.currentSymbol = symbol;
+        this.currentExchange = exchange;
+        this.currentMarketType = marketType;
+        this.hasMoreData = true;
+        this.lastCandle = data[data.length - 1];
+        
+        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+        const inferredPrecision = this._inferPrecisionFromData();
+        
+        if (cachedPrecision) {
+            this.applyPriceFormat(parseInt(cachedPrecision));
+        } else {
+            this.applyPriceFormat(inferredPrecision);
+            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
+        }
+        
+        this._performUpdate();
+        this._updatePageTitle();
+        
+        if (this.volumeSeries && this.chartData.length > 0) {
+            const volumeData = this.chartData.map(candle => ({
+                time: candle.time,
+                value: candle.volume || 0,
+                color: candle.close >= candle.open ? this.bullishColor : this.bearishColor
             }));
-            
-      
-            this.chartData = data;
-            this.currentInterval = interval;
-            this.currentSymbol = symbol;
-            this.currentExchange = exchange;
-            this.currentMarketType = marketType;
-            this.hasMoreData = true;
-            this.lastCandle = data[data.length - 1];
-            
-            const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
-            const inferredPrecision = this._inferPrecisionFromData();
-            
-            if (cachedPrecision && parseInt(cachedPrecision) >= inferredPrecision) {
-                this.applyPriceFormat(parseInt(cachedPrecision));
-            } else {
-                if (cachedPrecision) {
-                    console.warn(`⚠️ Кэш precision устарел (${cachedPrecision} < ${inferredPrecision}), исправляем`);
-                }
-                this.applyPriceFormat(inferredPrecision);
-                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
-            }
-            
-            this._performUpdate();
-            this._updatePageTitle();
-            
-            if (this.volumeSeries && this.chartData.length > 0) {
-                const volumeData = this.chartData.map(candle => ({
-                    time: candle.time,
-                    value: candle.volume || 0,
-                    color: candle.close >= candle.open ? this.bullishColor : this.bearishColor
-                }));
-                this.volumeSeries.setData(volumeData);
-            }
-            
-            if (this.indicatorManager) {
-                this.indicatorManager.restorePendingIndicators();
-                this.indicatorManager.updateAllIndicators();
-                this.indicatorManager.loadIndicators();
-            }
-            
-            if (!cachedPrecision || parseInt(cachedPrecision) < inferredPrecision) {
-                getPrecisionFromExchange(symbol, exchange, marketType)
-                    .then(precision => {
-                        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                        console.log(`✅ Precision saved for ${symbol}: ${precision} decimals`);
-                    })
-                    .catch(() => {});
-            }
-            
-            requestAnimationFrame(() => {
-                if (window.renderDrawings) window.renderDrawings();
-            });
-            
-            this._notifySymbolChange();
-            
-        } else {
-            console.warn('setDataQuick: нет данных');
+            this.volumeSeries.setData(volumeData);
         }
         
-        this._lastTimeframe = interval;
-
-        if (!window._dailySeparator) {
-            window._dailySeparator = new DailySeparator(this);
-        } else {
-            window._dailySeparator.redraw();
+        if (this.indicatorManager) {
+            this.indicatorManager.restorePendingIndicators();
+            this.indicatorManager.updateAllIndicators();
+            this.indicatorManager.loadIndicators();
         }
         
-        if (!window._sessionHighlighter) {
-            window._sessionHighlighter = new SessionHighlighter(this);
-        }
+        // ✅ Всегда получаем точный precision и ПРИМЕНЯЕМ его
+        getPrecisionFromExchange(symbol, exchange, marketType)
+            .then(precision => {
+                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                this.applyPriceFormat(precision);  // ← ВОТ ЭТО добавлено
+                console.log(`✅ Precision applied for ${symbol}: ${precision} decimals`);
+            })
+            .catch(() => {});
+        
+        requestAnimationFrame(() => {
+            if (window.renderDrawings) window.renderDrawings();
+        });
+        
+        this._notifySymbolChange();
+        
+    } else {
+        console.warn('setDataQuick: нет данных');
     }
+    
+    this._lastTimeframe = interval;
 
+    if (!window._dailySeparator) {
+        window._dailySeparator = new DailySeparator(this);
+    } else {
+        window._dailySeparator.redraw();
+    }
+    
+    if (!window._sessionHighlighter) {
+        window._sessionHighlighter = new SessionHighlighter(this);
+    }
+}
     async loadDrawingsForCurrentSymbol() {
         await new Promise(resolve => setTimeout(resolve, 100));
 
