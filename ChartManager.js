@@ -1290,23 +1290,7 @@ class ChartManager {
                 time: Math.floor(Math.floor(c.time * 1000) / (step * 1000)) * step
             }));
             
-            const nowSec = Math.floor(Date.now() / 1000);
-            const currentAligned = Math.floor(nowSec / step) * step;
-            const lastDataCandle = data[data.length - 1];
-            
-            if (lastDataCandle && lastDataCandle.time < currentAligned) {
-                const currentCandle = {
-                    time: currentAligned,
-                    open: lastDataCandle.close,
-                    high: lastDataCandle.close,
-                    low: lastDataCandle.close,
-                    close: lastDataCandle.close,
-                    volume: 0
-                };
-                data.push(currentCandle);
-                console.log('📌 Добавлена текущая незакрытая свеча:', new Date(currentAligned * 1000));
-            }
-            
+      
             this.chartData = data;
             this.currentInterval = interval;
             this.currentSymbol = symbol;
