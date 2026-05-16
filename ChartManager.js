@@ -1942,8 +1942,8 @@ _syncPriceLine(price) {
         return clean;
     }
 
-    async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
-    // ✅ Ждём, пока завершится предыдущий запрос
+  async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
+    // Ждём только предыдущий fetchKlines, но не тикеры
     while (ChartManager._fetchInProgress) {
         await new Promise(r => setTimeout(r, 100));
     }
@@ -2087,7 +2087,10 @@ _syncPriceLine(price) {
             this.currentSymbol = symbol;
             this.currentExchange = exchange;
             this.currentMarketType = marketType;
-
+// Заранее спрашиваем у биржи точность
+getPrecisionFromExchange(symbol, exchange, marketType).then(p => {
+    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, p);
+}).catch(() => {});
             const candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
 
             if (!candles || candles.length === 0) {
