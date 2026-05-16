@@ -1370,16 +1370,7 @@ _applyRedrawIfNeeded() {
         const currentKey = this._getCurrentSymbolKey();
         console.log('📊 Loading rays for:', currentKey);
 
-        // ========== ЗАГРУЗКА PRECISION ==========
-        const cm = window.chartManagerInstance || this._chartManager;
-        const symbol = cm?.currentSymbol;
-        const exchange = cm?.currentExchange;
-        const marketType = cm?.currentMarketType;
-        
-        if (symbol && exchange && marketType && typeof getPrecisionFromExchange === 'function') {
-            await getPrecisionFromExchange(symbol, exchange, marketType);
-            console.log('✅ Precision loaded:', PRECISION_CACHE.get(`${exchange}_${marketType}_${symbol}`));
-        }
+       
         // ========== КОНЕЦ ЗАГРУЗКИ PRECISION ==========
 
         const raysData = await window.db.getByIndex('drawings', 'symbolKey', currentKey);
