@@ -393,23 +393,30 @@ startTickerPanelPriceEngine() {
     this._restQueue = [];           
     this._isRestRunning = false;    
 
-    this._safeFetch = async (url, retries = 3) => {
-        for (let i = 0; i < retries; i++) {
-            try {
-                if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000);
-                const response = await fetch(url, { signal: controller.signal });
-                clearTimeout(timeoutId);
-                if (response.status === 418 || response.status === 429) continue;
-                if (!response.ok) return null;
-                return await response.json();
-            } catch (e) {
-                if (e.name !== 'AbortError') continue;
-            }
+  this._safeFetch = async (url, retries = 3) => {
+    // ✅ Ждём ChartManager, но не больше 5 секунд
+    let waited = 0;
+    while (ChartManager._fetchInProgress && waited < 50) {
+        await new Promise(r => setTimeout(r, 100));
+        waited++;
+    }
+    
+    for (let i = 0; i < retries; i++) {
+        try {
+            if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (response.status === 418 || response.status === 429) continue;
+            if (!response.ok) return null;
+            return await response.json();
+        } catch (e) {
+            if (e.name !== 'AbortError') continue;
         }
-        return null;
-    };
+    }
+    return null;
+};
 
     this._processRestQueue = async () => {
         // ✅ Ждём fetchBatchSnapshots
