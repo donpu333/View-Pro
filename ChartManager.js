@@ -1172,68 +1172,74 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    updateLastCandle(candle) {
-        if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) {
-            console.warn('⚠️ Пропущена свеча с некорректным временем:', candle);
+updateLastCandle(candle) {
+    if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) {
+        console.warn('⚠️ Пропущена свеча с некорректным временем:', candle);
+        return;
+    }
+    
+    try {
+        if (!this._isValidCandle(candle)) {
+            console.warn('⚠️ Битая свеча обнаружена:', candle);
+            
+            const sanitized = this._sanitizeCandle(candle);
+            if (!sanitized) {
+                console.error('❌ Свечу невозможно исправить, пропускаем');
+                return;
+            }
+            
+            candle = sanitized;
+        }
+        
+        const existingIndex = this.chartData.findIndex(c => c.time === candle.time);
+        
+        if (existingIndex !== -1) {
+            // ✅ Обновляем существующую свечу
+            this.chartData[existingIndex] = candle;
+        } else if (this.chartData.length === 0 || candle.time > this.chartData[this.chartData.length - 1].time) {
+            // ✅ Добавляем только если время больше последней свечи
+            this.chartData.push(candle);
+            const limit = CONFIG.klineLimits[this.currentInterval] || 1000;
+            if (this.chartData.length > limit) {
+                this.chartData = this.chartData.slice(-limit);
+            }
+        } else {
+            // ⏳ Устаревшая свеча — игнорируем
+            console.warn('⏳ Пропущена устаревшая свеча:', new Date(candle.time * 1000));
             return;
         }
         
-        try {
-            if (!this._isValidCandle(candle)) {
-                console.warn('⚠️ Битая свеча обнаружена:', candle);
-                
-                const sanitized = this._sanitizeCandle(candle);
-                if (!sanitized) {
-                    console.error('❌ Свечу невозможно исправить, пропускаем');
-                    return;
-                }
-                
-                candle = sanitized;
-            }
-            
-            const existingIndex = this.chartData.findIndex(c => c.time === candle.time);
-            
-            if (existingIndex !== -1) {
-                this.chartData[existingIndex] = candle;
-            } else {
-                this.chartData.push(candle);
-                const limit = CONFIG.klineLimits[this.currentInterval] || 1000;
-                if (this.chartData.length > limit) {
-                    this.chartData = this.chartData.slice(-limit);
-                }
-            }
-            
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (activeSeries) {
-                activeSeries.update({
-                    time: candle.time,
-                    open: candle.open,
-                    high: candle.high,
-                    low: candle.low,
-                    close: candle.close
-                });
-            }
-            
-            this.currentRealPrice = candle.close;
-            if (activeSeries) {
-                activeSeries.applyOptions({ priceLineSource: candle.close });
-            }
-            
-            if (this.volumeSeries && this.chartData.length > 0) {
-                const volumeData = this.chartData.map(c => ({
-                    time: c.time,
-                    value: c.volume || 0,
-                    color: c.close >= c.open ? this.bullishColor : this.bearishColor
-                }));
-                this.volumeSeries.setData(volumeData);
-            }
-            
-            this.lastCandle = candle;
-            
-        } catch (e) {
-            console.error('❌ Ошибка в updateLastCandle:', e);
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries) {
+            activeSeries.update({
+                time: candle.time,
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close
+            });
         }
+        
+        this.currentRealPrice = candle.close;
+        if (activeSeries) {
+            activeSeries.applyOptions({ priceLineSource: candle.close });
+        }
+        
+        if (this.volumeSeries && this.chartData.length > 0) {
+            const volumeData = this.chartData.map(c => ({
+                time: c.time,
+                value: c.volume || 0,
+                color: c.close >= c.open ? this.bullishColor : this.bearishColor
+            }));
+            this.volumeSeries.setData(volumeData);
+        }
+        
+        this.lastCandle = candle;
+        
+    } catch (e) {
+        console.error('❌ Ошибка в updateLastCandle:', e);
     }
+}
 
     async waitForChartReady() {
         await new Promise(resolve => {
