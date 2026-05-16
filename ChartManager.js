@@ -1941,93 +1941,100 @@ updateLastCandle(candle) {
     }
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
-        if (this._currentFetchController) {
-            this._currentFetchController.abort();
-        }
-        this._currentFetchController = new AbortController();
+    // ✅ Ждём, пока завершится предыдущий запрос
+    while (ChartManager._fetchInProgress) {
+        await new Promise(r => setTimeout(r, 100));
+    }
+    ChartManager._fetchInProgress = true;
+    
+    // Отменяем предыдущий (если завис)
+    if (this._currentFetchController) {
+        this._currentFetchController.abort();
+    }
+    this._currentFetchController = new AbortController();
 
-        const bybitIntervalMap = {
-            '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
-            '1h': '60', '4h': '240', '6h': '360', '12h': '720',
-            '1d': 'D', '1w': 'W', '1M': 'M'
-        };
+    const bybitIntervalMap = {
+        '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+        '1h': '60', '4h': '240', '6h': '360', '12h': '720',
+        '1d': 'D', '1w': 'W', '1M': 'M'
+    };
 
-        let url;
-        if (exchange === 'binance') {
-            url = marketType === 'futures'
-                ? `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-                : `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-        } else {
-            const bybitInt = bybitIntervalMap[interval] || interval;
-            const cat = marketType === 'futures' ? 'linear' : 'spot';
-            url = `https://api.bybit.com/v5/market/kline?category=${cat}&symbol=${symbol}&interval=${bybitInt}&limit=${limit}`;
-        }
-
-        try {
-            const response = await fetch(url, { 
-                signal: this._currentFetchController.signal
-            });
-            
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const data = await response.json();
-
-            let rawCandles;
-            
-            if (exchange === 'binance') {
-                rawCandles = data.map(item => ({
-                    time: Math.floor(item[0] / 1000),
-                    open: parseFloat(item[1]),
-                    high: parseFloat(item[2]),
-                    low: parseFloat(item[3]),
-                    close: parseFloat(item[4]),
-                    volume: parseFloat(item[5]),
-                    quoteVolume: parseFloat(item[7])
-                }));
-            } else {
-                if (data.retCode !== 0) throw new Error(data.retMsg);
-                rawCandles = data.result.list.map(item => ({
-                    time: Math.floor(parseInt(item[0]) / 1000),
-                    open: parseFloat(item[1]),
-                    high: parseFloat(item[2]),
-                    low: parseFloat(item[3]),
-                    close: parseFloat(item[4]),
-                    volume: parseFloat(item[5] || 0),
-                    quoteVolume: parseFloat(item[6] || 0)
-                })).filter(c => c !== null).reverse();
-            }
-            
-            const beforeCount = rawCandles.length;
-            
-            const seenTimes = new Set();
-            const noDupes = rawCandles.filter(c => {
-                if (seenTimes.has(c.time)) return false;
-                seenTimes.add(c.time);
-                return true;
-            });
-            
-            const validCandles = noDupes.filter(c => this._isValidCandle(c));
-            
-            const removedCount = beforeCount - validCandles.length;
-            if (removedCount > 0) {
-                console.warn(`⚠️ fetchKlines: отфильтровано ${removedCount} битых/дублей из ${beforeCount}`);
-            }
-            
-            validCandles.sort((a, b) => a.time - b.time);
-            
-            this._currentFetchController = null;
-            return validCandles;
-            
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.log('🛑 fetchKlines прерван (AbortController)');
-            } else {
-                console.error('❌ Ошибка fetchKlines:', error);
-            }
-            this._currentFetchController = null;
-            return [];
-        }
+    let url;
+    if (exchange === 'binance') {
+        url = marketType === 'futures'
+            ? `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+            : `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    } else {
+        const bybitInt = bybitIntervalMap[interval] || interval;
+        const cat = marketType === 'futures' ? 'linear' : 'spot';
+        url = `https://api.bybit.com/v5/market/kline?category=${cat}&symbol=${symbol}&interval=${bybitInt}&limit=${limit}`;
     }
 
+    try {
+        const response = await fetch(url, { 
+            signal: this._currentFetchController.signal
+        });
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        let rawCandles;
+        
+        if (exchange === 'binance') {
+            rawCandles = data.map(item => ({
+                time: Math.floor(item[0] / 1000),
+                open: parseFloat(item[1]),
+                high: parseFloat(item[2]),
+                low: parseFloat(item[3]),
+                close: parseFloat(item[4]),
+                volume: parseFloat(item[5]),
+                quoteVolume: parseFloat(item[7])
+            }));
+        } else {
+            if (data.retCode !== 0) throw new Error(data.retMsg);
+            rawCandles = data.result.list.map(item => ({
+                time: Math.floor(parseInt(item[0]) / 1000),
+                open: parseFloat(item[1]),
+                high: parseFloat(item[2]),
+                low: parseFloat(item[3]),
+                close: parseFloat(item[4]),
+                volume: parseFloat(item[5] || 0),
+                quoteVolume: parseFloat(item[6] || 0)
+            })).filter(c => c !== null).reverse();
+        }
+        
+        const beforeCount = rawCandles.length;
+        
+        const seenTimes = new Set();
+        const noDupes = rawCandles.filter(c => {
+            if (seenTimes.has(c.time)) return false;
+            seenTimes.add(c.time);
+            return true;
+        });
+        
+        const validCandles = noDupes.filter(c => this._isValidCandle(c));
+        
+        const removedCount = beforeCount - validCandles.length;
+        if (removedCount > 0) {
+            console.warn(`⚠️ fetchKlines: отфильтровано ${removedCount} битых/дублей из ${beforeCount}`);
+        }
+        
+        validCandles.sort((a, b) => a.time - b.time);
+        
+        return validCandles;
+        
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log('🛑 fetchKlines прерван (переключение символа)');
+        } else {
+            console.error('❌ Ошибка fetchKlines:', error);
+        }
+        return [];
+    } finally {
+        this._currentFetchController = null;
+        ChartManager._fetchInProgress = false;
+    }
+}
     _updatePageTitle() {
         const symbol = this.currentSymbol || '';
         const price = this.currentRealPrice;
