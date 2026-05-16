@@ -293,90 +293,52 @@ fallbackCopy(button, text) {
 async switchToTimeframe(tf) {
     console.log('Переключение на таймфрейм:', tf);
     
-    
-    
     document.querySelectorAll('.timeframe-item').forEach(i => {
         i.classList.toggle('active', i.dataset.tf === tf);
     });
 
     this.currentInterval = tf;
     localStorage.setItem('lastTimeframe', tf);
-console.log('💾 Сохранён таймфрейм:', tf);
-    this.updateInstrumentInfo();
-    document.getElementById('timeframePanel').classList.remove('expanded');
+    console.log('💾 Сохранён таймфрейм:', tf);
     
     this.chartManager.setCurrentInterval(tf);
+    document.getElementById('timeframePanel').classList.remove('expanded');
 
-    console.log('Загружаем данные для', tf);
-    
-    // ✅ БЕРЁМ ТЕКУЩИЙ СИМВОЛ ИЗ CHARTMANAGER
     const currentSymbol = this.chartManager.currentSymbol;
     const currentExchange = this.chartManager.currentExchange;
     const currentMarketType = this.chartManager.currentMarketType;
     
     console.log('Текущий символ:', currentSymbol, currentExchange, currentMarketType);
+
+    // ✅ ИСПОЛЬЗУЕМ switchSymbol — он атомарно всё обновит
+    await this.chartManager.switchSymbol(currentSymbol, currentExchange, currentMarketType);
     
-    const data = await this.chartManager.fetchKlines(currentSymbol, currentExchange, currentMarketType, tf, 1000);
-    console.log('Получено данных:', data ? data.length : 0);
+    // Обновляем WebSocket (switchSymbol уже подписался на цену, 
+    // но WebSocketManager для свечей нужно обновить отдельно)
+    if (this.wsManager) {
+        console.log('🔄 Обновляем WebSocket для символа:', currentSymbol, 'таймфрейм:', tf);
+        this.wsManager.updateSymbolAndTimeframe(currentSymbol, tf, currentExchange, currentMarketType);
+    }
     
-    if (data && data.length > 0) {
-        console.log('Устанавливаем данные на график');
-        this.chartManager.setDataQuick(
-            data, 
-            tf, 
-            currentSymbol,
-            currentExchange, 
-            currentMarketType
-        );
-        
-        // ✅ ДОБАВЛЕНО: ОБНОВЛЯЕМ ФОРМАТ ЦЕНЫ ПОСЛЕ ЗАГРУЗКИ ДАННЫХ
-        this.chartManager.updatePricePrecision(currentSymbol, currentExchange, currentMarketType);
-        
-        // ✅ ОБНОВЛЯЕМ WEBSOCKET ОДНИМ ВЫЗОВОМ (символ + таймфрейм)
-       if (this.wsManager) {
-    console.log('🔄 Обновляем WebSocket для символа:', currentSymbol, 'таймфрейм:', tf);
-    this.wsManager.updateSymbolAndTimeframe(currentSymbol, tf, currentExchange, currentMarketType);
-}
-        setTimeout(() => {
-            this.chartManager.autoScale();
-        }, 300);
-        
-        if (window.rayManager) {
-            setTimeout(() => {
-                window.rayManager.syncWithNewTimeframe();
-            }, 200);
-        }
-        
-        if (window.trendLineManager) {
-            setTimeout(() => {
-                window.trendLineManager.syncWithNewTimeframe();
-            }, 200);
-        }
-        
-        if (window.rulerLineManager) {
-            setTimeout(() => {
-                window.rulerLineManager.syncWithNewTimeframe();
-            }, 200);
-        }
-        
-        if (window.alertLineManager) {
-            setTimeout(() => {
-                window.alertLineManager.syncWithNewTimeframe();
-            }, 200);
-        }
-        
-        if (window.textManager) {
-            setTimeout(() => {
-                window.textManager.syncWithNewTimeframe();
-            }, 200);
-        }
-     
-        console.log('Запускаем таймер');
-        this.timerManager.start(tf);
-        
-        this.loadStarredTimeframes();
-        
-   }   
+    // Запускаем таймер (switchSymbol уже запустил, но на всякий случай)
+    this.timerManager.start(tf);
+    
+    // Автомасштаб
+    setTimeout(() => {
+        this.chartManager.autoScale();
+    }, 300);
+    
+    // Синхронизируем рисунки
+    setTimeout(() => {
+        if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+        if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+        if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+        if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+        if (window.textManager) window.textManager.syncWithNewTimeframe();
+    }, 200);
+    
+    this.updateInstrumentInfo();
+    this.loadStarredTimeframes();
 }
 }
 if (typeof window !== 'undefined') {
