@@ -273,16 +273,43 @@ class ChartManager {
     }
 
     _startRedrawLoop() {
-        const loop = () => {
+    // setInterval работает всегда, даже когда вкладка неактивна
+    this._redrawInterval = setInterval(() => {
+        this.rayManager?._applyRedrawIfNeeded();
+        this.trendLineManager?._applyRedrawIfNeeded();
+        this.rulerLineManager?._applyRedrawIfNeeded();
+        this.alertLineManager?._applyRedrawIfNeeded();
+        
+        // Обновляем свечу даже в фоне
+        if (this.chartData.length > 0) {
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            
+            if (series && this.currentRealPrice && lastCandle) {
+                series.update({
+                    time: lastCandle.time,
+                    open: lastCandle.open,
+                    high: lastCandle.high,
+                    low: lastCandle.low,
+                    close: this.currentRealPrice
+                });
+                series.applyOptions({ priceLineSource: this.currentRealPrice });
+            }
+        }
+    }, 100);
+    
+    // RAF для плавности на активной вкладке
+    const rafLoop = () => {
+        if (!document.hidden) {
             this.rayManager?._applyRedrawIfNeeded();
             this.trendLineManager?._applyRedrawIfNeeded();
             this.rulerLineManager?._applyRedrawIfNeeded();
             this.alertLineManager?._applyRedrawIfNeeded();
-            
-            requestAnimationFrame(loop);
-        };
-        requestAnimationFrame(loop);
-    }
+        }
+        this._rafId = requestAnimationFrame(rafLoop);
+    };
+    this._rafId = requestAnimationFrame(rafLoop);
+}
 
     getCurrentPrice() {
         if (this.priceManager) {
@@ -1713,52 +1740,57 @@ _syncPriceLine(price) {
         this.indicatorManager.loadIndicators();
     }
 
-    async _syncAfterHidden() {
-        if (!this.chartData.length) return;
+   async _syncAfterHidden() {
+    if (!this.chartData.length) return;
 
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        const nowSec = Math.floor(Date.now() / 1000);
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    const nowSec = Math.floor(Date.now() / 1000);
 
-        const intervalSeconds = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900,
-            '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600,
-            '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000
-        }[this.currentInterval] || 3600;
+    const intervalSeconds = {
+        '1m': 60, '3m': 180, '5m': 300, '15m': 900,
+        '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600,
+        '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000
+    }[this.currentInterval] || 3600;
 
-        if (nowSec - lastCandle.time < intervalSeconds * 1.5) {
-            this.forceRedraw();
-            return;
-        }
+    // ✅ ВСЕГДА загружаем свежие свечи при возврате!
+    console.log('🔄 Синхронизация после скрытия...');
+    
+    try {
+        const freshCandles = await this.fetchKlines(
+            this.currentSymbol,
+            this.currentExchange,
+            this.currentMarketType,
+            this.currentInterval,
+            500
+        );
 
-        console.log('🔄 Обнаружен гэп, загружаем пропущенные свечи...');
-        try {
-            const freshCandles = await this.fetchKlines(
-                this.currentSymbol,
-                this.currentExchange,
-                this.currentMarketType,
-                this.currentInterval,
-                1000
-            );
-
-            if (freshCandles && freshCandles.length > 0) {
-                const newCandles = freshCandles.filter(c => c.time > lastCandle.time);
-                if (newCandles.length > 0) {
-                    const allCandles = [...this.chartData, ...newCandles];
-                    this.chartData = allCandles
-                        .filter((v, i, a) => a.findIndex(t => t.time === v.time) === i)
-                        .sort((a, b) => a.time - b.time);
-
-                    this._performUpdate();
-                    console.log(`✅ Добавлено ${newCandles.length} пропущенных свечей`);
+        if (freshCandles && freshCandles.length > 0) {
+            const newCandles = freshCandles.filter(c => c.time > lastCandle.time);
+            
+            if (newCandles.length > 0) {
+                console.log(`✅ Добавлено ${newCandles.length} пропущенных свечей`);
+                
+                const allCandles = [...this.chartData, ...newCandles];
+                this.chartData = allCandles
+                    .filter((v, i, a) => a.findIndex(t => t.time === v.time) === i)
+                    .sort((a, b) => a.time - b.time);
+                
+                // Ограничиваем размер
+                const limit = CONFIG.klineLimits[this.currentInterval] || 1000;
+                if (this.chartData.length > limit) {
+                    this.chartData = this.chartData.slice(-limit);
                 }
+            } else {
+                console.log('Новых свечей нет');
             }
-        } catch (e) {
-            console.warn('⚠️ Ошибка при синхронизации после скрытия:', e);
         }
-
-        this.forceRedraw();
+    } catch (e) {
+        console.warn('⚠️ Ошибка синхронизации:', e);
     }
 
+    this._performUpdate();
+    this.scrollToLast();
+}
     _saveZoomState() {
         const timeScale = this.chart.timeScale();
         if (!timeScale) return;
@@ -1799,7 +1831,7 @@ _syncPriceLine(price) {
         this._savedZoomRange = null;
     }
 
- _subscribeToPrice() {
+_subscribeToPrice() {
     if (!this.priceManager) {
         setTimeout(() => this._subscribeToPrice(), 100);
         return;
@@ -1811,7 +1843,8 @@ _syncPriceLine(price) {
     }
     
     this._priceUpdateHandler = (price, symbol) => {
-        if (document.hidden || this._switchingSymbol) return;
+        // ✅ УБРАЛИ document.hidden — обновляем всегда!
+        if (this._switchingSymbol) return;
         if (symbol !== this.currentSymbol) return;
         this._syncPriceLine(price);
     };
