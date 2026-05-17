@@ -272,31 +272,18 @@ class ChartManager {
         this._startRedrawLoop();
     }
 
-   _startRedrawLoop() {
-    const redraw = () => {
-        this.rayManager?._applyRedrawIfNeeded();
-        this.trendLineManager?._applyRedrawIfNeeded();
-        
-        if (this.chartData.length > 0) {
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    _startRedrawLoop() {
+        const loop = () => {
+            this.rayManager?._applyRedrawIfNeeded();
+            this.trendLineManager?._applyRedrawIfNeeded();
+            this.rulerLineManager?._applyRedrawIfNeeded();
+            this.alertLineManager?._applyRedrawIfNeeded();
             
-            if (series && this.currentRealPrice && lastCandle) {
-                series.update({
-                    time: lastCandle.time,
-                    open: lastCandle.open,
-                    high: lastCandle.high,
-                    low: lastCandle.low,
-                    close: this.currentRealPrice
-                });
-            }
-        }
-        
-        this._redrawTimer = setTimeout(redraw, 100);
-    };
-    
-    redraw();
-}
+            requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+    }
+
     getCurrentPrice() {
         if (this.priceManager) {
             const price = this.priceManager.getPrice(this.currentSymbol);
@@ -1824,7 +1811,7 @@ _syncPriceLine(price) {
     }
     
     this._priceUpdateHandler = (price, symbol) => {
-       if (this._switchingSymbol) return;
+        if (document.hidden || this._switchingSymbol) return;
         if (symbol !== this.currentSymbol) return;
         this._syncPriceLine(price);
     };
