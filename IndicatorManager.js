@@ -18,6 +18,10 @@ class IndicatorManager {
         }
         
         this._initIndicatorPanels();
+         // ✅ ДОБАВЬТЕ ЭТИ 3 СТРОКИ:
+    setTimeout(() => {
+        this.loadIndicators();
+    }, 2000);
     }
     
     _handleWorkerMessage(message) {
@@ -283,29 +287,44 @@ class IndicatorManager {
         }
     }
     
-    // ИСПРАВЛЕНО: Убрали уродливые setTimeout с index * 200. Теперь индикаторы загружаются мгновенно.
-    _restoreIndicators(indicatorsData) {
-        indicatorsData.forEach(data => {
-            if (this.activeIndicators.some(i => i.type === data.type)) return;
-            
-            const success = this.addIndicator(data.type);
-            if (success) {
-                const indicator = this.activeIndicators.find(i => i.type === data.type);
-                if (indicator) {
-                    if (data.settings) indicator.settings = { ...indicator.settings, ...data.settings };
-                    if (data.visible !== undefined) indicator.visible = data.visible;
-                    
-                    indicator.createSeries();
-                    indicator.series.forEach(series => {
-                        if (series) series.applyOptions({ visible: indicator.visible });
-                    });
-                }
-            }
-        });
+   _restoreIndicators(indicatorsData) {
+    indicatorsData.forEach(data => {
+        if (this.activeIndicators.some(i => i.type === data.type)) return;
         
-        this.afterAllIndicatorsLoaded();
-    }
+        // ✅ Сначала создаем индикатор БЕЗ вызова createSeries
+        const IndicatorClass = window.IndicatorRegistry.get(data.type);
+        if (!IndicatorClass) return;
+        
+        const indicator = new IndicatorClass(this);
+        if (!indicator) return;
+        
+        // ✅ Применяем сохраненные настройки ДО создания серий
+        if (data.settings) {
+            indicator.settings = { ...indicator.settings, ...data.settings };
+        }
+        if (data.visible !== undefined) {
+            indicator.visible = data.visible;
+        }
+        
+        // ✅ Создаем панель если нужно
+        if (indicator.data.panel !== 'main') {
+            this._showPanel(indicator.data.panel);
+        }
+        
+        // ✅ ТЕПЕРЬ создаем серии с правильными настройками
+        const series = indicator.createSeries();
+        if (series && series.length > 0) {
+            this.activeIndicators.push(indicator);
+            indicator.series.forEach(s => {
+                if (s) s.applyOptions({ visible: indicator.visible !== false });
+            });
+        }
+    });
     
+    this._saveIndicators();
+    this._renderUI();
+    this.afterAllIndicatorsLoaded();
+}
     afterAllIndicatorsLoaded() {
         this.chartManager?._updateMainChartHeight?.();
         
