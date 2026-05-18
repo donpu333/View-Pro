@@ -647,20 +647,21 @@ try {
         const headerTitle = wrapper.querySelector('#multiatr-header span:first-child');
         if(headerTitle) headerTitle.innerText = `📊 ATR MULTI [ ${modeText} | ${filterText} | P: ${this.settings.atrPeriod} ]`;
 
-        const addRow = (label, color, atrValue, natr, progress, remaining) => {
-            const atrFormatted = formatATR(atrValue);
-            const copyBtn = atrFormatted !== '—' ? 
-                `<button class="copy-atr-btn" data-value="${atrValue}" style="background:none;border:none;color:#888;cursor:pointer;font-size:10px;padding:0 2px;margin-left:4px;line-height:1;" title="Скопировать ATR">📋</button>` 
-                : '';
-                
-            return `<tr>
-                <td style="padding:3px 4px; color:${color}; white-space:nowrap;">${label}</td>
-                <td style="text-align:right; padding:3px 4px; color:#FFFFFF; font-weight: bold;">${atrFormatted}${copyBtn}</td>
-                <td style="text-align:right; padding:3px 4px; color:#AAAAAA;">${formatPercent(natr)}</td>
-                <td style="text-align:right; padding:3px 4px; color:${progressColor(progress)};">${formatPercent(progress)}</td>
-                <td style="text-align:right; padding:3px 4px; color:${remainingColor(remaining)};">${formatPercent(remaining)}</td>
-            </tr>`;
-        };
+       const addRow = (label, color, atrValue, natr, progress, remaining) => {
+    const atrFormatted = formatATR(atrValue);
+    // Используем atrFormatted для копирования вместо atrValue
+    const copyBtn = atrFormatted !== '—' ? 
+        `<button class="copy-atr-btn" data-value="${atrFormatted}" style="background:none;border:none;color:#888;cursor:pointer;font-size:10px;padding:0 2px;margin-left:4px;line-height:1;" title="Скопировать ATR">📋</button>` 
+        : '';
+        
+    return `<tr>
+        <td style="padding:3px 4px; color:${color}; white-space:nowrap;">${label}</td>
+        <td style="text-align:right; padding:3px 4px; color:#FFFFFF; font-weight: bold;">${atrFormatted}${copyBtn}</td>
+        <td style="text-align:right; padding:3px 4px; color:#AAAAAA;">${formatPercent(natr)}</td>
+        <td style="text-align:right; padding:3px 4px; color:${progressColor(progress)};">${formatPercent(progress)}</td>
+        <td style="text-align:right; padding:3px 4px; color:${remainingColor(remaining)};">${formatPercent(remaining)}</td>
+    </tr>`;
+};
 
         let rowsHTML = `
             <table style="border-collapse:collapse; width:100%;">
@@ -811,7 +812,6 @@ try {
         }
     }
 }
-
 class Volume24HIndicator extends BaseIndicator {
     static meta = { name: '24H Объем', category: 'volume', panel: 'volume24h', color: '#2962FF' };
 
