@@ -1755,51 +1755,88 @@ _syncPriceLine(price) {
     }
 
     async _syncAfterHidden() {
-        if (!this.chartData.length) return;
+    if (!this.chartData.length) return;
 
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        const nowSec = Math.floor(Date.now() / 1000);
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    const nowSec = Math.floor(Date.now() / 1000);
 
-        const intervalSeconds = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900,
-            '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600,
-            '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000
-        }[this.currentInterval] || 3600;
+    const intervalSeconds = {
+        '1m': 60, '3m': 180, '5m': 300, '15m': 900,
+        '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600,
+        '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000
+    }[this.currentInterval] || 3600;
 
-        if (nowSec - lastCandle.time < intervalSeconds * 1.5) {
-            this.forceRedraw();
-            return;
+    // Если прошло меньше 1.5 интервалов — просто обновляем последнюю свечу
+    if (nowSec - lastCandle.time < intervalSeconds * 1.5) {
+        // 👇 НЕ вызываем forceRedraw — он перерисовывает весь график
+        // Просто восстанавливаем таймер и рисунки
+        if (this.timerManager?._primitive) {
+            this.timerManager._primitive.requestRedraw();
         }
-
-        console.log('🔄 Обнаружен гэп, загружаем пропущенные свечи...');
-        try {
-            const freshCandles = await this.fetchKlines(
-                this.currentSymbol,
-                this.currentExchange,
-                this.currentMarketType,
-                this.currentInterval,
-                1000
-            );
-
-            if (freshCandles && freshCandles.length > 0) {
-                const newCandles = freshCandles.filter(c => c.time > lastCandle.time);
-                if (newCandles.length > 0) {
-                    const allCandles = [...this.chartData, ...newCandles];
-                    this.chartData = allCandles
-                        .filter((v, i, a) => a.findIndex(t => t.time === v.time) === i)
-                        .sort((a, b) => a.time - b.time);
-
-                    this._performUpdate();
-                    console.log(`✅ Добавлено ${newCandles.length} пропущенных свечей`);
-                }
-            }
-        } catch (e) {
-            console.warn('⚠️ Ошибка при синхронизации после скрытия:', e);
-        }
-
-        this.forceRedraw();
+        this.scheduleDrawingsUpdate();
+        return;
     }
 
+    // Если гэп большой — загружаем свечи
+    console.log('🔄 Обнаружен гэп, загружаем пропущенные свечи...');
+    try {
+        const freshCandles = await this.fetchKlines(
+            this.currentSymbol,
+            this.currentExchange,
+            this.currentMarketType,
+            this.currentInterval,
+            1000
+        );
+
+        if (freshCandles && freshCandles.length > 0) {
+            const newCandles = freshCandles.filter(c => c.time > lastCandle.time);
+            if (newCandles.length > 0) {
+                // 👇 Сохраняем текущий масштаб
+                const timeScale = this.chart.timeScale();
+                const currentRange = timeScale.getVisibleLogicalRange();
+                
+                // Добавляем свечи по одной, не перерисовывая весь график
+                for (const candle of newCandles) {
+                    this.chartData.push(candle);
+                    this.lastCandle = candle;
+                }
+                
+                // Удаляем дубли
+                this.chartData = this.chartData
+                    .filter((v, i, a) => a.findIndex(t => t.time === v.time) === i)
+                    .sort((a, b) => a.time - b.time);
+                
+                // 👇 Обновляем ТОЛЬКО последнюю свечу, не весь график
+                const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                if (series) {
+                    const last = this.chartData[this.chartData.length - 1];
+                    series.update(last);
+                }
+                
+                // 👇 Восстанавливаем масштаб
+                if (currentRange) {
+                    const newLength = this.chartData.length;
+                    const oldLength = this.chartData.length - newCandles.length;
+                    const shift = newLength - oldLength;
+                    timeScale.setVisibleLogicalRange({
+                        from: currentRange.from + shift,
+                        to: currentRange.to + shift
+                    });
+                }
+                
+                console.log(`✅ Добавлено ${newCandles.length} пропущенных свечей`);
+            }
+        }
+    } catch (e) {
+        console.warn('⚠️ Ошибка при синхронизации после скрытия:', e);
+    }
+
+    // Обновляем рисунки и таймер
+    if (this.timerManager?._primitive) {
+        this.timerManager._primitive.requestRedraw();
+    }
+    this.scheduleDrawingsUpdate();
+}
     _saveZoomState() {
         const timeScale = this.chart.timeScale();
         if (!timeScale) return;
