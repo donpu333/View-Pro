@@ -1621,6 +1621,7 @@ _syncPriceLine(price) {
     }
     
     this.scheduleUpdatePosition();
+    this._updatePageTitle(); // 👈 ОБНОВЛЯЕМ ЗАГОЛОВОК ВКЛАДКИ
 }
     autoScale() {
         if (this.chart && this.chartData.length > 0) {
@@ -2122,28 +2123,34 @@ _createNewCandle(candle) {
         ChartManager._fetchInProgress = false;
     }
 }
-    _updatePageTitle() {
-        const symbol = this.currentSymbol || '';
-        const price = this.currentRealPrice;
-        
-        if (!symbol) {
-            document.title = 'График';
-            return;
-        }
-        
-        if (price != null && !isNaN(price) && price > 0) {
-            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            const precision = series?.options()?.priceFormat?.precision || 2;
-            
-            const lastCandle = this.chartData?.[this.chartData.length - 1];
-            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-            const arrow = isBullish ? '▲' : '▼';
-            
-            document.title = `${arrow} ${symbol} ${price.toFixed(precision)}`;
-        } else {
-            document.title = `${symbol}`;
-        }
+   _updatePageTitle() {
+    const symbol = this.currentSymbol || '';
+    
+    // Берём цену из lastCandle если currentRealPrice ещё нет
+    let price = this.currentRealPrice;
+    if (!price && this.lastCandle) {
+        price = this.lastCandle.close;
     }
+    if (!price && this.chartData?.length > 0) {
+        price = this.chartData[this.chartData.length - 1].close;
+    }
+    
+    if (!symbol) {
+        document.title = 'График';
+        return;
+    }
+    
+    if (price != null && !isNaN(price) && price > 0) {
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const precision = series?.options()?.priceFormat?.precision || 2;
+        const lastCandle = this.chartData?.[this.chartData.length - 1];
+        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+        const arrow = isBullish ? '▲' : '▼';
+        document.title = `${arrow} ${symbol} ${price.toFixed(precision)}`;
+    } else {
+        document.title = `${symbol}`;
+    }
+}
 
     // ============================================================
     //  НОВЫЕ МЕТОДЫ: switchSymbol + _abortAllProcesses
