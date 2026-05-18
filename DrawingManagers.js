@@ -51,8 +51,34 @@ class HorizontalRayRenderer {
         this._pixelRatio = window.devicePixelRatio || 1;
     }
 
+    // Вычисление воспринимаемой яркости цвета (как в TradingView)
+    _getBrightness(color) {
+        let r, g, b;
+        
+        // HEX формат (#RGB или #RRGGBB)
+        const hexMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+        if (hexMatch) {
+            r = parseInt(hexMatch[1], 16);
+            g = parseInt(hexMatch[2], 16);
+            b = parseInt(hexMatch[3], 16);
+        } else {
+            // RGB/RGBA формат
+            const rgbMatch = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+            if (rgbMatch) {
+                r = parseInt(rgbMatch[1]);
+                g = parseInt(rgbMatch[2]);
+                b = parseInt(rgbMatch[3]);
+            } else {
+                // Если не удалось распарсить — считаем цвет светлым (белый текст)
+                return 255;
+            }
+        }
+        
+        // Формула воспринимаемой яркости (стандарт ITU-R BT.601)
+        return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+
     draw(target) {
-        // ... БЕЗ ИЗМЕНЕНИЙ (оригинальный draw) ...
         const currentKey = this._chartManager.getCurrentSymbolKey?.();
         if (currentKey && this._ray.symbolKey !== currentKey) return;
         
@@ -95,6 +121,7 @@ class HorizontalRayRenderer {
             const color = ray.options.color;
             const opacity = ray.options.opacity !== undefined ? ray.options.opacity : 0.9;
 
+            // Парсинг цвета
             const parseHex = (hex) => {
                 const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
                 return result ? {
@@ -121,6 +148,7 @@ class HorizontalRayRenderer {
                 rgbaColor = color;
             }
 
+            // Рисуем линию
             ctx.strokeStyle = rgbaColor;
             ctx.lineWidth = yLength;
             
@@ -133,27 +161,29 @@ class HorizontalRayRenderer {
             ctx.lineTo(endPos, yPos + yLength / 2);
             ctx.stroke();
 
-           if (ray.readyToDrag || ray.dragging) {
-    ctx.fillStyle = '#FFFFFF';
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = 4;
-    ctx.beginPath();
-    ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-    ctx.fill();
-    
-    ctx.fillStyle = rgbaColor;
-    ctx.beginPath();
-    ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-    ctx.fill();
-}
+            // Точка перетаскивания (если активна)
+            if (ray.readyToDrag || ray.dragging) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.fillStyle = rgbaColor;
+                ctx.beginPath();
+                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+            }
 
+            // Ценовая метка
             if (ray.options.showPrice) {
-                // ✅ Precision из графика — без запросов к бирже
-const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
-const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
-const priceText = ray.price.toFixed(precision);
+                const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
+                const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
+                const priceText = ray.price.toFixed(precision);
 
-                ctx.font = `bold ${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+                // Обычный шрифт (НЕ жирный)
+                ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
                 const textMetrics = ctx.measureText(priceText);
                 const textWidth = textMetrics.width;
                 const padding = 8 * scope.horizontalPixelRatio;
@@ -165,6 +195,7 @@ const priceText = ray.price.toFixed(precision);
 
                 this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
 
+                // Фон плашки
                 ctx.fillStyle = rgbaColor;
                 ctx.shadowBlur = 4;
                 ctx.shadowColor = 'rgba(0,0,0,0.3)';
@@ -173,17 +204,26 @@ const priceText = ray.price.toFixed(precision);
                 ctx.fill();
 
                 ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
                 
-                ctx.shadowColor = '#000000';
-                ctx.shadowBlur = 3;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = `bold ${(ray.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+                // Определяем яркость фона и выбираем цвет текста
+                const brightness = this._getBrightness(ray.options.color);
+                const textColor = brightness < 128 ? '#FFFFFF' : '#000000';
+                
+                // Лёгкая тень для улучшения читаемости
+                ctx.shadowColor = brightness < 128 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+                ctx.shadowBlur = 2;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+                
+                // Текст цены
+                ctx.fillStyle = textColor;
+                ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
                 
+                // Сбрасываем тени
                 ctx.shadowColor = 'transparent';
                 ctx.shadowBlur = 0;
                 ctx.shadowOffsetX = 0;
@@ -208,54 +248,49 @@ const priceText = ray.price.toFixed(precision);
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-  hitTest(x, y) {
-    let bestHit = null;
-    let bestDistance = Infinity;
+    hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
 
-    // Проверка линии
-    if (this._hitArea) {
-        const buffer = 10;
-        const centerY = this._hitArea.y + this._hitArea.height / 2;
-        const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-        
-        // ✅ УБИРАЕМ ОГРАНИЧЕНИЕ ПО X — линия бесконечна влево/вправо
-        // const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
-        // const inX = x >= 0 && x <= chartWidth;
-        
-        // if (inX && inY) {
-        if (inY) {  // ← ТОЛЬКО ПРОВЕРКА ПО Y
-            const distance = Math.abs(y - centerY);
-            if (distance < bestDistance) {
-                bestHit = { type: 'line', ray: this._ray, distance: distance };
-                bestDistance = distance;
+        // Проверка линии
+        if (this._hitArea) {
+            const buffer = 10;
+            const centerY = this._hitArea.y + this._hitArea.height / 2;
+            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+            
+            if (inY) {
+                const distance = Math.abs(y - centerY);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'line', ray: this._ray, distance: distance };
+                    bestDistance = distance;
+                }
             }
         }
-    }
 
-    // Проверка ценовой метки
-    if (this._priceLabelHitArea) {
-        const padding = 15;
-        const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
-        const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
-        
-        const inX = x >= this._priceLabelHitArea.x - padding && 
-                    x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
-        const inY = y >= this._priceLabelHitArea.y - padding && 
-                    y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
-                    
-        if (inX && inY) {
-            const dx = x - centerX;
-            const dy = y - centerY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < bestDistance) {
-                bestHit = { type: 'label', ray: this._ray, distance: distance };
-                bestDistance = distance;
+        // Проверка ценовой метки
+        if (this._priceLabelHitArea) {
+            const padding = 15;
+            const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+            const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+            
+            const inX = x >= this._priceLabelHitArea.x - padding && 
+                        x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+            const inY = y >= this._priceLabelHitArea.y - padding && 
+                        y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+                        
+            if (inX && inY) {
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'label', ray: this._ray, distance: distance };
+                    bestDistance = distance;
+                }
             }
         }
-    }
 
-    return bestHit;
-}
+        return bestHit;
+    }
 }
 class HorizontalRayPaneView {
     constructor(ray, chartManager) {
