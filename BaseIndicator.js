@@ -87,12 +87,40 @@ class BaseIndicator {
         return {};
     }
     
-    createSeries() {
-        this._createEmptySeries();
-        this.calculateAsync();
-        return this.series;
+   createSeries() {
+    this._removeAllSeries();
+    
+    const chart = this.manager.chartManager.chart;
+    if (!chart) return [];
+    
+    try {
+        if (this.data.panel === 'main') {
+            const series = chart.addSeries(LightweightCharts.LineSeries, {
+                color: this.settings.color || this.data.color,
+                lineWidth: this.settings.lineWidth || 2,
+                lastValueVisible: false,
+                priceLineVisible: false
+            });
+            this.series = [series];
+        } else {
+            const panel = this.manager.indicatorPanels[this.data.panel];
+            if (panel?.chart) {
+                const series = panel.chart.addSeries(LightweightCharts.LineSeries, {
+                    color: this.settings.color || this.data.color,
+                    lineWidth: this.settings.lineWidth || 2,
+                    lastValueVisible: false,
+                    priceLineVisible: false
+                });
+                this.series = [series];
+            }
+        }
+    } catch(e) {
+        console.error('Ошибка создания серии:', e);
     }
     
+    this.calculateAsync();
+    return this.series;
+}
        _removeAllSeries() {
         this.series.forEach(s => {
             if (!s) return;
