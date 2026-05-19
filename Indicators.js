@@ -557,10 +557,12 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }, 5000);
     }
 
-    destroy() {
-        if (this._fallbackTimer) clearInterval(this._fallbackTimer);
-        document.getElementById('multiatr-full-table')?.remove();
-    }
+   destroy() {
+    const table = document.getElementById('multiatr-full-table');
+    if (table) table.remove();
+    this._removeAllSeries();
+    this.manager = null;
+}
     
     async fetchDataForTF(tf, limit) {
         const { currentSymbol: symbol, currentExchange: exchange, currentMarketType: marketType } = this.manager.chartManager;
@@ -812,6 +814,7 @@ try {
         }
     }
 }
+
 class Volume24HIndicator extends BaseIndicator {
     static meta = { name: '24H Объем', category: 'volume', panel: 'volume24h', color: '#2962FF' };
 
