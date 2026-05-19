@@ -120,34 +120,38 @@ class IndicatorManager {
         }
     }
     
-    removeIndicator(index) {
-        const indicator = this.activeIndicators[index];
-        if (!indicator) return false;
-        
-        indicator.series.forEach(series => {
-            if (indicator.data.panel === 'main') {
-                try { this.chartManager.chart.removeSeries(series); } catch(e) {}
-            } else {
-                // ИСПРАВЛЕНО: Передаем сам объект series, как ожидает новый PanelManager
-                this.panelManager.removeSeries(indicator.data.panel, series);
-            }
-        });
-        
-        this.activeIndicators.splice(index, 1);
-        
-        if (indicator.data.panel !== 'main') {
-            const hasOther = this.activeIndicators.some(i => i.data.panel === indicator.data.panel);
-            if (!hasOther) {
-                this.panelManager.closePanel(indicator.data.panel);
-            }
-        }
-        
-        this._saveIndicators();
-        this._renderUI();
-        this.chartManager?.chart?.timeScale()?.fitContent();
-        
-        return true;
+  removeIndicator(index) {
+    const indicator = this.activeIndicators[index];
+    if (!indicator) return false;
+    
+    // ✅ Вызываем destroy если есть (удаляет таблицы, DOM элементы)
+    if (indicator.destroy) {
+        indicator.destroy();
     }
+    
+    indicator.series.forEach(series => {
+        if (indicator.data.panel === 'main') {
+            try { this.chartManager.chart.removeSeries(series); } catch(e) {}
+        } else {
+            this.panelManager.removeSeries(indicator.data.panel, series);
+        }
+    });
+    
+    this.activeIndicators.splice(index, 1);
+    
+    if (indicator.data.panel !== 'main') {
+        const hasOther = this.activeIndicators.some(i => i.data.panel === indicator.data.panel);
+        if (!hasOther) {
+            this.panelManager.closePanel(indicator.data.panel);
+        }
+    }
+    
+    this._saveIndicators();
+    this._renderUI();
+    this.chartManager?.chart?.timeScale()?.fitContent();
+    
+    return true;
+}
     
     updateAllIndicators() {
         if (!this.worker) return;
@@ -291,14 +295,13 @@ class IndicatorManager {
     indicatorsData.forEach(data => {
         if (this.activeIndicators.some(i => i.type === data.type)) return;
         
-        // ✅ Сначала создаем индикатор БЕЗ вызова createSeries
         const IndicatorClass = window.IndicatorRegistry.get(data.type);
         if (!IndicatorClass) return;
         
         const indicator = new IndicatorClass(this);
         if (!indicator) return;
         
-        // ✅ Применяем сохраненные настройки ДО создания серий
+        // ✅ Сначала настройки, ПОТОМ createSeries
         if (data.settings) {
             indicator.settings = { ...indicator.settings, ...data.settings };
         }
@@ -306,12 +309,15 @@ class IndicatorManager {
             indicator.visible = data.visible;
         }
         
-        // ✅ Создаем панель если нужно
+        // ✅ Проверяем цвет
+        if (!indicator.settings.color || indicator.settings.color === 'undefined') {
+            indicator.settings.color = indicator.data.color || '#FFA500';
+        }
+        
         if (indicator.data.panel !== 'main') {
             this._showPanel(indicator.data.panel);
         }
         
-        // ✅ ТЕПЕРЬ создаем серии с правильными настройками
         const series = indicator.createSeries();
         if (series && series.length > 0) {
             this.activeIndicators.push(indicator);
