@@ -184,10 +184,11 @@ class TimerManager {
         setTimeout(() => this._createPrimitive(), 500);
     }
 
- _createPrimitive() {
+_createPrimitive() {
     if (this._disabled) return;
     if (!this._chartManager || !this._chartManager.chart) return;
     
+    // Удаляем старый примитив если есть
     if (this._primitive) {
         try {
             const oldSeries = this._chartManager.currentChartType === 'candle' 
@@ -198,6 +199,7 @@ class TimerManager {
         this._primitive = null;
     }
     
+    // Создаём новый примитив
     this._primitive = new TimerPrimitive(this, this._chartManager);
     
     const series = this._chartManager.currentChartType === 'candle' 
@@ -208,16 +210,17 @@ class TimerManager {
         try {
             series.attachPrimitive(this._primitive);
             
+            // Для дневных ТФ — скрываем
             if (this._isDayTimeframe(this._currentTf)) {
                 this._primitive.setEnabled(false);
+            } else {
+                // ✅ ВКЛЮЧАЕМ, но позицию установим когда данные загрузятся
+                this._primitive.setEnabled(true);
+                // ✅ ЗАПУСКАЕМ ОЖИДАНИЕ ДАННЫХ
+                this._waitForDataAndUpdate(series);
             }
             
-            // ✅ СРАЗУ УСТАНАВЛИВАЕМ ПОЗИЦИЮ ПО ТЕКУЩЕЙ ЦЕНЕ
-            const price = this._chartManager.getCurrentPrice();
-            if (price && this._primitive.setPrice) {
-                this._primitive.setPrice(price);
-            }
-            
+            // Подписка на обновления данных в будущем
             series.subscribeDataChanged(() => {
                 if (this._primitive && this._primitive.isEnabled() && 
                     this._chartManager.chartData && this._chartManager.chartData.length > 0) {
@@ -225,13 +228,47 @@ class TimerManager {
                 }
             });
             
-            console.log('✅ TimerManager: примитив создан');
+            console.log('✅ TimerManager: примитив создан, ждём данные...');
         } catch (e) {
             console.warn('❌ TimerManager: ошибка создания примитива:', e);
         }
     }
 }
 
+// ✅ НОВЫЙ МЕТОД: ожидание загрузки данных
+_waitForDataAndUpdate(series) {
+    let attempts = 0;
+    const maxAttempts = 50; // 5 секунд максимум
+    
+    const checkData = () => {
+        attempts++;
+        
+        // Проверяем, что менеджер и примитив всё ещё существуют
+        if (!this._chartManager || !this._primitive) return;
+        
+        // Проверяем, что данные загружены
+        if (this._chartManager.chartData && this._chartManager.chartData.length > 0) {
+            // ✅ ДАННЫЕ ГОТОВЫ — ОБНОВЛЯЕМ ПОЗИЦИЮ
+            if (this._primitive.isEnabled()) {
+                this._primitive.requestRedraw();
+                console.log(`✅ TimerManager: данные загружены (попытка ${attempts}), позиция обновлена`);
+            }
+            return; // Выходим из цикла
+        }
+        
+        // Если превысили лимит попыток
+        if (attempts >= maxAttempts) {
+            console.warn('⚠️ TimerManager: не удалось дождаться данных');
+            return;
+        }
+        
+        // Пробуем ещё раз через 100мс
+        setTimeout(checkData, 100);
+    };
+    
+    // Запускаем первую проверку с небольшой задержкой
+    setTimeout(checkData, 50);
+}
     _isDayTimeframe(interval) {
         return ['1d', '1w', '1M'].includes(interval);
     }
