@@ -51,55 +51,83 @@ class TickerRenderer {
         });
     }
     
-       _doUpdatePriceElements() {
-        let domUpdates = 0;
+     _doUpdatePriceElements() {
+    let domUpdates = 0;
+    const toDelete = []; // Собираем ключи элементов, которые нужно удалить из Map
+    
+    // Итерируемся по ВСЕМ созданным элементам, а не только по видимым на экране
+    for (const [key, el] of this.tickerElements.entries()) {
+        // Если элемент удален из DOM - помечаем на удаление и пропускаем
+        if (!el || !el.isConnected) {
+            toDelete.push(key);
+            continue;
+        }
         
-        // ✅ Итерируемся по ВСЕМ созданным элементам, а не только по видимым на экране
-        for (const [key, el] of this.tickerElements.entries()) {
-            if (!el || !el.isConnected) continue; // Если элемент удален из DOM - пропускаем
+        const ticker = this.parent.tickersMap.get(key);
+        // Если тикер больше не существует - помечаем элемент на удаление и пропускаем
+        if (!ticker) {
+            toDelete.push(key);
+            continue;
+        }
+        
+        const priceEl = el.querySelector('.ticker-price');
+        const changeEl = el.querySelector('.ticker-change');
+        const volumeEl = el.querySelector('.ticker-volume');
+        const tradesEl = el.querySelector('.ticker-trades');
+        
+        const newPrice = this.formatPrice(ticker.price);
+        const newChange = this.formatChange(ticker.change) + '%';
+        const newVolume = this.formatVolume(ticker.volume);
+        const newTrades = this.formatTrades(ticker);
+        
+        if (priceEl && priceEl.textContent !== newPrice) {
+            priceEl.textContent = newPrice;
             
-            const ticker = this.parent.tickersMap.get(key);
-            if (!ticker) continue;
+            // Обновляем цветовой класс, не перезаписывая все классы
+            priceEl.classList.remove('positive', 'negative');
+            const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
+            if (colorClass) {
+                priceEl.classList.add(colorClass);
+            }
             
-            const priceEl = el.querySelector('.ticker-price');
-            const changeEl = el.querySelector('.ticker-change');
-            const volumeEl = el.querySelector('.ticker-volume');
-            const tradesEl = el.querySelector('.ticker-trades');
-            
-            const newPrice = this.formatPrice(ticker.price);
-            const newChange = this.formatChange(ticker.change) + '%';
-            const newVolume = this.formatVolume(ticker.volume);
-            const newTrades = this.formatTrades(ticker);
-            
-            if (priceEl && priceEl.textContent !== newPrice) {
-                priceEl.textContent = newPrice;
-                const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
-                priceEl.className = `ticker-price ${colorClass}`;
-                
-                if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
-                    const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-                    priceEl.classList.remove('flash-up', 'flash-down');
-                    void priceEl.offsetWidth; 
-                    priceEl.classList.add(flashClass);
-                    ticker.prevPrice = ticker.price;
-                }
-                domUpdates++;
+            // Мигание при изменении цены
+            if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
+                const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
+                // Удаляем предыдущие анимационные классы
+                priceEl.classList.remove('flash-up', 'flash-down');
+                // Форсируем reflow для перезапуска анимации
+                void priceEl.offsetWidth;
+                // Добавляем новый анимационный класс
+                priceEl.classList.add(flashClass);
+                ticker.prevPrice = ticker.price;
             }
-            if (changeEl && changeEl.textContent !== newChange) {
-                changeEl.textContent = newChange;
-                changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
-                domUpdates++;
+            domUpdates++;
+        }
+        
+        if (changeEl && changeEl.textContent !== newChange) {
+            changeEl.textContent = newChange;
+            changeEl.classList.remove('positive', 'negative');
+            const changeClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
+            if (changeClass) {
+                changeEl.classList.add(changeClass);
             }
-            if (volumeEl && volumeEl.textContent !== newVolume) {
-                volumeEl.textContent = newVolume;
-                domUpdates++;
-            }
-            if (tradesEl && tradesEl.textContent !== newTrades) {
-                tradesEl.textContent = newTrades;
-                domUpdates++;
-            }
+            domUpdates++;
+        }
+        
+        if (volumeEl && volumeEl.textContent !== newVolume) {
+            volumeEl.textContent = newVolume;
+            domUpdates++;
+        }
+        
+        if (tradesEl && tradesEl.textContent !== newTrades) {
+            tradesEl.textContent = newTrades;
+            domUpdates++;
         }
     }
+    
+    // Удаляем из Map элементы, которые больше не нужны
+    toDelete.forEach(key => this.tickerElements.delete(key));
+}
     
     sortTickers(tickers) {
         return [...tickers].sort((a, b) => {
@@ -220,132 +248,153 @@ class TickerRenderer {
         container.addEventListener('scroll', this._scrollHandler);
     }
     
-    renderVisibleTickers() {
-        const container = document.getElementById('tickerListContainer');
-        if (!container || !this.displayedTickers || this.totalItems === 0) return;
+  renderVisibleTickers() {
+    // RAF-троттлинг для скролла — предотвращает множественные вызовы
+    if (this._scrollRenderScheduled) return;
+    
+    this._scrollRenderScheduled = true;
+    requestAnimationFrame(() => {
+        this._scrollRenderScheduled = false;
+        this._doRenderVisibleTickers();
+    });
+}
+
+_doRenderVisibleTickers() {
+    const container = document.getElementById('tickerListContainer');
+    if (!container || !this.displayedTickers || this.totalItems === 0) return;
+    
+    const itemsContainer = container.querySelector('.ticker-items-container');
+    if (!itemsContainer) return;
+    
+    const scrollTop = container.scrollTop;
+    const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight));
+    const endIndex = Math.min(startIndex + this.visibleCount + 10, this.totalItems);
+    
+    if (startIndex >= endIndex) return;
+    
+    const visibleKeys = new Set();
+    const fragment = document.createDocumentFragment();
+    
+    for (let i = startIndex; i < endIndex; i++) {
+        const ticker = this.displayedTickers[i];
+        if (!ticker) continue;
         
-        const itemsContainer = container.querySelector('.ticker-items-container');
-        if (!itemsContainer) return;
+        const key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
+        visibleKeys.add(key);
         
-        const scrollTop = container.scrollTop;
-        const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight));
-        const endIndex = Math.min(startIndex + this.visibleCount + 10, this.totalItems);
+        let el = this.tickerElements.get(key);
+        const isNewElement = !el;
         
-        if (startIndex >= endIndex) return;
-        
-        const visibleKeys = new Set();
-        const fragment = document.createDocumentFragment();
-        
-        for (let i = startIndex; i < endIndex; i++) {
-            const ticker = this.displayedTickers[i];
-            if (!ticker) continue;
-            
-            const key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
-            visibleKeys.add(key);
-            
-            let el = this.tickerElements.get(key);
-            const isNewElement = !el;
-            
-            if (isNewElement) {
-                el = this.createTickerElement(ticker, i);
-                this.tickerElements.set(key, el);
-            }
-            
-            el.style.position = 'absolute';
-            el.style.top = (i * this.rowHeight) + 'px';
-            el.style.left = '0';
-            el.style.right = '0';
-            el.style.width = '100%';
-            el.style.display = '';
-            
-            if (!isNewElement) {
-                const priceEl = el.querySelector('.ticker-price');
-                const changeEl = el.querySelector('.ticker-change');
-                const volumeEl = el.querySelector('.ticker-volume');
-                const tradesEl = el.querySelector('.ticker-trades');
-                
-                if (priceEl) priceEl.textContent = this.formatPrice(ticker.price);
-                if (changeEl) {
-                    changeEl.textContent = this.formatChange(ticker.change) + '%';
-                    changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
-                }
-                if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
-                if (tradesEl) tradesEl.textContent = this.formatTrades(ticker);
-            }
-            
-            if (!el.parentNode) {
-                fragment.appendChild(el);
-            }
+        if (isNewElement) {
+            el = this.createTickerElement(ticker, i);
+            this.tickerElements.set(key, el);
         }
         
-        if (fragment.hasChildNodes()) {
-            itemsContainer.appendChild(fragment);
+        el.style.position = 'absolute';
+        el.style.top = (i * this.rowHeight) + 'px';
+        el.style.left = '0';
+        el.style.right = '0';
+        el.style.width = '100%';
+        el.style.display = '';
+        
+        if (!isNewElement) {
+            const priceEl = el.querySelector('.ticker-price');
+            const changeEl = el.querySelector('.ticker-change');
+            const volumeEl = el.querySelector('.ticker-volume');
+            const tradesEl = el.querySelector('.ticker-trades');
+            
+            if (priceEl) {
+                priceEl.textContent = this.formatPrice(ticker.price);
+                // Используем classList вместо перезаписи className
+                priceEl.classList.remove('positive', 'negative');
+                const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
+                if (colorClass) priceEl.classList.add(colorClass);
+            }
+            
+            if (changeEl) {
+                changeEl.textContent = this.formatChange(ticker.change) + '%';
+                // Используем classList вместо перезаписи className
+                changeEl.classList.remove('positive', 'negative');
+                const changeClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
+                if (changeClass) changeEl.classList.add(changeClass);
+            }
+            
+            if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
+            if (tradesEl) tradesEl.textContent = this.formatTrades(ticker);
         }
         
-        for (const [key, el] of this.tickerElements.entries()) {
-            if (!visibleKeys.has(key)) {
-                el.style.display = 'none';
-            }
+        if (!el.parentNode) {
+            fragment.appendChild(el);
         }
     }
     
-    createTickerElement(ticker, index) {
-        const div = document.createElement('div');
-        div.className = `ticker-item ${ticker.symbol === this.parent.state.currentSymbol && 
-            ticker.exchange === this.parent.state.currentExchange && 
-            ticker.marketType === this.parent.state.currentMarketType ? 'active' : ''}`;
-        div.dataset.symbol = ticker.symbol;
-        div.dataset.exchange = ticker.exchange;
-        div.dataset.marketType = ticker.marketType;
-        div.style.display = 'grid';
-        div.style.gridTemplateColumns = '1.3fr 1fr 0.7fr 0.8fr 0.7fr';
-        div.style.alignItems = 'center';
-        div.style.gap = '4px';
-        div.style.padding = '6px 8px';
-        div.style.minHeight = '36px';
-        div.style.borderBottom = '1px solid #2B3139';
-
-        // Ручка для перетаскивания (ПКМ как в TradingView)
-    const dragHandle = document.createElement('div');
-    dragHandle.className = 'drag-handle';
-    dragHandle.title = 'ПКМ → перетащить';
-    
-    // Вставляем ручку ПЕРЕД всеми остальными элементами
-    div.appendChild(dragHandle);
-
-
-
-        const flag = this.parent.state.flags[`${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`] || null;
-        const flagHTML = flag ? 
-            `<div class="flag flag-${flag}"></div>` : 
-            '<div class="flag-placeholder"></div>';
-
-        const isFavorite = this.parent.state.favorites.includes(ticker.symbol) ? 'favorite' : '';
-        const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
-        const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
-        
-        let displayName = ticker.symbol.replace('USDT', '');
-        const match = displayName.match(/^(\d+)([A-Z]+)$/);
-        if (match) displayName = '1' + match[2];
-        else if (displayName.length > 8) displayName = displayName.substring(0, 7) + '…';
-
-        const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
-
-        div.innerHTML = `
-            <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;" data-ctx="symbol">
-                ${flagHTML}
-                <sup class="market-sup ${markerClass}" style="font-size:7px;font-weight:bold;margin-right:2px;flex-shrink:0;" data-ctx="block">${markerLetter}</sup>
-                <span class="symbol-text" title="${ticker.symbol}" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${displayName}</span>
-                <span class="star ${isFavorite}" data-symbol="${ticker.symbol}" title="Избранное" style="flex-shrink:0;margin-left:2px;" data-ctx="block">★</span>
-            </div>
-            <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatPrice(ticker.price)}</div>
-            <div class="ticker-change ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatChange(ticker.change)}%</div>
-            <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatVolume(ticker.volume)}</div>
-            <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatTrades(ticker)}</div>
-        `;
-
-        return div;
+    if (fragment.hasChildNodes()) {
+        itemsContainer.appendChild(fragment);
     }
+    
+    // Скрываем невидимые элементы вместо удаления (переиспользуем позже)
+    for (const [key, el] of this.tickerElements.entries()) {
+        if (!visibleKeys.has(key)) {
+            el.style.display = 'none';
+        }
+    }
+}
+
+// Вспомогательная функция для экранирования HTML
+_escapeHTML(str) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+}
+
+createTickerElement(ticker, index) {
+    const div = document.createElement('div');
+    div.className = `ticker-item ${ticker.symbol === this.parent.state.currentSymbol && 
+        ticker.exchange === this.parent.state.currentExchange && 
+        ticker.marketType === this.parent.state.currentMarketType ? 'active' : ''}`;
+    div.dataset.symbol = ticker.symbol;
+    div.dataset.exchange = ticker.exchange;
+    div.dataset.marketType = ticker.marketType;
+    div.style.display = 'grid';
+    div.style.gridTemplateColumns = '1.3fr 1fr 0.7fr 0.8fr 0.7fr';
+    div.style.alignItems = 'center';
+    div.style.gap = '4px';
+    div.style.padding = '6px 8px';
+    div.style.minHeight = '36px';
+    div.style.borderBottom = '1px solid #2B3139';
+
+    const flag = this.parent.state.flags[`${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`] || null;
+    const flagHTML = flag ? 
+        `<div class="flag flag-${this._escapeHTML(flag)}"></div>` : 
+        '<div class="flag-placeholder"></div>';
+
+    const isFavorite = this.parent.state.favorites.includes(ticker.symbol) ? 'favorite' : '';
+    const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
+    const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
+    
+    let displayName = ticker.symbol.replace('USDT', '');
+    const match = displayName.match(/^(\d+)([A-Z]+)$/);
+    if (match) displayName = '1' + match[2];
+    else if (displayName.length > 8) displayName = displayName.substring(0, 7) + '…';
+
+    const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
+
+    // Экранируем все пользовательские данные
+    div.innerHTML = `
+        <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;" data-ctx="symbol">
+            ${flagHTML}
+            <sup class="market-sup ${markerClass}" style="font-size:7px;font-weight:bold;margin-right:2px;flex-shrink:0;" data-ctx="block">${this._escapeHTML(markerLetter)}</sup>
+            <span class="symbol-text" title="${this._escapeHTML(ticker.symbol)}" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${this._escapeHTML(displayName)}</span>
+            <span class="star ${isFavorite}" data-symbol="${this._escapeHTML(ticker.symbol)}" title="Избранное" style="flex-shrink:0;margin-left:2px;" data-ctx="block">★</span>
+        </div>
+        <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this._escapeHTML(this.formatPrice(ticker.price))}</div>
+        <div class="ticker-change ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this._escapeHTML(this.formatChange(ticker.change))}%</div>
+        <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this._escapeHTML(this.formatVolume(ticker.volume))}</div>
+        <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this._escapeHTML(this.formatTrades(ticker))}</div>
+    `;
+
+    return div;
+}
     
   // Заменить ВЕСЬ метод formatPrice в TickerRenderer на этот:
 formatPrice(price) {
