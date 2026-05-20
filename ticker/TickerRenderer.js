@@ -6,22 +6,17 @@ class TickerRenderer {
         this.tickerElements = new Map();
         this.displayedTickers = [];
         this.totalItems = 0;
-        
-        // ✅ ИСПРАВЛЕНИЕ 1: Инициализация всех таймеров/ID для корректной очистки
         this._scrollHandler = null;
         this._renderScheduled = false;
         this._renderRafId = null;
         this._firstRender = true;
-        this._updatePriceRafId = null; // Переименовано для ясности
-        this._cleanupInterval = null;  // ✅ Добавлен ID интервала очистки кеша
-        this._observer = null;         // ✅ IntersectionObserver (опционально)
-        this._isDestroyed = false;     // ✅ Флаг уничтожения
+        this._updatePriceRaf = null; // RAF-троттлинг
         
         // Инжектим CSS для мигания один раз
         this._injectFlashCSS();
     }
     
-    // CSS для мигания цены (без изменений)
+    // CSS для мигания цены
     _injectFlashCSS() {
         if (document.getElementById('tickerFlashCSS')) return;
         const style = document.createElement('style');
@@ -43,99 +38,25 @@ class TickerRenderer {
                 animation: flashRed 0.4s ease-out;
                 border-radius: 2px;
             }
-            /* ✅ ИСПРАВЛЕНИЕ 2: Добавлен класс для предотвращения reflow */
-            .ticker-price.no-animation {
-                animation: none !important;
-            }
         `;
         document.head.appendChild(style);
     }
     
-    // ✅ ИСПРАВЛЕНИЕ 3: Метод destroy() для предотвращения утечек памяти
-    destroy() {
-        this._isDestroyed = true;
-        
-        console.log('[TickerRenderer] Destroying instance...');
-        
-        // Очистка RAF обновления цен
-        if (this._updatePriceRafId) {
-            cancelAnimationFrame(this._updatePriceRafId);
-            this._updatePriceRafId = null;
-        }
-        
-        // Очистка RAF рендеринга
-        if (this._renderRafId) {
-            cancelAnimationFrame(this._renderRafId);
-            this._renderRafId = null;
-        }
-        
-        // Очистка интервала кеша
-        if (this._cleanupInterval) {
-            clearInterval(this._cleanupInterval);
-            this._cleanupInterval = null;
-        }
-        
-        // Очистка IntersectionObserver (если используется)
-        if (this._observer) {
-            this._observer.disconnect();
-            this._observer = null;
-        }
-        
-        // Удаление обработчика скролла
-        const container = document.getElementById('tickerListContainer');
-        if (container && this._scrollHandler) {
-            container.removeEventListener('scroll', this._scrollHandler);
-            this._scrollHandler = null;
-        }
-        
-        // Очистка Map элементов
-        this.tickerElements.clear();
-        this.displayedTickers = [];
-        
-        console.log('[TickerRenderer] Instance destroyed successfully');
-    }
-    
-    // ✅ ИСПРАВЛЕНИЕ 4: Проверка флага destroyed перед любыми операциями
-    _checkDestroyed(methodName) {
-        if (this._isDestroyed) {
-            console.warn(`[TickerRenderer] ${methodName} called on destroyed instance`);
-            return true;
-        }
-        return false;
-    }
-    
     // RAF-троттлинг — DOM обновляется строго 1 раз за кадр (60fps)
     updatePriceElements() {
-        if (this._checkDestroyed('updatePriceElements')) return;
-        if (this._updatePriceRafId) return; // Уже запланировано
-        
-        this._updatePriceRafId = requestAnimationFrame(() => {
-            this._updatePriceRafId = null;
-            
-            // ✅ Дополнительная проверка после RAF callback
-            if (this._isDestroyed) return;
-            
+        if (this._updatePriceRaf) return;
+        this._updatePriceRaf = requestAnimationFrame(() => {
+            this._updatePriceRaf = null;
             this._doUpdatePriceElements();
         });
     }
     
-    _doUpdatePriceElements() {
-        if (this._checkDestroyed('_doUpdatePriceElements')) return;
-        
+       _doUpdatePriceElements() {
         let domUpdates = 0;
-        const now = Date.now(); // ✅ Кэшируем текущее время
         
-        // Итерируемся по ВСЕМ созданным элементам
+        // ✅ Итерируемся по ВСЕМ созданным элементам, а не только по видимым на экране
         for (const [key, el] of this.tickerElements.entries()) {
-            // ✅ ИСПРАВЛЕНИЕ 5: Безопасная проверка существования элемента
-            if (!el) continue;
-            
-            // ✅ ИСПРАВЛЕНИЕ 6: Проверка isConnected с fallback для старых браузеров
-            const isConnected = typeof el.isConnected !== 'undefined' 
-                ? el.isConnected 
-                : document.body.contains(el);
-            
-            if (!isConnected) continue; // Элемент удален из DOM
+            if (!el || !el.isConnected) continue; // Если элемент удален из DOM - пропускаем
             
             const ticker = this.parent.tickersMap.get(key);
             if (!ticker) continue;
@@ -152,153 +73,101 @@ class TickerRenderer {
             
             if (priceEl && priceEl.textContent !== newPrice) {
                 priceEl.textContent = newPrice;
-                
                 const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
                 priceEl.className = `ticker-price ${colorClass}`;
                 
-                // ✅ ИСПРАВЛЕНИЕ 7: Оптимизированная анимация без forced reflow
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
                     const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-                    
-                    // Убираем старые классы анимации
-                    priceEl.classList.remove('flash-up', 'flash-down', 'no-animation');
-                    
-                    // Используем requestAnimationFrame вместо void offsetWidth
-                    requestAnimationFrame(() => {
-                        if (!priceEl.isConnected) return; // Элемент мог быть удален
-                        
-                        // Trigger reflow через класс-заглушку (менее затратно)
-                        priceEl.classList.add('no-animation');
-                        priceEl.offsetHeight; // Минимальный reflow только при необходимости
-                        priceEl.classList.remove('no-animation');
-                        
-                        // Запускаем новую анимацию
-                        priceEl.classList.add(flashClass);
-                        
-                        // Автоудаление класса после окончания анимации
-                        const onAnimEnd = () => {
-                            priceEl.removeEventListener('animationend', onAnimEnd);
-                            priceEl.classList.remove(flashClass);
-                        };
-                        priceEl.addEventListener('animationend', onAnimEnd, { once: true });
-                    });
-                    
+                    priceEl.classList.remove('flash-up', 'flash-down');
+                    void priceEl.offsetWidth; 
+                    priceEl.classList.add(flashClass);
                     ticker.prevPrice = ticker.price;
                 }
                 domUpdates++;
             }
-            
             if (changeEl && changeEl.textContent !== newChange) {
                 changeEl.textContent = newChange;
                 changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                 domUpdates++;
             }
-            
             if (volumeEl && volumeEl.textContent !== newVolume) {
                 volumeEl.textContent = newVolume;
                 domUpdates++;
             }
-            
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
                 domUpdates++;
             }
         }
-        
-        // ✅ Логирование для отладки (можно удалить в продакшене)
-        if (domUpdates > 0 && process.env.NODE_ENV === 'development') {
-            console.log(`[TickerRenderer] DOM updates this frame: ${domUpdates}`);
-        }
     }
     
     sortTickers(tickers) {
-        if (this._checkDestroyed('sortTickers')) return [];
-        
         return [...tickers].sort((a, b) => {
             let result = 0;
-            
-            switch (this.parent.state.sortBy) {
-                case 'name':
-                    result = a.symbol.localeCompare(b.symbol);
-                    break;
-                case 'price':
-                    result = (a.price || 0) - (b.price || 0);
-                    break;
-                case 'change':
-                    result = (a.change || 0) - (b.change || 0);
-                    break;
-                case 'volume':
-                    result = (a.volume || 0) - (b.volume || 0);
-                    break;
-                case 'trades':
-                    result = (a.trades || 0) - (b.trades || 0);
-                    break;
-                default:
-                    result = 0;
-            }
-            
+            if (this.parent.state.sortBy === 'name') result = a.symbol.localeCompare(b.symbol);
+            else if (this.parent.state.sortBy === 'price') result = (a.price || 0) - (b.price || 0);
+            else if (this.parent.state.sortBy === 'change') result = (a.change || 0) - (b.change || 0);
+            else if (this.parent.state.sortBy === 'volume') result = (a.volume || 0) - (b.volume || 0);
+            else if (this.parent.state.sortBy === 'trades') result = (a.trades || 0) - (b.trades || 0);
             return this.parent.state.sortDirection === 'asc' ? result : -result;
         });
     }
     
     getFilteredTickers() {
-        if (this._checkDestroyed('getFilteredTickers')) return [];
-        
         const flagPart = this.parent.state.activeTab === 'flags' 
             ? this.parent.state.activeFlagTab 
             : 'none';
         
         const cacheKey = `${this.parent.state.marketFilter}:${this.parent.state.exchangeFilter}:${this.parent.state.activeTab}:${flagPart}:${this.parent.state.sortBy}:${this.parent.state.sortDirection}`;
         
-        // ✅ ИСПРАВЛЕНИЕ 8: Проверка валидности кеша
-        if (this.parent.filterCache && 
-            this.parent.filterCache.key === cacheKey && 
-            Array.isArray(this.parent.filterCache.result)) {
+        if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
             return this.parent.filterCache.result;
         }
         
         let filtered = [...this.parent.tickers];
         
-        // Применяем фильтры
         if (this.parent.state.marketFilter !== 'all') {
             filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
         }
-        
         if (this.parent.state.exchangeFilter !== 'all') {
             filtered = filtered.filter(t => t.exchange === this.parent.state.exchangeFilter);
         }
         
         if (this.parent.state.activeTab === 'favorites') {
             filtered = filtered.filter(t => this.parent.state.favorites.includes(t.symbol));
-        } else if (this.parent.state.activeTab === 'flags') {
-            filtered = filtered.filter(t => {
-                const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
-                if (this.parent.state.activeFlagTab) {
+        } 
+        else if (this.parent.state.activeTab === 'flags') {
+            if (this.parent.state.activeFlagTab) {
+                filtered = filtered.filter(t => {
+                    const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
                     return this.parent.state.flags[key] === this.parent.state.activeFlagTab;
-                } else {
+                });
+            } else {
+                filtered = filtered.filter(t => {
+                    const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
                     return this.parent.state.flags[key] !== undefined;
-                }
-            });
+                });
+            }
         }
         
         const result = this.sortTickers(filtered);
         
-        // ✅ ИСПРАВЛЕНИЕ 9: Глубокое копирование результата в кеш
         this.parent.filterCache = {
             key: cacheKey,
-            result: result, // Массив уже новый из sortTickers
-            timestamp: now // Для потенциальной инвалидации по времени
+            result: result
         };
         
         return result;
     }
     
     renderTickerList() {
-        if (this._checkDestroyed('renderTickerList')) return;
-        
         const flagTabs = document.getElementById('flagTabs');
         if (flagTabs) {
-            flagTabs.classList.toggle('show', this.parent.state.activeTab === 'flags');
+            if (this.parent.state.activeTab === 'flags') {
+                flagTabs.classList.add('show');
+            } else {
+                flagTabs.classList.remove('show');
+            }
         }
 
         const container = document.getElementById('tickerListContainer');
@@ -308,41 +177,33 @@ class TickerRenderer {
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
 
-        // ✅ ИСПРАВЛЕНИЕ 10: Безопасное удаление обработчика скролла
         if (this._scrollHandler) {
             container.removeEventListener('scroll', this._scrollHandler);
-            this._scrollHandler = null;
         }
         
-        // Очистка старых элементов
         const spacer = container.querySelector('.ticker-spacer');
         if (spacer) spacer.remove();
         
         const itemsContainer = container.querySelector('.ticker-items-container');
         if (itemsContainer) itemsContainer.remove();
         
-        // ✅ ИСПРАВЛЕНИЕ 11: Очистка Map перед рендерингом
         this.tickerElements.clear();
 
         if (this.totalItems === 0) {
             container.style.height = 'auto';
-            // ✅ Показываем сообщение о пустом списке
-            container.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:#666;">Нет данных для отображения</div>';
             return;
         }
 
         container.style.position = 'relative';
         container.style.overflowY = 'auto';
         
-        // Создаем spacer для высоты контента
         const newSpacer = document.createElement('div');
         newSpacer.className = 'ticker-spacer';
-        newSpacer.style.height = `${this.totalItems * this.rowHeight}px`;
+        newSpacer.style.height = (this.totalItems * this.rowHeight) + 'px';
         newSpacer.style.width = '100%';
         newSpacer.style.pointerEvents = 'none';
         container.appendChild(newSpacer);
         
-        // Контейнер для видимых элементов
         const newItemsContainer = document.createElement('div');
         newItemsContainer.className = 'ticker-items-container';
         newItemsContainer.style.position = 'absolute';
@@ -353,23 +214,13 @@ class TickerRenderer {
         
         this.renderVisibleTickers();
 
-        // ✅ ИСПРАВЛЕНИЕ 12: Обработчик скролла с throttle
-        let scrollTimeout = null;
         this._scrollHandler = () => {
-            if (scrollTimeout) return; // Throttle
-            
-            scrollTimeout = setTimeout(() => {
-                scrollTimeout = null;
-                this.renderVisibleTickers();
-            }, 16); // ~60fps
+            this.renderVisibleTickers();
         };
-        
-        container.addEventListener('scroll', this._scrollHandler, { passive: true });
+        container.addEventListener('scroll', this._scrollHandler);
     }
     
     renderVisibleTickers() {
-        if (this._checkDestroyed('renderVisibleTickers')) return;
-        
         const container = document.getElementById('tickerListContainer');
         if (!container || !this.displayedTickers || this.totalItems === 0) return;
         
@@ -397,25 +248,16 @@ class TickerRenderer {
             
             if (isNewElement) {
                 el = this.createTickerElement(ticker, i);
-                
-                // ✅ ИСПРАВЛЕНИЕ 13: Проверка успешного создания элемента
-                if (!el) {
-                    console.error(`[TickerRenderer] Failed to create element for ${key}`);
-                    continue;
-                }
-                
                 this.tickerElements.set(key, el);
             }
             
-            // Позиционирование элемента
             el.style.position = 'absolute';
-            el.style.top = `${i * this.rowHeight}px`;
+            el.style.top = (i * this.rowHeight) + 'px';
             el.style.left = '0';
             el.style.right = '0';
             el.style.width = '100%';
             el.style.display = '';
             
-            // Обновление данных для существующих элементов
             if (!isNewElement) {
                 const priceEl = el.querySelector('.ticker-price');
                 const changeEl = el.querySelector('.ticker-change');
@@ -424,25 +266,22 @@ class TickerRenderer {
                 
                 if (priceEl) priceEl.textContent = this.formatPrice(ticker.price);
                 if (changeEl) {
-                    changeEl.textContent = `${this.formatChange(ticker.change)}%`;
+                    changeEl.textContent = this.formatChange(ticker.change) + '%';
                     changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                 }
                 if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
                 if (tradesEl) tradesEl.textContent = this.formatTrades(ticker);
             }
             
-            // Добавляем в fragment только если еще не в DOM
             if (!el.parentNode) {
                 fragment.appendChild(el);
             }
         }
         
-        // Batch DOM update
         if (fragment.hasChildNodes()) {
             itemsContainer.appendChild(fragment);
         }
         
-        // Скрываем невидимые элементы
         for (const [key, el] of this.tickerElements.entries()) {
             if (!visibleKeys.has(key)) {
                 el.style.display = 'none';
@@ -451,36 +290,35 @@ class TickerRenderer {
     }
     
     createTickerElement(ticker, index) {
-        if (this._checkDestroyed('createTickerElement')) return null;
-        
         const div = document.createElement('div');
-        const isActive = ticker.symbol === this.parent.state.currentSymbol &&
-                        ticker.exchange === this.parent.state.currentExchange &&
-                        ticker.marketType === this.parent.state.currentMarketType;
-        
-        div.className = `ticker-item ${isActive ? 'active' : ''}`;
+        div.className = `ticker-item ${ticker.symbol === this.parent.state.currentSymbol && 
+            ticker.exchange === this.parent.state.currentExchange && 
+            ticker.marketType === this.parent.state.currentMarketType ? 'active' : ''}`;
         div.dataset.symbol = ticker.symbol;
         div.dataset.exchange = ticker.exchange;
         div.dataset.marketType = ticker.marketType;
-        div.dataset.key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`; // ✅ Для быстрого доступа
-        
-        // Стили grid
-        Object.assign(div.style, {
-            display: 'grid',
-            gridTemplateColumns: '1.3fr 1fr 0.7fr 0.8fr 0.7fr',
-            alignItems: 'center',
-            gap: '4px',
-            padding: '6px 8px',
-            minHeight: '36px',
-            borderBottom: '1px solid #2B3139'
-        });
+        div.style.display = 'grid';
+        div.style.gridTemplateColumns = '1.3fr 1fr 0.7fr 0.8fr 0.7fr';
+        div.style.alignItems = 'center';
+        div.style.gap = '4px';
+        div.style.padding = '6px 8px';
+        div.style.minHeight = '36px';
+        div.style.borderBottom = '1px solid #2B3139';
 
-        // ✅ ИСПРАВЛЕНИЕ 14: Сначала innerHTML, потом appendChild для dragHandle
-        // Подготовка данных
+        // Ручка для перетаскивания (ПКМ как в TradingView)
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'drag-handle';
+    dragHandle.title = 'ПКМ → перетащить';
+    
+    // Вставляем ручку ПЕРЕД всеми остальными элементами
+    div.appendChild(dragHandle);
+
+
+
         const flag = this.parent.state.flags[`${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`] || null;
-        const flagHTML = flag 
-            ? `<div class="flag flag-${flag}"></div>` 
-            : '<div class="flag-placeholder"></div>';
+        const flagHTML = flag ? 
+            `<div class="flag flag-${flag}"></div>` : 
+            '<div class="flag-placeholder"></div>';
 
         const isFavorite = this.parent.state.favorites.includes(ticker.symbol) ? 'favorite' : '';
         const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
@@ -493,7 +331,6 @@ class TickerRenderer {
 
         const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
 
-        // ✅ Устанавливаем innerHTML ПЕРЕД добавлением dragHandle
         div.innerHTML = `
             <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;" data-ctx="symbol">
                 ${flagHTML}
@@ -507,105 +344,88 @@ class TickerRenderer {
             <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatTrades(ticker)}</div>
         `;
 
-        // ✅ Теперь добавляем dragHandle ПОСЛЕ innerHTML
-        const dragHandle = document.createElement('div');
-        dragHandle.className = 'drag-handle';
-        dragHandle.title = 'ПКМ → перетащить';
-        div.insertBefore(dragHandle, div.firstChild);
-
         return div;
     }
     
-    formatPrice(price) {
-        if (!price || price <= 0) return '...';
-        
-        const now = Date.now();
-        const cached = this.parent.formatCache.prices.get(price);
-        
-        // ✅ ИСПРАВЛЕНИЕ 15: Проверка валидности кеша
-        if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
-            return cached.value;
-        }
-        
-        let result;
-        
-        // Подстрочная нотация для очень малых цен
-        if (price < 0.001) {
-            const priceStr = price.toFixed(10);
-            const match = priceStr.match(/^0\.(0+)(.+)$/);
-            
-            if (match && match[1].length >= 3) {
-                const zeros = match[1].length;
-                const digits = match[2].replace(/0+$/, '');
-                
-                if (digits.length === 0) {
-                    result = price.toFixed(zeros + 2);
-                } else {
-                    const subScript = '₀₁₂₃₄₅₆₇₈₉';
-                    const zeroSub = String(zeros).split('').map(d => subScript[parseInt(d)]).join('');
-                    result = `0.0${zeroSub}${digits}`;
-                }
-            } else {
-                result = this._formatAsIs(price);
-            }
-        } else {
-            result = this._formatAsIs(price);
-        }
-        
-        // ✅ ИСПРАВЛЕНИЕ 16: Защита от переполнения кеша
-        try {
-            this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
-            
-            if (this.parent.formatCache.prices.size > 500) {
-                const oldestKey = this.parent.formatCache.prices.keys().next().value;
-                if (oldestKey !== undefined) {
-                    this.parent.formatCache.prices.delete(oldestKey);
-                }
-            }
-        } catch (e) {
-            console.error('[TickerRenderer] Cache write error:', e);
-        }
-        
-        return result;
-    }
-
-    _formatAsIs(price) {
-        if (typeof price !== 'number' || isNaN(price)) return '...';
-        
-        let str = price.toFixed(8);
-        str = str.replace(/\.?0+$/, '');
-        
-        if (!str.includes('.')) {
-            str += '.00';
-        } else {
-            const parts = str.split('.');
-            if (parts[1].length < 2) {
-                str = str.padEnd(str.length + (2 - parts[1].length), '0');
-            }
-        }
-        
-        return str;
+  // Заменить ВЕСЬ метод formatPrice в TickerRenderer на этот:
+formatPrice(price) {
+    if (!price || price <= 0) return '...';
+    
+    const now = Date.now();
+    const cached = this.parent.formatCache.prices.get(price);
+    if (cached && (now - cached.timestamp) < this.parent.cacheMaxAge) {
+        return cached.value;
     }
     
+    let result;
+    
+    // ✅ Подстрочная нотация ТОЛЬКО для цен с 4+ нулями после запятой
+    // 0.00002534 → 4 нуля → "0.0₄2534"
+    // 0.00000089 → 6 нулей → "0.0₆89"
+    if (price < 0.001) {
+        const priceStr = price.toFixed(10);
+        const match = priceStr.match(/^0\.(0+)(.+)$/);
+        if (match && match[1].length >= 3) { // минимум 3 нуля (0.000...)
+            const zeros = match[1].length;
+            const digits = match[2].replace(/0+$/, '');
+            if (digits.length === 0) {
+                // Все нули (0.00000000) → показываем как есть
+                result = price.toFixed(zeros + 2);
+            } else {
+                const subScript = '₀₁₂₃₄₅₆₇₈₉';
+                const zeroSub = String(zeros).split('').map(d => subScript[parseInt(d)]).join('');
+                result = `0.0${zeroSub}${digits}`;
+            }
+        } else {
+            // Для цен вроде 0.001...0.999 → показываем как приходит
+            result = this._formatAsIs(price);
+        }
+    } else {
+        // ✅ Все цены ≥ 1 → показываем КАК ПРИХОДЯТ от биржи
+        result = this._formatAsIs(price);
+    }
+    
+    this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
+    if (this.parent.formatCache.prices.size > 500) {
+        const oldestKey = this.parent.formatCache.prices.keys().next().value;
+        this.parent.formatCache.prices.delete(oldestKey);
+    }
+    
+    return result;
+}
+
+// ✅ Новый метод: форматирует "как приходит" без лишних нулей
+_formatAsIs(price) {
+    // Убираем конечные нули, но оставляем минимум 2 знака
+    let str = price.toFixed(8); // берём с запасом
+    str = str.replace(/\.?0+$/, ''); // убираем .0000
+    if (!str.includes('.')) {
+        str += '.00'; // если целое → добавляем .00
+    } else {
+        const parts = str.split('.');
+        if (parts[1].length < 2) {
+            str = str.padEnd(str.length + (2 - parts[1].length), '0'); // минимум 2 знака
+        }
+    }
+    return str;
+}
     formatChange(change) {
-        if (change === undefined || change === null || isNaN(change)) return '0.00';
+        if (change === undefined || change === null) return '0.00';
         
         const now = Date.now();
         const cached = this.parent.formatCache.changes.get(change);
         
-        if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
+        if (cached && (now - cached.timestamp) < this.parent.cacheMaxAge) {
             return cached.value;
         }
         
-        const result = (change > 0 ? '+' : '') + Number(change).toFixed(2);
+        const result = (change > 0 ? '+' : '') + change.toFixed(2);
         
         this.parent.formatCache.changes.set(change, { value: result, timestamp: now });
         
         if (this.parent.formatCache.changes.size > 500) {
             const oldestKey = this.parent.formatCache.changes.keys().next().value;
-            if (oldestKey !== undefined) {
-                this.parent.formatCache.changes.delete(oldestKey);
-            }
+            this.parent.formatCache.changes.delete(oldestKey);
         }
         
         return result;
@@ -617,166 +437,121 @@ class TickerRenderer {
         const now = Date.now();
         const cached = this.parent.formatCache.volumes.get(volume);
         
-        if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
+        if (cached && (now - cached.timestamp) < this.parent.cacheMaxAge) {
             return cached.value;
         }
         
         let result;
-        const absVolume = Math.abs(volume);
-        
-        if (absVolume >= 1e9) result = (volume / 1e9).toFixed(2) + 'B';
-        else if (absVolume >= 1e6) result = (volume / 1e6).toFixed(2) + 'M';
-        else if (absVolume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
-        else if (absVolume < 1) result = volume.toFixed(4);
+        if (volume >= 1e9) result = (volume / 1e9).toFixed(2) + 'B';
+        else if (volume >= 1e6) result = (volume / 1e6).toFixed(2) + 'M';
+        else if (volume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
+        else if (volume < 1) result = volume.toFixed(4);
         else result = volume.toFixed(2);
         
         this.parent.formatCache.volumes.set(volume, { value: result, timestamp: now });
         
         if (this.parent.formatCache.volumes.size > 500) {
             const oldestKey = this.parent.formatCache.volumes.keys().next().value;
-            if (oldestKey !== undefined) {
-                this.parent.formatCache.volumes.delete(oldestKey);
-            }
+            this.parent.formatCache.volumes.delete(oldestKey);
         }
         
         return result;
     }
     
     formatTrades(ticker) {
-        if (!ticker || ticker.exchange !== 'binance' || !ticker.trades || ticker.trades <= 0) return '—';
-        
-        const absTrades = Math.abs(ticker.trades);
-        
-        if (absTrades > 1e9) return (ticker.trades / 1e9).toFixed(1) + 'B';
-        if (absTrades > 1e6) return (ticker.trades / 1e6).toFixed(1) + 'M';
-        if (absTrades > 1e3) return (ticker.trades / 1e3).toFixed(1) + 'K';
-        
+        if (ticker.exchange !== 'binance' || !ticker.trades || ticker.trades <= 0) return '—';
+        if (ticker.trades > 1e9) return (ticker.trades / 1e9).toFixed(1) + 'B';
+        if (ticker.trades > 1e6) return (ticker.trades / 1e6).toFixed(1) + 'M';
+        if (ticker.trades > 1e3) return (ticker.trades / 1e3).toFixed(1) + 'K';
         return ticker.trades.toString();
     }
     
-    // ✅ ИСПРАВЛЕНИЕ 17: Безопасный запуск cleanup с защитой от дубликатов
     startCacheCleanup() {
-        if (this._cleanupInterval) {
-            console.warn('[TickerRenderer] Cleanup interval already running');
-            return;
-        }
-        
-        this._cleanupInterval = setInterval(() => {
-            if (this._isDestroyed) {
-                // Самоочистка при уничтожении
-                clearInterval(this._cleanupInterval);
-                this._cleanupInterval = null;
-                return;
-            }
-            
+        setInterval(() => {
             const now = Date.now();
-            const maxAge = this.parent.cacheMaxAge;
             
-            // Очистка просроченных записей
-            this._cleanCacheMap(this.parent.formatCache.prices, now, maxAge);
-            this._cleanCacheMap(this.parent.formatCache.changes, now, maxAge);
-            this._cleanCacheMap(this.parent.formatCache.volumes, now, maxAge);
+            for (const [key, value] of this.parent.formatCache.prices) {
+                if (now - value.timestamp > this.parent.cacheMaxAge) {
+                    this.parent.formatCache.prices.delete(key);
+                }
+            }
             
+            for (const [key, value] of this.parent.formatCache.changes) {
+                if (now - value.timestamp > this.parent.cacheMaxAge) {
+                    this.parent.formatCache.changes.delete(key);
+                }
+            }
+            
+            for (const [key, value] of this.parent.formatCache.volumes) {
+                if (now - value.timestamp > this.parent.cacheMaxAge) {
+                    this.parent.formatCache.volumes.delete(key);
+                }
+            }
         }, 30000);
-        
-        console.log('[TickerRenderer] Cache cleanup started');
     }
     
-    // ✅ Вспомогательный метод для очистки кеша
-    _cleanCacheMap(cacheMap, now, maxAge) {
-        if (!cacheMap) return;
-        
-        for (const [key, value] of cacheMap.entries()) {
-            if (!value || (now - value.timestamp) > maxAge) {
-                cacheMap.delete(key);
-            }
-        }
-    }
-    
-    setupHeaderSorting() {
-        if (this._checkDestroyed('setupHeaderSorting')) return;
-        
-        // ✅ ИСПРАВЛЕНИЕ 18: Безопасное удаление старых обработчиков
-        if (this.parent._sortClickHandler) {
-            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-                header.removeEventListener('click', this.parent._sortClickHandler);
-            });
-        }
-        
-        // Восстановление сортировки
-        const savedSortBy = localStorage.getItem('tickerSortBy');
-        const savedSortDir = localStorage.getItem('tickerSortDir');
-        
-        if (savedSortBy) {
-            this.parent.state.sortBy = savedSortBy;
-            this.parent.state.sortDirection = savedSortDir || 'desc';
-        }
-        
-        // ✅ ИСПРАВЛЕНИЕ 19: Привязка контекста и обработка ошибок
-        this.parent._sortClickHandler = (e) => {
-            e.stopPropagation();
-            
-            try {
-                const header = e.currentTarget;
-                const sortBy = header.dataset.sort;
-                
-                if (!sortBy) return;
-                
-                if (this.parent.state.sortBy === sortBy) {
-                    this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
-                } else {
-                    this.parent.state.sortBy = sortBy;
-                    this.parent.state.sortDirection = 'desc';
-                }
-                
-                // Сохранение в localStorage
-                localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
-                localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
-                
-                // Обновление иконок
-                document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                    icon.className = 'fas fa-sort';
-                });
-                
-                const icon = header.querySelector('i');
-                if (icon) {
-                    icon.className = this.parent.state.sortDirection === 'asc' 
-                        ? 'fas fa-sort-up' 
-                        : 'fas fa-sort-down';
-                }
-                
-                // Инвалидация кеша и рендеринг
-                this.parent.filterCache = null;
-                this.parent.renderTickerList();
-                
-            } catch (error) {
-                console.error('[TickerRenderer] Sort handler error:', error);
-            }
-        };
-        
-        // Назначение обработчиков
+   setupHeaderSorting() {
+    if (this.parent._sortClickHandler) {
         document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.addEventListener('click', this.parent._sortClickHandler);
+            header.removeEventListener('click', this.parent._sortClickHandler);
+        });
+    }
+    
+    // 👇 ВОССТАНОВЛЕНИЕ СОРТИРОВКИ ПРИ ЗАГРУЗКЕ
+    const savedSortBy = localStorage.getItem('tickerSortBy');
+    const savedSortDir = localStorage.getItem('tickerSortDir');
+    
+    if (savedSortBy) {
+        this.parent.state.sortBy = savedSortBy;
+        this.parent.state.sortDirection = savedSortDir || 'desc';
+    }
+    
+    this.parent._sortClickHandler = (e) => {
+        e.stopPropagation();
+        
+        const header = e.currentTarget;
+        const sortBy = header.dataset.sort;
+        
+        if (this.parent.state.sortBy === sortBy) {
+            this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.parent.state.sortBy = sortBy;
+            this.parent.state.sortDirection = 'desc';
+        }
+        
+        // 👇 СОХРАНЯЕМ ВЫБОР В localStorage
+        localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
+        localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
+        
+        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+            icon.className = 'fas fa-sort';
         });
         
-        // Обновление иконки активной сортировки
-        if (savedSortBy) {
-            const activeHeader = document.querySelector(`.table-header span[data-sort="${savedSortBy}"]`);
-            if (activeHeader) {
-                const icon = activeHeader.querySelector('i');
-                if (icon) {
-                    icon.className = savedSortDir === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                }
+        const icon = header.querySelector('i');
+        if (icon) {
+            icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+        }
+        
+        this.parent.filterCache = null;
+        this.parent.renderTickerList();
+    };
+    
+    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+        header.addEventListener('click', this.parent._sortClickHandler);
+    });
+    
+    // 👇 ОБНОВЛЯЕМ ИКОНКУ СОГЛАСНО ВОССТАНОВЛЕННОЙ СОРТИРОВКЕ
+    if (savedSortBy) {
+        const activeHeader = document.querySelector(`.table-header span[data-sort="${savedSortBy}"]`);
+        if (activeHeader) {
+            const icon = activeHeader.querySelector('i');
+            if (icon) {
+                icon.className = savedSortDir === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
             }
         }
     }
 }
-
-// ✅ Экспорт для различных окружений
+}
 if (typeof window !== 'undefined') {
     window.TickerRenderer = TickerRenderer;
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = TickerRenderer;
 }
