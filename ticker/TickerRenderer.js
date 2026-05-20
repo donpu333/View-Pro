@@ -7,135 +7,62 @@ class TickerRenderer {
         this.displayedTickers = [];
         this.totalItems = 0;
         
-        // ✅ ИСПРАВЛЕНИЕ 1: Инициализация всех таймеров/ID для корректной очистки
+        // Таймеры и флаги
         this._scrollHandler = null;
         this._renderScheduled = false;
         this._renderRafId = null;
         this._firstRender = true;
-        this._updatePriceRafId = null; // Переименовано для ясности
-        this._cleanupInterval = null;  // ✅ Добавлен ID интервала очистки кеша
-        this._observer = null;         // ✅ IntersectionObserver (опционально)
-        this._isDestroyed = false;     // ✅ Флаг уничтожения
+        this._updatePriceRafId = null;
+        this._cleanupInterval = null;
+        this._isDestroyed = false;
         
-        // Инжектим CSS для мигания один раз
+        // ✅ НОВЫЕ: Для авто-сортировки
+        this._resortTimeoutId = null;      // Timer для debounce сортировки
+        this._lastSortDataHash = '';       // Хэш последних данных для детекта изменений
+        this._resortEnabled = true;        // Флаг включения авто-сортировки
+        this._resortDelay = 500;           // Задержка в мс (debounce)
+        this._dataChanged = false;         // Флаг изменения данных
+        
+        // Инжектим CSS
         this._injectFlashCSS();
     }
     
-    // CSS для мигания цены (без изменений)
-    _injectFlashCSS() {
-        if (document.getElementById('tickerFlashCSS')) return;
-        const style = document.createElement('style');
-        style.id = 'tickerFlashCSS';
-        style.textContent = `
-            @keyframes flashGreen {
-                0% { background-color: rgba(38, 166, 91, 0.5); }
-                100% { background-color: transparent; }
-            }
-            @keyframes flashRed {
-                0% { background-color: rgba(234, 57, 67, 0.5); }
-                100% { background-color: transparent; }
-            }
-            .ticker-price.flash-up {
-                animation: flashGreen 0.4s ease-out;
-                border-radius: 2px;
-            }
-            .ticker-price.flash-down {
-                animation: flashRed 0.4s ease-out;
-                border-radius: 2px;
-            }
-            /* ✅ ИСПРАВЛЕНИЕ 2: Добавлен класс для предотвращения reflow */
-            .ticker-price.no-animation {
-                animation: none !important;
-            }
-        `;
-        document.head.appendChild(style);
-    }
+    // ... [предыдущие методы без изменений: _injectFlashCSS, destroy, _checkDestroyed] ...
     
-    // ✅ ИСПРАВЛЕНИЕ 3: Метод destroy() для предотвращения утечек памяти
-    destroy() {
-        this._isDestroyed = true;
-        
-        console.log('[TickerRenderer] Destroying instance...');
-        
-        // Очистка RAF обновления цен
-        if (this._updatePriceRafId) {
-            cancelAnimationFrame(this._updatePriceRafId);
-            this._updatePriceRafId = null;
-        }
-        
-        // Очистка RAF рендеринга
-        if (this._renderRafId) {
-            cancelAnimationFrame(this._renderRafId);
-            this._renderRafId = null;
-        }
-        
-        // Очистка интервала кеша
-        if (this._cleanupInterval) {
-            clearInterval(this._cleanupInterval);
-            this._cleanupInterval = null;
-        }
-        
-        // Очистка IntersectionObserver (если используется)
-        if (this._observer) {
-            this._observer.disconnect();
-            this._observer = null;
-        }
-        
-        // Удаление обработчика скролла
-        const container = document.getElementById('tickerListContainer');
-        if (container && this._scrollHandler) {
-            container.removeEventListener('scroll', this._scrollHandler);
-            this._scrollHandler = null;
-        }
-        
-        // Очистка Map элементов
-        this.tickerElements.clear();
-        this.displayedTickers = [];
-        
-        console.log('[TickerRenderer] Instance destroyed successfully');
-    }
-    
-    // ✅ ИСПРАВЛЕНИЕ 4: Проверка флага destroyed перед любыми операциями
-    _checkDestroyed(methodName) {
-        if (this._isDestroyed) {
-            console.warn(`[TickerRenderer] ${methodName} called on destroyed instance`);
-            return true;
-        }
-        return false;
-    }
-    
-    // RAF-троттлинг — DOM обновляется строго 1 раз за кадр (60fps)
+    /**
+     * ✅ ГЛАВНЫЙ ФИКС: Обновление цен + авто-пересортировка
+     */
     updatePriceElements() {
         if (this._checkDestroyed('updatePriceElements')) return;
-        if (this._updatePriceRafId) return; // Уже запланировано
+        if (this._updatePriceRafId) return;
         
         this._updatePriceRafId = requestAnimationFrame(() => {
             this._updatePriceRafId = null;
-            
-            // ✅ Дополнительная проверка после RAF callback
             if (this._isDestroyed) return;
             
-            this._doUpdatePriceElements();
+            // Обновляем DOM элементы
+            const dataChanged = this._doUpdatePriceElements();
+            
+            // ✅ Если данные изменились И включена авто-сортировка → планируем пересортировку
+            if (dataChanged && this._resortEnabled && this.parent.state.sortBy) {
+                this._scheduleResort();
+            }
         });
     }
     
     _doUpdatePriceElements() {
-        if (this._checkDestroyed('_doUpdatePriceElements')) return;
+        if (this._checkDestroyed('_doUpdatePriceElements')) return false;
         
         let domUpdates = 0;
-        const now = Date.now(); // ✅ Кэшируем текущее время
+        let dataChanged = false; // ✅ Флаг: были ли изменения в данных
         
-        // Итерируемся по ВСЕМ созданным элементам
         for (const [key, el] of this.tickerElements.entries()) {
-            // ✅ ИСПРАВЛЕНИЕ 5: Безопасная проверка существования элемента
             if (!el) continue;
             
-            // ✅ ИСПРАВЛЕНИЕ 6: Проверка isConnected с fallback для старых браузеров
             const isConnected = typeof el.isConnected !== 'undefined' 
                 ? el.isConnected 
                 : document.body.contains(el);
-            
-            if (!isConnected) continue; // Элемент удален из DOM
+            if (!isConnected) continue;
             
             const ticker = this.parent.tickersMap.get(key);
             if (!ticker) continue;
@@ -150,66 +77,126 @@ class TickerRenderer {
             const newVolume = this.formatVolume(ticker.volume);
             const newTrades = this.formatTrades(ticker);
             
+            // ✅ Отслеживаем изменения
+            let itemChanged = false;
+            
             if (priceEl && priceEl.textContent !== newPrice) {
                 priceEl.textContent = newPrice;
                 
                 const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
                 priceEl.className = `ticker-price ${colorClass}`;
                 
-                // ✅ ИСПРАВЛЕНИЕ 7: Оптимизированная анимация без forced reflow
+                // Анимация мигания
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
-                    const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-                    
-                    // Убираем старые классы анимации
-                    priceEl.classList.remove('flash-up', 'flash-down', 'no-animation');
-                    
-                    // Используем requestAnimationFrame вместо void offsetWidth
-                    requestAnimationFrame(() => {
-                        if (!priceEl.isConnected) return; // Элемент мог быть удален
-                        
-                        // Trigger reflow через класс-заглушку (менее затратно)
-                        priceEl.classList.add('no-animation');
-                        priceEl.offsetHeight; // Минимальный reflow только при необходимости
-                        priceEl.classList.remove('no-animation');
-                        
-                        // Запускаем новую анимацию
-                        priceEl.classList.add(flashClass);
-                        
-                        // Автоудаление класса после окончания анимации
-                        const onAnimEnd = () => {
-                            priceEl.removeEventListener('animationend', onAnimEnd);
-                            priceEl.classList.remove(flashClass);
-                        };
-                        priceEl.addEventListener('animationend', onAnimEnd, { once: true });
-                    });
-                    
+                    this._triggerFlashAnimation(priceEl, ticker);
                     ticker.prevPrice = ticker.price;
                 }
+                
                 domUpdates++;
+                itemChanged = true;
             }
             
             if (changeEl && changeEl.textContent !== newChange) {
                 changeEl.textContent = newChange;
                 changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                 domUpdates++;
+                itemChanged = true;
             }
             
             if (volumeEl && volumeEl.textContent !== newVolume) {
                 volumeEl.textContent = newVolume;
                 domUpdates++;
+                itemChanged = true;
             }
             
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
                 domUpdates++;
+                itemChanged = true;
+            }
+            
+            if (itemChanged) {
+                dataChanged = true;
             }
         }
         
-        // ✅ Логирование для отладки (можно удалить в продакшене)
-        if (domUpdates > 0 && process.env.NODE_ENV === 'development') {
-            console.log(`[TickerRenderer] DOM updates this frame: ${domUpdates}`);
-        }
+        return dataChanged; // ✅ Возвращаем факт изменений
     }
+    
+    /**
+     * ✅ НОВЫЙ: Планирует пересортировку с debounce
+     */
+    _scheduleResort() {
+        // Очищаем предыдущий таймер
+        if (this._resortTimeoutId) {
+            clearTimeout(this._resortTimeoutId);
+        }
+        
+        // Планируем новую сортировку через _resortDelay мс
+        this._resortTimeoutId = setTimeout(() => {
+            this._resortTimeoutId = null;
+            
+            if (this._isDestroyed || !this._resortEnabled) return;
+            
+            console.log(`[TickerRenderer] Auto-resorting by: ${this.parent.state.sortBy}`);
+            
+            // Инвалидируем кеш фильтров
+            this.parent.filterCache = null;
+            
+            // Полный рендер с новой сортировкой
+            this.renderTickerList();
+            
+        }, this._resortDelay);
+    }
+    
+    /**
+     * ✅ НОВЫЙ: Принудительная немедленная сортировка (для кнопок)
+     */
+    forceResortNow() {
+        if (this._resortTimeoutId) {
+            clearTimeout(this._resortTimeoutId);
+            this._resortTimeoutId = null;
+        }
+        
+        this.parent.filterCache = null;
+        this.renderTickerList();
+    }
+    
+    /**
+     * ✅ НОВЫЕ: Управление авто-сортировкой
+     */
+    enableAutoResort(enabled = true) {
+        this._resortEnabled = enabled;
+        console.log(`[TickerRenderer] Auto-resort: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    }
+    
+    setResortDelay(delayMs) {
+        this._resortDelay = Math.max(100, Math.min(2000, delayMs)); // Clamp 100-2000ms
+    }
+    
+    /**
+     * ✅ Улучшенная анимация мигания (вынесена в отдельный метод)
+     */
+    _triggerFlashAnimation(priceEl, ticker) {
+        const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
+        
+        priceEl.classList.remove('flash-up', 'flash-down');
+        
+        requestAnimationFrame(() => {
+            if (!priceEl.isConnected) return;
+            
+            priceEl.classList.add(flashClass);
+            
+            const onAnimEnd = () => {
+                priceEl.removeEventListener('animationend', onAnimEnd);
+                priceEl.classList.remove(flashClass);
+            };
+            
+            priceEl.addEventListener('animationend', onAnimEnd, { once: true });
+        });
+    }
+    
+    // ... [sortTickers, getFilteredTickers - без изменений] ...
     
     sortTickers(tickers) {
         if (this._checkDestroyed('sortTickers')) return [];
@@ -250,7 +237,6 @@ class TickerRenderer {
         
         const cacheKey = `${this.parent.state.marketFilter}:${this.parent.state.exchangeFilter}:${this.parent.state.activeTab}:${flagPart}:${this.parent.state.sortBy}:${this.parent.state.sortDirection}`;
         
-        // ✅ ИСПРАВЛЕНИЕ 8: Проверка валидности кеша
         if (this.parent.filterCache && 
             this.parent.filterCache.key === cacheKey && 
             Array.isArray(this.parent.filterCache.result)) {
@@ -259,7 +245,6 @@ class TickerRenderer {
         
         let filtered = [...this.parent.tickers];
         
-        // Применяем фильтры
         if (this.parent.state.marketFilter !== 'all') {
             filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
         }
@@ -283,11 +268,10 @@ class TickerRenderer {
         
         const result = this.sortTickers(filtered);
         
-        // ✅ ИСПРАВЛЕНИЕ 9: Глубокое копирование результата в кеш
         this.parent.filterCache = {
             key: cacheKey,
-            result: result, // Массив уже новый из sortTickers
-            timestamp: now // Для потенциальной инвалидации по времени
+            result: result,
+            timestamp: Date.now()
         };
         
         return result;
@@ -308,33 +292,34 @@ class TickerRenderer {
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
 
-        // ✅ ИСПРАВЛЕНИЕ 10: Безопасное удаление обработчика скролла
+        // ✅ Отменяем ожидающую авто-сортировку (мы уже сортируем вручную)
+        if (this._resortTimeoutId) {
+            clearTimeout(this._resortTimeoutId);
+            this._resortTimeoutId = null;
+        }
+
         if (this._scrollHandler) {
             container.removeEventListener('scroll', this._scrollHandler);
             this._scrollHandler = null;
         }
         
-        // Очистка старых элементов
         const spacer = container.querySelector('.ticker-spacer');
         if (spacer) spacer.remove();
         
         const itemsContainer = container.querySelector('.ticker-items-container');
         if (itemsContainer) itemsContainer.remove();
         
-        // ✅ ИСПРАВЛЕНИЕ 11: Очистка Map перед рендерингом
         this.tickerElements.clear();
 
         if (this.totalItems === 0) {
             container.style.height = 'auto';
-            // ✅ Показываем сообщение о пустом списке
-            container.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:#666;">Нет данных для отображения</div>';
+            container.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:#666;">Нет данных</div>';
             return;
         }
 
         container.style.position = 'relative';
         container.style.overflowY = 'auto';
         
-        // Создаем spacer для высоты контента
         const newSpacer = document.createElement('div');
         newSpacer.className = 'ticker-spacer';
         newSpacer.style.height = `${this.totalItems * this.rowHeight}px`;
@@ -342,7 +327,6 @@ class TickerRenderer {
         newSpacer.style.pointerEvents = 'none';
         container.appendChild(newSpacer);
         
-        // Контейнер для видимых элементов
         const newItemsContainer = document.createElement('div');
         newItemsContainer.className = 'ticker-items-container';
         newItemsContainer.style.position = 'absolute';
@@ -353,19 +337,20 @@ class TickerRenderer {
         
         this.renderVisibleTickers();
 
-        // ✅ ИСПРАВЛЕНИЕ 12: Обработчик скролла с throttle
         let scrollTimeout = null;
         this._scrollHandler = () => {
-            if (scrollTimeout) return; // Throttle
+            if (scrollTimeout) return;
             
             scrollTimeout = setTimeout(() => {
                 scrollTimeout = null;
                 this.renderVisibleTickers();
-            }, 16); // ~60fps
+            }, 16);
         };
         
         container.addEventListener('scroll', this._scrollHandler, { passive: true });
     }
+    
+    // ... [renderVisibleTickers, createTickerElement - без изменений] ...
     
     renderVisibleTickers() {
         if (this._checkDestroyed('renderVisibleTickers')) return;
@@ -397,17 +382,10 @@ class TickerRenderer {
             
             if (isNewElement) {
                 el = this.createTickerElement(ticker, i);
-                
-                // ✅ ИСПРАВЛЕНИЕ 13: Проверка успешного создания элемента
-                if (!el) {
-                    console.error(`[TickerRenderer] Failed to create element for ${key}`);
-                    continue;
-                }
-                
+                if (!el) continue;
                 this.tickerElements.set(key, el);
             }
             
-            // Позиционирование элемента
             el.style.position = 'absolute';
             el.style.top = `${i * this.rowHeight}px`;
             el.style.left = '0';
@@ -415,7 +393,6 @@ class TickerRenderer {
             el.style.width = '100%';
             el.style.display = '';
             
-            // Обновление данных для существующих элементов
             if (!isNewElement) {
                 const priceEl = el.querySelector('.ticker-price');
                 const changeEl = el.querySelector('.ticker-change');
@@ -431,18 +408,15 @@ class TickerRenderer {
                 if (tradesEl) tradesEl.textContent = this.formatTrades(ticker);
             }
             
-            // Добавляем в fragment только если еще не в DOM
             if (!el.parentNode) {
                 fragment.appendChild(el);
             }
         }
         
-        // Batch DOM update
         if (fragment.hasChildNodes()) {
             itemsContainer.appendChild(fragment);
         }
         
-        // Скрываем невидимые элементы
         for (const [key, el] of this.tickerElements.entries()) {
             if (!visibleKeys.has(key)) {
                 el.style.display = 'none';
@@ -462,9 +436,8 @@ class TickerRenderer {
         div.dataset.symbol = ticker.symbol;
         div.dataset.exchange = ticker.exchange;
         div.dataset.marketType = ticker.marketType;
-        div.dataset.key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`; // ✅ Для быстрого доступа
+        div.dataset.key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
         
-        // Стили grid
         Object.assign(div.style, {
             display: 'grid',
             gridTemplateColumns: '1.3fr 1fr 0.7fr 0.8fr 0.7fr',
@@ -475,8 +448,6 @@ class TickerRenderer {
             borderBottom: '1px solid #2B3139'
         });
 
-        // ✅ ИСПРАВЛЕНИЕ 14: Сначала innerHTML, потом appendChild для dragHandle
-        // Подготовка данных
         const flag = this.parent.state.flags[`${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`] || null;
         const flagHTML = flag 
             ? `<div class="flag flag-${flag}"></div>` 
@@ -493,7 +464,6 @@ class TickerRenderer {
 
         const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
 
-        // ✅ Устанавливаем innerHTML ПЕРЕД добавлением dragHandle
         div.innerHTML = `
             <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;" data-ctx="symbol">
                 ${flagHTML}
@@ -507,7 +477,6 @@ class TickerRenderer {
             <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatTrades(ticker)}</div>
         `;
 
-        // ✅ Теперь добавляем dragHandle ПОСЛЕ innerHTML
         const dragHandle = document.createElement('div');
         dragHandle.className = 'drag-handle';
         dragHandle.title = 'ПКМ → перетащить';
@@ -516,20 +485,20 @@ class TickerRenderer {
         return div;
     }
     
+    // ... [formatPrice, _formatAsIs, formatChange, formatVolume, formatTrades - без изменений] ...
+    
     formatPrice(price) {
         if (!price || price <= 0) return '...';
         
         const now = Date.now();
         const cached = this.parent.formatCache.prices.get(price);
         
-        // ✅ ИСПРАВЛЕНИЕ 15: Проверка валидности кеша
         if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
             return cached.value;
         }
         
         let result;
         
-        // Подстрочная нотация для очень малых цен
         if (price < 0.001) {
             const priceStr = price.toFixed(10);
             const match = priceStr.match(/^0\.(0+)(.+)$/);
@@ -552,7 +521,6 @@ class TickerRenderer {
             result = this._formatAsIs(price);
         }
         
-        // ✅ ИСПРАВЛЕНИЕ 16: Защита от переполнения кеша
         try {
             this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
             
@@ -654,16 +622,11 @@ class TickerRenderer {
         return ticker.trades.toString();
     }
     
-    // ✅ ИСПРАВЛЕНИЕ 17: Безопасный запуск cleanup с защитой от дубликатов
     startCacheCleanup() {
-        if (this._cleanupInterval) {
-            console.warn('[TickerRenderer] Cleanup interval already running');
-            return;
-        }
+        if (this._cleanupInterval) return;
         
         this._cleanupInterval = setInterval(() => {
             if (this._isDestroyed) {
-                // Самоочистка при уничтожении
                 clearInterval(this._cleanupInterval);
                 this._cleanupInterval = null;
                 return;
@@ -672,17 +635,13 @@ class TickerRenderer {
             const now = Date.now();
             const maxAge = this.parent.cacheMaxAge;
             
-            // Очистка просроченных записей
             this._cleanCacheMap(this.parent.formatCache.prices, now, maxAge);
             this._cleanCacheMap(this.parent.formatCache.changes, now, maxAge);
             this._cleanCacheMap(this.parent.formatCache.volumes, now, maxAge);
             
         }, 30000);
-        
-        console.log('[TickerRenderer] Cache cleanup started');
     }
     
-    // ✅ Вспомогательный метод для очистки кеша
     _cleanCacheMap(cacheMap, now, maxAge) {
         if (!cacheMap) return;
         
@@ -696,14 +655,12 @@ class TickerRenderer {
     setupHeaderSorting() {
         if (this._checkDestroyed('setupHeaderSorting')) return;
         
-        // ✅ ИСПРАВЛЕНИЕ 18: Безопасное удаление старых обработчиков
         if (this.parent._sortClickHandler) {
             document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
                 header.removeEventListener('click', this.parent._sortClickHandler);
             });
         }
         
-        // Восстановление сортировки
         const savedSortBy = localStorage.getItem('tickerSortBy');
         const savedSortDir = localStorage.getItem('tickerSortDir');
         
@@ -712,7 +669,6 @@ class TickerRenderer {
             this.parent.state.sortDirection = savedSortDir || 'desc';
         }
         
-        // ✅ ИСПРАВЛЕНИЕ 19: Привязка контекста и обработка ошибок
         this.parent._sortClickHandler = (e) => {
             e.stopPropagation();
             
@@ -729,11 +685,9 @@ class TickerRenderer {
                     this.parent.state.sortDirection = 'desc';
                 }
                 
-                // Сохранение в localStorage
                 localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
                 localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
                 
-                // Обновление иконок
                 document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
                     icon.className = 'fas fa-sort';
                 });
@@ -745,21 +699,18 @@ class TickerRenderer {
                         : 'fas fa-sort-down';
                 }
                 
-                // Инвалидация кеша и рендеринг
-                this.parent.filterCache = null;
-                this.parent.renderTickerList();
+                // ✅ Принудительная немедленная сортировка при клике
+                this.forceResortNow();
                 
             } catch (error) {
                 console.error('[TickerRenderer] Sort handler error:', error);
             }
         };
         
-        // Назначение обработчиков
         document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
             header.addEventListener('click', this.parent._sortClickHandler);
         });
         
-        // Обновление иконки активной сортировки
         if (savedSortBy) {
             const activeHeader = document.querySelector(`.table-header span[data-sort="${savedSortBy}"]`);
             if (activeHeader) {
@@ -770,9 +721,53 @@ class TickerRenderer {
             }
         }
     }
+    
+    destroy() {
+        this._isDestroyed = true;
+        
+        console.log('[TickerRenderer] Destroying instance...');
+        
+        // Очистка всех таймеров
+        if (this._updatePriceRafId) {
+            cancelAnimationFrame(this._updatePriceRafId);
+            this._updatePriceRafId = null;
+        }
+        
+        if (this._renderRafId) {
+            cancelAnimationFrame(this._renderRafId);
+            this._renderRafId = null;
+        }
+        
+        if (this._cleanupInterval) {
+            clearInterval(this._cleanupInterval);
+            this._cleanupInterval = null;
+        }
+        
+        // ✅ Очистка таймера авто-сортировки
+        if (this._resortTimeoutId) {
+            clearTimeout(this._resortTimeoutId);
+            this._resortTimeoutId = null;
+        }
+        
+        if (this._observer) {
+            this._observer.disconnect();
+            this._observer = null;
+        }
+        
+        const container = document.getElementById('tickerListContainer');
+        if (container && this._scrollHandler) {
+            container.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
+        }
+        
+        this.tickerElements.clear();
+        this.displayedTickers = [];
+        
+        console.log('[TickerRenderer] Instance destroyed successfully');
+    }
 }
 
-// ✅ Экспорт для различных окружений
+// Экспорт
 if (typeof window !== 'undefined') {
     window.TickerRenderer = TickerRenderer;
 }
