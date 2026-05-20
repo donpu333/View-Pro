@@ -446,50 +446,33 @@ class HorizontalRayManager {
         return this._rays.filter(item => item.ray.symbolKey === currentKey);
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyO' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-                e.preventDefault();
-                
-                const container = this._chartManager.chartContainer;
-                const rect = container.getBoundingClientRect();
-                const mouseX = this._lastMouseX !== undefined ? this._lastMouseX : rect.width / 2;
-                const mouseY = this._lastMouseY !== undefined ? this._lastMouseY : rect.height / 2;
-                
-                let price = this._chartManager.coordinateToPrice(mouseY);
-                let time = this._chartManager.coordinateToTime(mouseX);
-                
-                if (price === null || time === null) {
-                    const lastCandle = this._chartManager.getLastCandle();
-                    if (lastCandle) {
-                        price = lastCandle.close;
-                        time = lastCandle.time;
-                    } else {
-                        return;
-                    }
-                }
-                
-                if (this._magnetEnabled) {
-                    const snapped = this._snapToPrice(price, time);
-                    price = snapped.price;
-                    time = snapped.time;
-                }
-                
-                this.createRay(price, time, {
-                    color: document.getElementById('currentColorBox')?.style.backgroundColor || '#0933e2',
-                    lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
-                    lineStyle: document.getElementById('templateSelect')?.value || 'solid',
-                    opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9,
-                    showPrice: true
-                });
-            }
+// В HorizontalRayManager._setupHotkeys() - ЗАМЕНИТЕ существующий код
+_setupHotkeys() {
+    // Горячая клавиша H (как Horizontal) - ВКЛЮЧАЕТ РЕЖИМ, а не создаёт луч
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
             
-            if (e.key === 'Delete' && this._selectedRay) {
-                this.deleteRay(this._selectedRay.id);
-                this._selectedRay = null;
-            }
-        });
-    }
+            const newState = !this._isDrawingMode;
+            this.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
+        }
+        
+        // Delete - удаление выбранного луча
+        if (e.key === 'Delete' && this._selectedRay) {
+            this.deleteRay(this._selectedRay.id);
+            this._selectedRay = null;
+        }
+    });
+}
 
     _handleContextMenu(e) {
         e.preventDefault();
@@ -7185,6 +7168,40 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
+  // Горизонтальный луч - клавиша O (как было, НО теперь включает режим)
+    if (e.code === 'KeyO' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        
+        if (window.rayManager) {
+            const newState = !window.rayManager._isDrawingMode;
+            window.rayManager.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            // Меняем стиль кнопки
+            const rayBtn = document.getElementById('toolHorizontalRay');
+            if (rayBtn) {
+                if (newState) {
+                    rayBtn.style.background = '#4A90E2';
+                    rayBtn.style.color = '#FFFFFF';
+                    rayBtn.classList.add('active');
+                } else {
+                    rayBtn.style.background = '';
+                    rayBtn.style.color = '';
+                    rayBtn.classList.remove('active');
+                }
+            }
+            
+            console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
+        }
+    }
+    
+
+
     // Линейка - клавиша Y
     if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
