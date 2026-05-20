@@ -7,7 +7,6 @@ class TickerRenderer {
         this.displayedTickers = [];
         this.totalItems = 0;
         
-        // Таймеры/ID для корректной очистки
         this._scrollHandler = null;
         this._renderScheduled = false;
         this._renderRafId = null;
@@ -16,13 +15,11 @@ class TickerRenderer {
         this._cleanupInterval = null;
         this._observer = null;
         this._isDestroyed = false;
-        this._needsResort = false; // Флаг для отсроченной пересортировки
+        this._needsResort = false;
         
-        // Инжектим CSS для мигания один раз
         this._injectFlashCSS();
     }
     
-    // CSS для мигания цены
     _injectFlashCSS() {
         if (document.getElementById('tickerFlashCSS')) return;
         const style = document.createElement('style');
@@ -51,11 +48,8 @@ class TickerRenderer {
         document.head.appendChild(style);
     }
     
-    // Уничтожение инстанса
     destroy() {
         this._isDestroyed = true;
-        
-        console.log('[TickerRenderer] Destroying instance...');
         
         if (this._updatePriceRafId) {
             cancelAnimationFrame(this._updatePriceRafId);
@@ -85,8 +79,6 @@ class TickerRenderer {
         
         this.tickerElements.clear();
         this.displayedTickers = [];
-        
-        console.log('[TickerRenderer] Instance destroyed successfully');
     }
     
     _checkDestroyed(methodName) {
@@ -97,7 +89,6 @@ class TickerRenderer {
         return false;
     }
     
-    // Применение текущей сортировки к массиву тикеров
     applyCurrentSort() {
         if (this._checkDestroyed('applyCurrentSort')) return;
         if (!this.parent.tickers || this.parent.tickers.length === 0) return;
@@ -133,19 +124,15 @@ class TickerRenderer {
             return sortDirection === 'asc' ? result : -result;
         });
         
-        // Инвалидируем кеш фильтрации
         this.parent.filterCache = null;
     }
     
-    // Пересортировка с перерендером (для ручной сортировки)
     resortAndRender() {
         if (this._checkDestroyed('resortAndRender')) return;
-        
         this.applyCurrentSort();
         this.renderTickerList();
     }
     
-    // RAF-троттлинг — DOM обновляется строго 1 раз за кадр
     updatePriceElements() {
         if (this._checkDestroyed('updatePriceElements')) return;
         if (this._updatePriceRafId) return;
@@ -163,7 +150,6 @@ class TickerRenderer {
         let domUpdates = 0;
         let needsResort = false;
         
-        // Итерируемся по ВСЕМ созданным элементам
         for (const [key, el] of this.tickerElements.entries()) {
             if (!el) continue;
             
@@ -186,7 +172,6 @@ class TickerRenderer {
             const newVolume = this.formatVolume(ticker.volume);
             const newTrades = this.formatTrades(ticker);
             
-            // Сохраняем старые значения для проверки изменений
             const oldVolume = volumeEl ? volumeEl.textContent : null;
             const oldPrice = priceEl ? priceEl.textContent : null;
             
@@ -225,47 +210,32 @@ class TickerRenderer {
                 domUpdates++;
             }
             
-            // ✅ Если изменился объем, цена или количество сделок - нужна пересортировка
             if (volumeEl && volumeEl.textContent !== newVolume) {
                 volumeEl.textContent = newVolume;
                 domUpdates++;
-                
-                // Если сортировка по объему - помечаем необходимость пересортировки
-                if (this.parent.state.sortBy === 'volume') {
-                    needsResort = true;
-                }
+                if (this.parent.state.sortBy === 'volume') needsResort = true;
             }
             
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
                 domUpdates++;
-                
-                if (this.parent.state.sortBy === 'trades') {
-                    needsResort = true;
-                }
+                if (this.parent.state.sortBy === 'trades') needsResort = true;
             }
             
-            // Если изменилась цена и сортировка по цене
             if (oldPrice !== newPrice && this.parent.state.sortBy === 'price') {
                 needsResort = true;
             }
             
-            // Если изменилось изменение и сортировка по изменению
-            if (changeEl && this.parent.state.sortBy === 'change') {
+            if (this.parent.state.sortBy === 'change') {
                 needsResort = true;
             }
         }
         
-        // ✅ Применяем пересортировку если нужно
         if (needsResort) {
-            console.log('[TickerRenderer] Data changed, reapplying sort...');
             this.applyCurrentSort();
-            
-            // Обновляем отображаемые тикеры и позиции
             this.displayedTickers = this.getFilteredTickers();
             this.totalItems = this.displayedTickers.length;
             
-            // Обновляем высоту спейсера
             const container = document.getElementById('tickerListContainer');
             if (container) {
                 const spacer = container.querySelector('.ticker-spacer');
@@ -274,7 +244,6 @@ class TickerRenderer {
                 }
             }
             
-            // Перерендериваем видимые элементы с новыми позициями
             this.renderVisibleTickers();
         }
         
@@ -330,7 +299,6 @@ class TickerRenderer {
         
         let filtered = [...this.parent.tickers];
         
-        // Применяем фильтры
         if (this.parent.state.marketFilter !== 'all') {
             filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
         }
@@ -567,7 +535,7 @@ class TickerRenderer {
         if (!price || price <= 0) return '...';
         
         const now = Date.now();
-        const cached = this.parent.formatCache.prices.get(price);
+        const cached = this.parent.formatCache?.prices?.get(price);
         
         if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
             return cached.value;
@@ -597,17 +565,19 @@ class TickerRenderer {
             result = this._formatAsIs(price);
         }
         
-        try {
-            this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
-            
-            if (this.parent.formatCache.prices.size > 500) {
-                const oldestKey = this.parent.formatCache.prices.keys().next().value;
-                if (oldestKey !== undefined) {
-                    this.parent.formatCache.prices.delete(oldestKey);
+        if (this.parent.formatCache?.prices) {
+            try {
+                this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
+                
+                if (this.parent.formatCache.prices.size > 500) {
+                    const oldestKey = this.parent.formatCache.prices.keys().next().value;
+                    if (oldestKey !== undefined) {
+                        this.parent.formatCache.prices.delete(oldestKey);
+                    }
                 }
+            } catch (e) {
+                console.error('[TickerRenderer] Cache write error:', e);
             }
-        } catch (e) {
-            console.error('[TickerRenderer] Cache write error:', e);
         }
         
         return result;
@@ -635,7 +605,7 @@ class TickerRenderer {
         if (change === undefined || change === null || isNaN(change)) return '0.00';
         
         const now = Date.now();
-        const cached = this.parent.formatCache.changes.get(change);
+        const cached = this.parent.formatCache?.changes?.get(change);
         
         if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
             return cached.value;
@@ -643,12 +613,14 @@ class TickerRenderer {
         
         const result = (change > 0 ? '+' : '') + Number(change).toFixed(2);
         
-        this.parent.formatCache.changes.set(change, { value: result, timestamp: now });
-        
-        if (this.parent.formatCache.changes.size > 500) {
-            const oldestKey = this.parent.formatCache.changes.keys().next().value;
-            if (oldestKey !== undefined) {
-                this.parent.formatCache.changes.delete(oldestKey);
+        if (this.parent.formatCache?.changes) {
+            this.parent.formatCache.changes.set(change, { value: result, timestamp: now });
+            
+            if (this.parent.formatCache.changes.size > 500) {
+                const oldestKey = this.parent.formatCache.changes.keys().next().value;
+                if (oldestKey !== undefined) {
+                    this.parent.formatCache.changes.delete(oldestKey);
+                }
             }
         }
         
@@ -659,7 +631,7 @@ class TickerRenderer {
         if (!volume || volume === 0) return '0';
         
         const now = Date.now();
-        const cached = this.parent.formatCache.volumes.get(volume);
+        const cached = this.parent.formatCache?.volumes?.get(volume);
         
         if (cached && cached.value && (now - cached.timestamp) < this.parent.cacheMaxAge) {
             return cached.value;
@@ -674,12 +646,14 @@ class TickerRenderer {
         else if (absVolume < 1) result = volume.toFixed(4);
         else result = volume.toFixed(2);
         
-        this.parent.formatCache.volumes.set(volume, { value: result, timestamp: now });
-        
-        if (this.parent.formatCache.volumes.size > 500) {
-            const oldestKey = this.parent.formatCache.volumes.keys().next().value;
-            if (oldestKey !== undefined) {
-                this.parent.formatCache.volumes.delete(oldestKey);
+        if (this.parent.formatCache?.volumes) {
+            this.parent.formatCache.volumes.set(volume, { value: result, timestamp: now });
+            
+            if (this.parent.formatCache.volumes.size > 500) {
+                const oldestKey = this.parent.formatCache.volumes.keys().next().value;
+                if (oldestKey !== undefined) {
+                    this.parent.formatCache.volumes.delete(oldestKey);
+                }
             }
         }
         
@@ -714,9 +688,9 @@ class TickerRenderer {
             const now = Date.now();
             const maxAge = this.parent.cacheMaxAge;
             
-            this._cleanCacheMap(this.parent.formatCache.prices, now, maxAge);
-            this._cleanCacheMap(this.parent.formatCache.changes, now, maxAge);
-            this._cleanCacheMap(this.parent.formatCache.volumes, now, maxAge);
+            this._cleanCacheMap(this.parent.formatCache?.prices, now, maxAge);
+            this._cleanCacheMap(this.parent.formatCache?.changes, now, maxAge);
+            this._cleanCacheMap(this.parent.formatCache?.volumes, now, maxAge);
             
         }, 30000);
         
@@ -780,7 +754,6 @@ class TickerRenderer {
                         : 'fas fa-sort-down';
                 }
                 
-                // ✅ Применяем сортировку и перерендер
                 this.resortAndRender();
                 
             } catch (error) {
