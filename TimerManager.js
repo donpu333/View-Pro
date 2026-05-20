@@ -183,7 +183,6 @@ class TimerManager {
         chartManager.timerManager = this;
         setTimeout(() => this._createPrimitive(), 500);
     }
-
 _createPrimitive() {
     if (this._disabled) return;
     if (!this._chartManager || !this._chartManager.chart) return;
@@ -233,6 +232,41 @@ _createPrimitive() {
             console.warn('❌ TimerManager: ошибка создания примитива:', e);
         }
     }
+}
+
+// ✅ НОВЫЙ МЕТОД: ожидание загрузки данных
+_waitForDataAndUpdate(series) {
+    let attempts = 0;
+    const maxAttempts = 50; // 5 секунд максимум
+    
+    const checkData = () => {
+        attempts++;
+        
+        // Проверяем, что менеджер и примитив всё ещё существуют
+        if (!this._chartManager || !this._primitive) return;
+        
+        // Проверяем, что данные загружены
+        if (this._chartManager.chartData && this._chartManager.chartData.length > 0) {
+            // ✅ ДАННЫЕ ГОТОВЫ — ОБНОВЛЯЕМ ПОЗИЦИЮ
+            if (this._primitive.isEnabled()) {
+                this._primitive.requestRedraw();
+                console.log(`✅ TimerManager: данные загружены (попытка ${attempts}), позиция обновлена`);
+            }
+            return; // Выходим из цикла
+        }
+        
+        // Если превысили лимит попыток
+        if (attempts >= maxAttempts) {
+            console.warn('⚠️ TimerManager: не удалось дождаться данных');
+            return;
+        }
+        
+        // Пробуем ещё раз через 100мс
+        setTimeout(checkData, 100);
+    };
+    
+    // Запускаем первую проверку с небольшой задержкой
+    setTimeout(checkData, 50);
 }
 
 // ✅ НОВЫЙ МЕТОД: ожидание загрузки данных
