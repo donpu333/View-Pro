@@ -7,7 +7,6 @@ class TickerRenderer {
         this.displayedTickers = [];
         this.totalItems = 0;
         
-        // Инициализация всех таймеров/ID
         this._scrollHandler = null;
         this._renderScheduled = false;
         this._renderRafId = null;
@@ -17,94 +16,81 @@ class TickerRenderer {
         this._observer = null;
         this._isDestroyed = false;
         
-        // ✅ ИСПРАВЛЕНИЕ: Трекер версии данных для инвалидации кеша
-        this._dataVersion = 0;
+        // ✅ ЕДИНСТВЕННОЕ добавление: счетчик для сброса кеша
+        this._cacheBuster = 0;
         
         this._injectFlashCSS();
     }
     
-    /**
-     * ✅ НОВЫЙ МЕТОД: Инвалидация кеша при изменении данных
-     * Вызывать каждый раз, когда обновляются ticker'ы (новые цены/объемы)
-     */
-    invalidateCache() {
-        if (this._checkDestroyed('invalidateCache')) return;
-        
-        // Увеличиваем версию данных - это сделает кеш невалидным
-        this._dataVersion++;
-        
-        // Принудительно очищаем кеш фильтров
-        this.parent.filterCache = null;
-        
-        console.log(`[TickerRenderer] Cache invalidated (version: ${this._dataVersion})`);
-    }
-    
-    /**
-     * ✅ ИСПРАВЛЕННЫЙ МЕТОД: Фильтрация с учетом изменений данных
-     */
-    getFilteredTickers() {
-        if (this._checkDestroyed('getFilteredTickers')) return [];
-        
-        const flagPart = this.parent.state.activeTab === 'flags' 
-            ? this.parent.state.activeFlagTab 
-            : 'none';
-        
-        // ✅ Добавляем версию данных в ключ кеша
-        const cacheKey = `${this.parent.state.marketFilter}:${this.parent.state.exchangeFilter}:${this.parent.state.activeTab}:${flagPart}:${this.parent.state.sortBy}:${this.parent.state.sortDirection}:v${this._dataVersion}`;
-        
-        // Проверяем кеш (теперь с учетом версии данных)
-        if (this.parent.filterCache && 
-            this.parent.filterCache.key === cacheKey && 
-            Array.isArray(this.parent.filterCache.result)) {
-            
-            // ✅ ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: Проверяем возраст кеша (макс 2 секунды)
-            const cacheAge = Date.now() - this.parent.filterCache.timestamp;
-            if (cacheAge < 2000) { // Не старше 2 секунд
-                return this.parent.filterCache.result;
+    _injectFlashCSS() {
+        if (document.getElementById('tickerFlashCSS')) return;
+        const style = document.createElement('style');
+        style.id = 'tickerFlashCSS';
+        style.textContent = `
+            @keyframes flashGreen {
+                0% { background-color: rgba(38, 166, 91, 0.5); }
+                100% { background-color: transparent; }
             }
-            // Кеш слишком старый - игнорируем
-            console.log('[TickerRenderer] Cache too old, recalculating...');
-        }
-        
-        let filtered = [...this.parent.tickers];
-        
-        // Применяем фильтры
-        if (this.parent.state.marketFilter !== 'all') {
-            filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
-        }
-        
-        if (this.parent.state.exchangeFilter !== 'all') {
-            filtered = filtered.filter(t => t.exchange === this.parent.state.exchangeFilter);
-        }
-        
-        if (this.parent.state.activeTab === 'favorites') {
-            filtered = filtered.filter(t => this.parent.state.favorites.includes(t.symbol));
-        } else if (this.parent.state.activeTab === 'flags') {
-            filtered = filtered.filter(t => {
-                const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
-                if (this.parent.state.activeFlagTab) {
-                    return this.parent.state.flags[key] === this.parent.state.activeFlagTab;
-                } else {
-                    return this.parent.state.flags[key] !== undefined;
-                }
-            });
-        }
-        
-        const result = this.sortTickers(filtered);
-        
-        // Сохраняем в кеш с меткой времени
-        this.parent.filterCache = {
-            key: cacheKey,
-            result: result,
-            timestamp: Date.now()
-        };
-        
-        return result;
+            @keyframes flashRed {
+                0% { background-color: rgba(234, 57, 67, 0.5); }
+                100% { background-color: transparent; }
+            }
+            .ticker-price.flash-up {
+                animation: flashGreen 0.4s ease-out;
+                border-radius: 2px;
+            }
+            .ticker-price.flash-down {
+                animation: flashRed 0.4s ease-out;
+                border-radius: 2px;
+            }
+            .ticker-price.no-animation {
+                animation: none !important;
+            }
+        `;
+        document.head.appendChild(style);
     }
     
-    /**
-     * ✅ ИСПРАВЛЕННЫЙ МЕТОД: Обновление цен с авто-пересортировкой
-     */
+    destroy() {
+        this._isDestroyed = true;
+        
+        if (this._updatePriceRafId) {
+            cancelAnimationFrame(this._updatePriceRafId);
+            this._updatePriceRafId = null;
+        }
+        
+        if (this._renderRafId) {
+            cancelAnimationFrame(this._renderRafId);
+            this._renderRafId = null;
+        }
+        
+        if (this._cleanupInterval) {
+            clearInterval(this._cleanupInterval);
+            this._cleanupInterval = null;
+        }
+        
+        if (this._observer) {
+            this._observer.disconnect();
+            this._observer = null;
+        }
+        
+        const container = document.getElementById('tickerListContainer');
+        if (container && this._scrollHandler) {
+            container.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
+        }
+        
+        this.tickerElements.clear();
+        this.displayedTickers = [];
+    }
+    
+    _checkDestroyed(methodName) {
+        if (this._isDestroyed) {
+            console.warn(`[TickerRenderer] ${methodName} called on destroyed instance`);
+            return true;
+        }
+        return false;
+    }
+    
     updatePriceElements() {
         if (this._checkDestroyed('updatePriceElements')) return;
         if (this._updatePriceRafId) return;
@@ -114,57 +100,8 @@ class TickerRenderer {
             
             if (this._isDestroyed) return;
             
-            // Обновляем значения в DOM
             this._doUpdatePriceElements();
-            
-            // ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Проверяем, нужна ли пересортировка
-            this._checkAndResortIfNeeded();
         });
-    }
-    
-    /**
-     * ✅ НОВЫЙ МЕТОД: Проверка необходимости пересортировки
-     */
-    _checkAndResortIfNeeded() {
-        if (!this.displayedTickers || this.displayedTickers.length === 0) return;
-        
-        const sortBy = this.parent.state.sortBy;
-        
-        // Проверяем только если сортировка по динамическим полям (цена, изменение, объем, сделки)
-        const dynamicFields = ['price', 'change', 'volume', 'trades'];
-        if (!dynamicFields.includes(sortBy)) return;
-        
-        // Проверяем первые 10 элементов - если порядок нарушен, пересортируем
-        let needsResort = false;
-        const checkLimit = Math.min(10, this.displayedTickers.length);
-        
-        for (let i = 0; i < checkLimit - 1; i++) {
-            const a = this.displayedTickers[i];
-            const b = this.displayedTickers[i + 1];
-            
-            if (!a || !b) continue;
-            
-            const valA = a[sortBy] || 0;
-            const valB = b[sortBy] || 0;
-            
-            const direction = this.parent.state.sortDirection === 'asc' ? 1 : -1;
-            
-            // Если порядок нарушен (с учетом направления сортировки)
-            if ((valA - valB) * direction > 0.0001) { // Небольшой допуск для float
-                needsResort = true;
-                break;
-            }
-        }
-        
-        if (needsResort) {
-            console.log('[TickerRenderer] Sort order changed, re-rendering...');
-            
-            // Инвалидируем кеш
-            this.invalidateCache();
-            
-            // Перерендериваем список
-            this.renderTickerList();
-        }
     }
     
     _doUpdatePriceElements() {
@@ -243,10 +180,6 @@ class TickerRenderer {
                 domUpdates++;
             }
         }
-        
-        if (domUpdates > 0 && process.env.NODE_ENV === 'development') {
-            console.log(`[TickerRenderer] DOM updates this frame: ${domUpdates}`);
-        }
     }
     
     sortTickers(tickers) {
@@ -266,7 +199,7 @@ class TickerRenderer {
                     result = (a.change || 0) - (b.change || 0);
                     break;
                 case 'volume':
-                    result = (a.volume || 0) - (b.volume || 0); // ✅ Теперь работает корректно
+                    result = (a.volume || 0) - (b.volume || 0);
                     break;
                 case 'trades':
                     result = (a.trades || 0) - (b.trades || 0);
@@ -277,6 +210,59 @@ class TickerRenderer {
             
             return this.parent.state.sortDirection === 'asc' ? result : -result;
         });
+    }
+    
+    getFilteredTickers() {
+        if (this._checkDestroyed('getFilteredTickers')) return [];
+        
+        const flagPart = this.parent.state.activeTab === 'flags' 
+            ? this.parent.state.activeFlagTab 
+            : 'none';
+        
+        // ✅ ИСПРАВЛЕНИЕ: Добавляем cacheBuster чтобы кеш сбрасывался
+        const cacheKey = `${this.parent.state.marketFilter}:${this.parent.state.exchangeFilter}:${this.parent.state.activeTab}:${flagPart}:${this.parent.state.sortBy}:${this.parent.state.sortDirection}:${this._cacheBuster}`;
+        
+        // Проверяем кеш
+        if (this.parent.filterCache && 
+            this.parent.filterCache.key === cacheKey && 
+            Array.isArray(this.parent.filterCache.result)) {
+            return this.parent.filterCache.result;
+        }
+        
+        let filtered = [...this.parent.tickers];
+        
+        // Применяем фильтры
+        if (this.parent.state.marketFilter !== 'all') {
+            filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
+        }
+        
+        if (this.parent.state.exchangeFilter !== 'all') {
+            filtered = filtered.filter(t => t.exchange === this.parent.state.exchangeFilter);
+        }
+        
+        if (this.parent.state.activeTab === 'favorites') {
+            filtered = filtered.filter(t => this.parent.state.favorites.includes(t.symbol));
+        } else if (this.parent.state.activeTab === 'flags') {
+            filtered = filtered.filter(t => {
+                const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
+                if (this.parent.state.activeFlagTab) {
+                    return this.parent.state.flags[key] === this.parent.state.activeFlagTab;
+                } else {
+                    return this.parent.state.flags[key] !== undefined;
+                }
+            });
+        }
+        
+        const result = this.sortTickers(filtered);
+        
+        // Сохраняем в кеш
+        this.parent.filterCache = {
+            key: cacheKey,
+            result: result,
+            timestamp: Date.now()
+        };
+        
+        return result;
     }
     
     renderTickerList() {
@@ -290,7 +276,7 @@ class TickerRenderer {
         const container = document.getElementById('tickerListContainer');
         if (!container) return;
 
-        const displayed = this.getFilteredTickers(); // ✅ Теперь всегда актуальные данные
+        const displayed = this.getFilteredTickers();
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
 
@@ -640,8 +626,6 @@ class TickerRenderer {
             this._cleanCacheMap(this.parent.formatCache.volumes, now, maxAge);
             
         }, 30000);
-        
-        console.log('[TickerRenderer] Cache cleanup started');
     }
     
     _cleanCacheMap(cacheMap, now, maxAge) {
@@ -701,10 +685,10 @@ class TickerRenderer {
                         : 'fas fa-sort-down';
                 }
                 
-                // ✅ Инвалидация кеша при смене сортировки
-                this.invalidateCache();
-                
-                this.parent.renderTickerList();
+                // ✅ Сбрасываем кеш при смене сортировки
+                this._cacheBuster++;
+                this.parent.filterCache = null;
+                this.renderTickerList();
                 
             } catch (error) {
                 console.error('[TickerRenderer] Sort handler error:', error);
@@ -724,79 +708,6 @@ class TickerRenderer {
                 }
             }
         }
-    }
-    
-    destroy() {
-        this._isDestroyed = true;
-        
-        console.log('[TickerRenderer] Destroying instance...');
-        
-        if (this._updatePriceRafId) {
-            cancelAnimationFrame(this._updatePriceRafId);
-            this._updatePriceRafId = null;
-        }
-        
-        if (this._renderRafId) {
-            cancelAnimationFrame(this._renderRafId);
-            this._renderRafId = null;
-        }
-        
-        if (this._cleanupInterval) {
-            clearInterval(this._cleanupInterval);
-            this._cleanupInterval = null;
-        }
-        
-        if (this._observer) {
-            this._observer.disconnect();
-            this._observer = null;
-        }
-        
-        const container = document.getElementById('tickerListContainer');
-        if (container && this._scrollHandler) {
-            container.removeEventListener('scroll', this._scrollHandler);
-            this._scrollHandler = null;
-        }
-        
-        this.tickerElements.clear();
-        this.displayedTickers = [];
-        
-        console.log('[TickerRenderer] Instance destroyed successfully');
-    }
-    
-    _checkDestroyed(methodName) {
-        if (this._isDestroyed) {
-            console.warn(`[TickerRenderer] ${methodName} called on destroyed instance`);
-            return true;
-        }
-        return false;
-    }
-    
-    _injectFlashCSS() {
-        if (document.getElementById('tickerFlashCSS')) return;
-        const style = document.createElement('style');
-        style.id = 'tickerFlashCSS';
-        style.textContent = `
-            @keyframes flashGreen {
-                0% { background-color: rgba(38, 166, 91, 0.5); }
-                100% { background-color: transparent; }
-            }
-            @keyframes flashRed {
-                0% { background-color: rgba(234, 57, 67, 0.5); }
-                100% { background-color: transparent; }
-            }
-            .ticker-price.flash-up {
-                animation: flashGreen 0.4s ease-out;
-                border-radius: 2px;
-            }
-            .ticker-price.flash-down {
-                animation: flashRed 0.4s ease-out;
-                border-radius: 2px;
-            }
-            .ticker-price.no-animation {
-                animation: none !important;
-            }
-        `;
-        document.head.appendChild(style);
     }
 }
 
