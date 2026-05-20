@@ -7,31 +7,145 @@ class TickerRenderer {
         this.displayedTickers = [];
         this.totalItems = 0;
         
-        // Таймеры и флаги
+        // Таймеры/ID для корректной очистки
         this._scrollHandler = null;
         this._renderScheduled = false;
         this._renderRafId = null;
         this._firstRender = true;
         this._updatePriceRafId = null;
         this._cleanupInterval = null;
+        this._observer = null;
         this._isDestroyed = false;
+        this._needsResort = false; // Флаг для отсроченной пересортировки
         
-        // ✅ НОВЫЕ: Для авто-сортировки
-        this._resortTimeoutId = null;      // Timer для debounce сортировки
-        this._lastSortDataHash = '';       // Хэш последних данных для детекта изменений
-        this._resortEnabled = true;        // Флаг включения авто-сортировки
-        this._resortDelay = 500;           // Задержка в мс (debounce)
-        this._dataChanged = false;         // Флаг изменения данных
-        
-        // Инжектим CSS
+        // Инжектим CSS для мигания один раз
         this._injectFlashCSS();
     }
     
-    // ... [предыдущие методы без изменений: _injectFlashCSS, destroy, _checkDestroyed] ...
+    // CSS для мигания цены
+    _injectFlashCSS() {
+        if (document.getElementById('tickerFlashCSS')) return;
+        const style = document.createElement('style');
+        style.id = 'tickerFlashCSS';
+        style.textContent = `
+            @keyframes flashGreen {
+                0% { background-color: rgba(38, 166, 91, 0.5); }
+                100% { background-color: transparent; }
+            }
+            @keyframes flashRed {
+                0% { background-color: rgba(234, 57, 67, 0.5); }
+                100% { background-color: transparent; }
+            }
+            .ticker-price.flash-up {
+                animation: flashGreen 0.4s ease-out;
+                border-radius: 2px;
+            }
+            .ticker-price.flash-down {
+                animation: flashRed 0.4s ease-out;
+                border-radius: 2px;
+            }
+            .ticker-price.no-animation {
+                animation: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
     
-    /**
-     * ✅ ГЛАВНЫЙ ФИКС: Обновление цен + авто-пересортировка
-     */
+    // Уничтожение инстанса
+    destroy() {
+        this._isDestroyed = true;
+        
+        console.log('[TickerRenderer] Destroying instance...');
+        
+        if (this._updatePriceRafId) {
+            cancelAnimationFrame(this._updatePriceRafId);
+            this._updatePriceRafId = null;
+        }
+        
+        if (this._renderRafId) {
+            cancelAnimationFrame(this._renderRafId);
+            this._renderRafId = null;
+        }
+        
+        if (this._cleanupInterval) {
+            clearInterval(this._cleanupInterval);
+            this._cleanupInterval = null;
+        }
+        
+        if (this._observer) {
+            this._observer.disconnect();
+            this._observer = null;
+        }
+        
+        const container = document.getElementById('tickerListContainer');
+        if (container && this._scrollHandler) {
+            container.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
+        }
+        
+        this.tickerElements.clear();
+        this.displayedTickers = [];
+        
+        console.log('[TickerRenderer] Instance destroyed successfully');
+    }
+    
+    _checkDestroyed(methodName) {
+        if (this._isDestroyed) {
+            console.warn(`[TickerRenderer] ${methodName} called on destroyed instance`);
+            return true;
+        }
+        return false;
+    }
+    
+    // Применение текущей сортировки к массиву тикеров
+    applyCurrentSort() {
+        if (this._checkDestroyed('applyCurrentSort')) return;
+        if (!this.parent.tickers || this.parent.tickers.length === 0) return;
+        
+        const sortBy = this.parent.state.sortBy;
+        const sortDirection = this.parent.state.sortDirection;
+        
+        if (!sortBy || sortBy === 'default') return;
+        
+        this.parent.tickers.sort((a, b) => {
+            let result = 0;
+            
+            switch (sortBy) {
+                case 'name':
+                    result = (a.symbol || '').localeCompare(b.symbol || '');
+                    break;
+                case 'price':
+                    result = (a.price || 0) - (b.price || 0);
+                    break;
+                case 'change':
+                    result = (a.change || 0) - (b.change || 0);
+                    break;
+                case 'volume':
+                    result = (a.volume || 0) - (b.volume || 0);
+                    break;
+                case 'trades':
+                    result = (a.trades || 0) - (b.trades || 0);
+                    break;
+                default:
+                    result = 0;
+            }
+            
+            return sortDirection === 'asc' ? result : -result;
+        });
+        
+        // Инвалидируем кеш фильтрации
+        this.parent.filterCache = null;
+    }
+    
+    // Пересортировка с перерендером (для ручной сортировки)
+    resortAndRender() {
+        if (this._checkDestroyed('resortAndRender')) return;
+        
+        this.applyCurrentSort();
+        this.renderTickerList();
+    }
+    
+    // RAF-троттлинг — DOM обновляется строго 1 раз за кадр
     updatePriceElements() {
         if (this._checkDestroyed('updatePriceElements')) return;
         if (this._updatePriceRafId) return;
@@ -39,29 +153,24 @@ class TickerRenderer {
         this._updatePriceRafId = requestAnimationFrame(() => {
             this._updatePriceRafId = null;
             if (this._isDestroyed) return;
-            
-            // Обновляем DOM элементы
-            const dataChanged = this._doUpdatePriceElements();
-            
-            // ✅ Если данные изменились И включена авто-сортировка → планируем пересортировку
-            if (dataChanged && this._resortEnabled && this.parent.state.sortBy) {
-                this._scheduleResort();
-            }
+            this._doUpdatePriceElements();
         });
     }
     
     _doUpdatePriceElements() {
-        if (this._checkDestroyed('_doUpdatePriceElements')) return false;
+        if (this._checkDestroyed('_doUpdatePriceElements')) return;
         
         let domUpdates = 0;
-        let dataChanged = false; // ✅ Флаг: были ли изменения в данных
+        let needsResort = false;
         
+        // Итерируемся по ВСЕМ созданным элементам
         for (const [key, el] of this.tickerElements.entries()) {
             if (!el) continue;
             
             const isConnected = typeof el.isConnected !== 'undefined' 
                 ? el.isConnected 
                 : document.body.contains(el);
+            
             if (!isConnected) continue;
             
             const ticker = this.parent.tickersMap.get(key);
@@ -77,8 +186,9 @@ class TickerRenderer {
             const newVolume = this.formatVolume(ticker.volume);
             const newTrades = this.formatTrades(ticker);
             
-            // ✅ Отслеживаем изменения
-            let itemChanged = false;
+            // Сохраняем старые значения для проверки изменений
+            const oldVolume = volumeEl ? volumeEl.textContent : null;
+            const oldPrice = priceEl ? priceEl.textContent : null;
             
             if (priceEl && priceEl.textContent !== newPrice) {
                 priceEl.textContent = newPrice;
@@ -86,117 +196,92 @@ class TickerRenderer {
                 const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
                 priceEl.className = `ticker-price ${colorClass}`;
                 
-                // Анимация мигания
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
-                    this._triggerFlashAnimation(priceEl, ticker);
+                    const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
+                    priceEl.classList.remove('flash-up', 'flash-down', 'no-animation');
+                    
+                    requestAnimationFrame(() => {
+                        if (!priceEl.isConnected) return;
+                        priceEl.classList.add('no-animation');
+                        priceEl.offsetHeight;
+                        priceEl.classList.remove('no-animation');
+                        priceEl.classList.add(flashClass);
+                        
+                        const onAnimEnd = () => {
+                            priceEl.removeEventListener('animationend', onAnimEnd);
+                            priceEl.classList.remove(flashClass);
+                        };
+                        priceEl.addEventListener('animationend', onAnimEnd, { once: true });
+                    });
+                    
                     ticker.prevPrice = ticker.price;
                 }
-                
                 domUpdates++;
-                itemChanged = true;
             }
             
             if (changeEl && changeEl.textContent !== newChange) {
                 changeEl.textContent = newChange;
                 changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                 domUpdates++;
-                itemChanged = true;
             }
             
+            // ✅ Если изменился объем, цена или количество сделок - нужна пересортировка
             if (volumeEl && volumeEl.textContent !== newVolume) {
                 volumeEl.textContent = newVolume;
                 domUpdates++;
-                itemChanged = true;
+                
+                // Если сортировка по объему - помечаем необходимость пересортировки
+                if (this.parent.state.sortBy === 'volume') {
+                    needsResort = true;
+                }
             }
             
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
                 domUpdates++;
-                itemChanged = true;
+                
+                if (this.parent.state.sortBy === 'trades') {
+                    needsResort = true;
+                }
             }
             
-            if (itemChanged) {
-                dataChanged = true;
+            // Если изменилась цена и сортировка по цене
+            if (oldPrice !== newPrice && this.parent.state.sortBy === 'price') {
+                needsResort = true;
+            }
+            
+            // Если изменилось изменение и сортировка по изменению
+            if (changeEl && this.parent.state.sortBy === 'change') {
+                needsResort = true;
             }
         }
         
-        return dataChanged; // ✅ Возвращаем факт изменений
-    }
-    
-    /**
-     * ✅ НОВЫЙ: Планирует пересортировку с debounce
-     */
-    _scheduleResort() {
-        // Очищаем предыдущий таймер
-        if (this._resortTimeoutId) {
-            clearTimeout(this._resortTimeoutId);
+        // ✅ Применяем пересортировку если нужно
+        if (needsResort) {
+            console.log('[TickerRenderer] Data changed, reapplying sort...');
+            this.applyCurrentSort();
+            
+            // Обновляем отображаемые тикеры и позиции
+            this.displayedTickers = this.getFilteredTickers();
+            this.totalItems = this.displayedTickers.length;
+            
+            // Обновляем высоту спейсера
+            const container = document.getElementById('tickerListContainer');
+            if (container) {
+                const spacer = container.querySelector('.ticker-spacer');
+                if (spacer) {
+                    spacer.style.height = `${this.totalItems * this.rowHeight}px`;
+                }
+            }
+            
+            // Перерендериваем видимые элементы с новыми позициями
+            this.renderVisibleTickers();
         }
         
-        // Планируем новую сортировку через _resortDelay мс
-        this._resortTimeoutId = setTimeout(() => {
-            this._resortTimeoutId = null;
-            
-            if (this._isDestroyed || !this._resortEnabled) return;
-            
-            console.log(`[TickerRenderer] Auto-resorting by: ${this.parent.state.sortBy}`);
-            
-            // Инвалидируем кеш фильтров
-            this.parent.filterCache = null;
-            
-            // Полный рендер с новой сортировкой
-            this.renderTickerList();
-            
-        }, this._resortDelay);
-    }
-    
-    /**
-     * ✅ НОВЫЙ: Принудительная немедленная сортировка (для кнопок)
-     */
-    forceResortNow() {
-        if (this._resortTimeoutId) {
-            clearTimeout(this._resortTimeoutId);
-            this._resortTimeoutId = null;
+        if (domUpdates > 0 && process.env.NODE_ENV === 'development') {
+            console.log(`[TickerRenderer] DOM updates this frame: ${domUpdates}`);
         }
-        
-        this.parent.filterCache = null;
-        this.renderTickerList();
     }
-    
-    /**
-     * ✅ НОВЫЕ: Управление авто-сортировкой
-     */
-    enableAutoResort(enabled = true) {
-        this._resortEnabled = enabled;
-        console.log(`[TickerRenderer] Auto-resort: ${enabled ? 'ENABLED' : 'DISABLED'}`);
-    }
-    
-    setResortDelay(delayMs) {
-        this._resortDelay = Math.max(100, Math.min(2000, delayMs)); // Clamp 100-2000ms
-    }
-    
-    /**
-     * ✅ Улучшенная анимация мигания (вынесена в отдельный метод)
-     */
-    _triggerFlashAnimation(priceEl, ticker) {
-        const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-        
-        priceEl.classList.remove('flash-up', 'flash-down');
-        
-        requestAnimationFrame(() => {
-            if (!priceEl.isConnected) return;
-            
-            priceEl.classList.add(flashClass);
-            
-            const onAnimEnd = () => {
-                priceEl.removeEventListener('animationend', onAnimEnd);
-                priceEl.classList.remove(flashClass);
-            };
-            
-            priceEl.addEventListener('animationend', onAnimEnd, { once: true });
-        });
-    }
-    
-    // ... [sortTickers, getFilteredTickers - без изменений] ...
     
     sortTickers(tickers) {
         if (this._checkDestroyed('sortTickers')) return [];
@@ -206,7 +291,7 @@ class TickerRenderer {
             
             switch (this.parent.state.sortBy) {
                 case 'name':
-                    result = a.symbol.localeCompare(b.symbol);
+                    result = (a.symbol || '').localeCompare(b.symbol || '');
                     break;
                 case 'price':
                     result = (a.price || 0) - (b.price || 0);
@@ -245,6 +330,7 @@ class TickerRenderer {
         
         let filtered = [...this.parent.tickers];
         
+        // Применяем фильтры
         if (this.parent.state.marketFilter !== 'all') {
             filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
         }
@@ -292,12 +378,6 @@ class TickerRenderer {
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
 
-        // ✅ Отменяем ожидающую авто-сортировку (мы уже сортируем вручную)
-        if (this._resortTimeoutId) {
-            clearTimeout(this._resortTimeoutId);
-            this._resortTimeoutId = null;
-        }
-
         if (this._scrollHandler) {
             container.removeEventListener('scroll', this._scrollHandler);
             this._scrollHandler = null;
@@ -313,7 +393,7 @@ class TickerRenderer {
 
         if (this.totalItems === 0) {
             container.style.height = 'auto';
-            container.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:#666;">Нет данных</div>';
+            container.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:#666;">Нет данных для отображения</div>';
             return;
         }
 
@@ -349,8 +429,6 @@ class TickerRenderer {
         
         container.addEventListener('scroll', this._scrollHandler, { passive: true });
     }
-    
-    // ... [renderVisibleTickers, createTickerElement - без изменений] ...
     
     renderVisibleTickers() {
         if (this._checkDestroyed('renderVisibleTickers')) return;
@@ -484,8 +562,6 @@ class TickerRenderer {
 
         return div;
     }
-    
-    // ... [formatPrice, _formatAsIs, formatChange, formatVolume, formatTrades - без изменений] ...
     
     formatPrice(price) {
         if (!price || price <= 0) return '...';
@@ -623,7 +699,10 @@ class TickerRenderer {
     }
     
     startCacheCleanup() {
-        if (this._cleanupInterval) return;
+        if (this._cleanupInterval) {
+            console.warn('[TickerRenderer] Cleanup interval already running');
+            return;
+        }
         
         this._cleanupInterval = setInterval(() => {
             if (this._isDestroyed) {
@@ -640,6 +719,8 @@ class TickerRenderer {
             this._cleanCacheMap(this.parent.formatCache.volumes, now, maxAge);
             
         }, 30000);
+        
+        console.log('[TickerRenderer] Cache cleanup started');
     }
     
     _cleanCacheMap(cacheMap, now, maxAge) {
@@ -664,7 +745,7 @@ class TickerRenderer {
         const savedSortBy = localStorage.getItem('tickerSortBy');
         const savedSortDir = localStorage.getItem('tickerSortDir');
         
-        if (savedSortBy) {
+        if (savedSortBy && savedSortBy !== 'default') {
             this.parent.state.sortBy = savedSortBy;
             this.parent.state.sortDirection = savedSortDir || 'desc';
         }
@@ -699,8 +780,8 @@ class TickerRenderer {
                         : 'fas fa-sort-down';
                 }
                 
-                // ✅ Принудительная немедленная сортировка при клике
-                this.forceResortNow();
+                // ✅ Применяем сортировку и перерендер
+                this.resortAndRender();
                 
             } catch (error) {
                 console.error('[TickerRenderer] Sort handler error:', error);
@@ -711,7 +792,7 @@ class TickerRenderer {
             header.addEventListener('click', this.parent._sortClickHandler);
         });
         
-        if (savedSortBy) {
+        if (savedSortBy && savedSortBy !== 'default') {
             const activeHeader = document.querySelector(`.table-header span[data-sort="${savedSortBy}"]`);
             if (activeHeader) {
                 const icon = activeHeader.querySelector('i');
@@ -721,53 +802,8 @@ class TickerRenderer {
             }
         }
     }
-    
-    destroy() {
-        this._isDestroyed = true;
-        
-        console.log('[TickerRenderer] Destroying instance...');
-        
-        // Очистка всех таймеров
-        if (this._updatePriceRafId) {
-            cancelAnimationFrame(this._updatePriceRafId);
-            this._updatePriceRafId = null;
-        }
-        
-        if (this._renderRafId) {
-            cancelAnimationFrame(this._renderRafId);
-            this._renderRafId = null;
-        }
-        
-        if (this._cleanupInterval) {
-            clearInterval(this._cleanupInterval);
-            this._cleanupInterval = null;
-        }
-        
-        // ✅ Очистка таймера авто-сортировки
-        if (this._resortTimeoutId) {
-            clearTimeout(this._resortTimeoutId);
-            this._resortTimeoutId = null;
-        }
-        
-        if (this._observer) {
-            this._observer.disconnect();
-            this._observer = null;
-        }
-        
-        const container = document.getElementById('tickerListContainer');
-        if (container && this._scrollHandler) {
-            container.removeEventListener('scroll', this._scrollHandler);
-            this._scrollHandler = null;
-        }
-        
-        this.tickerElements.clear();
-        this.displayedTickers = [];
-        
-        console.log('[TickerRenderer] Instance destroyed successfully');
-    }
 }
 
-// Экспорт
 if (typeof window !== 'undefined') {
     window.TickerRenderer = TickerRenderer;
 }
