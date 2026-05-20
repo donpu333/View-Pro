@@ -375,33 +375,50 @@ _waitForDataAndUpdate(series) {
         }
     }
     
-    reattach() {
-        if (this._disabled) return;
-        if (!this._primitive) {
-            this._createPrimitive();
-            return;
-        }
-        
-        const wasEnabled = this._primitive.isEnabled();
-        
+   reattach() {
+    if (this._disabled) return;
+    
+    // Если примитива вообще нет — создаём (там уже будет ожидание данных)
+    if (!this._primitive) {
+        this._createPrimitive();
+        return;
+    }
+    
+    const wasEnabled = this._primitive.isEnabled();
+    
+    // Отсоединяем от старой серии
+    try {
+        const oldSeries = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.barSeries 
+            : this._chartManager.candleSeries;
+        if (oldSeries) oldSeries.detachPrimitive(this._primitive);
+    } catch (e) {}
+    
+    // Присоединяем к новой серии
+    const newSeries = this._chartManager.currentChartType === 'candle' 
+        ? this._chartManager.candleSeries 
+        : this._chartManager.barSeries;
+    
+    if (newSeries) {
         try {
-            const oldSeries = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.barSeries 
-                : this._chartManager.candleSeries;
-            if (oldSeries) oldSeries.detachPrimitive(this._primitive);
-        } catch (e) {}
-        
-        const newSeries = this._chartManager.currentChartType === 'candle' 
-            ? this._chartManager.candleSeries 
-            : this._chartManager.barSeries;
-        
-        if (newSeries) {
-            try {
-                newSeries.attachPrimitive(this._primitive);
-                if (wasEnabled) this._primitive.setEnabled(true);
-            } catch (e) {}
+            newSeries.attachPrimitive(this._primitive);
+            
+            if (wasEnabled) {
+                this._primitive.setEnabled(true);
+                
+                // ✅ Даём команду на перерисовку — координата цены готова
+                // Небольшая задержка, чтобы series точно инициализировал примитив
+                setTimeout(() => {
+                    if (this._primitive && this._primitive.isEnabled()) {
+                        this._primitive.requestRedraw();
+                    }
+                }, 10);
+            }
+        } catch (e) {
+            console.warn('❌ TimerManager: ошибка в reattach:', e);
         }
     }
+}
 
     destroy() {
         this.stop();
