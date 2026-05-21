@@ -113,52 +113,35 @@ class TickerRenderer {
         });
     }
     
-    getFilteredTickers() {
-        const flagPart = this.parent.state.activeTab === 'flags' 
-            ? this.parent.state.activeFlagTab 
-            : 'none';
-        
-        const cacheKey = `${this.parent.state.marketFilter}:${this.parent.state.exchangeFilter}:${this.parent.state.activeTab}:${flagPart}:${this.parent.state.sortBy}:${this.parent.state.sortDirection}`;
-        
-        if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
-            return this.parent.filterCache.result;
-        }
-        
-        let filtered = [...this.parent.tickers];
-        
-        if (this.parent.state.marketFilter !== 'all') {
-            filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
-        }
-        if (this.parent.state.exchangeFilter !== 'all') {
-            filtered = filtered.filter(t => t.exchange === this.parent.state.exchangeFilter);
-        }
-        
-        if (this.parent.state.activeTab === 'favorites') {
-            filtered = filtered.filter(t => this.parent.state.favorites.includes(t.symbol));
-        } 
-        else if (this.parent.state.activeTab === 'flags') {
-            if (this.parent.state.activeFlagTab) {
-                filtered = filtered.filter(t => {
-                    const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
-                    return this.parent.state.flags[key] === this.parent.state.activeFlagTab;
-                });
-            } else {
-                filtered = filtered.filter(t => {
-                    const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
-                    return this.parent.state.flags[key] !== undefined;
-                });
-            }
-        }
-        
-        const result = this.sortTickers(filtered);
-        
-        this.parent.filterCache = {
-            key: cacheKey,
-            result: result
-        };
-        
-        return result;
+   getFilteredTickers() {
+    let filtered = [...this.parent.tickers];
+    
+    if (this.parent.state.marketFilter !== 'all') {
+        filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
     }
+    if (this.parent.state.exchangeFilter !== 'all') {
+        filtered = filtered.filter(t => t.exchange === this.parent.state.exchangeFilter);
+    }
+    
+    if (this.parent.state.activeTab === 'favorites') {
+        filtered = filtered.filter(t => this.parent.state.favorites.includes(t.symbol));
+    } 
+    else if (this.parent.state.activeTab === 'flags') {
+        if (this.parent.state.activeFlagTab) {
+            filtered = filtered.filter(t => {
+                const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
+                return this.parent.state.flags[key] === this.parent.state.activeFlagTab;
+            });
+        } else {
+            filtered = filtered.filter(t => {
+                const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
+                return this.parent.state.flags[key] !== undefined;
+            });
+        }
+    }
+    
+    return this.sortTickers(filtered);
+}
     
     renderTickerList() {
         const flagTabs = document.getElementById('flagTabs');
