@@ -4442,3 +4442,42 @@ input:checked + .slider:before {
     color: #4285F4 !important;
     font-weight: bold;
 }
+/* ✅ Активный алерт (лёгкий фон) */
+.alert-list-item.is-active {
+    background: rgba(0, 255, 100, 0.05) !important;
+}
+
+/* Информация об удалении */
+.expire-info.soon {
+    color: #FF6B6B;
+    font-weight: bold;
+    animation: blink-red 1s infinite;
+}
+
+@keyframes blink-red {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Сработавший алерт - shimmer эффект */
+.alert-list-item.triggered {
+    position: relative;
+    overflow: hidden;
+}
+
+.alert-list-item.triggered::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 200, 0, 0.08), transparent);
+    animation: shimmer 3s infinite;
+    pointer-events: none;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
