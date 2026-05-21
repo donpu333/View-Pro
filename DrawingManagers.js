@@ -4794,7 +4794,7 @@ checkTimerAlerts() {
         const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
         
         // СРАБАТЫВАЕТ ПРИ ПЕРВОМ ЖЕ ПЕРЕСЕЧЕНИИ
-        if ((crossedAbove || crossedBelow)) {
+    if ((crossedAbove || crossedBelow) && !alert.active) {
             console.log(`🔔 Алерт сработал! ${symbol} ${lastPrice} -> ${price} (цель: ${alertPrice})`);
             
             // Увеличиваем счётчик
