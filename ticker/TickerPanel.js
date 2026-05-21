@@ -98,12 +98,11 @@ class TickerPanel {
         // Восстанавливаем сохранённую сортировку
 const savedSortBy = localStorage.getItem('tickerSortBy');
 const savedSortDir = localStorage.getItem('tickerSortDir');
-if (savedSortBy) {
-    this.state.sortBy = savedSortBy;
-    this.state.sortDirection = savedSortDir || 'desc';
-}
-        this.init();
-    }
+this.state.sortBy = savedSortBy || 'volume';
+this.state.sortDirection = savedSortDir || 'desc';
+
+this.init();
+      }  
     
    async init() {
     console.log('📋 TickerPanel: быстрая инициализация');
