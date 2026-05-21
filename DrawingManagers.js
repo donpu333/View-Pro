@@ -4729,8 +4729,7 @@ checkTimerAlerts() {
     this._alerts.forEach(item => {
         const alert = item.alert;
         
-        if (alert.triggered) return;
-        if (!alert.active) return;
+        if (alert.triggered) return; // Уже сработал
         
         if (alert.canTriggerAgain() && alert.shouldTriggerByTimer(now)) {
             const currentPrice = this._lastPrices.get(alert.symbol);
@@ -4741,33 +4740,27 @@ checkTimerAlerts() {
                 alert.triggerCount++;
                 alert.lastTriggerTime = now;
                 
-                // Обновляем UI
+                // Проверяем лимит
+                if (!alert.canTriggerAgain()) {
+                    alert.triggered = true;
+                    alert.active = false;
+                    
+                    if (item.primitive && item.series) {
+                        try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+                        item.primitive = null;
+                        item.series = null;
+                    }
+                }
+                
                 this._updateAlertsListUI();
                 this._requestRedraw();
                 this._saveAlerts();
                 
-                // Запускаем бесконечное зелёное мерцание
-                this._highlightActiveAlert(alert.id);
+                // Постоянная подсветка
+                this._highlightActiveAlert(alert.id, true);
                 
                 this._showAlertNotification(alert, currentPrice, true);
                 this._sendTelegramAlert(alert, currentPrice, true);
-                
-                if (!alert.canTriggerAgain()) {
-                    // Останавливаем мерцание
-                    this._stopHighlight(alert.id);
-                    
-                    alert.triggered = true;
-                    
-                    if (item.primitive) {
-                        try {
-                            item.series.detachPrimitive(item.primitive);
-                            item.primitive = null;
-                            item.series = null;
-                        } catch (e) {}
-                    }
-                    
-                    this._updateAlertsListUI();
-                }
             }
         }
     });
@@ -4780,11 +4773,12 @@ checkTimerAlerts() {
     
     this._lastPrices.set(symbol, price);
     
+    // Первое получение цены - просто сохраняем
     if (lastPrice === undefined) return;
     
     const symbolAlerts = this._alerts.filter(item => 
         item.alert.symbol === symbol && 
-        !item.alert.triggered
+        !item.alert.triggered  // ← ТОЛЬКО НЕ СРАБОТАВШИЕ
     );
     
     if (symbolAlerts.length === 0) return;
@@ -4792,44 +4786,47 @@ checkTimerAlerts() {
     symbolAlerts.forEach(item => {
         const alert = item.alert;
         
+        // Пропускаем слишком новые алерты (2 секунды)
         if (now - alert.createdAt < 2000) return;
         
         const alertPrice = alert.price;
         const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
         const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
         
-        if ((crossedAbove || crossedBelow) && !alert.active) {
+        // СРАБАТЫВАЕТ ПРИ ПЕРВОМ ЖЕ ПЕРЕСЕЧЕНИИ
+        if ((crossedAbove || crossedBelow)) {
             console.log(`🔔 Алерт сработал! ${symbol} ${lastPrice} -> ${price} (цель: ${alertPrice})`);
             
-            alert.active = true;
+            // Увеличиваем счётчик
+            alert.triggerCount++;
             alert.lastTriggerTime = now;
-            alert.triggerCount = 1;
+            
+            // ✅ ПОМЕЧАЕМ КАК СРАБОТАВШИЙ (если лимит достигнут)
+            if (!alert.canTriggerAgain()) {
+                alert.triggered = true;
+                alert.active = false;
+                
+                // Открепляем примитив
+                if (item.primitive && item.series) {
+                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+                    item.primitive = null;
+                    item.series = null;
+                }
+            } else {
+                // Если есть повторения - оставляем активным, но помечаем что сработал
+                alert.active = true;
+            }
             
             // Обновляем UI
             this._updateAlertsListUI();
             this._requestRedraw();
             this._saveAlerts();
             
-            // ✅ Запускаем бесконечное зелёное мерцание
-            this._highlightActiveAlert(alert.id);
+            // ✅ ПОСТОЯННАЯ ПОДСВЕТКА (бесконечная)
+            this._highlightActiveAlert(alert.id, true); // true = бесконечная
             
-            this._showAlertNotification(alert, price);
-            this._sendTelegramAlert(alert, price);
-            
-            if (!alert.canTriggerAgain()) {
-                // Останавливаем мерцание, если алерт больше не активен
-                this._stopHighlight(alert.id);
-                
-                alert.triggered = true;
-                if (item.primitive && item.series) {
-                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                    item.primitive = null;
-                    item.series = null;
-                }
-                
-                // Обновляем UI ещё раз (алерт переместится в "Сработавшие")
-                this._updateAlertsListUI();
-            }
+            this._showAlertNotification(alert, price, alert.triggerCount > 1);
+            this._sendTelegramAlert(alert, price, alert.triggerCount > 1);
         }
     });
 }
@@ -5329,53 +5326,47 @@ _applyRedrawIfNeeded() {
  * 
  * @param {string} alertId - ID алерта, который нужно подсветить
  */
-_highlightActiveAlert(alertId) {
-    const content = document.getElementById('alertHistoryContent');
-    if (!content) {
-        console.warn('⚠️ Контейнер alertHistoryContent не найден');
-        return;
-    }
-    
-    // Ищем элемент алерта в DOM
-    const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-    if (!item) {
-        console.warn(`⚠️ Элемент алерта ${alertId} не найден в DOM`);
-        return;
-    }
-    
-    // Удаляем класс, если он уже есть (для повторных срабатываний)
-    item.classList.remove('alert-triggering');
-    
-    // Принудительный reflow для перезапуска анимации
-    void item.offsetWidth;
-    
-    // Добавляем класс для запуска анимации
-    item.classList.add('alert-triggering');
-    
-    console.log(`✨ Подсветка алерта ${alertId} активирована`);
-    
-    // Убираем подсветку через 2 секунды (4 цикла анимации по 0.5с)
+_highlightActiveAlert(alertId, isInfinite = true) {
     setTimeout(() => {
-        item.classList.remove('alert-triggering');
-        console.log(`✨ Подсветка алерта ${alertId} завершена`);
-    }, 2000);
-    
-    // Прокручиваем список к этому элементу, если он не виден
-    const container = item.closest('.alert-list');
-    if (container) {
-        const containerRect = container.getBoundingClientRect();
-        const itemRect = item.getBoundingClientRect();
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
         
-        // Проверяем, виден ли элемент
-        if (itemRect.top < containerRect.top || itemRect.bottom > containerRect.bottom) {
-            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const allItems = content.querySelectorAll('.alert-list-item');
+        let targetItem = null;
+        
+        allItems.forEach(item => {
+            if (item.getAttribute('data-id') === alertId) {
+                targetItem = item;
+            }
+        });
+        
+        if (!targetItem) return;
+        
+        // Очищаем старые стили
+        targetItem.classList.remove('alert-active-highlight');
+        targetItem.style.backgroundColor = '';
+        targetItem.style.boxShadow = '';
+        targetItem.style.borderLeftColor = '';
+        
+        if (isInfinite) {
+            targetItem.classList.add('alert-active-highlight');
+            targetItem.style.backgroundColor = 'rgba(0, 255, 100, 0.15)';
+        } else {
+            targetItem.style.backgroundColor = 'rgba(0, 255, 100, 0.25)';
+            targetItem.style.boxShadow = 'inset 0 0 30px rgba(0, 255, 100, 0.4)';
+            targetItem.style.borderLeftColor = '#00FF00';
+            setTimeout(() => {
+                if (targetItem) {
+                    targetItem.style.backgroundColor = '';
+                    targetItem.style.boxShadow = '';
+                    targetItem.style.borderLeftColor = '';
+                }
+            }, 2000);
         }
-    }
+        
+        targetItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
 }
-/**
- * Удаляет сработавшие алерты, которые находятся в списке более 24 часов.
- * Вызывается автоматически каждые 5 минут.
- */
 _cleanupOldTriggeredAlerts() {
     const now = Date.now();
     const twentyFourHoursMs = 24 * 60 * 60 * 1000; // 24 часа в миллисекундах
@@ -5799,91 +5790,7 @@ async loadAlerts() {
     });
 }
 /**
- * Подсвечивает элемент алерта в списке "Активные" при срабатывании.
- */
-_highlightActiveAlert(alertId) {
-    setTimeout(() => {
-        const content = document.getElementById('alertHistoryContent');
-        if (!content) return;
-        
-        const allItems = content.querySelectorAll('.alert-list-item');
-        let targetItem = null;
-        
-        allItems.forEach(item => {
-            if (item.getAttribute('data-id') === alertId) {
-                targetItem = item;
-            }
-        });
-        
-        if (!targetItem) {
-            console.warn(`Не найден элемент с id: ${alertId}`);
-            return;
-        }
-        
-        const originalBg = targetItem.style.backgroundColor || '';
-        const originalBoxShadow = targetItem.style.boxShadow || '';
-        const originalBorderColor = targetItem.style.borderLeftColor || '';
-        const originalBorderWidth = targetItem.style.borderLeftWidth || '';
-        
-        // Флаг для отслеживания состояния подсветки
-        let isHighlighted = false;
-        
-        // Функция мерцания (зелёный цвет)
-        const toggleHighlight = () => {
-            if (!targetItem.isConnected) {
-                // Элемент удалён из DOM — очищаем интервал
-                if (targetItem._blinkInterval) {
-                    clearInterval(targetItem._blinkInterval);
-                }
-                return;
-            }
-            
-            isHighlighted = !isHighlighted;
-            
-            if (isHighlighted) {
-                // ВКЛЮЧИТЬ зелёную подсветку
-                targetItem.style.backgroundColor = 'rgba(0, 255, 100, 0.25)';
-                targetItem.style.boxShadow = 'inset 0 0 30px rgba(0, 255, 100, 0.4), 0 0 20px rgba(0, 255, 100, 0.6)';
-                targetItem.style.borderLeftColor = '#00FF00';
-                targetItem.style.borderLeftWidth = '6px';
-                targetItem.style.transition = 'all 0.3s ease';
-            } else {
-                // ВЫКЛЮЧИТЬ подсветку (возвращаем оригинал)
-                targetItem.style.backgroundColor = originalBg || 'transparent';
-                targetItem.style.boxShadow = originalBoxShadow || 'none';
-                targetItem.style.borderLeftColor = originalBorderColor || '#808080';
-                targetItem.style.borderLeftWidth = originalBorderWidth || '3px';
-                targetItem.style.transition = 'all 0.3s ease';
-            }
-        };
-        
-        // Запускаем первое мерцание сразу
-        toggleHighlight();
-        
-        // Бесконечное мерцание каждые 500мс
-        targetItem._blinkInterval = setInterval(toggleHighlight, 500);
-        
-        // Сохраняем функцию очистки в элементе
-        targetItem._stopBlink = () => {
-            if (targetItem._blinkInterval) {
-                clearInterval(targetItem._blinkInterval);
-                targetItem._blinkInterval = null;
-            }
-            // Возвращаем оригинальные стили
-            targetItem.style.backgroundColor = originalBg || '';
-            targetItem.style.boxShadow = originalBoxShadow || '';
-            targetItem.style.borderLeftColor = originalBorderColor || '';
-            targetItem.style.borderLeftWidth = originalBorderWidth || '';
-            targetItem.style.transition = 'all 0.3s ease';
-        };
-        
-        // Прокручиваем к элементу
-        targetItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 100);
-}
-
-/**
- * Останавливает мерцание алерта (вызывать при удалении или деактивации)
+ 
  */
 _stopHighlight(alertId) {
     const content = document.getElementById('alertHistoryContent');
