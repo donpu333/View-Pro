@@ -6,7 +6,7 @@ class TimerRenderer {
         this.enabled = true;
     }
 
-       draw(target) {
+      draw(target) {
     if (!this.enabled) return;
     
     target.useBitmapCoordinateSpace(scope => {
@@ -14,7 +14,7 @@ class TimerRenderer {
         const chartManager = this._timerManager._chartManager;
         if (!chartManager) return;
         
-        // ✅ Защита: ждём данные
+        // Защита: ждём данные
         if (!chartManager.chartData || chartManager.chartData.length === 0) return;
         
         const timerText = this._timerManager._timerElement?.textContent || '';
@@ -34,10 +34,9 @@ class TimerRenderer {
         const canvasWidth = scope.mediaSize.width * hpr;
         const rectX = canvasWidth - rectWidth - 5 * hpr;
         
-        // ✅ БЕРЁМ ЦЕНУ ТАК ЖЕ, КАК ЛИНИЯ ЦЕНЫ
+        // Берём цену
         let price = chartManager.currentRealPrice;
         if (!price || isNaN(price) || price <= 0) {
-            // Фолбэк: последняя цена из данных
             const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
             price = lastCandle ? lastCandle.close : null;
         }
@@ -50,17 +49,17 @@ class TimerRenderer {
         
         if (!activeSeries) return;
 
-        // ✅ ПОЛУЧАЕМ КООРДИНАТУ ТАК ЖЕ, КАК ЛИНИЯ ЦЕНЫ
+        // Получаем координату в ЛОГИЧЕСКИХ пикселях
         let rawYCoord = activeSeries.priceToCoordinate(price);
 
         if (rawYCoord === null || isNaN(rawYCoord)) return;
         
-        // ✅ ИСПОЛЬЗУЕМ ТУ ЖЕ ЛОГИКУ ЧТО И ЛИНИЯ ЦЕНЫ
-        // Линия цены не использует vpr для позиции — координата уже в логических пикселях
-        let rectY = rawYCoord - rectHeight / 2;
+        // ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: конвертируем логическую координату в битмап-координату
+        // Умножаем на vpr, так как мы в bitmap coordinate space
+        let rectY = rawYCoord * vpr - rectHeight / 2;
         
-        // ✅ Ограничиваем, чтобы таймер не уходил за пределы
-        const chartHeight = scope.mediaSize.height;
+        // Ограничиваем, чтобы таймер не уходил за пределы
+        const chartHeight = scope.mediaSize.height * vpr; // тоже в битмап-пикселях
         if (rectY < 0) rectY = 0;
         if (rectY + rectHeight > chartHeight) rectY = chartHeight - rectHeight;
         
