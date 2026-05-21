@@ -95,7 +95,7 @@ class TickerPanel {
         
         this.loadFromLocalStorage();
         window.tickerPanelInstance = this;
-        // Восстанавливаем сохранённую сортировку
+   // Восстанавливаем сохранённую сортировку (по умолчанию — volume desc)
 const savedSortBy = localStorage.getItem('tickerSortBy');
 const savedSortDir = localStorage.getItem('tickerSortDir');
 this.state.sortBy = savedSortBy || 'volume';
@@ -103,7 +103,6 @@ this.state.sortDirection = savedSortDir || 'desc';
 
 this.init();
       }  
-    
    async init() {
     console.log('📋 TickerPanel: быстрая инициализация');
     document.getElementById('tickerLoader').style.display = 'block';
@@ -440,7 +439,9 @@ startTickerPanelPriceEngine() {
             TickerPanel._restInProgress = false;
         }
         
-        console.log(`✅ REST завершён (${count} запросов)`);
+                console.log(`✅ REST завершён (${count} запросов)`);
+        
+        this.filterCache = null;  // ← И ВОТ ЭТО ДОБАВЬ
         
         if (!this._blockDOMUpdates) {
             this.renderTickerList();
@@ -567,7 +568,9 @@ startTickerPanelPriceEngine() {
 
         await this._processRestQueue();
         
-        console.log(`💰 Загружено ${this.tickersMap.size} тикеров с ценами!`);
+                console.log(`💰 Загружено ${this.tickersMap.size} тикеров с ценами!`);
+        
+        this.filterCache = null;  // ← ВОТ ЭТО ДОБАВЬ
         
         if (!this._blockDOMUpdates) {
             this.renderTickerList();
