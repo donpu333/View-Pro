@@ -4283,10 +4283,8 @@ class AlertLinePrimitive {
     
     requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
 }
-
 class AlertLineManager {
     constructor(chartManager) {
-        // ... ВЕСЬ СУЩЕСТВУЮЩИЙ КОД КОНСТРУКТОРА ОСТАЁТСЯ БЕЗ ИЗМЕНЕНИЙ ...
         this._pixelRatio = window.devicePixelRatio || 1;
         this._alerts = [];
         this._chartManager = chartManager;
@@ -4309,29 +4307,31 @@ class AlertLineManager {
         this._dragThreshold = 5;
         this._magnetEnabled = true;
         this._dblClickTimer = null;
-this._potentialDblClickTarget = null;
-this._dblClickTimeout = 350;
-this._lastClickTime = 0;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+        
         this._handleContextMenu = this._handleContextMenu.bind(this);
         this._setupEventListeners();
         this._setupHotkeys();
         this._autoLoadAlerts();
         this._setupSettingsListeners();
         this._needsRedraw = false;
+        
         // Проверка таймерных алертов каждую секунду
         setInterval(() => { this.checkTimerAlerts(); }, 1000);
         
-        // ✅ НОВОЕ: Очистка старых сработавших алертов каждые 5 минут
+        // Очистка старых сработавших алертов каждые 5 минут
         this._cleanupInterval = setInterval(() => { 
             this._cleanupOldTriggeredAlerts(); 
         }, 5 * 60 * 1000);
         
-        // ✅ НОВОЕ: Первая очистка через 10 секунд после создания
+        // Первая очистка через 10 секунд после создания
         setTimeout(() => { 
             this._cleanupOldTriggeredAlerts(); 
         }, 10000);
     }
-    // FIX: Универсальный метод перевода координат
+
     _toBitmapCoords(cssX, cssY) {
         return {
             x: cssX * this._pixelRatio,
@@ -4399,164 +4399,159 @@ this._lastClickTime = 0;
         this._subscribedSymbols.delete(symbol);
     }
 
- _setupHotkeys() {
-    document.addEventListener('keydown', (e) => {
-        // Горячая клавиша I — создание алерта
-        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            const container = this._chartManager.chartContainer;
-            const rect = container.getBoundingClientRect();
-            
-            // CSS-координаты курсора
-            const mouseX = this._lastMouseX !== undefined ? this._lastMouseX : rect.width / 2;
-            const mouseY = this._lastMouseY !== undefined ? this._lastMouseY : rect.height / 2;
-            
-            let price = this._chartManager.coordinateToPrice(mouseY);
-            // ✅ ИСПРАВЛЕНО: используем _getTimeFromCoordinate вместо coordinateToTime!
-            let time = this._getTimeFromCoordinate(mouseX);
-            let anchorCandle = null;
-            
-            if (price === null || time === null) {
-                const lastCandle = this._chartManager.getLastCandle();
-                if (lastCandle) { 
-                    price = lastCandle.close; 
-                    time = lastCandle.time; 
-                } else {
-                    return;
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const container = this._chartManager.chartContainer;
+                const rect = container.getBoundingClientRect();
+                
+                const mouseX = this._lastMouseX !== undefined ? this._lastMouseX : rect.width / 2;
+                const mouseY = this._lastMouseY !== undefined ? this._lastMouseY : rect.height / 2;
+                
+                let price = this._chartManager.coordinateToPrice(mouseY);
+                let time = this._getTimeFromCoordinate(mouseX);
+                let anchorCandle = null;
+                
+                if (price === null || time === null) {
+                    const lastCandle = this._chartManager.getLastCandle();
+                    if (lastCandle) { 
+                        price = lastCandle.close; 
+                        time = lastCandle.time; 
+                    } else {
+                        return;
+                    }
                 }
+                
+                if (this._magnetEnabled) {
+                    const snapped = this._snapToPrice(price, time);
+                    price = snapped.price;
+                    time = snapped.time;
+                    anchorCandle = snapped.anchorCandle;
+                }
+                
+                console.log('🔔 Создаём алерт:', {
+                    symbol: this._chartManager.currentSymbol,
+                    price: price,
+                    time: new Date(time * 1000).toLocaleString(),
+                    magnet: this._magnetEnabled
+                });
+                
+                this.createAlert(price, time, {
+                    color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
+                    lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
+                    lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
+                    opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
+                    showPrice: true,
+                    showBell: document.getElementById('alertShowBell')?.checked || true,
+                    repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
+                    repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
+                    anchorCandle: anchorCandle
+                });
             }
             
-            // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
-            if (this._magnetEnabled) {
-                const snapped = this._snapToPrice(price, time);
-                price = snapped.price;
-                time = snapped.time;
-                anchorCandle = snapped.anchorCandle;
+            if (e.key === 'Delete' && this._selectedAlert) {
+                e.preventDefault();
+                this.deleteAlert(this._selectedAlert.id);
+                this._selectedAlert = null;
             }
-            // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
-            
-            console.log('🔔 Создаём алерт:', {
-                symbol: this._chartManager.currentSymbol,
-                price: price,
-                time: new Date(time * 1000).toLocaleString(),
-                magnet: this._magnetEnabled
-            });
-            
-            this.createAlert(price, time, {
-                color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
-                lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
-                lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
-                opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
-                showPrice: true,
-                showBell: document.getElementById('alertShowBell')?.checked || true,
-                repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
-                repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
-                anchorCandle: anchorCandle
-            });
-        }
-        
-        // Delete — удаление выбранного алерта
-        if (e.key === 'Delete' && this._selectedAlert) {
-            e.preventDefault();
-            this.deleteAlert(this._selectedAlert.id);
-            this._selectedAlert = null;
-        }
-    });
-}
+        });
+    }
+
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
-       container.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
 
-    if (e.target.closest('#alertSettings') || 
-        e.target.closest('#trendSettings') || 
-        e.target.closest('#textSettings') ||
-        e.target.closest('#rulerSettingsPanel') ||
-        e.target.closest('#drawingSettings')) {
-        return;
-    }
-    const rect = container.getBoundingClientRect();
-    let x = e.clientX - rect.left;
-    let y = e.clientY - rect.top;
-    const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-    
-    const hit = this.hitTest(bmX, bmY);
-    if (hit) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const now = Date.now();
-        
-        // ДВОЙНОЙ КЛИК
-        if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
-            clearTimeout(this._dblClickTimer);
-            this._dblClickTimer = null;
-            this._potentialDblClickTarget = null;
-            this._lastClickTime = 0;
-            
-            hit.alert.showDragPoint = !hit.alert.showDragPoint;
-            this._requestRedraw();
-            return;
-        }
-        
-        // ОДИНОЧНЫЙ КЛИК
-        if (this._selectedAlert && this._selectedAlert !== hit.alert) {
-            this._selectedAlert.selected = false;
-            this._selectedAlert.showDragPoint = false;
-        }
-        hit.alert.selected = true;
-        this._selectedAlert = hit.alert;
-        
-        this._potentialDblClickTarget = hit.alert;
-        this._lastClickTime = now;
-        if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
-        this._dblClickTimer = setTimeout(() => {
-            this._dblClickTimer = null;
-            this._potentialDblClickTarget = null;
-        }, this._dblClickTimeout);
-        
-        if (hit.alert.showDragPoint) {
-            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
-            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-            if (alertX !== null && alertY !== null) {
-                hit.alert.dragPointX = alertX;
-                hit.alert.dragPointY = alertY;
+            if (e.target.closest('#alertSettings') || 
+                e.target.closest('#trendSettings') || 
+                e.target.closest('#textSettings') ||
+                e.target.closest('#rulerSettingsPanel') ||
+                e.target.closest('#drawingSettings')) {
+                return;
             }
-            this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
-        } else {
-            this._potentialDrag = null;
-        }
-        
-        this._requestRedraw();
-    } else {
-        const alertMenu = document.getElementById('alertContextMenu');
-        if (alertMenu && alertMenu.style.display === 'flex') {
-            const menuRect = alertMenu.getBoundingClientRect();
-            const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-            if (isClickInsideMenu) return;
-        }
-        if (this._selectedAlert) {
-            this._selectedAlert.selected = false;
-            this._selectedAlert.showDragPoint = false;
-            this._selectedAlert = null;
-        }
-        if (alertMenu) alertMenu.style.display = 'none';
-        this._requestRedraw();
-    }
-});
-              container.addEventListener('mousemove', (e) => {
+            
+            const rect = container.getBoundingClientRect();
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+            
+            const hit = this.hitTest(bmX, bmY);
+            if (hit) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const now = Date.now();
+                
+                // ДВОЙНОЙ КЛИК
+                if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
+                    clearTimeout(this._dblClickTimer);
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                    this._lastClickTime = 0;
+                    
+                    hit.alert.showDragPoint = !hit.alert.showDragPoint;
+                    this._requestRedraw();
+                    return;
+                }
+                
+                // ОДИНОЧНЫЙ КЛИК
+                if (this._selectedAlert && this._selectedAlert !== hit.alert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                }
+                hit.alert.selected = true;
+                this._selectedAlert = hit.alert;
+                
+                this._potentialDblClickTarget = hit.alert;
+                this._lastClickTime = now;
+                if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = setTimeout(() => {
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                }, this._dblClickTimeout);
+                
+                if (hit.alert.showDragPoint) {
+                    const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+                    const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+                    if (alertX !== null && alertY !== null) {
+                        hit.alert.dragPointX = alertX;
+                        hit.alert.dragPointY = alertY;
+                    }
+                    this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
+                } else {
+                    this._potentialDrag = null;
+                }
+                
+                this._requestRedraw();
+            } else {
+                const alertMenu = document.getElementById('alertContextMenu');
+                if (alertMenu && alertMenu.style.display === 'flex') {
+                    const menuRect = alertMenu.getBoundingClientRect();
+                    const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+                    if (isClickInsideMenu) return;
+                }
+                if (this._selectedAlert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                    this._selectedAlert = null;
+                }
+                if (alertMenu) alertMenu.style.display = 'none';
+                this._requestRedraw();
+            }
+        });
+
+        container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
             const cssX = e.clientX - rect.left;
             const cssY = e.clientY - rect.top;
             
-            // 1. Сохраняем CSS-координаты (нужны для горячей клавиши I)
             this._lastMouseX = cssX;
             this._lastMouseY = cssY;
 
-            // 2. Bitmap для логики перетаскивания и хиттеста
             const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
 
             if (this._potentialDrag && !this._isDragging) {
@@ -4573,11 +4568,11 @@ this._lastClickTime = 0;
                     container.style.cursor = 'grabbing';
                 }
             }
+            
             if (this._isDragging && this._dragAlert) {
                 e.preventDefault();
                 e.stopPropagation();
                 
-                // FIX: Переводим bitmap-дельту в CSS-дельту для корректного перетаскивания
                 const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
                 const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
                 
@@ -4610,6 +4605,7 @@ this._lastClickTime = 0;
                 }
             }
         });
+
         container.addEventListener('mouseup', (e) => {
             this._potentialDrag = null;
             if (this._isDragging) {
@@ -4643,8 +4639,6 @@ this._lastClickTime = 0;
         });
 
         container.addEventListener('contextmenu', this._handleContextMenu);
-
-       
     }
 
     _handleContextMenu(e) {
@@ -4723,113 +4717,163 @@ this._lastClickTime = 0;
     setMagnetEnabled(enabled) {
         this._magnetEnabled = enabled;
     }
-checkTimerAlerts() {
-    const now = Date.now();
+
+    // ============================================================
+    // ✅ ИСПРАВЛЕННАЯ ЛОГИКА АЛЕРТОВ
+    // ============================================================
     
-    this._alerts.forEach(item => {
-        const alert = item.alert;
+    /**
+     * Проверяет таймерные алерты каждую секунду.
+     * Если алерт активен (цена пересекла) и прошёл интервал — срабатывает!
+     */
+    checkTimerAlerts() {
+        const now = Date.now();
         
-        if (alert.triggered) return; // Уже сработал
-        
-        if (alert.canTriggerAgain() && alert.shouldTriggerByTimer(now)) {
-            const currentPrice = this._lastPrices.get(alert.symbol);
+        this._alerts.forEach(item => {
+            const alert = item.alert;
             
-            if (currentPrice !== undefined) {
-                console.log(`⏰ Таймерный алерт: ${alert.symbol} - срабатывание #${alert.triggerCount + 1}`);
+            // Пропускаем завершённые алерты
+            if (alert.triggered) return;
+            
+            // Алерт должен быть активирован (цена уже пересекла линию)
+            if (!alert.active) return;
+            
+            // Проверяем лимит повторов
+            if (!alert.canTriggerAgain()) return;
+            
+            // Проверяем интервал
+            if (!alert.shouldTriggerByTimer(now)) return;
+            
+            // ✅ СРАБАТЫВАНИЕ!
+            console.log(`⏰ Таймерный алерт сработал: ${alert.symbol} - повтор #${alert.triggerCount + 1}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}`);
+            
+            alert.triggerCount++;
+            alert.lastTriggerTime = now;
+            
+            // Сохраняем
+            this._saveAlerts();
+            
+            // БЕСКОНЕЧНАЯ подсветка во вкладке "Активные"
+            this._startInfiniteHighlight(alert.id);
+            
+            // Уведомления
+            this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
+            this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
+            
+            // Обновляем UI
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            
+            // Проверяем, исчерпан ли лимит
+            if (!alert.canTriggerAgain()) {
+                console.log(`✅ Алерт ${alert.id} завершил все повторы`);
                 
-                alert.triggerCount++;
+                // Останавливаем подсветку в "Активных"
+                this._stopHighlight(alert.id);
+                
+                // Переводим в сработавшие
+                alert.triggered = true;
+                
+                // Отсоединяем от графика
+                if (item.primitive && item.series) {
+                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+                    item.primitive = null;
+                    item.series = null;
+                }
+                
+                // Сохраняем и обновляем UI
+                this._saveAlerts();
+                this._updateAlertsListUI();
+                
+                // Подсвечиваем во вкладке "Сработавшие"
+                setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+            }
+        });
+    }
+
+    /**
+     * ✅ ИСПРАВЛЕНО: Обновление цены от WebSocket
+     * 
+     * ЛОГИКА:
+     * 1. Цена пересекла линию ВПЕРВЫЕ → активируем алерт (active=true), срабатываем сразу #1
+     * 2. Дальше срабатывает по ТАЙМЕРУ каждые N минут (checkTimerAlerts)
+     * 3. НЕ срабатывает при каждом новом пересечении!
+     */
+    updatePriceForSymbol(symbol, price, exchange = null) {
+        if (!symbol || !price || isNaN(price)) return;
+        
+        const now = Date.now();
+        const lastPrice = this._lastPrices.get(symbol);
+        
+        this._lastPrices.set(symbol, price);
+        
+        if (lastPrice === undefined) return;
+        
+        const symbolAlerts = this._alerts.filter(item => 
+            item.alert.symbol === symbol && 
+            !item.alert.triggered &&
+            !item.alert.active  // Только ещё НЕ активированные!
+        );
+        
+        if (symbolAlerts.length === 0) return;
+        
+        symbolAlerts.forEach(item => {
+            const alert = item.alert;
+            
+            // Защита от ложных срабатываний при создании
+            if (now - alert.createdAt < 2000) return;
+            
+            const alertPrice = alert.price;
+            const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
+            const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
+            
+            // ✅ Только ПЕРВОЕ пересечение активирует алерт!
+            if (crossedAbove || crossedBelow) {
+                const direction = crossedAbove ? '⬆️ ВВЕРХ' : '⬇️ ВНИЗ';
+                
+                console.log(`🔔 Цена ПЕРВЫЙ РАЗ пересекла! ${symbol}`);
+                console.log(`   ${lastPrice} -> ${price} (цель: ${alertPrice}) ${direction}`);
+                console.log(`   Запуск таймера: каждые ${alert.repeatInterval} мин, всего ${alert.repeatCount === Infinity ? '∞' : alert.repeatCount} раз`);
+                
+                // Активируем алерт
+                alert.active = true;
                 alert.lastTriggerTime = now;
+                alert.triggerCount = 1; // Первое срабатывание сразу!
                 
-                // Проверяем лимит
+                // Сохраняем
+                this._saveAlerts();
+                
+                // БЕСКОНЕЧНАЯ подсветка
+                this._startInfiniteHighlight(alert.id);
+                
+                // Уведомления (первое срабатывание)
+                this._showAlertNotification(alert, price, false);
+                this._sendTelegramAlert(alert, price, false);
+                
+                // Обновляем UI
+                this._updateAlertsListUI();
+                this._requestRedraw();
+                
+                // Если repeatCount = 1, то сразу завершаем
                 if (!alert.canTriggerAgain()) {
+                    console.log(`✅ Алерт ${alert.id} сработал 1 раз и завершён`);
+                    
+                    this._stopHighlight(alert.id);
                     alert.triggered = true;
-                    alert.active = false;
                     
                     if (item.primitive && item.series) {
                         try { item.series.detachPrimitive(item.primitive); } catch(e) {}
                         item.primitive = null;
                         item.series = null;
                     }
+                    
+                    this._saveAlerts();
+                    this._updateAlertsListUI();
+                    setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
                 }
-                
-                this._updateAlertsListUI();
-                this._requestRedraw();
-                this._saveAlerts();
-                
-                // Постоянная подсветка
-                this._highlightActiveAlert(alert.id, true);
-                
-                this._showAlertNotification(alert, currentPrice, true);
-                this._sendTelegramAlert(alert, currentPrice, true);
             }
-        }
-    });
-}
- updatePriceForSymbol(symbol, price, exchange = null) {
-    if (!symbol || !price || isNaN(price)) return;
-    
-    const now = Date.now();
-    const lastPrice = this._lastPrices.get(symbol);
-    
-    this._lastPrices.set(symbol, price);
-    
-    // Первое получение цены - просто сохраняем
-    if (lastPrice === undefined) return;
-    
-    const symbolAlerts = this._alerts.filter(item => 
-        item.alert.symbol === symbol && 
-        !item.alert.triggered  // ← ТОЛЬКО НЕ СРАБОТАВШИЕ
-    );
-    
-    if (symbolAlerts.length === 0) return;
-    
-    symbolAlerts.forEach(item => {
-        const alert = item.alert;
-        
-        // Пропускаем слишком новые алерты (2 секунды)
-        if (now - alert.createdAt < 2000) return;
-        
-        const alertPrice = alert.price;
-        const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
-        const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
-        
-        // СРАБАТЫВАЕТ ПРИ ПЕРВОМ ЖЕ ПЕРЕСЕЧЕНИИ
-    if ((crossedAbove || crossedBelow) && !alert.active) {
-            console.log(`🔔 Алерт сработал! ${symbol} ${lastPrice} -> ${price} (цель: ${alertPrice})`);
-            
-            // Увеличиваем счётчик
-            alert.triggerCount++;
-            alert.lastTriggerTime = now;
-            
-            // ✅ ПОМЕЧАЕМ КАК СРАБОТАВШИЙ (если лимит достигнут)
-            if (!alert.canTriggerAgain()) {
-                alert.triggered = true;
-                alert.active = false;
-                
-                // Открепляем примитив
-                if (item.primitive && item.series) {
-                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                    item.primitive = null;
-                    item.series = null;
-                }
-            } else {
-                // Если есть повторения - оставляем активным, но помечаем что сработал
-                alert.active = true;
-            }
-            
-            // Обновляем UI
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            this._saveAlerts();
-            
-            // ✅ ПОСТОЯННАЯ ПОДСВЕТКА (бесконечная)
-            this._highlightActiveAlert(alert.id, true); // true = бесконечная
-            
-            this._showAlertNotification(alert, price, alert.triggerCount > 1);
-            this._sendTelegramAlert(alert, price, alert.triggerCount > 1);
-        }
-    });
-}
+        });
+    }
 
     createAlert(price, time, options = {}) {
         const defaultVisibility = {
@@ -4876,36 +4920,37 @@ checkTimerAlerts() {
         return alert;
     }
 
-   deleteAlert(alertId) {
-    const index = this._alerts.findIndex(a => a.alert.id === alertId);
-    if (index !== -1) {
-        const { alert, primitive, series } = this._alerts[index];
-        const symbol = alert.symbol;
-        
-        // ✅ Останавливаем мерцание перед удалением
-        this._stopHighlight(alertId);
-        
-        window.db.delete('drawings', alertId).catch(e => console.warn(e));
-        
-        if (primitive && series) {
-            try { series.detachPrimitive(primitive); } catch (e) {}
+    deleteAlert(alertId) {
+        const index = this._alerts.findIndex(a => a.alert.id === alertId);
+        if (index !== -1) {
+            const { alert, primitive, series } = this._alerts[index];
+            const symbol = alert.symbol;
+            
+            // Останавливаем подсветку
+            this._stopHighlight(alertId);
+            
+            window.db.delete('drawings', alertId).catch(e => console.warn(e));
+            
+            if (primitive && series) {
+                try { series.detachPrimitive(primitive); } catch (e) {}
+            }
+            this._alerts.splice(index, 1);
+            
+            const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
+            if (!hasOtherAlerts) {
+                this._unsubscribeFromSymbol(symbol);
+            }
+            
+            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
+            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
         }
-        this._alerts.splice(index, 1);
-        
-        const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
-        if (!hasOtherAlerts) {
-            this._unsubscribeFromSymbol(symbol);
-        }
-        
-        if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
-        if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        this._requestRedraw();
-        return true;
+        return false;
     }
-    return false;
-}
+
     deleteAllAlerts() {
         for (const symbol of this._subscribedSymbols) {
             this._unsubscribeFromSymbol(symbol);
@@ -4928,96 +4973,90 @@ checkTimerAlerts() {
         this._requestRedraw();
     }
 
-  hitTest(x, y) {
-    // ✅ Приоритет: выбранный алерт проверяем первым
-    if (this._selectedAlert) {
-        const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
-        if (selItem && selItem.primitive?._paneView?._renderer) {
+    hitTest(x, y) {
+        if (this._selectedAlert) {
+            const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
+                } catch (e) {}
+            }
+        }
+        
+        let bestHit = null;
+        let bestDistance = Infinity;
+        
+        for (const item of this._alerts) {
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.alert === this._selectedAlert) continue;
+            
             try {
-                const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-              if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                
+                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
+                    bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                }
             } catch (e) {}
         }
-    }
-    
-    let bestHit = null;
-    let bestDistance = Infinity;
-    
-    for (const item of this._alerts) {
-        if (!item.primitive?._paneView?._renderer) continue;
-        if (item.alert === this._selectedAlert) continue;
         
-        try {
-            const hit = item.primitive._paneView._renderer.hitTest(x, y);
-            
-            if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
-                bestDistance = hit.distance;
-            }
-        } catch (e) {}
+        return bestHit;
     }
-    
-    return bestHit;
-}
+
     syncWithNewTimeframe() {
         // Ничего не делаем – updateAllViews сам всё обновит
     }
 
- _
-
-_handleChartClick(event) {
-    if (!this._isDrawingMode) return;
-    
-    const rect = this._chartManager.chartContainer.getBoundingClientRect();
-    
-    // CSS-координаты (НЕ bitmap!)
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    let price = this._chartManager.coordinateToPrice(y);
-    // ✅ ИСПРАВЛЕНО: используем _getTimeFromCoordinate!
-    let time = this._getTimeFromCoordinate(x);
-    let anchorCandle = null;
-    
-    if (price === null || time === null) {
-        const lastCandle = this._chartManager.getLastCandle();
-        if (lastCandle) {
-            price = lastCandle.close;
-            time = lastCandle.time;
-        } else {
-            return;
+    _handleChartClick(event) {
+        if (!this._isDrawingMode) return;
+        
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._getTimeFromCoordinate(x);
+        let anchorCandle = null;
+        
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle();
+            if (lastCandle) {
+                price = lastCandle.close;
+                time = lastCandle.time;
+            } else {
+                return;
+            }
         }
+        
+        if (this._magnetEnabled) {
+            const snapped = this._snapToPrice(price, time);
+            price = snapped.price;
+            time = snapped.time;
+            anchorCandle = snapped.anchorCandle;
+        }
+        
+        console.log('🔔 Создаём алерт кликом:', {
+            symbol: this._chartManager.currentSymbol,
+            price: price,
+            magnet: this._magnetEnabled
+        });
+        
+        this.createAlert(price, time, {
+            color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
+            lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
+            lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
+            opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
+            showPrice: true,
+            showBell: document.getElementById('alertShowBell')?.checked || true,
+            repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
+            repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
+            anchorCandle: anchorCandle
+        });
+        
+        this.setDrawingMode(false);
     }
-    
-    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
-    if (this._magnetEnabled) {
-        const snapped = this._snapToPrice(price, time);
-        price = snapped.price;
-        time = snapped.time;
-        anchorCandle = snapped.anchorCandle;
-    }
-    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
-    
-    console.log('🔔 Создаём алерт кликом:', {
-        symbol: this._chartManager.currentSymbol,
-        price: price,
-        magnet: this._magnetEnabled
-    });
-    
-    this.createAlert(price, time, {
-        color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
-        lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
-        lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
-        opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
-        showPrice: true,
-        showBell: document.getElementById('alertShowBell')?.checked || true,
-        repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
-        repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
-        anchorCandle: anchorCandle
-    });
-    
-    this.setDrawingMode(false);
-}
+
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
         
@@ -5074,139 +5113,120 @@ _handleChartClick(event) {
         };
     }
 
-    _findClosestCandleTime(time) {
-        if (!this._chartManager.chartData.length) return time;
+    _showSettings(alert) {
+        const settings = document.getElementById('alertSettings');
+        if (!settings) return;
         
-        const data = this._chartManager.chartData;
-        let closestCandle = data[0];
-        let minDiff = Math.abs(data[0].time - time);
+        document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
+        document.getElementById('alertHexInputInline').value = alert.options.color;
+        document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
+        document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
+        document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
+        document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
         
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closestCandle = data[i];
-            }
+        const bellCheckbox = document.getElementById('alertShowBell');
+        if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
+        
+        createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
+        
+        const priceInput = document.getElementById('alertSettingsPriceInput');
+        if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
+        
+        const repeatCountSelect = document.getElementById('alertRepeatCount');
+        if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
+        
+        const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
+        if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
+        
+        this._renderTimeframeCheckboxes(alert);
+        
+        settings.style.display = 'block';
+        settings.style.left = '50%';
+        settings.style.top = '50%';
+        settings.style.transform = 'translate(-50%, -50%)';
+        
+        settings.dataset.alertId = alert.id;
+        
+        const stylePanel = document.getElementById('alertStylePanel');
+        const repeatPanel = document.getElementById('alertRepeatPanel');
+        const visibilityPanel = document.getElementById('alertVisibilityPanel');
+        
+        stylePanel.classList.add('active');
+        repeatPanel.classList.remove('active');
+        visibilityPanel.classList.remove('active');
+        
+        document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
+            tab.classList.remove('active');
+            if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
+        });
+        
+        settings.onmousedown = (e) => e.stopPropagation();
+        
+        if (!document._alertSettingsCloseHandler) {
+            document._alertSettingsCloseHandler = (e) => {
+                if (!settings.contains(e.target) && settings.style.display === 'block') {
+                    settings.style.display = 'none';
+                }
+            };
+            document.addEventListener('mousedown', document._alertSettingsCloseHandler);
         }
-        
-        return closestCandle.time;
     }
-_showSettings(alert) {
-    const settings = document.getElementById('alertSettings');
-    if (!settings) return;
-    
-    document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
-    document.getElementById('alertHexInputInline').value = alert.options.color;
-    document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
-    document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
-    document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
-    document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
-    
-    const bellCheckbox = document.getElementById('alertShowBell');
-    if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
-    
-    // ✅ Вызов цветовой сетки
-    createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
-    
-    const priceInput = document.getElementById('alertSettingsPriceInput');
-    if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
-    
-    const repeatCountSelect = document.getElementById('alertRepeatCount');
-    if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
-    
-    const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
-    if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
-    
-    this._renderTimeframeCheckboxes(alert);
-    
-    settings.style.display = 'block';
-    settings.style.left = '50%';
-    settings.style.top = '50%';
-    settings.style.transform = 'translate(-50%, -50%)';
-    
-    settings.dataset.alertId = alert.id;
-    
-    const stylePanel = document.getElementById('alertStylePanel');
-    const repeatPanel = document.getElementById('alertRepeatPanel');
-    const visibilityPanel = document.getElementById('alertVisibilityPanel');
-    
-    stylePanel.classList.add('active');
-    repeatPanel.classList.remove('active');
-    visibilityPanel.classList.remove('active');
-    
-    document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
-        tab.classList.remove('active');
-        if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
-    });
-    
-    // Закрытие панели при клике вне её
-    settings.onmousedown = (e) => e.stopPropagation();
-    
-    if (!document._alertSettingsCloseHandler) {
-        document._alertSettingsCloseHandler = (e) => {
-            if (!settings.contains(e.target) && settings.style.display === 'block') {
-                settings.style.display = 'none';
-            }
-        };
-        document.addEventListener('mousedown', document._alertSettingsCloseHandler);
-    }
-}
 
-_setupSettingsListeners() {
-    const settings = document.getElementById('alertSettings');
-    if (!settings || settings._listenersSetup) return;
-    settings._listenersSetup = true;
-    
-    settings.querySelectorAll('.settings-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            const tabName = tab.dataset.alertSettingsTab;
-            document.getElementById('alertStylePanel').classList.toggle('active', tabName === 'style');
-            document.getElementById('alertRepeatPanel').classList.toggle('active', tabName === 'repeat');
-            document.getElementById('alertVisibilityPanel').classList.toggle('active', tabName === 'visibility');
-            settings.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
+    _setupSettingsListeners() {
+        const settings = document.getElementById('alertSettings');
+        if (!settings || settings._listenersSetup) return;
+        settings._listenersSetup = true;
+        
+        settings.querySelectorAll('.settings-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.alertSettingsTab;
+                document.getElementById('alertStylePanel').classList.toggle('active', tabName === 'style');
+                document.getElementById('alertRepeatPanel').classList.toggle('active', tabName === 'repeat');
+                document.getElementById('alertVisibilityPanel').classList.toggle('active', tabName === 'visibility');
+                settings.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+            });
         });
-    });
-    
-    document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
-        const alertId = settings.dataset.alertId;
-        const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
-        if (!alert) return;
-        const newPrice = parseFloat(document.getElementById('alertSettingsPriceInput').value);
-        if (!isNaN(newPrice)) {
-            alert.price = newPrice;
+        
+        document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
+            if (!alert) return;
+            const newPrice = parseFloat(document.getElementById('alertSettingsPriceInput').value);
+            if (!isNaN(newPrice)) {
+                alert.price = newPrice;
+                this._requestRedraw();
+                this._saveAlerts();
+            }
+        });
+        
+        document.getElementById('alertSaveSettings').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
+            if (!alert) return;
+            const repeatCountVal = document.getElementById('alertRepeatCount').value;
+            alert.updateOptions({
+                color: document.getElementById('alertCurrentColorBox').style.backgroundColor,
+                lineWidth: parseInt(document.getElementById('alertSettingThickness').value),
+                lineStyle: document.getElementById('alertTemplateSelect').value,
+                opacity: parseInt(document.getElementById('alertColorOpacity').value) / 100,
+                showBell: document.getElementById('alertShowBell').checked,
+                repeatCount: repeatCountVal === 'Infinity' ? Infinity : parseInt(repeatCountVal),
+                repeatInterval: parseInt(document.getElementById('alertRepeatInterval').value)
+            });
             this._requestRedraw();
+            settings.style.display = 'none';
             this._saveAlerts();
-        }
-    });
-    
-    document.getElementById('alertSaveSettings').addEventListener('click', () => {
-        const alertId = settings.dataset.alertId;
-        const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
-        if (!alert) return;
-        const repeatCountVal = document.getElementById('alertRepeatCount').value;
-        alert.updateOptions({
-            color: document.getElementById('alertCurrentColorBox').style.backgroundColor,
-            lineWidth: parseInt(document.getElementById('alertSettingThickness').value),
-            lineStyle: document.getElementById('alertTemplateSelect').value,
-            opacity: parseInt(document.getElementById('alertColorOpacity').value) / 100,
-            showBell: document.getElementById('alertShowBell').checked,
-            repeatCount: repeatCountVal === 'Infinity' ? Infinity : parseInt(repeatCountVal),
-            repeatInterval: parseInt(document.getElementById('alertRepeatInterval').value)
+            this._updateAlertsListUI();
         });
-        this._requestRedraw();
-        settings.style.display = 'none';
-        this._saveAlerts();
-        this._updateAlertsListUI();
-    });
-    
-    document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
-        const alertId = settings.dataset.alertId;
-        this.deleteAlert(alertId);
-        settings.style.display = 'none';
-        this._requestRedraw();
-    });
-}
+        
+        document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            this.deleteAlert(alertId);
+            settings.style.display = 'none';
+            this._requestRedraw();
+        });
+    }
 
     _renderTimeframeCheckboxes(alert) {
         const container = document.getElementById('alertTimeframeCheckboxList');
@@ -5272,7 +5292,7 @@ _setupSettingsListeners() {
         }
     }
 
-  _requestRedraw() {
+    _requestRedraw() {
         this._alerts.forEach(item => { 
             if (item.primitive?.requestRedraw) {
                 item.primitive.requestRedraw();
@@ -5280,180 +5300,221 @@ _setupSettingsListeners() {
         });
     }
 
-// ДОБАВИТЬ этот метод рядом
-_applyRedrawIfNeeded() {
-    if (this._needsRedraw) {
-        this._needsRedraw = false;
-        this._alerts?.forEach(item => { 
-            if (item.primitive?.requestRedraw) {
-                item.primitive.requestRedraw();
-            }
-        });
-    }
-}
-  _showAlertNotification(alert, currentPrice, isRepeat = false) {
-    const notification = document.getElementById('alertNotification');
-    
-    const priceFormatted = Utils.formatPrice(currentPrice);
-    const alertPriceFormatted = Utils.formatPrice(alert.price);
-    const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    
-    const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-    
-    if (notification) {
-        notification.innerHTML = `
-            <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
-            <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
-            <div class="alert-repeat">${timeStr}</div>
-        `;
-        notification.style.display = 'block';
-        notification.style.borderLeftColor = alert.options.color;
-        setTimeout(() => {
-            notification.style.display = 'none';
-        }, 5000);
-    }
-    
-    // ✅ НОВОЕ: Подсветка элемента в списке активных алертов
-    this._highlightActiveAlert(alert.id);
-    
-    this._playAlertSound();
-    this._showSystemNotification(alert, currentPrice, isRepeat);
-}
+    // ============================================================
+    // ✅ ПОДСВЕТКА АЛЕРТОВ (БЕСКОНЕЧНАЯ!)
+    // ============================================================
 
-/**
- * Подсвечивает элемент алерта в списке "Активные" при срабатывании.
- * Добавляет CSS-класс alert-triggering для анимации мигания.
- * 
- * @param {string} alertId - ID алерта, который нужно подсветить
- */
-_highlightActiveAlert(alertId, isInfinite = true) {
-    setTimeout(() => {
+    /**
+     * Запускает БЕСКОНЕЧНУЮ зелёную подсветку алерта во вкладке "Активные"
+     * Не прекращается пока алерт активен!
+     */
+    _startInfiniteHighlight(alertId) {
+        // Очищаем предыдущую
+        this._stopHighlight(alertId);
+        
+        setTimeout(() => {
+            const content = document.getElementById('alertHistoryContent');
+            if (!content) return;
+            
+            const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+            if (!item) {
+                console.warn(`⚠️ Элемент ${alertId} не найден для подсветки`);
+                return;
+            }
+            
+            // Сохраняем оригинальные стили (только один раз!)
+            if (!item._originalStyles) {
+                item._originalStyles = {
+                    bg: item.style.backgroundColor,
+                    boxShadow: item.style.boxShadow,
+                    borderLeftColor: item.style.borderLeftColor,
+                    borderLeftWidth: item.style.borderLeftWidth,
+                    transition: item.style.transition
+                };
+            }
+            
+            let isHighlighted = false;
+            
+            // Функция мерцания
+            const blink = () => {
+                // Если элемент удалён из DOM - останавливаем
+                if (!item.isConnected) {
+                    if (item._blinkInterval) {
+                        clearInterval(item._blinkInterval);
+                        item._blinkInterval = null;
+                    }
+                    return;
+                }
+                
+                isHighlighted = !isHighlighted;
+                
+                if (isHighlighted) {
+                    // 🟢 ЯРКАЯ фаза
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
+                    item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
+                    item.style.borderLeftColor = '#00FF00';
+                    item.style.borderLeftWidth = '6px';
+                    item.style.transition = 'all 0.35s ease';
+                } else {
+                    // 🟢 Тусклая фаза (но всё равно заметная!)
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
+                    item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
+                    item.style.borderLeftColor = '#00DD00';
+                    item.style.borderLeftWidth = '4px';
+                    item.style.transition = 'all 0.35s ease';
+                }
+            };
+            
+            // Запускаем сразу
+            blink();
+            
+            // Интервал 550мс
+            item._blinkInterval = setInterval(blink, 550);
+            
+            // Метод остановки
+            item._stopBlink = () => {
+                if (item._blinkInterval) {
+                    clearInterval(item._blinkInterval);
+                    item._blinkInterval = null;
+                }
+                // Восстанавливаем оригинал
+                const orig = item._originalStyles || {};
+                item.style.backgroundColor = orig.bg || '';
+                item.style.boxShadow = orig.boxShadow || '';
+                item.style.borderLeftColor = orig.borderLeftColor || '';
+                item.style.borderLeftWidth = orig.borderLeftWidth || '';
+                item.style.transition = orig.transition || '';
+            };
+            
+            // Прокручиваем к элементу
+            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            console.log(`✨ БЕСКОНЕЧНАЯ подсветка запущена для ${alertId}`);
+            
+        }, 100);
+    }
+
+    /**
+     * Останавливает подсветку алерта
+     */
+    _stopHighlight(alertId) {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
         
-        const allItems = content.querySelectorAll('.alert-list-item');
-        let targetItem = null;
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (item && item._stopBlink) {
+            item._stopBlink();
+            console.log(`⏹️ Подсветка остановлена для ${alertId}`);
+        }
+    }
+
+    /**
+     * Подсвечивает алерт во вкладке "Сработавшие" (однократно)
+     */
+    _highlightTriggeredAlert(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
         
-        allItems.forEach(item => {
-            if (item.getAttribute('data-id') === alertId) {
-                targetItem = item;
+        // Проверяем, что мы на вкладке "Сработавшие"
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
+        if (activeTab !== 'triggered') return;
+        
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (!item) return;
+        
+        // Жёлтая подсветка
+        item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
+        item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
+        item.style.borderLeftColor = '#FFC800';
+        item.style.borderLeftWidth = '5px';
+        item.style.transition = 'all 0.5s ease';
+        
+        // Прокручиваем
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Убираем через 8 секунд (оставляем лёгкую подсветку)
+        setTimeout(() => {
+            if (item.isConnected) {
+                item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
+                item.style.boxShadow = 'none';
+                item.style.borderLeftWidth = '3px';
             }
-        });
+        }, 8000);
+    }
+
+    // ============================================================
+    // ✅ УВЕДОМЛЕНИЯ
+    // ============================================================
+
+    _showAlertNotification(alert, currentPrice, isRepeat = false) {
+        const notification = document.getElementById('alertNotification');
         
-        if (!targetItem) return;
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const alertPriceFormatted = Utils.formatPrice(alert.price);
+        const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         
-        // Очищаем старые стили
-        targetItem.classList.remove('alert-active-highlight');
-        targetItem.style.backgroundColor = '';
-        targetItem.style.boxShadow = '';
-        targetItem.style.borderLeftColor = '';
+        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
         
-        if (isInfinite) {
-            targetItem.classList.add('alert-active-highlight');
-            targetItem.style.backgroundColor = 'rgba(0, 255, 100, 0.15)';
-        } else {
-            targetItem.style.backgroundColor = 'rgba(0, 255, 100, 0.25)';
-            targetItem.style.boxShadow = 'inset 0 0 30px rgba(0, 255, 100, 0.4)';
-            targetItem.style.borderLeftColor = '#00FF00';
+        if (notification) {
+            notification.innerHTML = `
+                <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
+                <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
+                <div class="alert-repeat">${timeStr}</div>
+            `;
+            notification.style.display = 'block';
+            notification.style.borderLeftColor = alert.options.color;
             setTimeout(() => {
-                if (targetItem) {
-                    targetItem.style.backgroundColor = '';
-                    targetItem.style.boxShadow = '';
-                    targetItem.style.borderLeftColor = '';
-                }
-            }, 2000);
+                notification.style.display = 'none';
+            }, 5000);
         }
         
-        targetItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 100);
-}
-_cleanupOldTriggeredAlerts() {
-    const now = Date.now();
-    const twentyFourHoursMs = 24 * 60 * 60 * 1000; // 24 часа в миллисекундах
-    
-    const idsToDelete = [];
-    
-    for (const item of this._alerts) {
-        const alert = item.alert;
-        
-        // Проверяем только сработавшие алерты
-        if (!alert.triggered) continue;
-        
-        // Берем время последнего срабатывания или время создания
-        const triggerTime = alert.lastTriggerTime || alert.createdAt;
-        
-        // Если прошло больше 24 часов — помечаем на удаление
-        if (now - triggerTime > twentyFourHoursMs) {
-            idsToDelete.push(alert.id);
-            
-            // Логируем подробную информацию
-            const hoursPassed = Math.floor((now - triggerTime) / (60 * 60 * 1000));
-            const symbol = alert.symbol;
-            const price = Utils.formatPrice(alert.price);
-            console.log(`🧹 Помечен на удаление: ${symbol} ${price} (прошло ${hoursPassed}ч)`);
-        }
+        this._playAlertSound();
+        this._showSystemNotification(alert, currentPrice, isRepeat);
     }
-    
-    // Удаляем все помеченные алерты
-    if (idsToDelete.length > 0) {
-        console.log(`🗑️ Удаляем ${idsToDelete.length} старых сработавших алертов (старше 24ч)`);
-        
-        for (const id of idsToDelete) {
-            this.deleteAlert(id);
-        }
-        
-        // Обновляем UI и сохраняем состояние
-        this._updateAlertsListUI();
-        this._saveAlerts();
-        
-        console.log(`✅ Очистка завершена. Осталось алертов: ${this._alerts.length}`);
-    }
-}
- _playAlertSound() {
-    try {
-        const audio = document.getElementById('alertSound');
-        
-        if (audio && audio.src && audio.src !== '') {
-            audio.currentTime = 0;
-            audio.play().catch(e => console.log('Звук не воспроизвёлся:', e));
-            return;
-        }
-        
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-            const ctx = new AudioContext();
+
+    _playAlertSound() {
+        try {
+            const audio = document.getElementById('alertSound');
             
-            if (ctx.state === 'suspended') {
-                ctx.resume();
+            if (audio && audio.src && audio.src !== '') {
+                audio.currentTime = 0;
+                audio.play().catch(e => console.log('Звук не воспроизвёлся:', e));
+                return;
             }
             
-            const now = ctx.currentTime;
-            
-            // iPhone Calypso
-            const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
-            
-            melody.forEach((freq, i) => {
-                const startTime = now + i * 0.15;
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {
+                const ctx = new AudioContext();
                 
-                osc.type = 'sine';
-                osc.frequency.value = freq;
+                if (ctx.state === 'suspended') {
+                    ctx.resume();
+                }
                 
-                gain.gain.setValueAtTime(0, startTime);
-                gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
-                gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+                const now = ctx.currentTime;
+                const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
                 
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(startTime);
-                osc.stop(startTime + 0.2);
-            });
+                melody.forEach((freq, i) => {
+                    const startTime = now + i * 0.15;
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    
+                    osc.type = 'sine';
+                    osc.frequency.value = freq;
+                    
+                    gain.gain.setValueAtTime(0, startTime);
+                    gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
+                    gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+                    
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(startTime);
+                    osc.stop(startTime + 0.2);
+                });
+            }
+        } catch (e) {
+            console.warn('Ошибка воспроизведения звука:', e);
         }
-    } catch (e) {
-        console.warn('Ошибка воспроизведения звука:', e);
     }
-}
 
     _showSystemNotification(alert, currentPrice, isRepeat = false) {
         if (!("Notification" in window)) {
@@ -5520,291 +5581,349 @@ _cleanupOldTriggeredAlerts() {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-   async _saveAlerts() {
-    if (this._alerts.length === 0) {
-        console.log('💾 No alerts to save');
-        return;
-    }
-    
-    const promises = this._alerts.map(item => 
-        window.db.put('drawings', {
-            id: item.alert.id,
-            type: 'alert',
-            symbolKey: item.alert.symbolKey,
-            data: {
-                price: item.alert.price,
-                time: item.alert.time,
-                anchorTime: item.alert.anchorTime,
-                symbol: item.alert.symbol,
-                exchange: item.alert.exchange,
-                marketType: item.alert.marketType,
-                options: item.alert.options,
-                timeframeVisibility: item.alert.timeframeVisibility,
-                triggered: item.alert.triggered,
-                triggerCount: item.alert.triggerCount,
-                repeatCount: item.alert.repeatCount,
-                repeatInterval: item.alert.repeatInterval,
-                lastTriggerTime: item.alert.lastTriggerTime,
-                active: item.alert.active,
-                anchorCandle: item.alert.anchorCandle
-            }
-        }).catch(e => console.warn('Save alert error:', e))
-    );
-    
-    await Promise.all(promises);
-    console.log(`💾 Saved ${this._alerts.length} alerts`);
-}
-async loadAlerts() {
-    try {
-        // Простая проверка готовности без waitForReady
-        let attempts = 0;
-        while (!window.dbReady && attempts < 100) {
-            await new Promise(r => setTimeout(r, 100));
-            attempts++;
-        }
-        
-        if (!window.dbReady) {
-            console.error('❌ Database not ready');
+    // ============================================================
+    // ✅ СОХРАНЕНИЕ / ЗАГРУЗКА
+    // ============================================================
+
+    async _saveAlerts() {
+        if (this._alerts.length === 0) {
+            console.log('💾 No alerts to save');
             return;
         }
         
-        if (!this._chartManager?.chartData?.length) {
-            console.log('⏳ Chart data not ready yet');
-            return;
-        }
-        
-        const series = this._chartManager.currentChartType === 'candle' 
-            ? this._chartManager.candleSeries 
-            : this._chartManager.barSeries;
-        
-        if (!series) {
-            console.error('❌ No series available');
-            return;
-        }
-
-        console.log('📊 Loading alerts from database...');
-
-        const allDrawings = await window.db.getAll('drawings');
-        const alertRecords = allDrawings.filter(d => d.type === 'alert');
-        
-        const newAlerts = [];
-        for (const rec of alertRecords) {
-            try {
-                const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
-                alert.id = rec.id;
-                alert.symbolKey = rec.symbolKey;
-                alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                alert.symbol = rec.data.symbol;
-                alert.exchange = rec.data.exchange;
-                alert.marketType = rec.data.marketType;
-                alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                alert.triggered = rec.data.triggered || false;
-                alert.triggerCount = rec.data.triggerCount || 0;
-                alert.repeatCount = rec.data.repeatCount || 5;
-                alert.repeatInterval = rec.data.repeatInterval || 1;
-                alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                alert.active = rec.data.active || false;
-                alert.anchorCandle = rec.data.anchorCandle || null;
-
-                const isCurrentSymbol = rec.symbolKey === this._getCurrentSymbolKey();
-                
-                if (!alert.triggered && isCurrentSymbol) {
-                    const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    newAlerts.push({ alert, primitive, series });
-                } else {
-                    newAlerts.push({ alert, primitive: null, series: null });
+        const promises = this._alerts.map(item => 
+            window.db.put('drawings', {
+                id: item.alert.id,
+                type: 'alert',
+                symbolKey: item.alert.symbolKey,
+                data: {
+                    price: item.alert.price,
+                    time: item.alert.time,
+                    anchorTime: item.alert.anchorTime,
+                    symbol: item.alert.symbol,
+                    exchange: item.alert.exchange,
+                    marketType: item.alert.marketType,
+                    options: item.alert.options,
+                    timeframeVisibility: item.alert.timeframeVisibility,
+                    triggered: item.alert.triggered,
+                    triggerCount: item.alert.triggerCount,
+                    repeatCount: item.alert.repeatCount,
+                    repeatInterval: item.alert.repeatInterval,
+                    lastTriggerTime: item.alert.lastTriggerTime,
+                    active: item.alert.active,
+                    anchorCandle: item.alert.anchorCandle
                 }
-            } catch (e) {
-                console.warn('Failed to load alert:', rec.id, e);
-            }
-        }
-
-        // Очищаем старые
-        this._alerts.forEach(item => {
-            try { item.series?.detachPrimitive(item.primitive); } catch(e) {}
-        });
-
-        this._alerts = newAlerts;
+            }).catch(e => console.warn('Save alert error:', e))
+        );
         
-        // Подписываемся на вебсокеты
-        const activeSymbols = new Set();
-        for (const item of this._alerts) {
-            if (!item.alert.triggered) {
-                activeSymbols.add(item.alert.symbol);
-            }
-        }
-        for (const symbol of activeSymbols) {
-            this._subscribeToSymbol(symbol);
-        }
-        
-        this._updateAlertsListUI();
-        this._requestRedraw();
-        console.log(`✅ Loaded ${this._alerts.length} alerts`);
-    } catch (error) {
-        console.error('❌ loadAlerts failed:', error);
+        await Promise.all(promises);
+        console.log(`💾 Saved ${this._alerts.length} alerts`);
     }
-}
 
-   _updateAlertsListUI() {
-    const content = document.getElementById('alertHistoryContent');
-    if (!content) return;
-    
-    const activeAlerts = this._alerts
-        .map(a => a.alert)
-        .filter(alert => !alert.triggered);
-        
-    const triggeredAlerts = this._alerts
-        .map(a => a.alert)
-        .filter(alert => alert.triggered)
-        .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
-    
-    const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
-    
-    let html = '';
-    
-    if (activeTab === 'active') {
-        if (activeAlerts.length === 0) {
-            html = '<div class="empty-alerts">Нет активных алертов</div>';
-        } else {
-            html = '<div class="alert-list">';
-            activeAlerts.forEach(alert => {
-                const priceFormatted = Utils.formatPrice(alert.price);
-                const color = alert.options.color;
-                
-                html += `
-                    <div class="alert-list-item" style="border-left-color: ${color};" data-id="${alert.id}">
-                        <div class="trigger-bell">🔔</div>
-                        <div>
-                            <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
-                            <div class="info">
-                                <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
-                                <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
-                            </div>
-                        </div>
-                        <div class="actions">
-                            <button class="delete-alert" data-id="${alert.id}" title="Удалить">
-                                <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
-                                    <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
-                                    <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
-                                    <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
-                                    <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                `;
-            });
-            html += '</div>';
-        }
-    } else {
-        // ✅ ВКЛАДКА "СРАБОТАВШИЕ" — ПОЛНОСТЬЮ ПЕРЕПИСАНА
-        if (triggeredAlerts.length === 0) {
-            html = '<div class="empty-alerts">Нет сработавших алертов</div>';
-        } else {
-            const now = Date.now();
-            const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+    async loadAlerts() {
+        try {
+            let attempts = 0;
+            while (!window.dbReady && attempts < 100) {
+                await new Promise(r => setTimeout(r, 100));
+                attempts++;
+            }
             
-            html = '<div class="alert-list">';
-            triggeredAlerts.forEach(alert => {
-                const priceFormatted = Utils.formatPrice(alert.price);
-                const color = alert.options.color;
-                
-                // ✅ Вычисляем время до удаления
-                const triggerTime = alert.lastTriggerTime || alert.createdAt;
-                const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { 
-                    hour: '2-digit', 
-                    minute: '2-digit', 
-                    second: '2-digit' 
-                });
-                const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: '2-digit'
-                });
-                
-                const hoursPassed = (now - triggerTime) / (60 * 60 * 1000);
-                const hoursLeft = Math.max(0, 24 - hoursPassed);
-                
-                let expireText = '';
-                let expireClass = '';
-                
-                if (hoursLeft <= 0) {
-                    expireText = '⚠️ Будет удалён при следующей очистке';
-                    expireClass = 'soon';
-                } else if (hoursLeft < 1) {
-                    const minutesLeft = Math.ceil(hoursLeft * 60);
-                    expireText = `⏳ Удаление через ${minutesLeft} мин`;
-                    expireClass = 'soon';
-                } else if (hoursLeft < 5) {
-                    expireText = `⏳ Удаление через ${Math.ceil(hoursLeft)} ч`;
-                    expireClass = 'soon';
-                } else {
-                    expireText = `⏳ Удаление через ${Math.floor(hoursLeft)} ч`;
-                    expireClass = '';
+            if (!window.dbReady) {
+                console.error('❌ Database not ready');
+                return;
+            }
+            
+            if (!this._chartManager?.chartData?.length) {
+                console.log('⏳ Chart data not ready yet');
+                return;
+            }
+            
+            const series = this._chartManager.currentChartType === 'candle' 
+                ? this._chartManager.candleSeries 
+                : this._chartManager.barSeries;
+            
+            if (!series) {
+                console.error('❌ No series available');
+                return;
+            }
+
+            console.log('📊 Loading alerts from database...');
+
+            const allDrawings = await window.db.getAll('drawings');
+            const alertRecords = allDrawings.filter(d => d.type === 'alert');
+            
+            const newAlerts = [];
+            for (const rec of alertRecords) {
+                try {
+                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                    alert.id = rec.id;
+                    alert.symbolKey = rec.symbolKey;
+                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    alert.symbol = rec.data.symbol;
+                    alert.exchange = rec.data.exchange;
+                    alert.marketType = rec.data.marketType;
+                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    alert.triggered = rec.data.triggered || false;
+                    alert.triggerCount = rec.data.triggerCount || 0;
+                    alert.repeatCount = rec.data.repeatCount || 5;
+                    alert.repeatInterval = rec.data.repeatInterval || 1;
+                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    alert.active = rec.data.active || false;
+                    alert.anchorCandle = rec.data.anchorCandle || null;
+
+                    const isCurrentSymbol = rec.symbolKey === this._getCurrentSymbolKey();
+                    
+                    if (!alert.triggered && isCurrentSymbol) {
+                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                        series.attachPrimitive(primitive);
+                        newAlerts.push({ alert, primitive, series });
+                    } else {
+                        newAlerts.push({ alert, primitive: null, series: null });
+                    }
+                } catch (e) {
+                    console.warn('Failed to load alert:', rec.id, e);
                 }
-                
-                const repeatInfo = alert.triggerCount > 0 
-                    ? ` (${alert.triggerCount}/${alert.triggerLimit === Infinity ? '∞' : alert.triggerLimit})` 
-                    : '';
-                
-                html += `
-                    <div class="alert-list-item triggered" style="border-left-color: ${color}; opacity: 0.75;" data-id="${alert.id}">
-                        <div>
-                            <div class="price">
-                                <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
-                                ${priceFormatted}${repeatInfo}
-                            </div>
-                            <div class="info">
-                                <span>🕐 ${dateStr} ${timeStr}</span>
-                                <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
-                            </div>
-                            <div class="expire-info ${expireClass}">${expireText}</div>
-                        </div>
-                        <div class="actions">
-                            <button class="delete-alert" data-id="${alert.id}" title="Удалить">
-                                <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
-                                    <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
-                                    <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
-                                    <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
-                                    <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                `;
+            }
+
+            // Очищаем старые
+            this._alerts.forEach(item => {
+                try { item.series?.detachPrimitive(item.primitive); } catch(e) {}
             });
-            html += '</div>';
+
+            this._alerts = newAlerts;
+            
+            // Подписываемся на вебсокеты
+            const activeSymbols = new Set();
+            for (const item of this._alerts) {
+                if (!item.alert.triggered) {
+                    activeSymbols.add(item.alert.symbol);
+                }
+            }
+            for (const symbol of activeSymbols) {
+                this._subscribeToSymbol(symbol);
+            }
+            
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            console.log(`✅ Loaded ${this._alerts.length} alerts`);
+        } catch (error) {
+            console.error('❌ loadAlerts failed:', error);
         }
     }
-    
-    content.innerHTML = html;
-    
-    // Привязываем обработчики удаления
-    content.querySelectorAll('.delete-alert').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const id = btn.dataset.id;
-            this.deleteAlert(id);
-        });
-    });
-}
-/**
- 
- */
-_stopHighlight(alertId) {
-    const content = document.getElementById('alertHistoryContent');
-    if (!content) return;
-    
-    const allItems = content.querySelectorAll('.alert-list-item');
-    allItems.forEach(item => {
-        if (item.getAttribute('data-id') === alertId) {
-            if (item._stopBlink) {
-                item._stopBlink();
+
+    // ============================================================
+    // ✅ UI - СПИСОК АЛЕРТОВ
+    // ============================================================
+
+    _updateAlertsListUI() {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+        
+        const activeAlerts = this._alerts
+            .map(a => a.alert)
+            .filter(alert => !alert.triggered);
+            
+        const triggeredAlerts = this._alerts
+            .map(a => a.alert)
+            .filter(alert => alert.triggered)
+            .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
+        
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
+        
+        let html = '';
+        
+        if (activeTab === 'active') {
+            // ======== ВКЛАДКА "АКТИВНЫЕ" ========
+            if (activeAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет активных алертов</div>';
+            } else {
+                html = '<div class="alert-list">';
+                activeAlerts.forEach(alert => {
+                    const priceFormatted = Utils.formatPrice(alert.price);
+                    const color = alert.options.color;
+                    const isActive = alert.active;
+                    
+                    html += `
+                        <div class="alert-list-item ${isActive ? 'is-active' : ''}" style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}" data-id="${alert.id}">
+                            <div class="trigger-bell">${isActive ? '🟢' : '🔔'}</div>
+                            <div>
+                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
+                                <div class="info">
+                                    <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
+                                    <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
+                                    ${isActive ? `<span style="color:#00FF00;font-weight:bold;">#${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="actions">
+                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">
+                                    <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
+                                        <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
+                                        <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
+                                        <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
+                                        <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+        } else {
+            // ======== ВКЛАДКА "СРАБОТАВШИЕ" ========
+            if (triggeredAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет сработавших алертов</div>';
+            } else {
+                const now = Date.now();
+                const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+                
+                html = '<div class="alert-list">';
+                triggeredAlerts.forEach(alert => {
+                    const priceFormatted = Utils.formatPrice(alert.price);
+                    const color = alert.options.color;
+                    
+                    const triggerTime = alert.lastTriggerTime || alert.createdAt;
+                    const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { 
+                        hour: '2-digit', 
+                        minute: '2-digit', 
+                        second: '2-digit' 
+                    });
+                    const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: '2-digit'
+                    });
+                    
+                    const hoursPassed = (now - triggerTime) / (60 * 60 * 1000);
+                    const hoursLeft = Math.max(0, 24 - hoursPassed);
+                    
+                    let expireText = '';
+                    let expireClass = '';
+                    
+                    if (hoursLeft <= 0) {
+                        expireText = '⚠️ Будет удалён при следующей очистке';
+                        expireClass = 'soon';
+                    } else if (hoursLeft < 1) {
+                        const minutesLeft = Math.ceil(hoursLeft * 60);
+                        expireText = `⏳ Удаление через ${minutesLeft} мин`;
+                        expireClass = 'soon';
+                    } else if (hoursLeft < 5) {
+                        expireText = `⏳ Удаление через ${Math.ceil(hoursLeft)} ч`;
+                        expireClass = 'soon';
+                    } else {
+                        expireText = `⏳ Удаление через ${Math.floor(hoursLeft)} ч`;
+                        expireClass = '';
+                    }
+                    
+                    const repeatInfo = alert.triggerCount > 0 
+                        ? ` (${alert.triggerCount}×)` 
+                        : '';
+                    
+                    html += `
+                        <div class="alert-list-item triggered" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
+                            <div>
+                                <div class="price">
+                                    <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
+                                    ${priceFormatted}${repeatInfo}
+                                </div>
+                                <div class="info">
+                                    <span>🕐 ${dateStr} ${timeStr}</span>
+                                    <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
+                                </div>
+                                <div class="expire-info ${expireClass}">${expireText}</div>
+                            </div>
+                            <div class="actions">
+                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">
+                                    <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
+                                        <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
+                                        <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
+                                        <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
+                                        <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
             }
         }
-    });
-}
+        
+        content.innerHTML = html;
+        
+        // Привязываем обработчики удаления
+        content.querySelectorAll('.delete-alert').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                this.deleteAlert(id);
+            });
+        });
+    }
+
+    // ============================================================
+    // ✅ ОЧИСТКА СТАРЫХ СРАБОТАВШИХ (24 ЧАСА)
+    // ============================================================
+
+    /**
+     * Удаляет сработавшие алерты старше 24 часов
+     */
+    _cleanupOldTriggeredAlerts() {
+        const now = Date.now();
+        const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+        
+        const idsToDelete = [];
+        
+        for (const item of this._alerts) {
+            const alert = item.alert;
+            
+            if (!alert.triggered) continue;
+            
+            const triggerTime = alert.lastTriggerTime || alert.createdAt;
+            
+            if (now - triggerTime > twentyFourHoursMs) {
+                idsToDelete.push(alert.id);
+                
+                const hoursPassed = Math.floor((now - triggerTime) / (60 * 60 * 1000));
+                const symbol = alert.symbol;
+                const price = Utils.formatPrice(alert.price);
+                console.log(`🧹 Помечен на удаление: ${symbol} ${price} (прошло ${hoursPassed}ч)`);
+            }
+        }
+        
+        if (idsToDelete.length > 0) {
+            console.log(`🗑️ Удаляем ${idsToDelete.length} старых сработавших алертов (старше 24ч)`);
+            
+            for (const id of idsToDelete) {
+                this.deleteAlert(id);
+            }
+            
+            this._updateAlertsListUI();
+            this._saveAlerts();
+            
+            this._showCleanupNotification(idsToDelete.length);
+            
+            console.log(`✅ Очистка завершена. Осталось алертов: ${this._alerts.length}`);
+        }
+    }
+
+    _showCleanupNotification(count) {
+        const notification = document.getElementById('alertNotification');
+        if (notification) {
+            notification.innerHTML = `
+                <div class="alert-title">🧹 Автоочистка</div>
+                <div class="alert-price">Удалено ${count} старых алертов (>24ч)</div>
+            `;
+            notification.style.display = 'block';
+            notification.style.borderLeftColor = '#FFA500';
+            setTimeout(() => { notification.style.display = 'none'; }, 3000);
+        }
+    }
+
+    // ============================================================
+    // ✅ АВТОЗАГРУЗКА
+    // ============================================================
+
     _autoLoadAlerts() {
         setTimeout(async () => {
             try {
@@ -5829,22 +5948,21 @@ _stopHighlight(alertId) {
     }
 
     deactivateAll() {
-    this._alerts.forEach(item => {
-        if (item.alert) {
-            item.alert.selected = false;
-            item.alert.showDragPoint = false;
-        }
-    });
-    this._selectedAlert = null;
-}
+        this._alerts.forEach(item => {
+            if (item.alert) {
+                item.alert.selected = false;
+                item.alert.showDragPoint = false;
+            }
+        });
+        this._selectedAlert = null;
+    }
 
-activateObject(alert) {
-    alert.selected = true;
-    alert.showDragPoint = true;
-    this._selectedAlert = alert;
+    activateObject(alert) {
+        alert.selected = true;
+        alert.showDragPoint = true;
+        this._selectedAlert = alert;
+    }
 }
-}
-
 class TextDrawing {
     constructor(text, time, price, options = {}) {
         this.text = text || 'Текст';
