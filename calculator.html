@@ -757,14 +757,23 @@
             const price = match ? match[0] : text;
             navigator.clipboard.writeText(price).then(() => showNotification(`Скопировано: ${price}`));
         }
-        function copyText(elementId) {
-            const el = document.getElementById(elementId);
-            if (!el) return;
-            const text = el.textContent.trim();
-            const match = text.match(/-?[\d,.]+/);
-            const num = match ? match[0] : text;
-            navigator.clipboard.writeText(num).then(() => showNotification(`Скопировано: ${num}`));
+  function copyText(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const text = el.textContent.trim();
+    
+    if (elementId === 'positionSizeUsdtText' || elementId === 'partsBreakdownText') {
+        const num = parseFloat(text.replace(',', '.'));
+        if (!isNaN(num)) {
+            navigator.clipboard.writeText(num.toFixed(1)).then(() => showNotification(`Скопировано: ${num.toFixed(1)}`));
+            return;
         }
+    }
+    
+    const match = text.match(/-?[\d,.]+/);
+    const num = match ? match[0] : text;
+    navigator.clipboard.writeText(num).then(() => showNotification(`Скопировано: ${num}`));
+}
 
         function setupArrowButtons() {
             document.querySelectorAll('.number-input-arrow').forEach(arrow => {
@@ -833,10 +842,10 @@
 
             document.getElementById('entryPriceResult').textContent = formatNumber(entry) + ' USDT';
             document.getElementById('positionSize').textContent = formatNumber(positionSize,1) + ' монет';
-            document.getElementById('positionSizeUsdtText').textContent = formatNumber(positionSizeUsdt,2) + ' USDT';
+          document.getElementById('positionSizeUsdtText').textContent = positionSizeUsdt.toFixed(1) + ' USDT';
             document.getElementById('stopLossPriceText').textContent = formatNumber(stopPrice) + ' USDT';
             document.getElementById('stopLossPercentText').textContent = `(${slPercentVal}%)`;
-            document.getElementById('stopLossUsdt').textContent = `-${formatNumber(lossUsdt,2)} USDT`;
+            document.getElementById('stopLossUsdt').textContent = `-${lossUsdt.toFixed(1)} USDT`;
             document.getElementById('liquidationPriceText').textContent = formatNumber(liqPrice) + ' USDT';
             document.getElementById('liquidationPricePercent').textContent = `(${liqPercent}%)`;
             document.getElementById('stopDistanceResult').innerHTML = `${formatDisplayNumber(priceDiff,8)} USDT <span class="usdt-value">(${formatNumber(lossUsdt,2)} USDT)</span>`;
@@ -861,7 +870,7 @@
             if (partsCount > 1 && positionSizeUsdt > 0) {
                 const partSize = positionSizeUsdt / partsCount;
                 document.getElementById('partsCountDisplay').textContent = partsCount;
-                document.getElementById('partsBreakdownText').textContent = `по ${partSize.toFixed(2)} USDT`;
+document.getElementById('partsBreakdownText').textContent = `по ${partSize.toFixed(1)} USDT`;
                 partsContainer.style.display = 'flex';
             } else partsContainer.style.display = 'none';
         }
