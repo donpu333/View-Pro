@@ -6,35 +6,31 @@ class TimerRenderer {
         this.enabled = true;
     }
 
-      draw(target) {
+   draw(target) {
     if (!this.enabled) return;
     
-    target.useBitmapCoordinateSpace(scope => {
+    // ✅ Используем MEDIA coordinate space, как линия цены
+    target.useMediaCoordinateSpace(scope => {
         const ctx = scope.context;
         const chartManager = this._timerManager._chartManager;
         if (!chartManager) return;
         
-        // Защита: ждём данные
         if (!chartManager.chartData || chartManager.chartData.length === 0) return;
         
         const timerText = this._timerManager._timerElement?.textContent || '';
         if (!timerText) return;
         
-        const hpr = scope.horizontalPixelRatio;
-        const vpr = scope.verticalPixelRatio;
-        
-        const fontSize = 11 * vpr;
+        const fontSize = 11;
         ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
         const textWidth = ctx.measureText(timerText).width;
         
-        const padding = 8 * hpr;
+        const padding = 8;
         const rectWidth = textWidth + padding * 2;
-        const rectHeight = fontSize + 8 * vpr;
+        const rectHeight = fontSize + 8;
         
-        const canvasWidth = scope.mediaSize.width * hpr;
-        const rectX = canvasWidth - rectWidth - 5 * hpr;
+        const canvasWidth = scope.mediaSize.width;
+        const rectX = canvasWidth - rectWidth - 5;
         
-        // Берём цену
         let price = chartManager.currentRealPrice;
         if (!price || isNaN(price) || price <= 0) {
             const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
@@ -49,17 +45,14 @@ class TimerRenderer {
         
         if (!activeSeries) return;
 
-        // Получаем координату в ЛОГИЧЕСКИХ пикселях
+        // ✅ В media space координата уже правильная, умножать НЕ НАДО
         let rawYCoord = activeSeries.priceToCoordinate(price);
 
         if (rawYCoord === null || isNaN(rawYCoord)) return;
         
-        // ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: конвертируем логическую координату в битмап-координату
-        // Умножаем на vpr, так как мы в bitmap coordinate space
-        let rectY = rawYCoord * vpr - rectHeight / 2;
+        let rectY = rawYCoord - rectHeight / 2;
         
-        // Ограничиваем, чтобы таймер не уходил за пределы
-        const chartHeight = scope.mediaSize.height * vpr; // тоже в битмап-пикселях
+        const chartHeight = scope.mediaSize.height; // без умножения!
         if (rectY < 0) rectY = 0;
         if (rectY + rectHeight > chartHeight) rectY = chartHeight - rectHeight;
         
@@ -72,9 +65,9 @@ class TimerRenderer {
         ctx.save();
         ctx.fillStyle = bgColor;
         ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.shadowBlur = 4 * hpr;
+        ctx.shadowBlur = 4;
         ctx.beginPath();
-        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 4 * hpr);
+        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 4);
         ctx.fill();
         
         ctx.shadowBlur = 0;
