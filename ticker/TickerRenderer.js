@@ -490,7 +490,7 @@ _formatAsIs(price) {
         }, 30000);
     }
     
-   setupHeaderSorting() {
+  setupHeaderSorting() {
     if (this.parent._sortClickHandler) {
         document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
             header.removeEventListener('click', this.parent._sortClickHandler);
@@ -501,10 +501,9 @@ _formatAsIs(price) {
     const savedSortBy = localStorage.getItem('tickerSortBy');
     const savedSortDir = localStorage.getItem('tickerSortDir');
     
-    if (savedSortBy) {
-        this.parent.state.sortBy = savedSortBy;
-        this.parent.state.sortDirection = savedSortDir || 'desc';
-    }
+    // ✅ По умолчанию сортировка по объёму (desc — большие сверху)
+    this.parent.state.sortBy = savedSortBy || 'volume';
+    this.parent.state.sortDirection = savedSortDir || 'desc';
     
     this.parent._sortClickHandler = (e) => {
         e.stopPropagation();
@@ -540,14 +539,12 @@ _formatAsIs(price) {
         header.addEventListener('click', this.parent._sortClickHandler);
     });
     
-    // 👇 ОБНОВЛЯЕМ ИКОНКУ СОГЛАСНО ВОССТАНОВЛЕННОЙ СОРТИРОВКЕ
-    if (savedSortBy) {
-        const activeHeader = document.querySelector(`.table-header span[data-sort="${savedSortBy}"]`);
-        if (activeHeader) {
-            const icon = activeHeader.querySelector('i');
-            if (icon) {
-                icon.className = savedSortDir === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            }
+    // 👇 ОБНОВЛЯЕМ ИКОНКУ СОГЛАСНО ТЕКУЩЕЙ СОРТИРОВКЕ
+    const activeHeader = document.querySelector(`.table-header span[data-sort="${this.parent.state.sortBy}"]`);
+    if (activeHeader) {
+        const icon = activeHeader.querySelector('i');
+        if (icon) {
+            icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
         }
     }
 }
