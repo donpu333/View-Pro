@@ -5529,55 +5529,73 @@ _cleanupOldTriggeredAlerts() {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-    async _saveAlerts() {
-        if (this._alerts.length === 0) return;
-        
-        const promises = this._alerts.map(item => 
-            window.db.put('drawings', {
-                id: item.alert.id,
-                type: 'alert',
-                symbolKey: item.alert.symbolKey,
-                data: {
-                    price: item.alert.price,
-                    time: item.alert.time,
-                    anchorTime: item.alert.anchorTime,
-                    symbol: item.alert.symbol,
-                    exchange: item.alert.exchange,
-                    marketType: item.alert.marketType,
-                    options: item.alert.options,
-                    timeframeVisibility: item.alert.timeframeVisibility,
-                    triggered: item.alert.triggered,
-                    triggerCount: item.alert.triggerCount,
-                    repeatCount: item.alert.repeatCount,
-                    repeatInterval: item.alert.repeatInterval,
-                    lastTriggerTime: item.alert.lastTriggerTime,
-                    active: item.alert.active,
-                    anchorCandle: item.alert.anchorCandle
-                }
-            }).catch(e => console.warn('Save alert error:', e))
-        );
-        
-        await Promise.all(promises);
-        console.log(`💾 Saved ${this._alerts.length} alerts`);
+   async _saveAlerts() {
+    if (this._alerts.length === 0) {
+        console.log('💾 No alerts to save');
+        return;
     }
-
-   async loadAlerts() {
+    
+    const promises = this._alerts.map(item => 
+        window.db.put('drawings', {
+            id: item.alert.id,
+            type: 'alert',
+            symbolKey: item.alert.symbolKey,
+            data: {
+                price: item.alert.price,
+                time: item.alert.time,
+                anchorTime: item.alert.anchorTime,
+                symbol: item.alert.symbol,
+                exchange: item.alert.exchange,
+                marketType: item.alert.marketType,
+                options: item.alert.options,
+                timeframeVisibility: item.alert.timeframeVisibility,
+                triggered: item.alert.triggered,
+                triggerCount: item.alert.triggerCount,
+                repeatCount: item.alert.repeatCount,
+                repeatInterval: item.alert.repeatInterval,
+                lastTriggerTime: item.alert.lastTriggerTime,
+                active: item.alert.active,
+                anchorCandle: item.alert.anchorCandle
+            }
+        }).catch(e => console.warn('Save alert error:', e))
+    );
+    
+    await Promise.all(promises);
+    console.log(`💾 Saved ${this._alerts.length} alerts`);
+}
+async loadAlerts() {
     try {
-        await waitForReady([
-            () => window.dbReady === true,
-            () => this._chartManager?.chartData?.length > 0,
-            () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)
-        ]);
-
-        console.log('📊 Loading ALL alerts from database...');
-
-        const allDrawings = await window.db.getAll('drawings');
-        const alertRecords = allDrawings.filter(d => d.type === 'alert');
+        // Простая проверка готовности без waitForReady
+        let attempts = 0;
+        while (!window.dbReady && attempts < 100) {
+            await new Promise(r => setTimeout(r, 100));
+            attempts++;
+        }
+        
+        if (!window.dbReady) {
+            console.error('❌ Database not ready');
+            return;
+        }
+        
+        if (!this._chartManager?.chartData?.length) {
+            console.log('⏳ Chart data not ready yet');
+            return;
+        }
         
         const series = this._chartManager.currentChartType === 'candle' 
             ? this._chartManager.candleSeries 
             : this._chartManager.barSeries;
+        
+        if (!series) {
+            console.error('❌ No series available');
+            return;
+        }
 
+        console.log('📊 Loading alerts from database...');
+
+        const allDrawings = await window.db.getAll('drawings');
+        const alertRecords = allDrawings.filter(d => d.type === 'alert');
+        
         const newAlerts = [];
         for (const rec of alertRecords) {
             try {
@@ -5591,7 +5609,7 @@ _cleanupOldTriggeredAlerts() {
                 alert.timeframeVisibility = rec.data.timeframeVisibility || {};
                 alert.triggered = rec.data.triggered || false;
                 alert.triggerCount = rec.data.triggerCount || 0;
-                alert.repeatCount = rec.data.repeatCount || 1;
+                alert.repeatCount = rec.data.repeatCount || 5;
                 alert.repeatInterval = rec.data.repeatInterval || 1;
                 alert.lastTriggerTime = rec.data.lastTriggerTime || null;
                 alert.active = rec.data.active || false;
@@ -5611,12 +5629,14 @@ _cleanupOldTriggeredAlerts() {
             }
         }
 
+        // Очищаем старые
         this._alerts.forEach(item => {
             try { item.series?.detachPrimitive(item.primitive); } catch(e) {}
         });
 
         this._alerts = newAlerts;
         
+        // Подписываемся на вебсокеты
         const activeSymbols = new Set();
         for (const item of this._alerts) {
             if (!item.alert.triggered) {
@@ -5629,7 +5649,7 @@ _cleanupOldTriggeredAlerts() {
         
         this._updateAlertsListUI();
         this._requestRedraw();
-        console.log(`✅ Loaded ${this._alerts.length} alerts (all symbols)`);
+        console.log(`✅ Loaded ${this._alerts.length} alerts`);
     } catch (error) {
         console.error('❌ loadAlerts failed:', error);
     }
