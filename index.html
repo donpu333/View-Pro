@@ -510,7 +510,7 @@
                     <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
                 </svg>
             </button>
-           <button class="alert-history-btn" id="fullscreenBtn" title="Полный экран (F11)">
+           <button class="alert-history-btn" id="fullscreenBtn" title="Полный экран (P)">
     <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e3e3e3">
     <path d="M120-120v-200h80v120h120v80H120Zm520 0v-80h120v-120h80v200H640ZM120-640v-200h200v80H200v120h-80Zm640 0v-120H640v-80h200v200h-80Z"/>
 </svg>
@@ -2521,85 +2521,7 @@ function createColorGrid(gridId, colorBoxId, hexInputId, selectedColor, addBtnId
     }
 })();
 
-// Функция для создания скриншота графика
-function takeChartScreenshot() {
-    const chartContainer = document.getElementById('chart-container');
-    if (!chartContainer) {
-        console.error('Контейнер графика не найден');
-        return;
-    }
 
-    const canvas = chartContainer.querySelector('canvas');
-    if (!canvas) {
-        console.error('Canvas графика не найден');
-        return;
-    }
-
-    try {
-        let symbol = 'UNKNOWN';
-        let timeframe = 'UNKNOWN';
-        
-        const pairDisplay = document.getElementById('pairDisplay');
-        const currentTfBadge = document.getElementById('currentTfBadge');
-        
-        if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
-        if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
-        
-        if (window.chartManagerInstance) {
-            if (window.chartManagerInstance.currentSymbol) {
-                symbol = window.chartManagerInstance.currentSymbol;
-            }
-            if (window.chartManagerInstance.currentInterval) {
-                const interval = window.chartManagerInstance.currentInterval;
-                const tfMap = {
-                    '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-                    '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
-                    '1d': '1D', '1w': '1W', '1M': '1M'
-                };
-                timeframe = tfMap[interval] || interval;
-            }
-        }
-        
-        const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-        const filename = `${cleanSymbol}_${timeframe}.png`;
-        
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-
-        const notification = document.getElementById('alertNotification');
-        if (notification) {
-            notification.innerHTML = `
-                <div class="alert-title">📸 Скриншот сохранён</div>
-                <div class="alert-price">${cleanSymbol} ${timeframe}</div>
-                <div class="alert-repeat">${filename}</div>
-            `;
-            notification.style.display = 'block';
-            notification.style.borderLeftColor = '#4CAF50';
-            setTimeout(() => {
-                notification.style.display = 'none';
-            }, 3000);
-        }
-        
-    } catch (error) {
-        console.error('❌ Ошибка при создании скриншота:', error);
-        
-        const notification = document.getElementById('alertNotification');
-        if (notification) {
-            notification.innerHTML = `
-                <div class="alert-title">❌ Ошибка</div>
-                <div class="alert-price">Не удалось создать скриншот</div>
-                <div class="alert-repeat">${error.message}</div>
-            `;
-            notification.style.display = 'block';
-            notification.style.borderLeftColor = '#f23645';
-            setTimeout(() => {
-                notification.style.display = 'none';
-            }, 3000);
-        }
-    }
-}
 </script> <!-- закрываем основной скрипт -->
 
 
@@ -2619,43 +2541,64 @@ function takeChartScreenshot() {
 </style>
 
 <script>
-   (function() {
-        const fullscreenBtn = document.getElementById('fullscreenBtn');
-        const body = document.body;
+   // ========== ГОРЯЧАЯ КЛАВИША ДЛЯ ПОЛНОГО ЭКРАНА (РАБОЧАЯ) ==========
+(function() {
+    // Находим кнопку и элемент body
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const body = document.body;
+    
+    // Функция переключения полного экрана (дублируем здесь, чтобы точно была доступна)
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.error('Ошибка перехода в полный экран:', err);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+    
+    // Привязываем к кнопке (если кнопка есть)
+    if (fullscreenBtn) {
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+    }
+    
+    // Следим за изменением полноэкранного режима
+    document.addEventListener('fullscreenchange', function() {
+        if (fullscreenBtn) {
+            fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
+        }
+        if (document.fullscreenElement) {
+            body.classList.add('fullscreen-mode');
+        } else {
+            body.classList.remove('fullscreen-mode');
+        }
+    });
+    
+    // ========== ГОРЯЧАЯ КЛАВИША P (РАБОТАЕТ НА ЛЮБОЙ РАСКЛАДКЕ) ==========
+    document.addEventListener('keydown', function(e) {
+        // Проверяем клавишу P (английская) ИЛИ русскую 'з' (которая на той же клавише)
+        const isPKey = e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З';
         
-        if (!fullscreenBtn) return;
-
-        // Функция делает ТОЛЬКО одно: просит браузер открыть/закрыть полный экран.
-        // Вся магия подстройки размеров графика происходит автоматически в ChartManager.js через ResizeObserver!
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.error('Ошибка перехода в полный экран:', err);
-                });
-            } else {
-                document.exitFullscreen();
+        if (isPKey) {
+            // Проверяем, что фокус не на поле ввода
+            const activeTag = document.activeElement.tagName;
+            if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA' && activeTag !== 'SELECT') {
+                e.preventDefault();
+                e.stopPropagation(); // Добавляем, чтобы событие не перехватили другие обработчики
+                toggleFullscreen();
+                console.log('🔲 Переключение полного экрана по клавише P');
             }
         }
-
-        fullscreenBtn.addEventListener('click', toggleFullscreen);
-
-        // Следим за системным событием смены режима, чтобы подсветить кнопку и накинуть CSS-класс
-        document.addEventListener('fullscreenchange', function() {
-            fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
-            if (document.fullscreenElement) {
-                body.classList.add('fullscreen-mode');
-            } else {
-                body.classList.remove('fullscreen-mode');
-            }
-        });
-
-        console.log('✅ Полноэкранный режим подключен (без ручного resize)');
-    })();
+    });
+    
+    console.log('✅ Горячая клавиша P (или з) для полного экрана - АКТИВНА');
+})();
 
 </script>
 <!-- СКРИПТ ДЛЯ СКРИНШОТА (ТОЛЬКО ОДИН!) -->
 <script>
-    function takeChartScreenshot() {
+ function takeChartScreenshot() {
         // Находим ВЕСЬ документ (всю страницу целиком)
         const element = document.documentElement;
         
@@ -2763,12 +2706,12 @@ if (toolbarOrientationBtn && drawingToolbar) {
             localStorage.setItem('drawingToolbarOrientation', 'horizontal');
         }
     });
-}
+} 
     
 </script>
 
 <script>
-// Точная фиксация позиции кнопок (A и стрелка) над панелями индикаторов
+
 (function() {
     function positionButtons() {
         const buttons = document.querySelector('.chart-footer-buttons');
