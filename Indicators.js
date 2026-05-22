@@ -274,11 +274,12 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             hour: { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0 },
             minute: { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0 },
             minute1: { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0 },
-            current: { atr: 0, natr: 0, progress: 0, remaining: 0, rangeRatio: 0, trueRange: 0, isValid: true, upperBound: 0, lowerBound: 0 }
+            current: { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, rangeRatio: 0, trueRange: 0, isValid: true, upperBound: 0, lowerBound: 0 }
         };
         
         this._lastCandleTime = 0;
         this._isUpdating = false;
+        this._updateTimeout = null;
         this._fallbackTimer = null;
         
         this._setupEventHandlers();
@@ -343,14 +344,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         document.getElementById('multiatr-toggle').addEventListener('mousedown', (e) => e.stopPropagation());
         document.getElementById('multiatr-toggle').addEventListener('click', () => this._toggleBody(body));
         document.getElementById('multiatr-close').addEventListener('mousedown', (e) => e.stopPropagation());
-      document.getElementById('multiatr-close').addEventListener('click', () => {
-    if (this.manager) {
-        const index = this.manager.activeIndicators?.indexOf(this);
-        if (index !== undefined && index !== -1) {
-            this.manager.removeIndicator(index);
-        }
-    }
-});
+        document.getElementById('multiatr-close').addEventListener('click', () => {
+            if (this.manager) {
+                const index = this.manager.activeIndicators?.indexOf(this);
+                if (index !== undefined && index !== -1) {
+                    this.manager.removeIndicator(index);
+                }
+            }
+        });
         body.addEventListener('click', (e) => this._handleCopy(e));
     }
 
@@ -412,182 +413,166 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         });
     }
 
-       /**
-     * ОСНОВНАЯ ФУНКЦИЯ: Полный пересчет метрик ATR
-     * Совместима с логикой Pine Script на 95%+
-     */
+    calculateTrueRange(high, low, prevClose, mode) {
+        if (mode === 'True Range') {
+            return Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+        }
+        return high - low;
+    }
+    
+    calculateCandlesFromHours(hours, minuteTFStr) {
+        return Math.max(Math.floor(hours * 60 / parseInt(minuteTFStr)), 1);
+    }
+    
+    // ИСПРАВЛЕНО: Корректная реализация RMA Уайлдера как в Pine Script
+    _rma(src, length) {
+        const result = new Array(src.length).fill(0);
+        
+        // Первое значение - SMA (простое среднее)
+        let sum = 0;
+        for (let i = 0; i < length; i++) {
+            sum += src[i];
+        }
+        result[length - 1] = sum / length;
+        
+        // Последующие значения - RMA Уайлдера: (src + (length - 1) * prev) / length
+        for (let i = length; i < src.length; i++) {
+            result[i] = (src[i] + (length - 1) * result[i - 1]) / length;
+        }
+        
+        return result;
+    }
+    
+    // ИСПРАВЛЕНО: Полная переработка computeATRMetrics с корректной фильтрацией
     computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
-        // Минимальная проверка данных
-        if (!data || data.length < Math.max(period + 1, 2)) {
-            return { 
-                atr: 0, 
-                natr: 0, 
-                progress: 0, 
-                remaining: 0, 
-                remainingPoints: 0, 
-                trueRange: 0, 
-                rangeRatio: 0, 
-                upperBound: 0, 
-                lowerBound: 0, 
-                isValid: true 
-            };
+        if (!data || data.length < period + 1) {
+            return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
+                    trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true };
         }
 
-        // 1. Подготовка данных (исключаем последнюю свечу если она текущая/незакрытая)
-        // Это имитирует поведение [1] в request.security Pine Script
-        const calcData = data.slice(0, -1); // Данные для расчета среднего ATR (закрытые)
-        const liveCandle = data[data.length - 1]; // Текущая живая свеча
-
-        if (calcData.length < period) {
-             return { 
-                atr: 0, 
-                natr: 0, 
-                progress: 0, 
-                remaining: 0, 
-                remainingPoints: 0, 
-                trueRange: 0, 
-                rangeRatio: 0, 
-                upperBound: 0, 
-                lowerBound: 0, 
-                isValid: true 
-            };
-        }
-
-        // 2. Расчет массива True Range для исторических данных
+        // Расчет True Range для всех свечей
         const trueRanges = [];
-        for (let i = 1; i < calcData.length; i++) {
+        for (let i = 1; i < data.length; i++) {
             trueRanges.push(this.calculateTrueRange(
-                calcData[i].high, 
-                calcData[i].low, 
-                calcData[i-1].close, 
-                rangeMode
+                data[i].high, data[i].low, data[i-1].close, rangeMode
             ));
         }
 
-        // ✅ ИСПРАВЛЕНО: Полный объект вместо spread
-        if (trueRanges.length === 0) {
-            return { 
-                atr: 0, 
-                natr: 0, 
-                progress: 0, 
-                remaining: 0, 
-                remainingPoints: 0, 
-                trueRange: 0, 
-                rangeRatio: 0, 
-                upperBound: 0, 
-                lowerBound: 0, 
-                isValid: true 
-            };
+        if (trueRanges.length < period) {
+            return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
+                    trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true };
         }
 
-        // 3. Расчет базового RMA (без фильтра) для определения границ
-        const rawRMA = this._calculateRMA(trueRanges, period);
+        // Базовый ATR (RMA от True Range)
+        const basicATR = this._rma(trueRanges, period);
         
-        // 4. Применение фильтра и расчет финального ATR
-        const filteredValues = []; // Значения, которые пойдут в итоговый RMA
+        let finalATR = basicATR;
+        let upperBound = 0;
+        let lowerBound = 0;
         
-        for (let i = 0; i < trueRanges.length; i++) {
-            const tr = trueRanges[i];
-            const currentRawAtr = rawRMA[i]; // Текущий "чистый" ATR для границ
+        // Применяем фильтр если нужно
+        if (useFilter) {
+            const filteredTR = [...trueRanges];
             
-            let effectiveValue = tr;
-            let upperBound = 0;
-            let lowerBound = 0;
-
-            if (useFilter && i >= period - 1) { // Фильтр применяем только после накопления периода
+            for (let i = period; i < trueRanges.length; i++) {
+                const robustATR = basicATR[i]; // Текущее значение ATR без фильтра
+                
                 if (filterType === 'Adaptive') {
-                    // Используем исправленную функцию StdDev
-                    const stdDev = this._calculateStdDev(trueRanges.slice(0, i + 1), period);
+                    // Расчет стандартного отклонения
+                    const window = trueRanges.slice(i - period + 1, i + 1);
+                    const mean = window.reduce((a, b) => a + b, 0) / period;
+                    const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
+                    const stdDev = Math.sqrt(variance);
                     
-                    upperBound = currentRawAtr + stdDev * devFactor;
-                    lowerBound = Math.max(currentRawAtr - stdDev * devFactor, 0);
-
-                    // Ограничители (Hard Limits как в Pine скрипте)
-                    upperBound = Math.min(upperBound, currentRawAtr * 3.0);
-                    lowerBound = Math.max(lowerBound, currentRawAtr * 0.3);
-
-                } else { // Fixed
-                    upperBound = currentRawAtr * fixedMult;
-                    lowerBound = Math.max(currentRawAtr / fixedMult, 0);
+                    upperBound = Math.min(robustATR + stdDev * devFactor, robustATR * 3.0);
+                    lowerBound = Math.max(robustATR - stdDev * devFactor, robustATR * 0.3);
+                } else {
+                    upperBound = robustATR * fixedMult;
+                    lowerBound = Math.max(robustATR / fixedMult, 0);
                 }
-
-                // Проверка валидности свечи
+                
+                const tr = trueRanges[i];
+                // Если свеча выходит за границы фильтра - заменяем на предыдущее значение ATR
                 if (tr > upperBound || tr < lowerBound) {
-                    // Свеча невалидна - берем предыдущее ПЕРЕФИЛЬТРОВАННОЕ значение
-                    effectiveValue = filteredValues[i-1] !== undefined ? filteredValues[i-1] : tr;
+                    filteredTR[i] = i > 0 ? basicATR[i - 1] : tr;
                 }
             }
             
-            filteredValues.push(effectiveValue);
+            // Пересчитываем ATR с фильтрованными значениями
+            finalATR = this._rma(filteredTR, period);
         }
-
-        // 5. Итоговый расчет ATR на основе отфильтрованных значений
-        const finalRMA = this._calculateRMA(filteredValues, period);
         
-        // Берем последнее значение из массива
-        const atr = finalRMA[finalRMA.length - 1];
-
-        // 6. Расчет прогресса (используем LIVE свечу для актуальности)
-        const prevCloseForLive = calcData.length > 0 ? calcData[calcData.length-1].close : liveCandle.close;
-        const liveTR = this.calculateTrueRange(liveCandle.high, liveCandle.low, prevCloseForLive, rangeMode);
-        
-        const distanceFromOpen = Math.abs(liveCandle.close - liveCandle.open);
-        
-        // Прогресс: насколько прошла цена относительно ATR
+        const lastIndex = trueRanges.length - 1;
+        const atr = finalATR[lastIndex];
+        const lastCandle = data[data.length - 1];
+        const lastTrueRange = trueRanges[lastIndex];
+        const distanceFromOpen = Math.abs(lastCandle.close - lastCandle.open);
         const progress = atr > 0 ? (distanceFromOpen / atr) * 100 : 0;
         
-        // Range Ratio: отношение текущего TR к среднему ATR
-        const rangeRatio = atr > 0 ? (liveTR / atr) * 100 : 0;
-
-        // Границы для отображения (последние рассчитанные)
-        let uB = 0, lB = 0;
-        if (useFilter && finalRMA.length > 0) {
-             if(filterType === 'Adaptive'){
-                 const sd = this._calculateStdDev(filteredValues, period);
-                 uB = atr + sd * devFactor; 
-                 lB = Math.max(atr - sd * devFactor, 0);
-             } else {
-                 uB = atr * fixedMult; 
-                 lB = atr / fixedMult;
-             }
-        }
-
         return {
-            atr: atr,
-            natr: liveCandle.close > 0 ? (atr / liveCandle.close) * 100 : 0,
-            progress: progress,
+            atr,
+            natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
+            progress: Math.min(progress, 100), // Не больше 100%
             remaining: Math.max(0, 100 - progress),
             remainingPoints: Math.max(0, atr - distanceFromOpen),
-            trueRange: liveTR,
-            rangeRatio: rangeRatio,
-            upperBound: uB,
-            lowerBound: lB,
+            trueRange: lastTrueRange,
+            rangeRatio: (lastIndex > 0 && finalATR[lastIndex - 1] > 0) 
+                ? (lastTrueRange / finalATR[lastIndex - 1]) * 100 
+                : 0,
+            upperBound,
+            lowerBound,
             isValid: true
         };
     }
     
+    // ИСПРАВЛЕНО: Добавлен debounce для предотвращения частых обновлений
     async updateAllMetrics() {
         if (this._isUpdating) return;
         this._isUpdating = true;
+        
+        // Очищаем предыдущий таймаут
+        if (this._updateTimeout) {
+            clearTimeout(this._updateTimeout);
+        }
 
         try {
-            const chartManager = this.manager.chartManager;
-            if (!chartManager || !chartManager.chartData?.length) return;
+            const chartManager = this.manager?.chartManager;
+            if (!chartManager?.chartData?.length) {
+                console.warn('ATR Multi: нет данных графика');
+                return;
+            }
 
             const currentData = chartManager.chartData;
+            
+            // Проверяем минимальную длину данных
+            if (currentData.length < this.settings.atrPeriod + 1) {
+                console.warn(`ATR Multi: недостаточно данных (нужно минимум ${this.settings.atrPeriod + 1})`);
+                return;
+            }
+            
+            // ИСПРАВЛЕНО: Используем ВСЕ данные включая текущую свечу
             this.cache.current = this.computeATRMetrics(
-                currentData.slice(0, -1), this.settings.atrPeriod, this.settings.rangeMode,
-                this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult
+                currentData, // Было: currentData.slice(0, -1) - НЕПРАВИЛЬНО!
+                this.settings.atrPeriod, 
+                this.settings.rangeMode,
+                this.settings.useFilter, 
+                this.settings.filterType, 
+                this.settings.devFactor, 
+                this.settings.fixedMult
             );
 
+            // Загружаем данные для дополнительных таймфреймов
             const tasks = [];
             if (this.settings.showWeekTF) tasks.push(this._fetchAndCompute('week', '1w', this.settings.weekATRPeriod));
             if (this.settings.showDayTF) tasks.push(this._fetchAndCompute('day', '1d', this.settings.dayATRPeriod));
             if (this.settings.showHourTF) tasks.push(this._fetchAndCompute('hour', this.settings.hourTF + 'h', this.settings.hourATRPeriod));
-            if (this.settings.showMinuteTF) tasks.push(this._fetchAndCompute('minute', this.settings.minuteTF + 'm', this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF)));
-            if (this.settings.showMinute1TF) tasks.push(this._fetchAndCompute('minute1', this.settings.minute1TF + 'm', this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF)));
+            if (this.settings.showMinuteTF) tasks.push(this._fetchAndCompute('minute', this.settings.minuteTF + 'm', 
+                this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF)));
+            if (this.settings.showMinute1TF) tasks.push(this._fetchAndCompute('minute1', this.settings.minute1TF + 'm', 
+                this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF)));
 
-            await Promise.all(tasks);
+            // ИСПРАВЛЕНО: Используем allSettled для устойчивости
+            await Promise.allSettled(tasks);
             this.renderFullTable();
         } catch (e) {
             console.error('ATR Multi error:', e);
@@ -596,22 +581,40 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }
     }
 
+    // ИСПРАВЛЕНО: Добавлена проверка на минимальное количество данных
     async _fetchAndCompute(cacheKey, tf, period) {
         const limit = Math.max(period * 3, 200);
-        const data = await this.fetchDataForTF(tf, limit);
-        if (data && data.length > period) {
-            const m = this.computeATRMetrics(data, period, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
-            this.cache[cacheKey] = { atr: m.atr, natr: m.natr, progress: m.progress, remaining: m.remaining, remainingPoints: m.remainingPoints };
+        try {
+            const data = await this.fetchDataForTF(tf, limit);
+            if (data && data.length >= period + 1) { // Было: data.length > period
+                const m = this.computeATRMetrics(
+                    data, period, this.settings.rangeMode, 
+                    this.settings.useFilter, this.settings.filterType, 
+                    this.settings.devFactor, this.settings.fixedMult
+                );
+                this.cache[cacheKey] = { 
+                    atr: m.atr, natr: m.natr, 
+                    progress: m.progress, remaining: m.remaining, 
+                    remainingPoints: m.remainingPoints 
+                };
+            } else {
+                console.warn(`ATR Multi: недостаточно данных для ${tf} (получено ${data?.length || 0}, нужно ${period + 1})`);
+            }
+        } catch (e) {
+            console.error(`ATR Multi: ошибка загрузки ${tf}:`, e);
         }
     }
     
     _setupEventHandlers() {
-        const chartManager = this.manager.chartManager;
+        const chartManager = this.manager?.chartManager;
         if (!chartManager) return;
         
         if (chartManager._subscribeToSymbolChange) {
-            chartManager._subscribeToSymbolChange(() => setTimeout(() => this.updateAllMetrics(), 500));
+            chartManager._subscribeToSymbolChange(() => {
+                setTimeout(() => this.updateAllMetrics(), 500);
+            });
         }
+        
         if (chartManager.on && typeof chartManager.on === 'function') {
             chartManager.on('dataUpdate', () => this._onChartDataUpdate());
         } else {
@@ -619,19 +622,31 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }
     }
     
+    // ИСПРАВЛЕНО: Добавлен debounce для обновлений
     _onChartDataUpdate() {
-        const data = this.manager.chartManager?.chartData;
-        if (!data?.length) return;
-        if (data[data.length - 1].time !== this._lastCandleTime) {
-            this._lastCandleTime = data[data.length - 1].time;
-            this.updateAllMetrics();
+        if (this._updateTimeout) {
+            clearTimeout(this._updateTimeout);
         }
+        
+        // Debounce 100ms для предотвращения частых обновлений
+        this._updateTimeout = setTimeout(() => {
+            const data = this.manager?.chartManager?.chartData;
+            if (!data?.length) return;
+            
+            const lastTime = data[data.length - 1].time;
+            if (lastTime !== this._lastCandleTime) {
+                this._lastCandleTime = lastTime;
+                this.updateAllMetrics();
+            }
+        }, 100);
     }
     
     _startFallbackTimer() {
+        if (this._fallbackTimer) return;
+        
         let lastTime = 0;
         this._fallbackTimer = setInterval(() => {
-            const data = this.manager.chartManager?.chartData;
+            const data = this.manager?.chartManager?.chartData;
             if (data?.length && data[data.length - 1].time !== lastTime) {
                 lastTime = data[data.length - 1].time;
                 this.updateAllMetrics();
@@ -639,16 +654,33 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }, 5000);
     }
 
-   destroy() {
-    const table = document.getElementById('multiatr-full-table');
-    if (table) table.remove();
-    this._removeAllSeries();
-    this.manager = null;
-}
+    destroy() {
+        if (this._fallbackTimer) {
+            clearInterval(this._fallbackTimer);
+            this._fallbackTimer = null;
+        }
+        if (this._updateTimeout) {
+            clearTimeout(this._updateTimeout);
+            this._updateTimeout = null;
+        }
+        
+        const table = document.getElementById('multiatr-full-table');
+        if (table) table.remove();
+        this._removeAllSeries();
+        this.manager = null;
+    }
     
     async fetchDataForTF(tf, limit) {
-        const { currentSymbol: symbol, currentExchange: exchange, currentMarketType: marketType } = this.manager.chartManager;
-        const bybitIntervalMap = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '6h': '360', '12h': '720', '1d': 'D', '1w': 'W' };
+        const chartManager = this.manager?.chartManager;
+        if (!chartManager) return [];
+        
+        const { currentSymbol: symbol, currentExchange: exchange, currentMarketType: marketType } = chartManager;
+        
+        const bybitIntervalMap = { 
+            '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', 
+            '1h': '60', '2h': '120', '4h': '240', '6h': '360', '8h': '480', '12h': '720', 
+            '1d': 'D', '1w': 'W' 
+        };
         
         let url;
         if (exchange === 'binance') {
@@ -660,8 +692,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }
         
         try {
-            const response = await fetch(url);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 секунд таймаут
+            
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
             if (!response.ok) return [];
+            
             const data = await response.json();
             
             if (exchange === 'binance') {
@@ -671,22 +709,25 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                     high: parseFloat(item[2]),
                     low: parseFloat(item[3]), 
                     close: parseFloat(item[4]),
-                    _rawClose: item[4],
                     volume: parseFloat(item[5])
                 })) : [];
             } else {
                 if (data.retCode !== 0 || !data.result?.list) return [];
-                return data.result.list.map(item => ({
+                return data.result.list.reverse().map(item => ({ // Bybit возвращает в обратном порядке
                     time: Math.floor(parseInt(item[0]) / 1000), 
                     open: parseFloat(item[1]),
                     high: parseFloat(item[2]), 
                     low: parseFloat(item[3]), 
                     close: parseFloat(item[4]),
-                    _rawClose: item[4],
                     volume: parseFloat(item[5] || 0)
                 }));
             }
-        } catch (e) { return []; }
+        } catch (e) {
+            if (e.name === 'AbortError') {
+                console.warn(`ATR Multi: таймаут запроса для ${tf}`);
+            }
+            return [];
+        }
     }
     
     renderFullTable() {
@@ -704,21 +745,22 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const current = c.current;
         const currentChartTF = this.manager?.chartManager?.currentInterval || '1h';
         
-       let decimals = 2;
-try {
-    const chartData = this.manager?.chartManager?.chartData;
-    if (chartData && chartData.length > 0) {
-        const last = chartData[chartData.length - 1];
-        // Смотрим все цены
-        [last.open, last.high, last.low, last.close].forEach(p => {
-            const s = p.toString();
-            if (s.includes('.')) {
-                const d = s.split('.')[1].replace(/0+$/, '').length;
-                if (d > decimals) decimals = d;
+        // Определяем количество десятичных знаков
+        let decimals = 2;
+        try {
+            const chartData = this.manager?.chartManager?.chartData;
+            if (chartData && chartData.length > 0) {
+                const last = chartData[chartData.length - 1];
+                [last.open, last.high, last.low, last.close].forEach(p => {
+                    const s = p.toString();
+                    if (s.includes('.')) {
+                        const d = s.split('.')[1].replace(/0+$/, '').length;
+                        if (d > decimals) decimals = d;
+                    }
+                });
             }
-        });
-    }
-} catch(e) {}
+        } catch(e) {}
+        
         const formatATR = (v) => (!v || v === 0) ? '—' : v.toFixed(decimals);
         const formatPercent = (v) => v > 0 ? v.toFixed(1) + '%' : '—%';
         const progressColor = (p) => p > 80 ? '#FF4444' : p > 50 ? '#FFA500' : '#FFFFFF';
@@ -731,21 +773,20 @@ try {
         const headerTitle = wrapper.querySelector('#multiatr-header span:first-child');
         if(headerTitle) headerTitle.innerText = `📊 ATR MULTI [ ${modeText} | ${filterText} | P: ${this.settings.atrPeriod} ]`;
 
-       const addRow = (label, color, atrValue, natr, progress, remaining) => {
-    const atrFormatted = formatATR(atrValue);
-    // Используем atrFormatted для копирования вместо atrValue
-    const copyBtn = atrFormatted !== '—' ? 
-        `<button class="copy-atr-btn" data-value="${atrFormatted}" style="background:none;border:none;color:#888;cursor:pointer;font-size:10px;padding:0 2px;margin-left:4px;line-height:1;" title="Скопировать ATR">📋</button>` 
-        : '';
-        
-    return `<tr>
-        <td style="padding:3px 4px; color:${color}; white-space:nowrap;">${label}</td>
-        <td style="text-align:right; padding:3px 4px; color:#FFFFFF; font-weight: bold;">${atrFormatted}${copyBtn}</td>
-        <td style="text-align:right; padding:3px 4px; color:#AAAAAA;">${formatPercent(natr)}</td>
-        <td style="text-align:right; padding:3px 4px; color:${progressColor(progress)};">${formatPercent(progress)}</td>
-        <td style="text-align:right; padding:3px 4px; color:${remainingColor(remaining)};">${formatPercent(remaining)}</td>
-    </tr>`;
-};
+        const addRow = (label, color, atrValue, natr, progress, remaining) => {
+            const atrFormatted = formatATR(atrValue);
+            const copyBtn = atrFormatted !== '—' ? 
+                `<button class="copy-atr-btn" data-value="${atrFormatted}" style="background:none;border:none;color:#888;cursor:pointer;font-size:10px;padding:0 2px;margin-left:4px;line-height:1;" title="Скопировать ATR">📋</button>` 
+                : '';
+                
+            return `<tr>
+                <td style="padding:3px 4px; color:${color}; white-space:nowrap;">${label}</td>
+                <td style="text-align:right; padding:3px 4px; color:#FFFFFF; font-weight: bold;">${atrFormatted}${copyBtn}</td>
+                <td style="text-align:right; padding:3px 4px; color:#AAAAAA;">${formatPercent(natr)}</td>
+                <td style="text-align:right; padding:3px 4px; color:${progressColor(progress)};">${formatPercent(progress)}</td>
+                <td style="text-align:right; padding:3px 4px; color:${remainingColor(remaining)};">${formatPercent(remaining)}</td>
+            </tr>`;
+        };
 
         let rowsHTML = `
             <table style="border-collapse:collapse; width:100%;">
@@ -883,8 +924,8 @@ try {
     }
     
     _createEmptySeries() {
-    this._removeAllSeries();
-}
+        this._removeAllSeries();
+    }
     
     updateSeriesData(data) {
         if (data && data.length) {
@@ -896,7 +937,6 @@ try {
         }
     }
 }
-
 class Volume24HIndicator extends BaseIndicator {
     static meta = { name: '24H Объем', category: 'volume', panel: 'volume24h', color: '#2962FF' };
 
