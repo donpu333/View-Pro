@@ -2,9 +2,11 @@ class TimerRenderer {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this.enabled = true;
-        this._lastValidPosition = null;
-        this._cachedColor = null; // ✅ Кешируем цвет
-        this._lastCandleTime = 0; // ✅ Время последней проверки свечи
+        this._lastValidPosition = null; // ✅ Кешируем ПОЗИЦИЮ!
+        this._cachedColor = null;
+        this._lastCandleTime = 0;
+        this._lastValidY = null; // ✅ Кешируем Y-координату!
+        this._priceCheckFailures = 0; // ✅ Счётчик ошибок
     }
 
     draw(target) {
@@ -23,27 +25,68 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
             
-            let price = chartManager.currentRealPrice;
-            if (!price || isNaN(price) || price <= 0) {
-                const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                price = lastCandle ? lastCandle.close : null;
-            }
+            // ✅✅✅ НАДЁЖНОЕ ПОЛУЧЕНИЕ ЦЕНЫ С ЗАЩИТОЙ
+            let price = this._getSafePrice(chartManager);
             
-            if (!price || isNaN(price) || price <= 0) return;
+            if (!price || isNaN(price) || price <= 0) {
+                // ✅ Если цена не получена - используем кешированную позицию!
+                if (this._lastValidPosition) {
+                    this._drawAtCachedPosition(ctx, scope, hpr, vpr, timerText);
+                }
+                return;
+            }
 
             const activeSeries = chartManager.currentChartType === 'candle' 
                 ? chartManager.candleSeries 
                 : chartManager.barSeries;
             
-            if (!activeSeries) return;
+            if (!activeSeries) {
+                if (this._lastValidPosition) {
+                    this._drawAtCachedPosition(ctx, scope, hpr, vpr, timerText);
+                }
+                return;
+            }
 
+            // ✅ Получаем Y-координату с защитой от null
             let rawYCoord = activeSeries.priceToCoordinate(price);
-            if (rawYCoord === null || isNaN(rawYCoord)) return;
+            
+            // ✅✅✅ ПРОВЕРКА: координата валидна?
+            if (rawYCoord === null || isNaN(rawYCoord) || !isFinite(rawYCoord)) {
+                this._priceCheckFailures++;
+                
+                console.warn(`⚠️ Timer: priceToCoordinate вернул ${rawYCoord} для price=${price} (ошибка #${this._priceCheckFailures})`);
+                
+                // ✅ Используем последнюю валидную позицию!
+                if (this._lastValidPosition && this._priceCheckFailures < 10) {
+                    this._drawAtCachedPosition(ctx, scope, hpr, vpr, timerText);
+                    return;
+                }
+                
+                // Если слишком много ошибок - пытаемся получить Y по-другому
+                rawYCoord = this._getFallbackYCoordinate(activeSeries, chartManager);
+                
+                if (rawYCoord === null) {
+                    return; // Нечего рисовать
+                }
+            } else {
+                // ✅ Успех - сбрасываем счётчик ошибок
+                this._priceCheckFailures = 0;
+                this._lastValidY = rawYCoord; // Кешируем успешную Y
+            }
             
             const bitmapY = rawYCoord * vpr;
             
             const bitmapWidth = scope.mediaSize.width * hpr;
             const bitmapHeight = scope.mediaSize.height * vpr;
+            
+            // ✅ Проверка что Y в пределах канвы
+            if (bitmapY < -1000 || bitmapY > bitmapHeight + 1000) {
+                console.warn('⚠️ Timer: Y за пределами канвы', { bitmapY, bitmapHeight });
+                if (this._lastValidPosition) {
+                    this._drawAtCachedPosition(ctx, scope, hpr, vpr, timerText);
+                }
+                return;
+            }
             
             const fontSize = Math.round(11 * vpr);
             ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
@@ -65,11 +108,12 @@ class TimerRenderer {
                 rectY = bitmapHeight - rectHeight - minTop;
             }
             
-            // ✅✅✅ ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЦВЕТА!
+            // ✅ Сохраняем успешную позицию
+            this._lastValidPosition = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
+            
             const bgColor = this._getCorrectColor(chartManager);
             
-            this._lastValidPosition = { x: rectX, y: rectY };
-            
+            // === РИСОВАНИЕ ===
             ctx.save();
             
             ctx.fillStyle = bgColor + 'DD';
@@ -93,20 +137,108 @@ class TimerRenderer {
         });
     }
     
-    // ✅✅✅ НОВЫЙ МЕТОД: правильное определение цвета
+    // ✅✅✅ НОВЫЙ: рисование в кешированной позиции (когда цена недоступна)
+    _drawAtCachedPosition(ctx, scope, hpr, vpr, timerText) {
+        if (!this._lastValidPosition) return;
+        
+        const fontSize = Math.round(11 * vpr);
+        ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+        
+        const bgColor = this._getCorrectColor(this._timerManager._chartManager);
+        
+        ctx.save();
+        ctx.fillStyle = bgColor + 'DD';
+        ctx.shadowColor = 'rgba(0,0,0,0.4)';
+        ctx.shadowBlur = Math.round(4 * hpr);
+        ctx.beginPath();
+        this._roundRect(
+            ctx, 
+            this._lastValidPosition.x, 
+            this._lastValidPosition.y, 
+            this._lastValidPosition.w, 
+            this._lastValidPosition.h, 
+            Math.round(2 * hpr)
+        );
+        ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+            timerText, 
+            this._lastValidPosition.x + this._lastValidPosition.w / 2, 
+            this._lastValidPosition.y + this._lastValidPosition.h / 2
+        );
+        ctx.restore();
+    }
+    
+    // ✅✅✅ НОВЫЙ: надёжное получение цены с защитой
+    _getSafePrice(chartManager) {
+        // Способ 1: текущая реальная цена
+        let price = chartManager.currentRealPrice;
+        
+        if (price && !isNaN(price) && price > 0) {
+            return price;
+        }
+        
+        // Способ 2: последняя свеча close
+        const data = chartManager.chartData;
+        if (data && data.length > 0) {
+            const lastCandle = data[data.length - 1];
+            if (lastCandle && lastCandle.close != null && !isNaN(lastCandle.close) && lastCandle.close > 0) {
+                return lastCandle.close;
+            }
+        }
+        
+        return null;
+    }
+    
+    // ✅✅✅ НОВЫЙ: fallback для Y-координаты
+    _getFallbackYCoordinate(series, chartManager) {
+        // Если есть кешированная Y - возвращаем её
+        if (this._lastValidY != null) {
+            return this._lastValidY;
+        }
+        
+        // Пробуем взять close последней свечи
+        const data = chartManager.chartData;
+        if (data && data.length > 0) {
+            const lastCandle = data[data.length - 1];
+            if (lastCandle && lastCandle.close != null) {
+                const y = series.priceToCoordinate(lastCandle.close);
+                if (y != null && !isNaN(y)) {
+                    return y;
+                }
+            }
+        }
+        
+        // Пребуем предпоследнюю свечу
+        if (data && data.length > 1) {
+            const prevCandle = data[data.length - 2];
+            if (prevCandle && prevCandle.close != null) {
+                const y = series.priceToCoordinate(prevCandle.close);
+                if (y != null && !isNaN(y)) {
+                    return y;
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    // ✅ Правильное определение цвета
     _getCorrectColor(chartManager) {
         const data = chartManager.chartData;
         if (!data || data.length === 0) {
             return chartManager.bullishColor || '#00bcd4';
         }
         
-        // Берём ПОСЛЕДНЮЮ свечу
         const lastCandle = data[data.length - 1];
         if (!lastCandle) {
             return chartManager.bullishColor || '#00bcd4';
         }
         
-        // ✅ Проверяем все необходимые поля
         const close = lastCandle.close;
         const open = lastCandle.open;
         
@@ -114,16 +246,11 @@ class TimerRenderer {
             return chartManager.bullishColor || '#00bcd4';
         }
         
-        // ✅ Определяем бычья/медвежья с учётом точности чисел
         const isBullish = close > open;
-        
-        // ✅ Берём цвета из настроек графика (гарантированное совпадение!)
         const bullishColor = chartManager.bullishColor || '#00bcd4';
         const bearishColor = chartManager.bearishColor || '#f23645';
-        
         const color = isBullish ? bullishColor : bearishColor;
         
-        // ✅ Кешируем цвет (чтобы не моргал)
         const candleTime = lastCandle.time || 0;
         if (candleTime !== this._lastCandleTime) {
             this._cachedColor = color;
@@ -229,11 +356,19 @@ class TimerPrimitive {
         return this._dataReady;
     }
     
-    // ✅ Метод для сброса кеша цвета (вызывать при смене данных)
     resetColorCache() {
         if (this._paneView && this._paneView._renderer) {
             this._paneView._renderer._cachedColor = null;
             this._paneView._renderer._lastCandleTime = 0;
+        }
+    }
+    
+    // ✅ Сброс позиции (вызывать при смене символа)
+    resetPositionCache() {
+        if (this._paneView && this._paneView._renderer) {
+            this._paneView._renderer._lastValidPosition = null;
+            this._paneView._renderer._lastValidY = null;
+            this._paneView._renderer._priceCheckFailures = 0;
         }
     }
 }
@@ -292,8 +427,8 @@ class TimerManager {
                     if (this._primitive && this._chartManager.chartData && 
                         this._chartManager.chartData.length > 0) {
                         
-                        // ✅ Сбрасываем кеш цвета при изменении данных!
                         this._primitive.resetColorCache();
+                        // ✅ Не сбрасываем позицию при обычном обновлении данных!
                         
                         if (this._primitive && !this._primitive.isDataReady()) {
                             this._primitive.setDataReady(true);
@@ -461,7 +596,8 @@ class TimerManager {
         } catch (e) {}
         
         this._primitive.setDataReady(false);
-        this._primitive.resetColorCache(); // ✅ Сброс кеша при переподключении
+        this._primitive.resetColorCache();
+        this._primitive.resetPositionCache(); // ✅ Сброс позиции при переподключении
         
         const newSeries = this._chartManager.currentChartType === 'candle' 
             ? this._chartManager.candleSeries 
