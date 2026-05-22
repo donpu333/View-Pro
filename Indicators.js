@@ -444,86 +444,149 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
     
     // ИСПРАВЛЕНО: Полная переработка computeATRMetrics с корректной фильтрацией
-    computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
-        if (!data || data.length < period + 1) {
-            return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
-                    trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true };
-        }
-
-        // Расчет True Range для всех свечей
-        const trueRanges = [];
-        for (let i = 1; i < data.length; i++) {
-            trueRanges.push(this.calculateTrueRange(
-                data[i].high, data[i].low, data[i-1].close, rangeMode
-            ));
-        }
-
-        if (trueRanges.length < period) {
-            return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
-                    trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true };
-        }
-
-        // Базовый ATR (RMA от True Range)
-        const basicATR = this._rma(trueRanges, period);
-        
-        let finalATR = basicATR;
-        let upperBound = 0;
-        let lowerBound = 0;
-        
-        // Применяем фильтр если нужно
-        if (useFilter) {
-            const filteredTR = [...trueRanges];
-            
-            for (let i = period; i < trueRanges.length; i++) {
-                const robustATR = basicATR[i]; // Текущее значение ATR без фильтра
-                
-                if (filterType === 'Adaptive') {
-                    // Расчет стандартного отклонения
-                    const window = trueRanges.slice(i - period + 1, i + 1);
-                    const mean = window.reduce((a, b) => a + b, 0) / period;
-                    const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
-                    const stdDev = Math.sqrt(variance);
-                    
-                    upperBound = Math.min(robustATR + stdDev * devFactor, robustATR * 3.0);
-                    lowerBound = Math.max(robustATR - stdDev * devFactor, robustATR * 0.3);
-                } else {
-                    upperBound = robustATR * fixedMult;
-                    lowerBound = Math.max(robustATR / fixedMult, 0);
-                }
-                
-                const tr = trueRanges[i];
-                // Если свеча выходит за границы фильтра - заменяем на предыдущее значение ATR
-                if (tr > upperBound || tr < lowerBound) {
-                    filteredTR[i] = i > 0 ? basicATR[i - 1] : tr;
-                }
-            }
-            
-            // Пересчитываем ATR с фильтрованными значениями
-            finalATR = this._rma(filteredTR, period);
-        }
-        
-        const lastIndex = trueRanges.length - 1;
-        const atr = finalATR[lastIndex];
-        const lastCandle = data[data.length - 1];
-        const lastTrueRange = trueRanges[lastIndex];
-        const distanceFromOpen = Math.abs(lastCandle.close - lastCandle.open);
-        const progress = atr > 0 ? (distanceFromOpen / atr) * 100 : 0;
-        
-        return {
-            atr,
-            natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
-            progress: Math.min(progress, 100), // Не больше 100%
-            remaining: Math.max(0, 100 - progress),
-            remainingPoints: Math.max(0, atr - distanceFromOpen),
-            trueRange: lastTrueRange,
-            rangeRatio: (lastIndex > 0 && finalATR[lastIndex - 1] > 0) 
-                ? (lastTrueRange / finalATR[lastIndex - 1]) * 100 
-                : 0,
-            upperBound,
-            lowerBound,
-            isValid: true
+computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
+    if (!data || data.length < period + 1) {
+        return { 
+            atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
+            trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, 
+            isValid: true, isAnomaly: false, anomalyType: null 
         };
     }
+
+    // ВСЕГДА High-Low для ATR
+    const ranges = [];
+    for (let i = 0; i < data.length; i++) {
+        ranges.push(data[i].high - data[i].low);
+    }
+
+    if (ranges.length < period) {
+        return { 
+            atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
+            trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, 
+            isValid: true, isAnomaly: false, anomalyType: null 
+        };
+    }
+
+    // Базовый ATR
+    const basicATR = this._rma(ranges, period);
+    
+    // Массив для фильтрованных значений
+    const filteredRanges = [...ranges];
+    let upperBound = 0;
+    let lowerBound = 0;
+    let anomalyStats = {
+        totalAnomalies: 0,
+        largeAnomalies: 0,
+        smallAnomalies: 0,
+        lastAnomalyType: null
+    };
+    
+    if (useFilter) {
+        for (let i = period; i < ranges.length; i++) {
+            const currentRange = ranges[i];
+            const previousATR = i > 0 ? basicATR[i - 1] : basicATR[i];
+            
+            if (filterType === 'Adaptive') {
+                // Расчет статистики для адаптивных границ
+                const window = ranges.slice(Math.max(0, i - period), i);
+                const mean = window.reduce((a, b) => a + b, 0) / window.length;
+                const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
+                const stdDev = Math.sqrt(variance);
+                
+                // ГРАНИЦЫ ДЛЯ ОБОИХ ТИПОВ АНОМАЛИЙ:
+                upperBound = Math.min(previousATR + stdDev * devFactor, previousATR * 2.0);
+                lowerBound = Math.max(previousATR - stdDev * devFactor, previousATR * 0.3);
+                
+            } else {
+                // FIXED: ЖЁСТКИЕ ГРАНИЦЫ
+                upperBound = previousATR * fixedMult;        // Например: ATR * 1.5
+                lowerBound = Math.max(previousATR / fixedMult, previousATR * 0.1); // Например: ATR / 1.5
+            }
+            
+            // ПРОВЕРЯЕМ ОБЕ АНОМАЛИИ:
+            const isLargeAnomaly = currentRange > upperBound;
+            const isSmallAnomaly = currentRange < lowerBound;
+            const isAnomaly = isLargeAnomaly || isSmallAnomaly;
+            
+            if (isAnomaly) {
+                anomalyStats.totalAnomalies++;
+                
+                if (isLargeAnomaly) {
+                    anomalyStats.largeAnomalies++;
+                    anomalyStats.lastAnomalyType = 'LARGE';
+                    // Логируем большую аномалию
+                    console.log(`🔴 БОЛЬШАЯ АНОМАЛИЯ: Свеча ${currentRange.toFixed(2)} > ATR ${previousATR.toFixed(2)} × ${fixedMult} = ${upperBound.toFixed(2)}`);
+                }
+                
+                if (isSmallAnomaly) {
+                    anomalyStats.smallAnomalies++;
+                    anomalyStats.lastAnomalyType = 'SMALL';
+                    // Логируем маленькую аномалию
+                    console.log(`🔵 МАЛЕНЬКАЯ АНОМАЛИЯ: Свеча ${currentRange.toFixed(2)} < ATR ${previousATR.toFixed(2)} / ${fixedMult} = ${lowerBound.toFixed(2)}`);
+                }
+                
+                // ЗАМЕНЯЕМ АНОМАЛЬНУЮ СВЕЧУ НА ПРЕДЫДУЩИЙ ATR
+                filteredRanges[i] = previousATR;
+            }
+        }
+    }
+    
+    // Пересчитываем ATR с фильтрованными значениями
+    const filteredATR = this._rma(filteredRanges, period);
+    
+    const lastIndex = ranges.length - 1;
+    const atr = filteredATR[lastIndex];
+    const lastCandle = data[data.length - 1];
+    const lastRange = ranges[lastIndex];
+    const previousATR = lastIndex > 0 ? filteredATR[lastIndex - 1] : atr;
+    
+    // Определяем тип текущей аномалии
+    const isCurrentlyLarge = lastRange > upperBound;
+    const isCurrentlySmall = lastRange < lowerBound;
+    const isCurrentlyAnomaly = isCurrentlyLarge || isCurrentlySmall;
+    let anomalyType = null;
+    if (isCurrentlyLarge) anomalyType = 'LARGE';
+    if (isCurrentlySmall) anomalyType = 'SMALL';
+    
+    // Прогресс свечи (только для НЕаномальных свечей)
+    const distanceFromOpen = Math.abs(lastCandle.close - lastCandle.open);
+    const progress = !isCurrentlyAnomaly && atr > 0 ? (distanceFromOpen / atr) * 100 : 0;
+    
+    return {
+        atr,
+        natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
+        progress: Math.min(progress, 100),
+        remaining: Math.max(0, 100 - progress),
+        remainingPoints: Math.max(0, atr - distanceFromOpen),
+        trueRange: lastRange,
+        rangeRatio: previousATR > 0 ? (lastRange / previousATR) * 100 : 0,
+        upperBound,
+        lowerBound,
+        isValid: !isCurrentlyAnomaly,
+        isAnomaly: isCurrentlyAnomaly,
+        anomalyType: anomalyType,
+        anomalyStats: anomalyStats
+    };
+}
+
+// Обновленная RMA функция (без изменений)
+_rma(src, length) {
+    const result = new Array(src.length).fill(0);
+    
+    // Первое значение - SMA
+    let sum = 0;
+    for (let i = 0; i < length; i++) {
+        sum += src[i];
+    }
+    result[length - 1] = sum / length;
+    
+    // RMA Уайлдера
+    for (let i = length; i < src.length; i++) {
+        result[i] = (src[i] + (length - 1) * result[i - 1]) / length;
+    }
+    
+    return result;
+}
     
     // ИСПРАВЛЕНО: Добавлен debounce для предотвращения частых обновлений
     async updateAllMetrics() {
