@@ -260,11 +260,11 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this.settings = {
             atrPeriod: 3, rangeMode: 'High-Low', useFilter: true, filterType: 'Adaptive',
             devFactor: 1.0, fixedMult: 1.5,
-            showWeekTF: true, weekATRPeriod: 5,
-            showDayTF: true, dayATRPeriod: 5,
-            showHourTF: true, hourATRPeriod: 24, hourTF: '1',
-            showMinuteTF: true, minuteATRPeriod: 3, minuteTF: '5',
-            showMinute1TF: true, minute1ATRPeriod: 1, minute1TF: '1',
+            showWeekTF: true, weekATRPeriod: 3,
+            showDayTF: true, dayATRPeriod: 3,
+            showHourTF: true, hourATRPeriod: 12, hourTF: '1',
+            showMinuteTF: true, minuteATRPeriod: 6, minuteTF: '5',
+            showMinute1TF: true, minute1ATRPeriod: 3, minute1TF: '1',
             showTable: true
         };
         
