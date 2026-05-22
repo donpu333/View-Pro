@@ -2302,9 +2302,7 @@ getPrecisionFromExchange(symbol, exchange, marketType).then(p => {
             this._updateTimeout = null;
         }
 
-        if (this.indicatorManager) {
-            this.indicatorManager.clearAllIndicators();
-        }
+        
 
         console.log('🛑 Все старые процессы прерваны');
     }
