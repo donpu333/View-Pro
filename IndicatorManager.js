@@ -11,6 +11,13 @@ class IndicatorManager {
         this._currentSettingsIndicator = null;
         this._outsideClickHandler = null;
         
+        // Привязываем контекст всех методов
+        this._handleWorkerMessage = this._handleWorkerMessage.bind(this);
+        this.updateAllIndicators = this.updateAllIndicators.bind(this);
+        this.loadIndicators = this.loadIndicators.bind(this);
+        this.restorePendingIndicators = this.restorePendingIndicators.bind(this);
+        this._saveIndicators = this._saveIndicators.bind(this);
+        
         // Инициализируем Worker
         this.worker = window.initIndicatorWorker();
         if (this.worker) {
@@ -18,22 +25,40 @@ class IndicatorManager {
         }
         
         this._initIndicatorPanels();
-         // ✅ ДОБАВЬТЕ ЭТИ 3 СТРОКИ:
-    setTimeout(() => {
-        this.loadIndicators();
-    }, 2000);
+        
+        setTimeout(() => {
+            this.loadIndicators();
+        }, 2000);
     }
     
     _handleWorkerMessage(message) {
         if (message.task === 'result') {
             const indicator = this.activeIndicators.find(i => i.id == message.indicatorId);
-            if (indicator && message.success) indicator.onCalculateResult(message);
+            if (indicator && message.success) {
+                // Очищаем серии перед новыми данными
+                if (indicator.series) {
+                    indicator.series.forEach(s => {
+                        if (s && s.setData) s.setData([]);
+                    });
+                }
+                indicator.onCalculateResult(message);
+            }
         }
         else if (message.task === 'resultMultiple') {
             for (const res of message.results) {
                 const indicator = this.activeIndicators.find(i => i.id == res.indicatorId);
                 if (indicator && res.success) {
-                    indicator.onCalculateResult({ indicatorId: res.indicatorId, result: res.result, success: true });
+                    // Очищаем серии перед новыми данными
+                    if (indicator.series) {
+                        indicator.series.forEach(s => {
+                            if (s && s.setData) s.setData([]);
+                        });
+                    }
+                    indicator.onCalculateResult({ 
+                        indicatorId: res.indicatorId, 
+                        result: res.result, 
+                        success: true 
+                    });
                 }
             }
         }
@@ -41,7 +66,10 @@ class IndicatorManager {
     
     _filterData(data) {
         if (!data || !Array.isArray(data)) return [];
-        return data.filter(item => item && item.time !== undefined && item.value !== undefined && !isNaN(item.value) && item.time > 0);
+        return data.filter(item => 
+            item && item.time !== undefined && item.value !== undefined && 
+            !isNaN(item.value) && item.time > 0
+        );
     }
     
     _initIndicatorPanels() {
@@ -55,9 +83,6 @@ class IndicatorManager {
         }
         
         this.panelManager = new window.IndicatorPanelManager(panelsContainer, this.chartManager);
-        
-        // УДАЛЕНО: Ручной вызов syncTimeScaleWithMainChart. 
-        // IndicatorPanelManager теперь делает это автоматически внутри себя при создании каждой панели!
     }
     
     toggleIndicatorVisibility(indicator) {
@@ -115,70 +140,80 @@ class IndicatorManager {
             console.error(`Ошибка при добавлении индикатора ${type}:`, error);
             return false;
         } finally {
-            // ИСПРАВЛЕНО: Снимаем блокировку сразу, без костыльного setTimeout
             this._addingInProgress.delete(type);
         }
     }
     
-  removeIndicator(index) {
-    const indicator = this.activeIndicators[index];
-    if (!indicator) return false;
-    
-    // ✅ Вызываем destroy если есть (удаляет таблицы, DOM элементы)
-    if (indicator.destroy) {
-        indicator.destroy();
-    }
-    
-    indicator.series.forEach(series => {
-        if (indicator.data.panel === 'main') {
-            try { this.chartManager.chart.removeSeries(series); } catch(e) {}
-        } else {
-            this.panelManager.removeSeries(indicator.data.panel, series);
+    removeIndicator(index) {
+        const indicator = this.activeIndicators[index];
+        if (!indicator) return false;
+        
+        if (indicator.destroy) {
+            indicator.destroy();
         }
-    });
-    
-    this.activeIndicators.splice(index, 1);
-    
-    if (indicator.data.panel !== 'main') {
-        const hasOther = this.activeIndicators.some(i => i.data.panel === indicator.data.panel);
-        if (!hasOther) {
-            this.panelManager.closePanel(indicator.data.panel);
+        
+        indicator.series.forEach(series => {
+            if (indicator.data.panel === 'main') {
+                try { this.chartManager.chart.removeSeries(series); } catch(e) {}
+            } else {
+                this.panelManager.removeSeries(indicator.data.panel, series);
+            }
+        });
+        
+        this.activeIndicators.splice(index, 1);
+        
+        if (indicator.data.panel !== 'main') {
+            const hasOther = this.activeIndicators.some(i => i.data.panel === indicator.data.panel);
+            if (!hasOther) {
+                this.panelManager.closePanel(indicator.data.panel);
+            }
         }
+        
+        this._saveIndicators();
+        this._renderUI();
+        this.chartManager?.chart?.timeScale()?.fitContent();
+        
+        return true;
     }
-    
-    this._saveIndicators();
-    this._renderUI();
-    this.chartManager?.chart?.timeScale()?.fitContent();
-    
-    return true;
-}
     
     updateAllIndicators() {
         if (!this.worker) return;
         
         const calculations = [];
         this.activeIndicators.forEach(indicator => {
-            // ИСПРАВЛЕНО: Пропускаем индикаторы, которые не используют Worker (например, MultiTimeframeATR)
             const workerType = indicator.getWorkerType();
             if (!workerType) return; 
             
             const chartData = this.chartManager.chartData;
             if (chartData && chartData.length > 0) {
+                // Очищаем старые данные на сериях
+                if (indicator.series) {
+                    indicator.series.forEach(series => {
+                        if (series && series.setData) {
+                            series.setData([]);
+                        }
+                    });
+                }
+                
+                // Очищаем результат
+                if (indicator.result) {
+                    indicator.result = null;
+                }
+                
                 calculations.push({
                     indicatorId: indicator.id,
                     type: workerType,
-                    data: chartData,
+                    data: [...chartData],
                     params: indicator.getWorkerParams()
                 });
             }
         });
         
         if (calculations.length > 0) {
+            console.log('📤 Отправка в Worker:', calculations.length, 'индикаторов');
             this.worker.postMessage({ task: 'calculateMultiple', calculations });
         }
     }
-    
-    
     
     showIndicatorSettings(indicator) {
         const panel = document.getElementById('indicatorSettings');
@@ -211,7 +246,6 @@ class IndicatorManager {
             saveBtn.onclick = () => {
                 if (this._currentSettingsIndicator) {
                     this._currentSettingsIndicator.applySettingsFromForm();
-                    // ВНИМАНИЕ: Метод createSeries() внутри ваших классов ДОЛЖЕН удалять старые серии!
                     this._currentSettingsIndicator.createSeries();
                     this._renderUI();
                     this._saveIndicators();
@@ -260,6 +294,7 @@ class IndicatorManager {
             visible: indicator.visible !== false
         }));
         localStorage.setItem('activeIndicatorsV2', JSON.stringify(indicatorsData));
+        console.log('💾 Индикаторы сохранены:', indicatorsData.length);
     }
     
     loadIndicators() {
@@ -272,6 +307,7 @@ class IndicatorManager {
             
             if (!this.chartManager.chartData || this.chartManager.chartData.length === 0) {
                 this._pendingIndicators = indicatorsData;
+                console.log('⏳ Данные графика еще не загружены, откладываем восстановление индикаторов');
                 return;
             }
             
@@ -288,56 +324,60 @@ class IndicatorManager {
             const data = [...this._pendingIndicators];
             this._pendingIndicators = null;
             this._restoreIndicators(data);
+            
+            // Запускаем пересчет
+            setTimeout(() => {
+                this.updateAllIndicators();
+            }, 500);
         }
     }
     
-   _restoreIndicators(indicatorsData) {
-    indicatorsData.forEach(data => {
-        if (this.activeIndicators.some(i => i.type === data.type)) return;
+    _restoreIndicators(indicatorsData) {
+        indicatorsData.forEach(data => {
+            if (this.activeIndicators.some(i => i.type === data.type)) return;
+            
+            const IndicatorClass = window.IndicatorRegistry.get(data.type);
+            if (!IndicatorClass) return;
+            
+            const indicator = new IndicatorClass(this);
+            if (!indicator) return;
+            
+            // Сначала настройки, ПОТОМ createSeries
+            if (data.settings) {
+                indicator.settings = { ...indicator.settings, ...data.settings };
+            }
+            if (data.visible !== undefined) {
+                indicator.visible = data.visible;
+            }
+            
+            // Проверяем цвет
+            if (!indicator.settings.color || indicator.settings.color === 'undefined') {
+                indicator.settings.color = indicator.data.color || '#FFA500';
+            }
+            
+            if (indicator.data.panel !== 'main') {
+                this._showPanel(indicator.data.panel);
+            }
+            
+            const series = indicator.createSeries();
+            if (series && series.length > 0) {
+                this.activeIndicators.push(indicator);
+                indicator.series.forEach(s => {
+                    if (s) s.applyOptions({ visible: indicator.visible !== false });
+                });
+            }
+        });
         
-        const IndicatorClass = window.IndicatorRegistry.get(data.type);
-        if (!IndicatorClass) return;
-        
-        const indicator = new IndicatorClass(this);
-        if (!indicator) return;
-        
-        // ✅ Сначала настройки, ПОТОМ createSeries
-        if (data.settings) {
-            indicator.settings = { ...indicator.settings, ...data.settings };
-        }
-        if (data.visible !== undefined) {
-            indicator.visible = data.visible;
-        }
-        
-        // ✅ Проверяем цвет
-        if (!indicator.settings.color || indicator.settings.color === 'undefined') {
-            indicator.settings.color = indicator.data.color || '#FFA500';
-        }
-        
-        if (indicator.data.panel !== 'main') {
-            this._showPanel(indicator.data.panel);
-        }
-        
-        const series = indicator.createSeries();
-        if (series && series.length > 0) {
-            this.activeIndicators.push(indicator);
-            indicator.series.forEach(s => {
-                if (s) s.applyOptions({ visible: indicator.visible !== false });
-            });
-        }
-    });
+        this._saveIndicators();
+        this._renderUI();
+        this.afterAllIndicatorsLoaded();
+    }
     
-    this._saveIndicators();
-    this._renderUI();
-    this.afterAllIndicatorsLoaded();
-}
     afterAllIndicatorsLoaded() {
         this.chartManager?._updateMainChartHeight?.();
         
         const volumeScale = this.chartManager?.chart?.priceScale('volume');
         if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.7, bottom: 0 } });
-        
-       
     }
     
     clearAllIndicators() {
