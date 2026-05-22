@@ -35,8 +35,10 @@ class TickerPanel {
         this.rowHeight = 36;
         this.visibleCount = 30;
         this.tickerElements = this.renderer.tickerElements;
-        this.displayedTickers = this.renderer.displayedTickers;
-        this.totalItems = this.renderer.totalItems;
+        Object.defineProperties(this, {
+    displayedTickers: { get: () => this.renderer.displayedTickers },
+    totalItems: { get: () => this.renderer.totalItems }
+});
         this._scrollHandler = this.renderer._scrollHandler;
         this._renderScheduled = this.renderer._renderScheduled;
         this._renderRafId = this.renderer._renderRafId;
@@ -356,7 +358,11 @@ addInitialSymbols() {
     
     this.updateModalCount();
     
-    // ✅ СНАЧАЛА РЕНЕР (цены будут 0.00)
+    // ✅ ИНВАЛИДИРУЕМ КЭШ ПЕРЕД ПЕРВЫМ РЕНДЕРОМ!
+    // (чтобы не использовать старый кэш с volume=0)
+    this.filterCache = null;
+    
+    // СНАЧАЛА РЕНДЕР (цены будут 0.00, но структура создана)
     this.renderTickerList();
     
     requestAnimationFrame(() => {
@@ -365,22 +371,41 @@ addInitialSymbols() {
         if (container) container.classList.add('ready');
         if (loader) loader.style.display = 'none';
         
-        // ✅ Разблокировка
+        // Разблокировка
         this._blockDOMUpdates = false;
         
-        // ✅ Запускаем движок
+        // Запускаем движок цен
         this.startTickerPanelPriceEngine();
         
         this.setupDelegatedEvents();
         
-        // ✅✅✅ ПЕРЕРИСОВКА ПОСЛЕ ЗАГРУЗКИ!
+        // ✅✅✅ ПЕРЕРИСОВКА ПОСЛЕ ЗАГРУЗКИ РЕАЛЬНЫХ ДАННЫХ!
+        // Увеличен timeout до 3000мс — чтобы успели прийти 49 REST-запросов
         setTimeout(() => {
-            console.log('🔄 Принудительное обновление UI...');
+            console.log('🔄 Финальная пересортировка после загрузки цен...');
+            
             if (this.renderer) {
+                // ✅ СБРАСЫВАЕМ КЭШ (он мог создаться когда volumes были = 0!)
+                this.filterCache = null;
+                
+                // Обновляем цены в DOM
                 this.renderer.updatePriceElements?.();
+                
+                // ✅ ПЕРЕСОРТИРОВКА С РЕАЛЬНЫМИ ОБЪЁМАМИ!
                 this.renderTickerList();
+                
+                console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
+                
+                // Диагностика (можно убрать в проде):
+                if (this.displayedTickers?.length > 0) {
+                    console.log('🏆 Топ-3 по объёму:', 
+                        this.displayedTickers.slice(0, 3).map(t => 
+                            `${t.symbol}: $${(t.volume / 1e9).toFixed(2)}B`
+                        )
+                    );
+                }
             }
-        }, 1500);
+        }, 3000);  // ← УВЕЛИЧЕНО С 1500 ДО 3000 МС!
     });
 }
 startTickerPanelPriceEngine() {
