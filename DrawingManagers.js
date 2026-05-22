@@ -4399,67 +4399,33 @@ class AlertLineManager {
         this._subscribedSymbols.delete(symbol);
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const container = this._chartManager.chartContainer;
-                const rect = container.getBoundingClientRect();
-                
-                const mouseX = this._lastMouseX !== undefined ? this._lastMouseX : rect.width / 2;
-                const mouseY = this._lastMouseY !== undefined ? this._lastMouseY : rect.height / 2;
-                
-                let price = this._chartManager.coordinateToPrice(mouseY);
-                let time = this._getTimeFromCoordinate(mouseX);
-                let anchorCandle = null;
-                
-                if (price === null || time === null) {
-                    const lastCandle = this._chartManager.getLastCandle();
-                    if (lastCandle) { 
-                        price = lastCandle.close; 
-                        time = lastCandle.time; 
-                    } else {
-                        return;
-                    }
-                }
-                
-                if (this._magnetEnabled) {
-                    const snapped = this._snapToPrice(price, time);
-                    price = snapped.price;
-                    time = snapped.time;
-                    anchorCandle = snapped.anchorCandle;
-                }
-                
-                console.log('🔔 Создаём алерт:', {
-                    symbol: this._chartManager.currentSymbol,
-                    price: price,
-                    time: new Date(time * 1000).toLocaleString(),
-                    magnet: this._magnetEnabled
-                });
-                
-                this.createAlert(price, time, {
-                    color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
-                    lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
-                    lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
-                    opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
-                    showPrice: true,
-                    showBell: document.getElementById('alertShowBell')?.checked || true,
-                    repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
-                    repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
-                    anchorCandle: anchorCandle
-                });
-            }
+   _setupHotkeys() {
+    // Горячая клавиша I — ВКЛЮЧАЕТ РЕЖИМ рисования алертов
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
             
-            if (e.key === 'Delete' && this._selectedAlert) {
-                e.preventDefault();
-                this.deleteAlert(this._selectedAlert.id);
-                this._selectedAlert = null;
-            }
-        });
-    }
-
+            const newState = !this._isDrawingMode;
+            this.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
+        }
+        
+        // Delete — удаление выбранного алерта
+        if (e.key === 'Delete' && this._selectedAlert) {
+            e.preventDefault();
+            this.deleteAlert(this._selectedAlert.id);
+            this._selectedAlert = null;
+        }
+    });
+}
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
@@ -7245,7 +7211,42 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
+// ========== ГОРЯЧИЕ КЛАВИШИ ==========
+document.addEventListener('keydown', (e) => {
+    // ... существующие обработчики (Z, U, Y, O, T) ...
 
+    // Алерт - клавиша I (включает режим)
+    if (e.code === 'KeyI' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        
+        if (window.alertLineManager) {
+            const newState = !window.alertLineManager._isDrawingMode;
+            window.alertLineManager.setDrawingMode(newState);
+            
+            // Выключаем режимы других инструментов
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            // Меняем стиль кнопки
+            const alertBtn = document.getElementById('toolAlert');
+            if (alertBtn) {
+                if (newState) {
+                    alertBtn.style.background = '#4A90E2';
+                    alertBtn.style.color = '#FFFFFF';
+                    alertBtn.classList.add('active');
+                } else {
+                    alertBtn.style.background = '';
+                    alertBtn.style.color = '';
+                    alertBtn.classList.remove('active');
+                }
+            }
+            
+            console.log(`Алерты ${newState ? 'включены' : 'выключены'}`);
+        }
+    }
+});
 
     // Линейка - клавиша Y
     if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
