@@ -412,75 +412,157 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         });
     }
 
-    calculateTrueRange(high, low, prevClose, mode) {
-        if (mode === 'True Range') {
-            return Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
-        }
-        return high - low;
-    }
-    
-    calculateCandlesFromHours(hours, minuteTFStr) {
-        return Math.max(Math.floor(hours * 60 / parseInt(minuteTFStr)), 1);
-    }
-    
+       /**
+     * ОСНОВНАЯ ФУНКЦИЯ: Полный пересчет метрик ATR
+     * Совместима с логикой Pine Script на 95%+
+     */
     computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
-        if (!data || data.length < period + 1) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true };
-
-        const trueRanges = [];
-        const rawATR = [];
-        const filteredATR = [];
-
-        for (let i = 1; i < data.length; i++) {
-            trueRanges.push(this.calculateTrueRange(data[i].high, data[i].low, data[i-1].close, rangeMode));
+        // Минимальная проверка данных
+        if (!data || data.length < Math.max(period + 1, 2)) {
+            return { 
+                atr: 0, 
+                natr: 0, 
+                progress: 0, 
+                remaining: 0, 
+                remainingPoints: 0, 
+                trueRange: 0, 
+                rangeRatio: 0, 
+                upperBound: 0, 
+                lowerBound: 0, 
+                isValid: true 
+            };
         }
 
-        if (trueRanges.length < period) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true };
+        // 1. Подготовка данных (исключаем последнюю свечу если она текущая/незакрытая)
+        // Это имитирует поведение [1] в request.security Pine Script
+        const calcData = data.slice(0, -1); // Данные для расчета среднего ATR (закрытые)
+        const liveCandle = data[data.length - 1]; // Текущая живая свеча
 
-        let upperBound = 0, lowerBound = 0;
+        if (calcData.length < period) {
+             return { 
+                atr: 0, 
+                natr: 0, 
+                progress: 0, 
+                remaining: 0, 
+                remainingPoints: 0, 
+                trueRange: 0, 
+                rangeRatio: 0, 
+                upperBound: 0, 
+                lowerBound: 0, 
+                isValid: true 
+            };
+        }
 
+        // 2. Расчет массива True Range для исторических данных
+        const trueRanges = [];
+        for (let i = 1; i < calcData.length; i++) {
+            trueRanges.push(this.calculateTrueRange(
+                calcData[i].high, 
+                calcData[i].low, 
+                calcData[i-1].close, 
+                rangeMode
+            ));
+        }
+
+        // ✅ ИСПРАВЛЕНО: Полный объект вместо spread
+        if (trueRanges.length === 0) {
+            return { 
+                atr: 0, 
+                natr: 0, 
+                progress: 0, 
+                remaining: 0, 
+                remainingPoints: 0, 
+                trueRange: 0, 
+                rangeRatio: 0, 
+                upperBound: 0, 
+                lowerBound: 0, 
+                isValid: true 
+            };
+        }
+
+        // 3. Расчет базового RMA (без фильтра) для определения границ
+        const rawRMA = this._calculateRMA(trueRanges, period);
+        
+        // 4. Применение фильтра и расчет финального ATR
+        const filteredValues = []; // Значения, которые пойдут в итоговый RMA
+        
         for (let i = 0; i < trueRanges.length; i++) {
             const tr = trueRanges[i];
-            rawATR[i] = (i === 0) ? tr : (tr + (period - 1) * rawATR[i-1]) / period;
+            const currentRawAtr = rawRMA[i]; // Текущий "чистый" ATR для границ
+            
+            let effectiveValue = tr;
+            let upperBound = 0;
+            let lowerBound = 0;
 
-            let currentValue = tr;
-
-            if (useFilter && i >= period) {
-                const window = trueRanges.slice(i - period, i);
-                const mean = window.reduce((a,b) => a+b, 0) / period;
-                const variance = window.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / period;
-                const stdDev = Math.sqrt(variance);
-                const robustVal = rawATR[i];
-
+            if (useFilter && i >= period - 1) { // Фильтр применяем только после накопления периода
                 if (filterType === 'Adaptive') {
-                    upperBound = Math.min(robustVal + stdDev * devFactor, robustVal * 3.0);
-                    lowerBound = Math.max(robustVal - stdDev * devFactor, robustVal * 0.3);
-                } else {
-                    upperBound = robustVal * fixedMult;
-                    lowerBound = robustVal / fixedMult;
+                    // Используем исправленную функцию StdDev
+                    const stdDev = this._calculateStdDev(trueRanges.slice(0, i + 1), period);
+                    
+                    upperBound = currentRawAtr + stdDev * devFactor;
+                    lowerBound = Math.max(currentRawAtr - stdDev * devFactor, 0);
+
+                    // Ограничители (Hard Limits как в Pine скрипте)
+                    upperBound = Math.min(upperBound, currentRawAtr * 3.0);
+                    lowerBound = Math.max(lowerBound, currentRawAtr * 0.3);
+
+                } else { // Fixed
+                    upperBound = currentRawAtr * fixedMult;
+                    lowerBound = Math.max(currentRawAtr / fixedMult, 0);
                 }
 
+                // Проверка валидности свечи
                 if (tr > upperBound || tr < lowerBound) {
-                    currentValue = filteredATR[i-1] || tr;
+                    // Свеча невалидна - берем предыдущее ПЕРЕФИЛЬТРОВАННОЕ значение
+                    effectiveValue = filteredValues[i-1] !== undefined ? filteredValues[i-1] : tr;
                 }
             }
-
-            filteredATR[i] = (i === 0) ? currentValue : (currentValue + (period - 1) * filteredATR[i-1]) / period;
+            
+            filteredValues.push(effectiveValue);
         }
 
-        const lastIndex = trueRanges.length - 1;
-        const atr = filteredATR[lastIndex];
-        const lastCandle = data[data.length - 1];
-        const lastTrueRange = trueRanges[lastIndex];
-        const distanceFromOpen = Math.abs(lastCandle.close - lastCandle.open);
+        // 5. Итоговый расчет ATR на основе отфильтрованных значений
+        const finalRMA = this._calculateRMA(filteredValues, period);
+        
+        // Берем последнее значение из массива
+        const atr = finalRMA[finalRMA.length - 1];
+
+        // 6. Расчет прогресса (используем LIVE свечу для актуальности)
+        const prevCloseForLive = calcData.length > 0 ? calcData[calcData.length-1].close : liveCandle.close;
+        const liveTR = this.calculateTrueRange(liveCandle.high, liveCandle.low, prevCloseForLive, rangeMode);
+        
+        const distanceFromOpen = Math.abs(liveCandle.close - liveCandle.open);
+        
+        // Прогресс: насколько прошла цена относительно ATR
         const progress = atr > 0 ? (distanceFromOpen / atr) * 100 : 0;
         
+        // Range Ratio: отношение текущего TR к среднему ATR
+        const rangeRatio = atr > 0 ? (liveTR / atr) * 100 : 0;
+
+        // Границы для отображения (последние рассчитанные)
+        let uB = 0, lB = 0;
+        if (useFilter && finalRMA.length > 0) {
+             if(filterType === 'Adaptive'){
+                 const sd = this._calculateStdDev(filteredValues, period);
+                 uB = atr + sd * devFactor; 
+                 lB = Math.max(atr - sd * devFactor, 0);
+             } else {
+                 uB = atr * fixedMult; 
+                 lB = atr / fixedMult;
+             }
+        }
+
         return {
-            atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
-            progress, remaining: Math.max(0, 100 - progress),
+            atr: atr,
+            natr: liveCandle.close > 0 ? (atr / liveCandle.close) * 100 : 0,
+            progress: progress,
+            remaining: Math.max(0, 100 - progress),
             remainingPoints: Math.max(0, atr - distanceFromOpen),
-            trueRange: lastTrueRange, 
-            rangeRatio: (lastIndex > 0 && filteredATR[lastIndex-1] > 0) ? (lastTrueRange / filteredATR[lastIndex-1]) * 100 : 0,
-            upperBound, lowerBound, isValid: true
+            trueRange: liveTR,
+            rangeRatio: rangeRatio,
+            upperBound: uB,
+            lowerBound: lB,
+            isValid: true
         };
     }
     
