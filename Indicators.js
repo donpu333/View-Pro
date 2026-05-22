@@ -592,17 +592,10 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const isSmallAnomaly = currentRange < lowerBound;
             const isAnomaly = isLargeAnomaly || isSmallAnomaly;
             
-            if (isAnomaly) {
-                filteredRanges[i] = prevFilteredATR;
-                
-                if (isLargeAnomaly) {
-                    console.log(`🔴 БОЛЬШАЯ: ${currentRange.toFixed(2)} > ATR ${prevFilteredATR.toFixed(2)} × ${fixedMult} = ${upperBound.toFixed(2)}`);
-                } else {
-                    console.log(`🔵 МАЛЕНЬКАЯ: ${currentRange.toFixed(2)} < ATR ${prevFilteredATR.toFixed(2)} / ${fixedMult} = ${lowerBound.toFixed(2)}`);
-                }
-            } else {
-                filteredRanges[i] = currentRange;
-            }
+            // ЗАМЕНИ НА:
+if (isAnomaly) {
+    filteredRanges[i] = prevFilteredATR;
+}
             
             filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
         }
