@@ -3,409 +3,560 @@ class TickerModal {
         this.parent = parent;
         this.searchTimeout = null;
         this.modalAllResults = [];
+        
+        // 🇷🇺→🇬🇧 Карта раскладки (русская → английская)
+        this.layoutMap = {
+            'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u',
+            'ш': 'i', 'щ': 'o', 'з': 'p', 'х': '[', 'ъ': ']',
+            'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h',
+            'о': 'j', 'л': 'k', 'д': 'l', 'ж': ';', 'э': "'",
+            'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n',
+            'ь': 'm', 'б': ',', 'ю': '.', 'ё': '`'
+        };
     }
     
+    // =========================================================================
+    // 🎯 ГЛАВНЫЙ МЕТОД - setupModal()
+    // =========================================================================
     setupModal() {
-    const modal = document.getElementById('addInstrumentModal');
-    const openBtn = document.getElementById('addInstrumentBtn');
-    const closeBtn = document.getElementById('modalClose');
-    const modalSearch = document.getElementById('modalSearchInput');
-    const modalBinanceBtn = document.getElementById('modalBinanceBtn');
-    const modalBybitBtn = document.getElementById('modalBybitBtn');
-    const modalFuturesBtn = document.getElementById('modalFuturesBtn');
-    const modalSpotBtn = document.getElementById('modalSpotBtn');
-    const modalAddAllBtn = document.getElementById('modalAddAllBtn');
+        const modal = document.getElementById('addInstrumentModal');
+        const openBtn = document.getElementById('addInstrumentBtn');
+        const closeBtn = document.getElementById('modalClose');
+        let modalSearch = document.getElementById('modalSearchInput');
+        const modalBinanceBtn = document.getElementById('modalBinanceBtn');
+        const modalBybitBtn = document.getElementById('modalBybitBtn');
+        const modalFuturesBtn = document.getElementById('modalFuturesBtn');
+        const modalSpotBtn = document.getElementById('modalSpotBtn');
+        const modalAddAllBtn = document.getElementById('modalAddAllBtn');
 
-    // ========== 1. СНАЧАЛА ОБЪЯВЛЯЕМ ФУНКЦИЮ ==========
-    const toggleClearBtn = () => {
+        // =========================================================================
+        // 1. 🔥 ЧИСТИМ ИНПУТ ОТ СТАРЫХ LISTENERS (ДО создания кнопки!)
+        // =========================================================================
+        if (modalSearch) {
+            const oldInput = modalSearch;
+            const newInput = oldInput.cloneNode(true);
+            oldInput.parentNode.replaceChild(newInput, oldInput);
+            modalSearch = document.getElementById('modalSearchInput');
+        }
+
+        // =========================================================================
+        // 2. ✕ СОЗДАЁМ КНОПКУ ОЧИСТКИ ПОИСКА
+        // =========================================================================
+        this.createClearButton(modalSearch);
+
+        // =========================================================================
+        // 3. ⌨️ ВЕШАЕМ ЛИСТЕНЕРЫ ПОИСКА (русская раскладка → английская)
+        // =========================================================================
+        this.setupSearchListeners(modalSearch);
+
+        // =========================================================================
+        // 4. 📂 ОТКРЫТИЕ МОДАЛЬНОГО ОКНА
+        // =========================================================================
+        if (openBtn) {
+            openBtn.addEventListener('click', () => {
+                this.parent.state.modalExchange = 'binance';
+                this.parent.state.modalMarketType = 'futures';
+                this.parent.state.modalSearchQuery = '';
+                this.parent.state.modalPage = 0;
+                
+                const input = document.getElementById('modalSearchInput');
+                if (input) input.value = '';
+                
+                this.toggleClearBtn();
+                this.updateModalButtons();
+                modal.classList.add('show');
+                input?.focus();
+                this.parent.updateModalCount();
+                this.updateModalResults(true);
+            });
+        }
+
+        // =========================================================================
+        // 5. ❌ ЗАКРЫТИЕ МОДАЛЬНОГО ОКНА
+        // =========================================================================
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                this.closeModal(modal, modalAddAllBtn);
+            });
+        }
+
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    this.closeModal(modal, modalAddAllBtn);
+                }
+            });
+        }
+
+        // Escape + Enter обработчики
+        document.addEventListener('keydown', (e) => {
+            if (!modal || !modal.classList.contains('show')) return;
+
+            // Escape - очистка или закрытие
+            if (e.key === 'Escape') {
+                const activeEl = document.activeElement;
+                if (activeEl && activeEl.id === 'modalSearchInput' && activeEl.value.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    activeEl.value = '';
+                    this.parent.state.modalSearchQuery = '';
+                    this.parent.state.modalPage = 0;
+                    this.toggleClearBtn();
+                    this.updateModalResults(true);
+                    return;
+                }
+                this.closeModal(modal, modalAddAllBtn);
+            }
+
+            // Enter - добавить первый результат
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const firstItem = document.querySelector('.modal-result-item:not(.added)');
+                if (firstItem) {
+                    const symbol = firstItem.dataset.symbol;
+                    const exchange = firstItem.dataset.exchange;
+                    const marketType = firstItem.dataset.marketType;
+                    
+                    if (this.parent.addSymbol(symbol, true, exchange, marketType)) {
+                        this.parent.updateModalCount();
+                        this.updateModalResults(true);
+                        this.parent.filterCache = null;
+                        this.parent.renderTickerList();
+                        
+                        if (e.shiftKey && modal) {
+                            modal.classList.remove('show');
+                        }
+                    }
+                }
+            }
+        });
+
+        // =========================================================================
+        // 6. 🏦 ПЕРЕКЛЮЧЕНИЕ БИРЖ (Binance / Bybit)
+        // =========================================================================
+        if (modalBinanceBtn) {
+            modalBinanceBtn.addEventListener('click', () => { 
+                this.parent.state.modalExchange = 'binance'; 
+                this.parent.state.modalPage = 0;
+                this.updateModalButtons();
+                this.parent.updateModalCount();
+                this.updateModalResults(true); 
+            });
+        }
+        
+        if (modalBybitBtn) {
+            modalBybitBtn.addEventListener('click', () => { 
+                this.parent.state.modalExchange = 'bybit'; 
+                this.parent.state.modalPage = 0;
+                this.updateModalButtons();
+                this.parent.updateModalCount();
+                this.updateModalResults(true); 
+            });
+        }
+
+        // =========================================================================
+        // 7. 📊 ПЕРЕКЛЮЧЕНИЕ ТИПА РЫНКА (Futures / Spot)
+        // =========================================================================
+        if (modalFuturesBtn) {
+            modalFuturesBtn.addEventListener('click', () => { 
+                this.parent.state.modalMarketType = 'futures'; 
+                this.parent.state.modalPage = 0;
+                this.updateModalButtons();
+                this.parent.updateModalCount();
+                this.updateModalResults(true); 
+            });
+        }
+        
+        if (modalSpotBtn) {
+            modalSpotBtn.addEventListener('click', () => { 
+                this.parent.state.modalMarketType = 'spot'; 
+                this.parent.state.modalPage = 0;
+                this.updateModalButtons();
+                this.parent.updateModalCount();
+                this.updateModalResults(true); 
+            });
+        }
+
+        // =========================================================================
+        // 8. ➕ КНОПКА "ДОБАВИТЬ ВСЕ"
+        // =========================================================================
+        if (modalAddAllBtn) {
+            modalAddAllBtn.addEventListener('click', async () => {
+                if (this.parent.state.isAddingAllInProgress) return;
+                
+                const cache = this.parent.state.modalExchange === 'binance' 
+                    ? this.parent.binanceSymbolsCache 
+                    : this.parent.bybitSymbolsCache;
+                    
+                const allPairs = cache.filter(s => 
+                    s.exchange === this.parent.state.modalExchange && 
+                    s.marketType === this.parent.state.modalMarketType && 
+                    s.symbol && 
+                    s.symbol.endsWith('USDT')
+                );
+                
+                if (allPairs.length === 0) return;
+                
+                this.parent.state.isAddingAllInProgress = true;
+                this.parent.state.addingAllOffset = 0;
+                modalAddAllBtn.classList.add('loading');
+                modalAddAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загрузка...';
+                
+                this.addNextBatch();
+            });
+        }
+    }
+
+    // =========================================================================
+    // ✕ СОЗДАНИЕ КНОПКИ ОЧИСТКИ
+    // =========================================================================
+    createClearButton(modalSearch) {
+        if (!modalSearch) return;
+
+        const searchWrapper = modalSearch.parentElement || modalSearch.closest('.modal-search-wrapper');
+        
+        if (!searchWrapper || document.getElementById('searchClearBtn')) return;
+
+        // Настраиваем wrapper
+        searchWrapper.style.position = 'relative';
+        searchWrapper.style.display = 'inline-block';
+        searchWrapper.style.width = '100%';
+        
+        modalSearch.style.paddingRight = '42px';
+        modalSearch.style.boxSizing = 'border-box';
+        
+        // Создаём кнопку
+        const clearBtn = document.createElement('button');
+        clearBtn.id = 'searchClearBtn';
+        clearBtn.type = 'button';
+        clearBtn.innerHTML = '✕';
+        clearBtn.title = 'Очистить поиск';
+        clearBtn.setAttribute('aria-label', 'Очистить поле поиска');
+        clearBtn.style.cssText = `
+            position: absolute;
+            right: 32px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            border: none;
+            background: #666;
+            color: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            display: none;
+            font-size: 10px;
+            line-height: 16px;
+            padding: 0;
+            text-align: center;
+            transition: all 0.15s ease;
+            z-index: 20;
+            flex-shrink: 0;
+            opacity: 0.8;
+        `;
+        
+        // Hover эффекты
+        clearBtn.onmouseenter = () => {
+            clearBtn.style.background = '#f23645';
+            clearBtn.style.transform = 'translateY(-50%) scale(1.2)';
+            clearBtn.style.opacity = '1';
+        };
+        clearBtn.onmouseleave = () => {
+            clearBtn.style.background = '#666';
+            clearBtn.style.transform = 'translateY(-50%) scale(1)';
+            clearBtn.style.opacity = '0.8';
+        };
+        
+        // Click - очистить поиск
+        clearBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const input = document.getElementById('modalSearchInput');
+            if (input) {
+                input.value = '';
+                this.parent.state.modalSearchQuery = '';
+                this.parent.state.modalPage = 0;
+                clearBtn.style.display = 'none';
+                input.focus();
+                this.updateModalResults(true);
+            }
+        };
+        
+        // Добавляем в DOM
+        searchWrapper.appendChild(clearBtn);
+    }
+
+    // =========================================================================
+    // ⌨️ ЛИСТЕНЕРЫ ПОИСКА (русская → английская раскладка)
+    // =========================================================================
+    setupSearchListeners(modalSearch) {
+        if (!modalSearch) return;
+
+        let isManualUpdate = false;
+
+        // --- KEYDOWN: перехват каждого символа ---
+        modalSearch.addEventListener('keydown', (e) => {
+            // Служебные клавиши - пропускаем
+            const specialKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 
+                                 'Home', 'End', 'Tab', 'Enter', 'Escape'];
+            
+            if (specialKeys.includes(e.key)) {
+                if (e.key === 'Backspace' || e.key === 'Delete') {
+                    setTimeout(() => this.toggleClearBtn(), 0);
+                }
+                return;
+            }
+            
+            // Модификаторы - пропускаем
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+            // Обычный символ - КОНВЕРТИРУЕМ!
+            if (e.key.length === 1) {
+                e.preventDefault();
+                
+                let char = e.key;
+                
+                // 🔄 Русская → Английская
+                const lowerChar = char.toLowerCase();
+                if (this.layoutMap[lowerChar]) {
+                    char = this.layoutMap[lowerChar];
+                }
+                
+                // Всегда uppercase для крипты
+                char = char.toUpperCase();
+
+                // Вставляем вручную
+                const input = e.target;
+                const start = input.selectionStart;
+                const end = input.selectionEnd;
+                const value = input.value;
+                
+                isManualUpdate = true;
+                input.value = value.substring(0, start) + char + value.substring(end);
+                input.selectionStart = input.selectionEnd = start + 1;
+                isManualUpdate = false;
+                
+                // Обновляем UI
+                this.toggleClearBtn();
+                this.triggerSearch(input.value);
+            }
+        });
+
+        // --- INPUT: для paste/IME/drag-drop ---
+        modalSearch.addEventListener('input', (e) => {
+            // Пропускаем наш ручной апдейт из keydown
+            if (isManualUpdate) return;
+
+            const input = e.target;
+            const cursorPos = input.selectionStart;
+            
+            let val = input.value;
+            
+            // Конвертируем каждый символ
+            let converted = '';
+            for (const c of val) {
+                const lowerC = c.toLowerCase();
+                if (this.layoutMap[lowerC]) {
+                    converted += this.layoutMap[lowerC].toUpperCase();
+                } else {
+                    converted += c.toUpperCase();
+                }
+            }
+            
+            // Применяем
+            input.value = converted;
+            
+            // Восстанавливаем курсор
+            const newCursor = Math.min(cursorPos, converted.length);
+            input.setSelectionRange(newCursor, newCursor);
+            
+            // Обновляем UI
+            this.toggleClearBtn();
+            this.triggerSearch(converted);
+        });
+    }
+
+    // =========================================================================
+    // 🔍 ТРИГГЕР ПОИСКА (с debounce)
+    // =========================================================================
+    triggerSearch(query) {
+        this.parent.state.modalSearchQuery = query;
+        this.parent.state.modalPage = 0;
+        
+        if (this.searchTimeout) {
+            clearTimeout(this.searchTimeout);
+        }
+        
+        this.searchTimeout = setTimeout(() => {
+            this.updateModalResults(true);
+        }, 300);
+    }
+
+    // =========================================================================
+    // ✕ ПОКАЗАТЬ/СКРЫТЬ КНОПКУ ОЧИСТКИ
+    // =========================================================================
+    toggleClearBtn() {
         const input = document.getElementById('modalSearchInput');
         const btn = document.getElementById('searchClearBtn');
+        
         if (input && btn) {
             btn.style.display = input.value.length > 0 ? 'block' : 'none';
         }
-    };
+    }
 
-    // ========== 2. ПОТОМ СОЗДАЁМ КРЕСТИК ==========
-   // ========== 2. СОЗДАЁМ КРЕСТИК ==========
-const searchWrapper = modalSearch?.parentElement || modalSearch?.closest('.modal-search-wrapper');
-
-if (modalSearch && !document.getElementById('searchClearBtn')) {
-    searchWrapper.style.position = 'relative';
-    searchWrapper.style.display = 'inline-block';
-    searchWrapper.style.width = '100%';
-    
-    modalSearch.style.paddingRight = '42px';  // Больше отступ справа
-    modalSearch.style.boxSizing = 'border-box';
-    
-    const clearBtn = document.createElement('button');
-    clearBtn.id = 'searchClearBtn';
-    clearBtn.type = 'button';
-    clearBtn.innerHTML = '✕';
-    clearBtn.title = 'Очистить поиск';
-    clearBtn.style.cssText = `
-        position: absolute;
-        right: 32px;          /* Сдвинули левее */
-        top: 50%;
-        transform: translateY(-50%);
-        width: 16px;          /* Чуть меньше */
-        height: 16px;
-        border: none;
-        background: #666;
-        color: #fff;
-        border-radius: 50%;
-        cursor: pointer;
-        display: none;
-        font-size: 10px;
-        line-height: 16px;
-        padding: 0;
-        text-align: center;
-        transition: all 0.15s ease;
-        z-index: 20;
-        flex-shrink: 0;
-    `;
-    
-    clearBtn.onmouseenter = () => {
-        clearBtn.style.background = '#f23645';
-        clearBtn.style.transform = 'translateY(-50%) scale(1.2)';
-    };
-    clearBtn.onmouseleave = () => {
-        clearBtn.style.background = '#666';
-        clearBtn.style.transform = 'translateY(-50%) scale(1)';
-    };
-    
-    clearBtn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const input = document.getElementById('modalSearchInput');
-        if (input) {
-            input.value = '';
-            this.parent.state.modalSearchQuery = '';
-            this.parent.state.modalPage = 0;
-            clearBtn.style.display = 'none';
-            input.focus();
-            this.updateModalResults(true);
+    // =========================================================================
+    // 🔒 ЗАКРЫТИЕ МОДАЛЬНОГО ОКНА
+    // =========================================================================
+    closeModal(modal, modalAddAllBtn) {
+        if (modal) {
+            modal.classList.remove('show');
         }
-    };
-    
-    searchWrapper.appendChild(clearBtn);
-}
-    openBtn.addEventListener('click', () => {
-        this.parent.state.modalExchange = 'binance';
-        this.parent.state.modalMarketType = 'futures';
-        this.parent.state.modalSearchQuery = '';
-        this.parent.state.modalPage = 0;
-        modalSearch.value = '';
-        toggleClearBtn();
-        this.updateModalButtons();
-        modal.classList.add('show');
-        modalSearch.focus();
-        this.parent.updateModalCount();
-        this.updateModalResults(true);
-    });
-
-    closeBtn.addEventListener('click', () => {
-        modal.classList.remove('show');
+        
         this.parent.state.isAddingAllInProgress = false;
         this.parent.state.addingAllOffset = 0;
-        modalAddAllBtn.classList.remove('loading');
-        modalAddAllBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
-    });
-
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.classList.remove('show');
-            this.parent.state.isAddingAllInProgress = false;
-            this.parent.state.addingAllOffset = 0;
+        
+        if (modalAddAllBtn) {
             modalAddAllBtn.classList.remove('loading');
             modalAddAllBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
         }
-    });
+    }
 
-    modalBinanceBtn.addEventListener('click', () => { 
-        this.parent.state.modalExchange = 'binance'; 
-        this.parent.state.modalPage = 0;
-        this.updateModalButtons();
-        this.parent.updateModalCount();
-        this.updateModalResults(true); 
-    });
-    
-    modalBybitBtn.addEventListener('click', () => { 
-        this.parent.state.modalExchange = 'bybit'; 
-        this.parent.state.modalPage = 0;
-        this.updateModalButtons();
-        this.parent.updateModalCount();
-        this.updateModalResults(true); 
-    });
-    
-    modalFuturesBtn.addEventListener('click', () => { 
-        this.parent.state.modalMarketType = 'futures'; 
-        this.parent.state.modalPage = 0;
-        this.updateModalButtons();
-        this.parent.updateModalCount();
-        this.updateModalResults(true); 
-    });
-    
-    modalSpotBtn.addEventListener('click', () => { 
-        this.parent.state.modalMarketType = 'spot'; 
-        this.parent.state.modalPage = 0;
-        this.updateModalButtons();
-        this.parent.updateModalCount();
-        this.updateModalResults(true); 
-    });
-
-    modalAddAllBtn.addEventListener('click', async () => {
-        if (this.parent.state.isAddingAllInProgress) return;
+    // =========================================================================
+    // 🚀 ДОБАВЛЕНИЕ ВСЕХ ИНСТРУМЕНТОВ (batch add)
+    // =========================================================================
+    async addNextBatch() {
+        if (!this.parent.state.isAddingAllInProgress) return;
         
-        const cache = this.parent.state.modalExchange === 'binance' ? this.parent.binanceSymbolsCache : this.parent.bybitSymbolsCache;
-        const allPairs = cache.filter(s => 
-            s.exchange === this.parent.state.modalExchange && 
-            s.marketType === this.parent.state.modalMarketType && 
-            s.symbol && s.symbol.endsWith('USDT')
-        );
+        const modalAddAllBtn = document.getElementById('modalAddAllBtn');
+        
+        // Берём данные из того же источника
+        let source;
+        if (this.parent.state.modalExchange === 'binance') {
+            source = this.parent.state.modalMarketType === 'futures' 
+                ? this.parent.allBinanceFutures 
+                : this.parent.allBinanceSpot;
+        } else {
+            source = this.parent.state.modalMarketType === 'futures' 
+                ? this.parent.allBybitFutures 
+                : this.parent.allBybitSpot;
+        }
+        
+        let allPairs = [...source];
+        
+        // Применяем фильтр поиска
+        if (this.parent.state.modalSearchQuery) {
+            const query = this.parent.state.modalSearchQuery.toUpperCase();
+            allPairs = allPairs.filter(s => s.symbol.includes(query));
+        }
+        
+        console.log(`📊 Добавление всех: найдено ${allPairs.length} символов`);
         
         if (allPairs.length === 0) return;
         
         this.parent.state.isAddingAllInProgress = true;
         this.parent.state.addingAllOffset = 0;
-        modalAddAllBtn.classList.add('loading');
-        modalAddAllBtn.innerHTML = '<i class="fas fa-spinner"></i> Загрузка...';
         
-        this.addNextBatch();
-    });
-
-    // Очищаем инпут от старых listeners
-    const oldInput = modalSearch;
-    const newInput = oldInput.cloneNode(true);
-    oldInput.parentNode.replaceChild(newInput, oldInput);
-    const modalSearchClean = document.getElementById('modalSearchInput');
-
-    let isManualUpdate = false;
-
-    const hardwareLayoutMap = {
-        'ё': '`', 'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p', 'х': '[', 'ъ': ']',
-        'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h', 'о': 'j', 'л': 'k', 'д': 'l', 'ж': ';', 'э': "'",
-        'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n', 'ь': 'm', 'б': ',', 'ю': '.'
-    };
-
-    modalSearchClean.addEventListener('keydown', (e) => {
-        if (['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Tab', 'Enter', 'Escape'].includes(e.key)) {
-            if (e.key === 'Backspace' || e.key === 'Delete') {
-                setTimeout(toggleClearBtn, 0);
-            }
-            return;
+        if (modalAddAllBtn) {
+            modalAddAllBtn.classList.add('loading');
+            modalAddAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загрузка...';
         }
         
-        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        this._doAddNextBatch(allPairs);
+    }
 
-        if (e.key.length === 1) {
-            e.preventDefault();
-            
-            let char = e.key;
-            if (hardwareLayoutMap[char]) char = hardwareLayoutMap[char];
-            char = char.toUpperCase();
+    async _doAddNextBatch(allPairs) {
+        if (!this.parent.state.isAddingAllInProgress) return;
 
-            const input = e.target;
-            const start = input.selectionStart;
-            const end = input.selectionEnd;
-            const value = input.value;
-            
-            isManualUpdate = true;
-            input.value = value.substring(0, start) + char + value.substring(end);
-            input.selectionStart = input.selectionEnd = start + 1;
-            isManualUpdate = false;
-            
-            toggleClearBtn();
-            
-            this.parent.state.modalSearchQuery = input.value;
-            this.parent.state.modalPage = 0;
-            
-            if (this.searchTimeout) clearTimeout(this.searchTimeout);
-            this.searchTimeout = setTimeout(() => {
-                this.updateModalResults(true);
-            }, 300);
-        }
-    });
+        const batchSize = this.parent.state.addingAllBatchSize || 50;
+        const start = this.parent.state.addingAllOffset;
+        const end = Math.min(start + batchSize, allPairs.length);
 
-    modalSearchClean.addEventListener('input', (e) => {
-        if (isManualUpdate) return;
-
-        const input = e.target;
-        const cursor = input.selectionStart;
-        
-        let val = input.value;
-        val = val.split('').map(c => hardwareLayoutMap[c] || c).join('');
-        
-        input.value = val.toUpperCase();
-        input.setSelectionRange(cursor, cursor);
-        
-        toggleClearBtn();
-        
-        this.parent.state.modalSearchQuery = input.value;
-        this.parent.state.modalPage = 0;
-        
-        if (this.searchTimeout) clearTimeout(this.searchTimeout);
-        this.searchTimeout = setTimeout(() => {
-            this.updateModalResults(true);
-        }, 300);
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modal.classList.contains('show')) {
-            const activeEl = document.activeElement;
-            if (activeEl && activeEl.id === 'modalSearchInput' && activeEl.value.length > 0) {
-                e.preventDefault();
-                e.stopPropagation();
-                activeEl.value = '';
-                this.parent.state.modalSearchQuery = '';
-                this.parent.state.modalPage = 0;
-                toggleClearBtn();
-                this.updateModalResults(true);
-                return;
+        // Добавляем текущую партию
+        for (let i = start; i < end; i++) {
+            const item = allPairs[i];
+            if (item && item.symbol) {
+                this.parent.addSymbol(
+                    item.symbol, 
+                    true, 
+                    item.exchange, 
+                    item.marketType, 
+                    false, 
+                    false, 
+                    false
+                );
             }
+        }
+
+        this.parent.state.addingAllOffset = end;
+        const progress = Math.round((end / allPairs.length) * 100);
+        
+        const btn = document.getElementById('modalAddAllBtn');
+        if (btn) {
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Загружено ${end}/${allPairs.length} (${progress}%)`;
+        }
+
+        if (end < allPairs.length) {
+            // Следующая партия через 150мс
+            setTimeout(() => this._doAddNextBatch(allPairs), 150);
+        } else {
+            // ✅ ГОТОВО!
+            console.log('✅ Все символы добавлены!');
             
-            modal.classList.remove('show');
             this.parent.state.isAddingAllInProgress = false;
-            this.parent.state.addingAllOffset = 0;
-            modalAddAllBtn.classList.remove('loading');
-            modalAddAllBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
-        }
-        
-        if (e.key === 'Enter' && modal.classList.contains('show')) {
-            e.preventDefault();
-            const firstItem = document.querySelector('.modal-result-item:not(.added)');
-            if (firstItem) {
-                const symbol = firstItem.dataset.symbol;
-                const exchange = firstItem.dataset.exchange;
-                const marketType = firstItem.dataset.marketType;
-                if (this.parent.addSymbol(symbol, true, exchange, marketType)) {
-                    this.parent.updateModalCount();
-                    this.updateModalResults(true);
+            
+            if (btn) {
+                btn.classList.remove('loading');
+                btn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
+            }
+
+            // Синхронизируем вотчлист
+            const wm = this.parent.watchlistManager;
+            if (wm) {
+                const activeList = wm.lists.get(wm.activeListId);
+                if (activeList) {
+                    for (const item of allPairs) {
+                        const key = `${item.symbol}:${item.exchange}:${item.marketType}`;
+                        if (!activeList.symbols.includes(key)) {
+                            activeList.symbols.push(key);
+                        }
+                    }
+                    this.parent.state.customSymbols = [...activeList.symbols];
+                    wm.saveToStorage();
+                    wm.renderDropdown();
+                    wm.loadSymbolsFromList(wm.activeListId);
+                } else {
                     this.parent.filterCache = null;
                     this.parent.renderTickerList();
-                    if (e.shiftKey) modal.classList.remove('show');
                 }
-            }
-        }
-    });
-}
-    
-async addNextBatch() {
-    if (!this.parent.state.isAddingAllInProgress) return;
-    
-    const modalAddAllBtn = document.getElementById('modalAddAllBtn');
-    
-    // Берем данные ИЗ ТОГО ЖЕ ИСТОЧНИКА, что и счетчик
-    let source;
-    if (this.parent.state.modalExchange === 'binance') {
-        source = this.parent.state.modalMarketType === 'futures' 
-            ? this.parent.allBinanceFutures 
-            : this.parent.allBinanceSpot;
-    } else {
-        source = this.parent.state.modalMarketType === 'futures' 
-            ? this.parent.allBybitFutures 
-            : this.parent.allBybitSpot;
-    }
-    
-    let allPairs = [...source];
-    
-    // Применяем поиск
-    if (this.parent.state.modalSearchQuery) {
-        const query = this.parent.state.modalSearchQuery.toUpperCase();
-        allPairs = allPairs.filter(s => s.symbol.includes(query));
-    }
-    
-    console.log(`📊 Добавление всех: найдено ${allPairs.length} символов`);
-    
-    if (allPairs.length === 0) return;
-    
-    this.parent.state.isAddingAllInProgress = true;
-    this.parent.state.addingAllOffset = 0;
-    modalAddAllBtn.classList.add('loading');
-    modalAddAllBtn.innerHTML = '<i class="fas fa-spinner"></i> Загрузка...';
-    
-    this._doAddNextBatch(allPairs);
-}
-
-async _doAddNextBatch(allPairs) {
-    if (!this.parent.state.isAddingAllInProgress) return;
-
-    const batchSize = this.parent.state.addingAllBatchSize;
-    const start = this.parent.state.addingAllOffset;
-    const end = Math.min(start + batchSize, allPairs.length);
-
-    // Добавляем текущую партию
-    for (let i = start; i < end; i++) {
-        const item = allPairs[i];
-        if (item && item.symbol) {
-            this.parent.addSymbol(item.symbol, true, item.exchange, item.marketType, false, false, false);
-        }
-    }
-
-    this.parent.state.addingAllOffset = end;
-    const progress = Math.round((end / allPairs.length) * 100);
-    const btn = document.getElementById('modalAddAllBtn');
-    if (btn) {
-        btn.innerHTML = `<i class="fas fa-spinner"></i> Загружено ${end}/${allPairs.length} (${progress}%)`;
-    }
-
-    if (end < allPairs.length) {
-        // Ещё есть символы – добавляем следующую партию через 150 мс
-        setTimeout(() => this._doAddNextBatch(allPairs), 150);
-    } else {
-        // ВСЕ СИМВОЛЫ ДОБАВЛЕНЫ
-        this.parent.state.isAddingAllInProgress = false;
-        if (btn) {
-            btn.classList.remove('loading');
-            btn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
-        }
-
-        // 1. Принудительно синхронизируем активный вотчлист
-        const wm = this.parent.watchlistManager;
-        if (wm) {
-            const activeList = wm.lists.get(wm.activeListId);
-            if (activeList) {
-                // Убедимся, что все добавленные ключи есть в списке
-                for (const item of allPairs) {
-                    const key = `${item.symbol}:${item.exchange}:${item.marketType}`;
-                    if (!activeList.symbols.includes(key)) {
-                        activeList.symbols.push(key);
-                    }
-                }
-                this.parent.state.customSymbols = [...activeList.symbols];
-                wm.saveToStorage();
-                wm.renderDropdown();
-                // Перезагружаем отображение списка из вотчлиста
-                wm.loadSymbolsFromList(wm.activeListId);
             } else {
-                // fallback
                 this.parent.filterCache = null;
                 this.parent.renderTickerList();
             }
-        } else {
-            this.parent.filterCache = null;
-            this.parent.renderTickerList();
+
+            // Обновляем счётчик
+            const counterSpan = document.getElementById('modalFoundCount');
+            if (counterSpan) counterSpan.textContent = allPairs.length;
+
+            // Загружаем 24h данные
+            setTimeout(() => {
+                if (this.parent.pollRestData) {
+                    this.parent.pollRestData();
+                } else if (this.parent.fetchBatchSnapshots) {
+                    const symbolsToFetch = allPairs.map(p => ({
+                        symbol: p.symbol,
+                        exchange: p.exchange,
+                        marketType: p.marketType
+                    }));
+                    this.parent.fetchBatchSnapshots(symbolsToFetch);
+                }
+            }, 500);
         }
-
-        // 2. Обновляем счётчик в модалке (на всякий случай)
-        const counterSpan = document.getElementById('modalFoundCount');
-        if (counterSpan) counterSpan.textContent = allPairs.length;
-
-        // 3. Загружаем 24h данные (change, volume, trades)
-        setTimeout(() => {
-            if (this.parent.pollRestData) {
-                this.parent.pollRestData();
-            } else if (this.parent.fetchBatchSnapshots) {
-                // Альтернативный метод, если pollRestData отсутствует
-                const symbolsToFetch = allPairs.map(p => ({
-                    symbol: p.symbol,
-                    exchange: p.exchange,
-                    marketType: p.marketType
-                }));
-                this.parent.fetchBatchSnapshots(symbolsToFetch);
-            }
-        }, 500);
     }
-}
+
+    // =========================================================================
+    // 🔄 ОБНОВЛЕНИЕ АКТИВНЫХ КНОПОК БИРЖИ/РЫНКА
+    // =========================================================================
     updateModalButtons() {
         const binanceBtn = document.getElementById('modalBinanceBtn');
         const bybitBtn = document.getElementById('modalBybitBtn');
@@ -417,67 +568,79 @@ async _doAddNextBatch(allPairs) {
         if (futuresBtn) futuresBtn.classList.toggle('active', this.parent.state.modalMarketType === 'futures');
         if (spotBtn) spotBtn.classList.toggle('active', this.parent.state.modalMarketType === 'spot');
     }
-  updateModalResults(reset = false) {
-    const resultsContainer = document.getElementById('modalResults');
-    
-    if (reset) {
-        this.parent.state.modalPage = 0;
+
+    // =========================================================================
+    // 📋 ОБНОВЛЕНИЕ РЕЗУЛЬТАТОВ ПОИСКА
+    // =========================================================================
+    updateModalResults(reset = false) {
+        const resultsContainer = document.getElementById('modalResults');
+        
+        if (!resultsContainer) return;
+        
+        if (reset) {
+            this.parent.state.modalPage = 0;
+        }
+        
+        // Выбираем источник данных
+        let source;
+        if (this.parent.state.modalExchange === 'binance') {
+            source = this.parent.state.modalMarketType === 'futures' 
+                ? this.parent.allBinanceFutures 
+                : this.parent.allBinanceSpot;
+        } else {
+            source = this.parent.state.modalMarketType === 'futures' 
+                ? this.parent.allBybitFutures 
+                : this.parent.allBybitSpot;
+        }
+        
+        if (!source || source.length === 0) {
+            resultsContainer.innerHTML = '<div class="no-results">Загрузка данных...</div>';
+            return;
+        }
+        
+        // Фильтруем по поиску
+        let filteredResults = [...source];
+        
+        if (this.parent.state.modalSearchQuery) {
+            const query = this.parent.state.modalSearchQuery.toUpperCase();
+            filteredResults = filteredResults.filter(s => s.symbol.includes(query));
+        }
+        
+        // Сохраняем все результаты
+        this.modalAllResults = filteredResults;
+        
+        // Обновляем счётчик
+        const foundSpan = document.getElementById('modalFoundCount');
+        if (foundSpan) {
+            foundSpan.textContent = this.modalAllResults.length;
+        }
+        
+        // Пагинация
+        const pageSize = this.parent.state.modalPageSize || 50;
+        const startIndex = reset ? 0 : this.parent.state.modalPage * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, this.modalAllResults.length);
+        
+        if (this.modalAllResults.length === 0) {
+            resultsContainer.innerHTML = '<div class="no-results">Инструменты не найдены</div>';
+            return;
+        }
+        
+        const pageResults = this.modalAllResults.slice(startIndex, endIndex);
+        
+        if (!reset && startIndex < this.modalAllResults.length) {
+            this.parent.state.modalPage++;
+        }
+        
+        this.renderModalResults(pageResults, !reset && startIndex > 0);
     }
-    
-    // Выбираем источник данных
-    let source;
-    if (this.parent.state.modalExchange === 'binance') {
-        source = this.parent.state.modalMarketType === 'futures' 
-            ? this.parent.allBinanceFutures 
-            : this.parent.allBinanceSpot;
-    } else {
-        source = this.parent.state.modalMarketType === 'futures' 
-            ? this.parent.allBybitFutures 
-            : this.parent.allBybitSpot;
-    }
-    
-    if (!source || source.length === 0) {
-        resultsContainer.innerHTML = '<div class="no-results">Загрузка данных...</div>';
-        return;
-    }
-    
-    // Фильтруем по поиску
-    let filteredResults = [...source];
-    
-    if (this.parent.state.modalSearchQuery) {
-        const query = this.parent.state.modalSearchQuery.toUpperCase();
-        filteredResults = filteredResults.filter(s => s.symbol.includes(query));
-    }
-    
-    // Сохраняем ВСЕ отфильтрованные результаты
-    this.modalAllResults = filteredResults;
-    
-    // ✅ ОБНОВЛЯЕМ СЧЕТЧИК
-    const foundSpan = document.getElementById('modalFoundCount');
-    if (foundSpan) {
-        foundSpan.textContent = this.modalAllResults.length;
-    }
-    
-    // Пагинация
-    const pageSize = this.parent.state.modalPageSize;
-    const startIndex = reset ? 0 : this.parent.state.modalPage * pageSize;
-    const endIndex = Math.min(startIndex + pageSize, this.modalAllResults.length);
-    
-    if (this.modalAllResults.length === 0) {
-        resultsContainer.innerHTML = '';
-        return;
-    }
-    
-    const pageResults = this.modalAllResults.slice(startIndex, endIndex);
-    
-    if (!reset && startIndex < this.modalAllResults.length) {
-        this.parent.state.modalPage++;
-    }
-    
-    this.renderModalResults(pageResults, !reset && startIndex > 0);
-}
+
+    // =========================================================================
+    // 🎨 РЕНДЕРИНГ РЕЗУЛЬТАТОВ ПОИСКА
+    // =========================================================================
     renderModalResults(results, append = false) {
         const resultsContainer = document.getElementById('modalResults');
+        
+        if (!resultsContainer) return;
         
         if (results.length === 0 && !append) { 
             resultsContainer.innerHTML = '<div class="no-results">Инструменты не найдены</div>'; 
@@ -489,6 +652,7 @@ async _doAddNextBatch(allPairs) {
         for (const symbolData of results) {
             if (!symbolData || !symbolData.symbol) continue;
             
+            // Проверяем добавлен ли уже
             const isAdded = this.parent.tickers.some(t => 
                 t.symbol === symbolData.symbol && 
                 t.exchange === symbolData.exchange && 
@@ -497,6 +661,7 @@ async _doAddNextBatch(allPairs) {
             
             const addedClass = isAdded ? 'added' : '';
             
+            // HTML иконки биржи
             let exchangeIconHtml = '';
             if (symbolData.exchange === 'binance') {
                 exchangeIconHtml = `
@@ -530,15 +695,51 @@ async _doAddNextBatch(allPairs) {
                 `;
             }
             
+            // HTML элемента результата
             if (isAdded) {
-                html += `<div class="modal-result-item ${addedClass}" data-symbol="${symbolData.symbol}" data-exchange="${symbolData.exchange}" data-market-type="${symbolData.marketType}">${exchangeIconHtml}<span class="modal-result-symbol">${symbolData.symbol}</span><div class="modal-result-exchange"><span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span></div><div class="modal-result-actions"><span class="modal-check-icon"><i class="fas fa-check-circle"></i></span><span class="modal-target-btn" data-symbol="${symbolData.symbol}" data-exchange="${symbolData.exchange}" data-market-type="${symbolData.marketType}" title="Прицелиться"><i class="fas fa-crosshairs"></i></span></div></div>`;
+                html += `
+                    <div class="modal-result-item ${addedClass}" 
+                         data-symbol="${symbolData.symbol}" 
+                         data-exchange="${symbolData.exchange}" 
+                         data-market-type="${symbolData.marketType}">
+                        ${exchangeIconHtml}
+                        <span class="modal-result-symbol">${symbolData.symbol}</span>
+                        <div class="modal-result-exchange">
+                            <span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span>
+                        </div>
+                        <div class="modal-result-actions">
+                            <span class="modal-check-icon"><i class="fas fa-check-circle"></i></span>
+                            <span class="modal-target-btn" 
+                                  data-symbol="${symbolData.symbol}" 
+                                  data-exchange="${symbolData.exchange}" 
+                                  data-market-type="${symbolData.marketType}" 
+                                  title="Прицелиться">
+                                <i class="fas fa-crosshairs"></i>
+                            </span>
+                        </div>
+                    </div>
+                `;
             } else {
-                html += `<div class="modal-result-item ${addedClass}" data-symbol="${symbolData.symbol}" data-exchange="${symbolData.exchange}" data-market-type="${symbolData.marketType}">${exchangeIconHtml}<span class="modal-result-symbol">${symbolData.symbol}</span><div class="modal-result-exchange"><span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span></div><span class="modal-add-icon"><i class="fas fa-plus-circle"></i></span></div>`;
+                html += `
+                    <div class="modal-result-item ${addedClass}" 
+                         data-symbol="${symbolData.symbol}" 
+                         data-exchange="${symbolData.exchange}" 
+                         data-market-type="${symbolData.marketType}">
+                        ${exchangeIconHtml}
+                        <span class="modal-result-symbol">${symbolData.symbol}</span>
+                        <div class="modal-result-exchange">
+                            <span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span>
+                        </div>
+                        <span class="modal-add-icon"><i class="fas fa-plus-circle"></i></span>
+                    </div>
+                `;
             }
         }
         
+        // Вставляем HTML
         resultsContainer.innerHTML = html;
         
+        // Обработчики кликов на элементы
         document.querySelectorAll('.modal-result-item:not(.added)').forEach(item => {
             item.addEventListener('click', (e) => {
                 const symbol = item.dataset.symbol;
@@ -549,14 +750,17 @@ async _doAddNextBatch(allPairs) {
                     this.parent.updateModalCount();
                     this.updateModalResults(true);
                     this.parent.filterCache = null;
+                    this.parent.renderTickerList();
                     
                     if (e.shiftKey) {
-                        document.getElementById('addInstrumentModal').classList.remove('show');
+                        const modal = document.getElementById('addInstrumentModal');
+                        if (modal) modal.classList.remove('show');
                     }
                 }
             });
         });
         
+        // Обработчики кнопок "прицелиться"
         document.querySelectorAll('.modal-target-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -567,11 +771,13 @@ async _doAddNextBatch(allPairs) {
                 if (this.parent.focusOnSymbol) {
                     this.parent.focusOnSymbol(symbol, exchange, marketType);
                 } else {
-                    document.getElementById('addInstrumentModal').classList.remove('show');
+                    const modal = document.getElementById('addInstrumentModal');
+                    if (modal) modal.classList.remove('show');
                 }
             });
         });
         
+        // Infinite scroll
         if (!resultsContainer._scrollHandler) {
             resultsContainer._scrollHandler = () => {
                 const { scrollTop, scrollHeight, clientHeight } = resultsContainer;
@@ -587,6 +793,7 @@ async _doAddNextBatch(allPairs) {
     }
 }
 
+// Экспорт
 if (typeof window !== 'undefined') {
     window.TickerModal = TickerModal;
 }
