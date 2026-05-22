@@ -443,56 +443,125 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return result;
     }
     
- computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
+ // 🔥 ЗАМЕНИ ВЕСЬ МЕТОД computeATRMetrics НА ЭТОТ:
+
+computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
     if (!data || data.length < period + 1) {
-        return { /* нули */ };
+        return { 
+            atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
+            trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, 
+            isValid: true, isAnomaly: false, anomalyType: null 
+        };
     }
 
+    // Шаг 1: Считаем все High-Low диапазоны
     const ranges = [];
     for (let i = 0; i < data.length; i++) {
         ranges.push(data[i].high - data[i].low);
     }
 
     if (ranges.length < period) {
-        return { /* нули */ };
+        return { 
+            atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
+            trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, 
+            isValid: true, isAnomaly: false, anomalyType: null 
+        };
     }
 
-    // Шаг 1: Считаем НЕФИЛЬТРОВАННЫЙ ATR для всего массива
-    const unfilteredATR = this._rma(ranges, period);
-    
-    // Шаг 2: Создаем массив фильтрованных диапазонов
-    const filteredRanges = [...ranges];
-    
-    // Шаг 3: Считаем ФИЛЬТРОВАННЫЙ ATR
+    // Шаг 2: Функция RMA (скользящая средняя Уайлдера)
+    const rma = (src, len) => {
+        const result = new Array(src.length).fill(0);
+        
+        // Инициализация: SMA для первого значения
+        let sum = 0;
+        for (let i = 0; i < len; i++) {
+            sum += src[i];
+        }
+        result[len - 1] = sum / len;
+        
+        // RMA для остальных
+        for (let i = len; i < src.length; i++) {
+            result[i] = (src[i] + (len - 1) * result[i - 1]) / len;
+        }
+        
+        return result;
+    };
+
+    // Шаг 3: Если фильтр выключен — просто возвращаем RMA
+    if (!useFilter) {
+        const atrArray = rma(ranges, period);
+        const lastIdx = ranges.length - 1;
+        const atr = atrArray[lastIdx];
+        const lastCandle = data[lastIdx];
+        const dist = Math.abs(lastCandle.close - lastCandle.open);
+        const prog = atr > 0 ? (dist / atr) * 100 : 0;
+        
+        return {
+            atr,
+            natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
+            progress: Math.min(prog, 100),
+            remaining: Math.max(0, 100 - prog),
+            remainingPoints: Math.max(0, atr - dist),
+            trueRange: ranges[lastIdx],
+            rangeRatio: (lastIdx > 0 && atrArray[lastIdx - 1] > 0) 
+                ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100 
+                : 0,
+            upperBound: 0,
+            lowerBound: 0,
+            isValid: true,
+            isAnomaly: false,
+            anomalyType: null
+        };
+    }
+
+    // Шаг 4: Строим фильтрованный массив ПОСЛЕДОВАТЕЛЬНО
+    const filteredRanges = [...ranges]; // Копия исходных диапазонов
     const filteredATR = new Array(ranges.length).fill(0);
     
-    // Инициализация: копируем первые period значений из нефильтрованного
+    // Первые (period) значений не фильтруем — считаем как обычный ATR
     for (let i = 0; i < period; i++) {
-        filteredATR[i] = unfilteredATR[i];
-        filteredRanges[i] = ranges[i]; // Первые свечи не фильтруем
+        filteredRanges[i] = ranges[i];
+        if (i === period - 1) {
+            let sum = 0;
+            for (let j = 0; j < period; j++) {
+                sum += ranges[j];
+            }
+            filteredATR[i] = sum / period;
+        } else if (i > 0) {
+            // До period просто копим среднее
+            let sum = 0;
+            for (let j = 0; j <= i; j++) {
+                sum += ranges[j];
+            }
+            filteredATR[i] = sum / (i + 1);
+        } else {
+            filteredATR[i] = ranges[i];
+        }
     }
     
     let upperBound = 0;
     let lowerBound = 0;
+    let lastAnomalyType = null;
     
+    // Шаг 5: Обрабатываем все свечи ПОСЛЕ инициализации
     for (let i = period; i < ranges.length; i++) {
         const currentRange = ranges[i];
-        // 🔥 ИСПОЛЬЗУЕМ ФИЛЬТРОВАННЫЙ ATR для границ!
-        const previousFilteredATR = filteredATR[i - 1];
+        // 🔥 ВОТ КЛЮЧ: используем ПРЕДЫДУЩИЙ ФИЛЬТРОВАННЫЙ ATR
+        const prevFilteredATR = filteredATR[i - 1];
         
-        if (useFilter) {
-            if (filterType === 'Adaptive') {
-                const window = ranges.slice(i - period, i);
-                const mean = window.reduce((a, b) => a + b, 0) / period;
-                const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
-                const stdDev = Math.sqrt(variance);
-                
-                upperBound = Math.min(previousFilteredATR + stdDev * devFactor, previousFilteredATR * 2.0);
-                lowerBound = Math.max(previousFilteredATR - stdDev * devFactor, previousFilteredATR * 0.3);
-            } else {
-                upperBound = previousFilteredATR * fixedMult;
-                lowerBound = Math.max(previousFilteredATR / fixedMult, previousFilteredATR * 0.1);
-            }
+        // Расчёт границ
+        if (filterType === 'Adaptive') {
+            const window = ranges.slice(Math.max(0, i - period), i);
+            const mean = window.reduce((a, b) => a + b, 0) / window.length;
+            const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
+            const stdDev = Math.sqrt(variance);
+            
+            upperBound = Math.min(prevFilteredATR + stdDev * devFactor, prevFilteredATR * 2.0);
+            lowerBound = Math.max(prevFilteredATR - stdDev * devFactor, prevFilteredATR * 0.3);
+        } else {
+            // 🔥 Fixed filter: используем prevFilteredATR
+            upperBound = prevFilteredATR * fixedMult;
+            lowerBound = Math.max(prevFilteredATR / fixedMult, prevFilteredATR * 0.1);
         }
         
         const isLargeAnomaly = currentRange > upperBound;
@@ -500,42 +569,47 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const isAnomaly = isLargeAnomaly || isSmallAnomaly;
         
         if (isAnomaly) {
-            // 🔥 Заменяем на ФИЛЬТРОВАННЫЙ ATR, а не на диапазон!
-            filteredRanges[i] = previousFilteredATR;
+            // 🔥 ВМЕСТО АНОМАЛЬНОГО ДИАПАЗОНА ИСПОЛЬЗУЕМ ПРЕДЫДУЩИЙ ATR
+            filteredRanges[i] = prevFilteredATR;
             
             if (isLargeAnomaly) {
-                console.log(`🔴 БОЛЬШАЯ АНОМАЛИЯ: Свеча ${currentRange.toFixed(2)} > ATR ${previousFilteredATR.toFixed(2)} × ${fixedMult} = ${upperBound.toFixed(2)}`);
+                lastAnomalyType = 'LARGE';
+                console.log(`🔴 БОЛЬШАЯ: ${currentRange.toFixed(2)} > ATR ${prevFilteredATR.toFixed(2)} × ${fixedMult} = ${upperBound.toFixed(2)}`);
+            } else {
+                lastAnomalyType = 'SMALL';
+                console.log(`🔵 МАЛЕНЬКАЯ: ${currentRange.toFixed(2)} < ATR ${prevFilteredATR.toFixed(2)} / ${fixedMult} = ${lowerBound.toFixed(2)}`);
             }
-            if (isSmallAnomaly) {
-                console.log(`🔵 МАЛЕНЬКАЯ АНОМАЛИЯ: Свеча ${currentRange.toFixed(2)} < ATR ${previousFilteredATR.toFixed(2)} / ${fixedMult} = ${lowerBound.toFixed(2)}`);
-            }
+        } else {
+            // Нормальная свеча — оставляем как есть
+            filteredRanges[i] = currentRange;
         }
         
-        // 🔥 Считаем ATR с ФИЛЬТРОВАННЫМИ значениями
+        // 🔥 Считаем ФИЛЬТРОВАННЫЙ ATR по формуле Уайлдера
         filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
     }
     
-    const lastIndex = ranges.length - 1;
-    const atr = filteredATR[lastIndex];
-    const lastCandle = data[data.length - 1];
-    const lastRange = ranges[lastIndex];
-    const previousATR = lastIndex > 0 ? filteredATR[lastIndex - 1] : atr;
+    // Шаг 6: Результат
+    const lastIdx = ranges.length - 1;
+    const atr = filteredATR[lastIdx];
+    const lastCandle = data[lastIdx];
+    const lastRange = ranges[lastIdx];
+    const prevATR = lastIdx > 0 ? filteredATR[lastIdx - 1] : atr;
     
     const isCurrentlyLarge = lastRange > upperBound;
     const isCurrentlySmall = lastRange < lowerBound;
     const isCurrentlyAnomaly = isCurrentlyLarge || isCurrentlySmall;
     
-    const distanceFromOpen = Math.abs(lastCandle.close - lastCandle.open);
-    const progress = !isCurrentlyAnomaly && atr > 0 ? (distanceFromOpen / atr) * 100 : 0;
+    const distFromOpen = Math.abs(lastCandle.close - lastCandle.open);
+    const progress = !isCurrentlyAnomaly && atr > 0 ? (distFromOpen / atr) * 100 : 0;
     
     return {
         atr,
         natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
         progress: Math.min(progress, 100),
         remaining: Math.max(0, 100 - progress),
-        remainingPoints: Math.max(0, atr - distanceFromOpen),
+        remainingPoints: Math.max(0, atr - distFromOpen),
         trueRange: lastRange,
-        rangeRatio: previousATR > 0 ? (lastRange / previousATR) * 100 : 0,
+        rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0,
         upperBound,
         lowerBound,
         isValid: !isCurrentlyAnomaly,
