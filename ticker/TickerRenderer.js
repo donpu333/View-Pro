@@ -490,7 +490,7 @@ _formatAsIs(price) {
         }, 30000);
     }
     
-  setupHeaderSorting() {
+ setupHeaderSorting() {
     if (this.parent._sortClickHandler) {
         document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
             header.removeEventListener('click', this.parent._sortClickHandler);
@@ -501,9 +501,17 @@ _formatAsIs(price) {
     const savedSortBy = localStorage.getItem('tickerSortBy');
     const savedSortDir = localStorage.getItem('tickerSortDir');
     
-    // ✅ По умолчанию сортировка по объёму (desc — большие сверху)
-    this.parent.state.sortBy = savedSortBy || 'volume';
-    this.parent.state.sortDirection = savedSortDir || 'desc';
+    // ✅ ЗАЩИТА: принимаем только валидные значения!
+    const VALID_SORT_FIELDS = ['name', 'price', 'change', 'volume', 'trades'];
+    const VALID_DIRECTIONS = ['asc', 'desc'];
+    
+    this.parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) 
+        ? savedSortBy 
+        : 'volume';
+    
+    this.parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) 
+        ? savedSortDir 
+        : 'desc';
     
     this.parent._sortClickHandler = (e) => {
         e.stopPropagation();
@@ -515,7 +523,7 @@ _formatAsIs(price) {
             this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
         } else {
             this.parent.state.sortBy = sortBy;
-            this.parent.state.sortDirection = 'desc';
+            this.parent.state.sortDirection = 'desc';  // ✅ При смене поля → всегда desc
         }
         
         // 👇 СОХРАНЯЕМ ВЫБОР В localStorage
