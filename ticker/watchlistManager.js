@@ -271,7 +271,7 @@ this.tickerPanel.renderer.totalItems = newList.symbols.length;
    // ✅ Даём TickerPanel закончить, потом грузим
 setTimeout(() => {
     this.fetchPricesForActiveList();
-}, 5000); 
+}, 3000); 
 }
 
   
@@ -325,7 +325,7 @@ _schedulePriceLoadForList(symbols) {
     });
 
     const BATCH = 25;
-    const DELAY = 3000; // ✅ БЫЛО 800 → 3000
+    const DELAY = 2000; // ✅ БЫЛО 800 → 3000
 
     // ✅ Используем safeFetch из TickerPanel если есть
     const safeFetch = this.tickerPanel._safeFetch || (async (url) => {
