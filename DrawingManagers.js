@@ -5719,104 +5719,118 @@ class TextRenderer {
         this._dragHitArea = null;
     }
 
-    draw(target) {
-        // ... БЕЗ ИЗМЕНЕНИЙ (оригинальный draw) ...
-        const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        if (currentKey && this._text.symbolKey !== currentKey) return;
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const text = this._text;
-            const chartManager = this._chartManager;
+   draw(target) {
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._text.symbolKey !== currentKey) return;
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const text = this._text;
+        const chartManager = this._chartManager;
 
-            const currentTf = chartManager.currentInterval;
-            if (!text.isVisibleOnTimeframe(currentTf)) return;
+        const currentTf = chartManager.currentInterval;
+        if (!text.isVisibleOnTimeframe(currentTf)) return;
 
-            const xCoordinate = chartManager.timeToCoordinate(text.time);
-            const yCoordinate = chartManager.priceToCoordinate(text.price);
-            if (xCoordinate === null || yCoordinate === null) return;
+        const xCoordinate = chartManager.timeToCoordinate(text.time);
+        const yCoordinate = chartManager.priceToCoordinate(text.price);
+        if (xCoordinate === null || yCoordinate === null) return;
 
-            const { position: x } = positionsLine(xCoordinate, scope.horizontalPixelRatio, 1, true);
-            const { position: y } = positionsLine(yCoordinate, scope.verticalPixelRatio, 1, true);
+        const { position: x } = positionsLine(xCoordinate, scope.horizontalPixelRatio, 1, true);
+        const { position: y } = positionsLine(yCoordinate, scope.verticalPixelRatio, 1, true);
 
-            const fontSize = text.options.fontSize * scope.verticalPixelRatio;
-            const font = `${text.options.bold ? 'bold ' : ''}${fontSize}px 'Inter', Arial, sans-serif`;
-            ctx.font = font;
-            const textWidth = ctx.measureText(text.text).width;
-            const textHeight = fontSize * 1.2;
+        const fontSize = text.options.fontSize * scope.verticalPixelRatio;
+        const font = `${text.options.bold ? 'bold ' : ''}${fontSize}px 'Inter', Arial, sans-serif`;
+        ctx.font = font;
 
-            const padding = 8 * scope.horizontalPixelRatio;
-            const rectWidth = textWidth + padding * 2;
-            const rectHeight = textHeight + padding * 2;
-            const rectX = x;
-            const rectY = y - rectHeight / 2;
+        // --- МНОГОСТРОЧНОСТЬ ---
+        const lines = text.text.split('\n');
+        const lineHeight = fontSize * 1.4;
+        const textBlockHeight = lines.length * lineHeight;
 
-            this._hitArea = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+        // Максимальная ширина среди всех строк
+        let textWidth = 0;
+        for (const line of lines) {
+            const w = ctx.measureText(line).width;
+            if (w > textWidth) textWidth = w;
+        }
 
-            ctx.save();
+        const padding = 8 * scope.horizontalPixelRatio;
+        const rectWidth = textWidth + padding * 2;
+        const rectHeight = textBlockHeight + padding * 2;   // новая высота
+        const rectX = x;
+        const rectY = y - rectHeight / 2;
 
-            let bgColor = text.options.bgColor;
-            const bgOpacity = text.options.bgOpacity !== undefined ? text.options.bgOpacity : 0.8;
+        this._hitArea = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
 
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
-            };
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
-            };
+        ctx.save();
 
-            let parsedBg = parseHex(bgColor) || parseRgb(bgColor);
-            let rgbaBg;
-            if (parsedBg) {
-                rgbaBg = `rgba(${parsedBg.r}, ${parsedBg.g}, ${parsedBg.b}, ${bgOpacity})`;
-            } else {
-                rgbaBg = bgColor;
-            }
+        let bgColor = text.options.bgColor;
+        const bgOpacity = text.options.bgOpacity !== undefined ? text.options.bgOpacity : 0;
 
-            ctx.fillStyle = rgbaBg;
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+        };
+
+        let parsedBg = parseHex(bgColor) || parseRgb(bgColor);
+        let rgbaBg;
+        if (parsedBg) {
+            rgbaBg = `rgba(${parsedBg.r}, ${parsedBg.g}, ${parsedBg.b}, ${bgOpacity})`;
+        } else {
+            rgbaBg = bgColor;
+        }
+
+        ctx.fillStyle = rgbaBg;
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 6 * scope.horizontalPixelRatio);
+        ctx.fill();
+
+        let textColor = text.options.color;
+        const textOpacity = text.options.opacity !== undefined ? text.options.opacity : 1;
+        let parsedText = parseHex(textColor) || parseRgb(textColor);
+        let rgbaText;
+        if (parsedText) {
+            rgbaText = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, ${textOpacity})`;
+        } else {
+            rgbaText = textColor;
+        }
+
+        ctx.fillStyle = rgbaText;
+        ctx.shadowBlur = 0;
+        ctx.font = font;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';   // важно для позиционирования строк
+
+        // --- ОТРИСОВКА КАЖДОЙ СТРОКИ ---
+        for (let i = 0; i < lines.length; i++) {
+            const lineY = rectY + padding + i * lineHeight;
+            ctx.fillText(lines[i], rectX + padding, lineY);
+        }
+
+        if (text.showDragPoint) {
             ctx.shadowColor = 'rgba(0,0,0,0.5)';
             ctx.shadowBlur = 4;
+            ctx.fillStyle = '#FFFFFF';
             ctx.beginPath();
-            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 6 * scope.horizontalPixelRatio);
+            ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
             ctx.fill();
 
-            let textColor = text.options.color;
-            const textOpacity = text.options.opacity !== undefined ? text.options.opacity : 1;
-            let parsedText = parseHex(textColor) || parseRgb(textColor);
-            let rgbaText;
-            if (parsedText) {
-                rgbaText = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, ${textOpacity})`;
-            } else {
-                rgbaText = textColor;
-            }
+            ctx.fillStyle = text.options.color;
+            ctx.beginPath();
+            ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
 
-            ctx.fillStyle = rgbaText;
-            ctx.shadowBlur = 0;
-            ctx.font = font;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text.text, rectX + padding, rectY + rectHeight / 2);
+            this._dragHitArea = { x: x, y: y, radius: 10 * scope.horizontalPixelRatio };
+        }
 
-            if (text.showDragPoint) {
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.beginPath();
-                ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-
-                ctx.fillStyle = text.options.color;
-                ctx.beginPath();
-                ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-
-                this._dragHitArea = { x: x, y: y, radius: 10 * scope.horizontalPixelRatio };
-            }
-
-            ctx.restore();
-        });
-    }
+        ctx.restore();
+    });
+}
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -5910,38 +5924,45 @@ class TextPrimitive {
     
     // FIX: Бинарный поиск вместо цикла для высокой производительности
     _syncTime() {
-        const chartData = this._chartManager.chartData;
-        if (!chartData || chartData.length === 0) return;
-        
-        const anchor = this._text.anchorTime;
-        if (anchor === undefined) return;
+    const chartData = this._chartManager.chartData;
+    if (!chartData || chartData.length === 0) return;
 
-        let left = 0;
-        let right = chartData.length - 1;
-        let closest = chartData[0];
+    const anchor = this._text.anchorTime;
+    if (anchor === undefined) return;
 
-        while (left <= right) {
-            const mid = Math.floor((left + right) / 2);
-            const midTime = chartData[mid].time;
+    // Если магнит выключен – не округляем, оставляем текущее время
+    if (this._chartManager.textManager && !this._chartManager.textManager._magnetEnabled) {
+        this._text.time = anchor;
+        return;
+    }
 
-            if (midTime === anchor) {
-                closest = chartData[mid];
-                break;
-            }
+    // Ищем ближайшую свечу (только при включённом магните)
+    let left = 0;
+    let right = chartData.length - 1;
+    let closest = chartData[0];
 
-            if (Math.abs(midTime - anchor) < Math.abs(closest.time - anchor)) {
-                closest = chartData[mid];
-            }
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        const midTime = chartData[mid].time;
 
-            if (midTime < anchor) {
-                left = mid + 1;
-            } else {
-                right = mid - 1;
-            }
+        if (midTime === anchor) {
+            closest = chartData[mid];
+            break;
         }
 
-        this._text.time = closest.time;
+        if (Math.abs(midTime - anchor) < Math.abs(closest.time - anchor)) {
+            closest = chartData[mid];
+        }
+
+        if (midTime < anchor) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
     }
+
+    this._text.time = closest.time;
+}
     
     getText() { return this._text; }
     
@@ -6498,7 +6519,7 @@ hitTest(x, y) {
     const fontSize = parseInt(document.getElementById('textFontSize')?.value) || 12;
     const bold = document.getElementById('textBold')?.checked || false;
     const opacity = parseInt(document.getElementById('textOpacity')?.value) / 100 || 1;
-    const bgOpacity = parseInt(document.getElementById('textBgOpacity')?.value) / 100 || 0.8;
+  const bgOpacity = parseInt(document.getElementById('textBgOpacity')?.value) / 100 || 0;
     
     const newText = this.createText('Текст', time, price, {
         color, 
