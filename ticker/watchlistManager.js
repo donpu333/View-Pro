@@ -11,7 +11,7 @@ class WatchlistManager {
         this._dbReady = false;
         this._initPromise = this._waitForDBAndLoad();
         this._switchCooldown = false;
-        this._priceLoadScheduled = false; // ← Новый флаг
+        this._priceLoadTimer = null; // ← Таймер для debounce
     }
 
     async _waitForDBAndLoad() {
@@ -115,7 +115,7 @@ class WatchlistManager {
     }
 
     // ============================================
-    // ✅ СОЗДАНИЕ СПИСКА
+    // СОЗДАНИЕ СПИСКА
     // ============================================
     async createList(name) {
         await this._initPromise;
@@ -153,159 +153,174 @@ class WatchlistManager {
     }
 
     // ============================================
-    // ✅✅✅ ПЕРЕКЛЮЧЕНИЕ (ВИРТУАЛЬНЫЙ СКРОЛЛ + ФОНОВАЯ ЗАГРУЗКА) ✅✅✅
+    // ПЕРЕКЛЮЧЕНИЕ (ВИРТУАЛЬНЫЙ СКРОЛЛ + ФОНОВАЯ ЗАГРУЗКА + ПЕРЕСОРТИРОВКА)
     // ============================================
-   async activateList(listId) {
-    await this._initPromise;
-    if (!this.lists.has(listId)) return;
-    if (this.activeListId === listId) { this.closeDropdown(); return; }
+    async activateList(listId) {
+        await this._initPromise;
+        if (!this.lists.has(listId)) return;
+        if (this.activeListId === listId) { this.closeDropdown(); return; }
 
-    // Сохраняем текущий
-    const oldList = this.lists.get(this.activeListId);
-    if (oldList) {
-        oldList.symbols = [...this.tickerPanel.state.customSymbols];
-        this.renderCache.delete(this.activeListId);
-    }
-
-    this.activeListId = listId;
-    this._switchCooldown = true;
-    setTimeout(() => { this._switchCooldown = false; }, 500);
-
-    const newList = this.lists.get(listId);
-    if (!newList) return;
-
-    console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
-
-    const startTime = performance.now();
-
-    // ============================================
-    // 1. ПОЛНАЯ ОЧИСТКА
-    // ============================================
-    this.tickerPanel.state.customSymbols = [...newList.symbols];
-    this.tickerPanel.tickers = [];
-    this.tickerPanel.tickersMap.clear();
-    this.tickerPanel.tickerElements?.clear();
-   this.tickerPanel.renderer.displayedTickers = [];
-this.tickerPanel.renderer.totalItems = newList.symbols.length;
-    this.tickerPanel.filterCache = null;
-
-    const container = document.getElementById('tickerListContainer');
-    if (container) {
-        container.innerHTML = '';
-        container.scrollTop = 0;
-    }
-
-    // ============================================
-    // 2. БЫСТРОЕ СОЗДАНИЕ ТИКЕРОВ (без DOM)
-    // ============================================
-    for (const symbolKey of newList.symbols) {
-        const parts = symbolKey.split(':');
-        if (parts.length !== 3) continue;
-        const [symbol, exchange, marketType] = parts;
-        
-        const flag = this.tickerPanel.state.flags[symbolKey] || null;
-        
-        const t = { 
-            symbol, price: 0, change: 0, volume: 0, 
-            trades: null, custom: true, prevPrice: 0, 
-            exchange, marketType, flag 
-        };
-        
-        this.tickerPanel.tickers.push(t);
-        this.tickerPanel.tickersMap.set(symbolKey, t);
-        
-        // Подписка на WS
-        if (window.priceManagerInstance) {
-            window.priceManagerInstance.subscribe(symbol, (price) => {
-                if (this.tickerPanel._onPriceUpdate) {
-                    this.tickerPanel._onPriceUpdate(symbol, price);
-                }
-            });
+        // Сохраняем текущий
+        const oldList = this.lists.get(this.activeListId);
+        if (oldList) {
+            oldList.symbols = [...this.tickerPanel.state.customSymbols];
+            this.renderCache.delete(this.activeListId);
         }
-    }
 
-    // ============================================
-    // 3. ВИРТУАЛЬНЫЙ РЕНДЕР (только видимые!)
-    // ============================================
-    this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
-    
-    const renderTime = performance.now() - startTime;
-    console.log(`⚡ Рендер за ${renderTime.toFixed(0)}мс`);
+        this.activeListId = listId;
+        this._switchCooldown = true;
+        setTimeout(() => { this._switchCooldown = false; }, 500);
 
-    // ============================================
-    // 4. UI обновления
-    // ============================================
-    this.tickerPanel.updateModalCount();
-    this.renderDropdown();
-    this.closeDropdown();
-    this.saveToStorageImmediate();
+        const newList = this.lists.get(listId);
+        if (!newList) return;
 
-    // Скрываем лоадер если был
-    const loader = document.getElementById('tickerLoader');
-    if (loader) loader.style.display = 'none';
+        console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
 
-    // ============================================
-    // 5. ✅ ЗАГРУЖАЕМ ПЕРВЫЙ ТИКЕР НА ГРАФИК
-    // ============================================
-    if (newList.symbols.length > 0) {
-        const firstKey = newList.symbols[0];
-        const parts = firstKey.split(':');
-        if (parts.length === 3) {
+        const startTime = performance.now();
+
+        // ============================================
+        // 1. ПОЛНАЯ ОЧИСТКА
+        // ============================================
+        this.tickerPanel.state.customSymbols = [...newList.symbols];
+        this.tickerPanel.tickers = [];
+        this.tickerPanel.tickersMap.clear();
+        this.tickerPanel.tickerElements?.clear();
+        this.tickerPanel.renderer.displayedTickers = [];
+        this.tickerPanel.renderer.totalItems = newList.symbols.length;
+        this.tickerPanel.filterCache = null;
+
+        const container = document.getElementById('tickerListContainer');
+        if (container) {
+            container.innerHTML = '';
+            container.scrollTop = 0;
+        }
+
+        // ============================================
+        // 2. БЫСТРОЕ СОЗДАНИЕ ТИКЕРОВ (без DOM)
+        // ============================================
+        for (const symbolKey of newList.symbols) {
+            const parts = symbolKey.split(':');
+            if (parts.length !== 3) continue;
             const [symbol, exchange, marketType] = parts;
             
-            // Загружаем на график
-            if (this.tickerPanel.coordinator?.chartManager) {
-                this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
+            const flag = this.tickerPanel.state.flags[symbolKey] || null;
+            
+            const t = { 
+                symbol, price: 0, change: 0, volume: 0, 
+                trades: null, custom: true, prevPrice: 0, 
+                exchange, marketType, flag 
+            };
+            
+            this.tickerPanel.tickers.push(t);
+            this.tickerPanel.tickersMap.set(symbolKey, t);
+            
+            // Подписка на WS
+            if (window.priceManagerInstance) {
+                window.priceManagerInstance.subscribe(symbol, (price) => {
+                    if (this.tickerPanel._onPriceUpdate) {
+                        this.tickerPanel._onPriceUpdate(symbol, price);
+                    }
+                });
+            }
+        }
+
+        // ============================================
+        // 3. ПЕРВИЧНЫЙ РЕНДЕР (структура без цен)
+        // ============================================
+        this.tickerPanel.renderTickerList();
+        
+        const renderTime = performance.now() - startTime;
+        console.log(`⚡ Первичный рендер за ${renderTime.toFixed(0)}мс`);
+
+        // ============================================
+        // 4. UI обновления
+        // ============================================
+        this.tickerPanel.updateModalCount();
+        this.renderDropdown();
+        this.closeDropdown();
+        this.saveToStorageImmediate();
+
+        // Скрываем лоадер если был
+        const loader = document.getElementById('tickerLoader');
+        if (loader) loader.style.display = 'none';
+
+        // ============================================
+        // 5. ЗАГРУЖАЕМ ПЕРВЫЙ ТИКЕР НА ГРАФИК
+        // ============================================
+        if (newList.symbols.length > 0) {
+            const firstKey = newList.symbols[0];
+            const parts = firstKey.split(':');
+            if (parts.length === 3) {
+                const [symbol, exchange, marketType] = parts;
+                
+                // Загружаем на график
+                if (this.tickerPanel.coordinator?.chartManager) {
+                    this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
+                }
+                
+                // Подсвечиваем в панели
+                setTimeout(() => {
+                    this.tickerPanel.focusOnSymbol(symbol, exchange, marketType);
+                }, 100);
+            }
+        }
+
+        // ============================================
+        // 6. ✅✅✅ ФОНОВАЯ ЗАГРУЗКА ЦЕН + ПЕРЕСОРТИРОВКА! ✅✅✅
+        // ============================================
+        setTimeout(async () => {
+            console.log('⏳ Загрузка цен для списка...');
+            
+            await this.fetchPricesForActiveList();
+            
+            // ✅ ПЕРЕСОРТИРОВКА ПОСЛЕ ЗАГРУЗКИ ЦЕН!
+            console.log('🔄 Пересортировка после загрузки цен...');
+            
+            this.tickerPanel.filterCache = null;  // Сбрасываем кэш!
+            this.tickerPanel.renderTickerList();   // Пересортировываем!
+            
+            console.log(`✅ Готово: ${this.tickerPanel.displayedTickers?.length} тикеров отсортировано`);
+            
+        }, 200);
+    }
+
+    // ============================================
+    // DEBOUNCE ДЛЯ ЗАГРУЗКИ ЦЕН
+    // ============================================
+    _schedulePriceLoadForList(symbols) {
+        if (!symbols || symbols.length === 0) return;
+        
+        // Защита от множественных вызовов
+        if (this._priceLoadTimer) {
+            clearTimeout(this._priceLoadTimer);
+        }
+        
+        this._priceLoadTimer = setTimeout(async () => {
+            this._priceLoadTimer = null;
+            
+            // Проверяем что не запущено
+            if (this.tickerPanel._isRestRunning) {
+                console.log('⏳ REST уже работает, не запускаем повторно');
+                return;
             }
             
-            // Подсвечиваем в панели
-            setTimeout(() => {
-                this.tickerPanel.focusOnSymbol(symbol, exchange, marketType);
-            }, 100);
-        }
+            console.log(`⚡ Планирую загрузку цен (${symbols.length} шт.)...`);
+            
+            await this.fetchPricesForActiveList();
+            
+            // ✅ ПЕРЕСОРТИРОВКА ПОСЛЕ ЗАГРУЗКИ!
+            this.tickerPanel.filterCache = null;
+            this.tickerPanel.renderTickerList();
+            
+        }, 1000); // 1 секунда debounce
     }
 
     // ============================================
-    // 6. ✅ ФОНОВАЯ ЗАГРУЗКА ЦЕН
-    // ============================================
-    setTimeout(() => {
-        this.fetchPricesForActiveList();
-    }, 200);
-}
-
-  
-
-_schedulePriceLoadForList(symbols) {
-    if (!symbols || symbols.length === 0) return;
-    
-    // ✅ Защита от множественных вызовов
-    if (this._priceLoadTimer) {
-        clearTimeout(this._priceLoadTimer);
-    }
-    
-    this._priceLoadTimer = setTimeout(async () => {
-        this._priceLoadTimer = null;
-        
-        // ✅ Проверяем что не запущено
-        if (this.tickerPanel._isRestRunning) {
-            console.log('⏳ REST уже работает, не запускаем повторно');
-            return;
-        }
-        
-        console.log(`⚡ Планирую загрузку цен (${symbols.length} шт.)...`);
-        
-        if (this.tickerPanel.pollRestData) {
-            await this.tickerPanel.pollRestData();
-        }
-        
-    }, 1000); // 1 секунда debounce
-}
-    // ============================================
-    // ✅ ЗАГРУЗКА ЦЕН (Fallback)
+    // ЗАГРУЗКА ЦЕН (Fallback)
     // ============================================
     async fetchPricesForActiveList() {
         const activeList = this.lists.get(this.activeListId);
-        if (!activeList || activeList.symbols.length === 0) return;
+        if (!activeList || activeList.symbols.length === 0) return false;
 
         const bnFut = [], bnSpot = [], byFut = [], bySpot = [];
 
@@ -389,10 +404,12 @@ _schedulePriceLoadForList(symbols) {
         }
 
         this.tickerPanel.renderer?.updatePriceElements?.();
+        
+        return true; // ✅ Вернули успех
     }
 
     // ============================================
-    // ✅ ДОБАВЛЕНИЕ В СПИСОК
+    // ДОБАВЛЕНИЕ В СПИСОК
     // ============================================
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
@@ -448,7 +465,6 @@ _schedulePriceLoadForList(symbols) {
         this.tickerPanel.clearAllSymbols();
     }
 
-
     loadSymbolsFromList(listId) {
         const list = this.lists.get(listId);
         if (!list) return;
@@ -459,8 +475,8 @@ _schedulePriceLoadForList(symbols) {
         this.tickerPanel.tickers = [];
         this.tickerPanel.tickersMap.clear();
         this.tickerPanel.tickerElements?.clear();
-       this.tickerPanel.renderer.displayedTickers = [];
-this.tickerPanel.renderer.totalItems = list.symbols.length;
+        this.tickerPanel.renderer.displayedTickers = [];
+        this.tickerPanel.renderer.totalItems = list.symbols.length;
         this.tickerPanel.filterCache = null;
         this.tickerPanel.state.customSymbols = [...list.symbols];
 
@@ -479,15 +495,24 @@ this.tickerPanel.renderer.totalItems = list.symbols.length;
             this.tickerPanel.tickersMap.set(symbolKey, t);
         }
 
-        // Виртуальный рендер
-        this.tickerPanel.renderVisibleTickers?.() || this.tickerPanel.renderTickerList();
+        // Первичный рендер
+        this.tickerPanel.renderTickerList();
         this.tickerPanel.updateModalCount();
 
-        // Фоновая загрузка цен
-        this._schedulePriceLoadForList(list.symbols);
+        // ✅ Фоновая загрузка цен + пересортировка
+        setTimeout(async () => {
+            console.log('⏳ Загрузка цен для списка...');
+            await this.fetchPricesForActiveList();
+            
+            // ✅ ПЕРЕСОРТИРОВКА ПОСЛЕ ЗАГРУЗКИ ЦЕН!
+            console.log('🔄 Пересортировка после загрузки цен...');
+            this.tickerPanel.filterCache = null;
+            this.tickerPanel.renderTickerList();
+            console.log(`✅ Готово: ${this.tickerPanel.displayedTickers?.length} тикеров отсортировано`);
+            
+        }, 200);
     }
 
-  
     async initializeWithPriority() {
         await this._initPromise;
         this.renderDropdown();
@@ -505,12 +530,11 @@ this.tickerPanel.renderer.totalItems = list.symbols.length;
                 await this.loadSymbolsFromList(this.activeListId);
             } else {
                 console.log('✅ Тикеры уже загружены, пропускаем');
-                // Но всё равно планируем обновление цен
+                // Но всё равно планируем обновление цен с пересортировкой
                 this._schedulePriceLoadForList(activeList.symbols);
             }
         }
     }
-
 
     renderDropdown() {
         const container = document.getElementById('watchlistDropdown');
@@ -634,6 +658,7 @@ this.tickerPanel.renderer.totalItems = list.symbols.length;
     }
 }
 
+// Стили для toast-уведомлений
 const toastStyles = document.createElement('style');
 toastStyles.textContent = `
     @keyframes wl-toast-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
