@@ -35,7 +35,8 @@ class WebSocketManager {
 
         let wsUrl;
         if (exchange === 'bybit') {
-            wsUrl = `wss://stream.bybit.com/v5/public/${marketType === 'spot' ? 'spot' : 'linear'}`;
+           let category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
+wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
             if (marketType === 'spot') {
                 wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${interval}`;
@@ -159,7 +160,8 @@ if (k) {
 
         let wsUrl;
         if (exchange === 'bybit') {
-            wsUrl = `wss://stream.bybit.com/v5/public/${marketType === 'spot' ? 'spot' : 'linear'}`;
+         let category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
+wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
             if (marketType === 'spot') {
                 wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`;
