@@ -405,7 +405,7 @@ addInitialSymbols() {
                     );
                 }
             }
-        }, 3000);  // ← УВЕЛИЧЕНО С 1500 ДО 3000 МС!
+        }, 1500);  // ← УВЕЛИЧЕНО С 1500 ДО 3000 МС!
     });
 }
 startTickerPanelPriceEngine() {
@@ -841,6 +841,7 @@ syncWithActiveWatchlist() {
     if (!symbolsData || symbolsData.length === 0) return;
     
     const addedKeys = [];
+    const newSymbolsOnly = []; // ← только новые для REST
     
     symbolsData.forEach(({ symbol, exchange, marketType }) => {
         if (!symbol) return; 
@@ -857,6 +858,7 @@ syncWithActiveWatchlist() {
             this.tickers.push(newTicker); 
             this.tickersMap.set(key, newTicker);
             addedKeys.push(key);
+            newSymbolsOnly.push({ symbol, exchange, marketType }); // ← для REST
             
             if (window.priceManagerInstance) {
                 window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
@@ -866,7 +868,7 @@ syncWithActiveWatchlist() {
     
     if (addedKeys.length === 0) return;
     
-    // ✅ ОДИН раз обновляем вотчлист
+    // Вотчлист
     if (this.watchlistManager) {
         const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
         if (list) {
@@ -887,9 +889,89 @@ syncWithActiveWatchlist() {
     this.tickerElements.clear();
     this.renderTickerList();
     
-   
+    // ✅ Загружаем цены ТОЛЬКО для новых символов, а не все
+    if (newSymbolsOnly.length > 0) {
+        this._fetchPricesForNewSymbols(newSymbolsOnly);
+    }
 }
 
+// ✅ НОВЫЙ МЕТОД — загрузка только новых тикеров, маленькими пачками
+async _fetchPricesForNewSymbols(symbols) {
+    const BATCH = 25;
+    const DELAY = 2000; // 2 секунды между пачками
+    
+    const bnFut = symbols.filter(s => s.exchange === 'binance' && s.marketType === 'futures');
+    const bnSpot = symbols.filter(s => s.exchange === 'binance' && s.marketType === 'spot');
+    const byFut = symbols.filter(s => s.exchange === 'bybit' && s.marketType === 'futures');
+    const bySpot = symbols.filter(s => s.exchange === 'bybit' && s.marketType === 'spot');
+    
+    // Binance Futures
+    for (let i = 0; i < bnFut.length; i += BATCH) {
+        const batch = bnFut.slice(i, i + BATCH);
+        try {
+            const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${batch.map(s=>`"${s.symbol}"`).join(',')}]`);
+            const d = await r.json();
+            if (Array.isArray(d)) d.forEach(t => {
+                const tk = this.tickersMap.get(`${t.symbol}:binance:futures`);
+                if (tk) { tk.price=+t.lastPrice; tk.change=+t.priceChangePercent; tk.volume=+t.quoteVolume; tk.trades=+t.count||0; }
+            });
+            this.updatePriceElements?.();
+        } catch(e) {}
+        if (i+BATCH < bnFut.length) await new Promise(r=>setTimeout(r, DELAY));
+    }
+    
+    // Binance Spot
+    for (let i = 0; i < bnSpot.length; i += BATCH) {
+        const batch = bnSpot.slice(i, i + BATCH);
+        try {
+            const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${batch.map(s=>`"${s.symbol}"`).join(',')}]`);
+            const d = await r.json();
+            if (Array.isArray(d)) d.forEach(t => {
+                const tk = this.tickersMap.get(`${t.symbol}:binance:spot`);
+                if (tk) { tk.price=+t.lastPrice; tk.change=+t.priceChangePercent; tk.volume=+t.quoteVolume; tk.trades=+t.count||0; }
+            });
+            this.updatePriceElements?.();
+        } catch(e) {}
+        if (i+BATCH < bnSpot.length) await new Promise(r=>setTimeout(r, DELAY));
+    }
+    
+    // Bybit — одним запросом на категорию
+    if (byFut.length > 0) {
+        try {
+            const r = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
+            const d = await r.json();
+            if (d?.retCode===0) {
+                const set = new Set(byFut.map(s=>s.symbol));
+                d.result.list.forEach(t => {
+                    if (set.has(t.symbol)) {
+                        const tk = this.tickersMap.get(`${t.symbol}:bybit:futures`);
+                        if (tk) { tk.price=+t.lastPrice; tk.change=+(t.price24hPcnt||0)*100; tk.volume=+(t.volume24h||0)*+(t.lastPrice||0); }
+                    }
+                });
+            }
+        } catch(e) {}
+    }
+    
+    if (bySpot.length > 0) {
+        try {
+            const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot');
+            const d = await r.json();
+            if (d?.retCode===0) {
+                const set = new Set(bySpot.map(s=>s.symbol));
+                d.result.list.forEach(t => {
+                    if (set.has(t.symbol)) {
+                        const tk = this.tickersMap.get(`${t.symbol}:bybit:spot`);
+                        if (tk) { tk.price=+t.lastPrice; tk.change=+(t.price24hPcnt||0)*100; tk.volume=+(t.volume24h||0)*+(t.lastPrice||0); }
+                    }
+                });
+            }
+        } catch(e) {}
+    }
+    
+    this.filterCache = null;
+    this.renderTickerList();
+    this.updatePriceElements?.();
+}
 async fetchBatchSnapshots(symbols) {
     if (!symbols || symbols.length === 0) return;
     
