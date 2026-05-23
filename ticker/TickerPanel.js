@@ -417,8 +417,7 @@ startTickerPanelPriceEngine() {
     this._restQueue = [];           
     this._isRestRunning = false;    
 
-  this._safeFetch = async (url, retries = 3) => {
-    // ✅ Ждём ChartManager, но не больше 5 секунд
+  this._safeFetch = async (url, retries = 5) => {
     let waited = 0;
     while (ChartManager._fetchInProgress && waited < 50) {
         await new Promise(r => setTimeout(r, 100));
@@ -427,12 +426,22 @@ startTickerPanelPriceEngine() {
     
     for (let i = 0; i < retries; i++) {
         try {
-            if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
+            if (i > 0) {
+                const delay = Math.min(2000 * Math.pow(2, i - 1), 30000);
+                await new Promise(r => setTimeout(r, delay));
+            }
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 15000);
             const response = await fetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
-            if (response.status === 418 || response.status === 429) continue;
+            
+            // ВОТ ЭТО ДОБАВЬ
+            if (response.status === 418 || response.status === 429) {
+                console.warn(`🚨 ${response.status} — ждём 20с`);
+                await new Promise(r => setTimeout(r, 20000));
+                continue;
+            }
+            
             if (!response.ok) return null;
             return await response.json();
         } catch (e) {
@@ -458,7 +467,7 @@ startTickerPanelPriceEngine() {
                 const task = this._restQueue.shift();
                 count++;
                 await task();
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 3000));
             }
         } finally {
             this._isRestRunning = false;
@@ -489,7 +498,7 @@ startTickerPanelPriceEngine() {
             if (t.exchange === 'bybit' && t.marketType === 'spot') groups.bySpot.push(t.symbol);
         }
 
-        const BATCH = 12;
+        const BATCH = 25;
         this._restQueue = [];
 
         // Binance Futures
@@ -696,7 +705,7 @@ startTickerPanelPriceEngine() {
         if (!this._isRestRunning && this._restQueue.length === 0) {
             loadAllData().catch(e => console.warn('⚠️ Ошибка:', e));
         }
-    }, 300000);
+   }, 600000);
 
     this.pollRestData = loadAllData;
 }
@@ -824,12 +833,7 @@ syncWithActiveWatchlist() {
     if (render) this.renderTickerList();
     
     // ✅ Загрузить данные для нового тикера
-    setTimeout(() => {
-        if (this.pollRestData && !this._isRestRunning) {
-            this.pollRestData();
-        }
-    }, 300);
-    
+   
     return true;
 }
  async addSymbolsBatch(symbolsData) {
@@ -882,12 +886,7 @@ syncWithActiveWatchlist() {
     this.tickerElements.clear();
     this.renderTickerList();
     
-    // ✅ Загружаем цены после рендера
-    setTimeout(() => {
-        if (this.pollRestData) {
-            this.pollRestData();
-        }
-    }, 1000);
+   
 }
 
 async fetchBatchSnapshots(symbols) {
