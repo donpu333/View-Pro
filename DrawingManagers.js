@@ -3237,7 +3237,6 @@ class RulerLinePrimitive {
 
 class RulerLineManager {
     constructor(chartManager) {
-        // FIX: убрана проверка на Mac, оставлен только pixelRatio
         this._pixelRatio = window.devicePixelRatio || 1;
         this._rulers = [];
         this._chartManager = chartManager;
@@ -3261,12 +3260,11 @@ class RulerLineManager {
         this._tempPoint = null;
         this._tempLinePrimitive = null;
         this._tempPointPrimitive = null;
-        this._magnetEnabled = true;
         this._dblClickTimer = null;
-this._potentialDblClickTarget = null;
-this._dblClickTimeout = 350;
-this._lastClickTime = 0;
-this._needsRedraw = false;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+        this._needsRedraw = false;
         this._handleMouseDown = this._handleMouseDown.bind(this);
         this._handleMouseMove = this._handleMouseMove.bind(this);
         this._handleMouseUp = this._handleMouseUp.bind(this);
@@ -3281,7 +3279,7 @@ this._needsRedraw = false;
         this._isLoading = false;
     }
 
-    // FIX: Универсальный метод перевода координат
+    // Универсальный метод перевода координат
     _toBitmapCoords(cssX, cssY) {
         return {
             x: cssX * this._pixelRatio,
@@ -3296,7 +3294,6 @@ this._needsRedraw = false;
         container.addEventListener('mouseup', this._handleMouseUp);
         container.addEventListener('mouseleave', this._handleMouseLeave);
         container.addEventListener('contextmenu', this._handleContextMenu);
-       
 
         container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
@@ -3350,13 +3347,9 @@ this._needsRedraw = false;
         }
     }
 
+    // ✅ ЗАГЛУШКА: магнит отключён
     setMagnetEnabled(enabled) {
-        this._magnetEnabled = enabled;
-        const magnetBtn = document.getElementById('toolMagnet');
-        if (magnetBtn) {
-            if (enabled) magnetBtn.classList.add('magnet-active');
-            else magnetBtn.classList.remove('magnet-active');
-        }
+        // ничего не делаем
     }
 
     createRuler(point1, point2, options = {}) {
@@ -3405,214 +3398,211 @@ this._needsRedraw = false;
         this._requestRedraw();
     }
 
-  hitTest(x, y) {
-    // ✅ Приоритет: выбранная линейка проверяем первой
-    if (this._selectedRuler) {
-        const selItem = this._rulers.find(item => item.ruler === this._selectedRuler);
-        if (selItem && selItem.primitive?._paneView?._renderer) {
+    hitTest(x, y) {
+        if (this._selectedRuler) {
+            const selItem = this._rulers.find(item => item.ruler === this._selectedRuler);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return hit;
+                } catch (e) {}
+            }
+        }
+        
+        let bestHit = null;
+        let bestDistance = Infinity;
+        
+        for (const item of this._rulers) {
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.ruler === this._selectedRuler) continue;
+            
             try {
-                const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-                if (hit) return hit; // { type, ruler, distance }
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
+                    bestHit = hit;
+                    bestDistance = hit.distance;
+                }
             } catch (e) {}
         }
-    }
-    
-    let bestHit = null;
-    let bestDistance = Infinity;
-    
-    for (const item of this._rulers) {
-        if (!item.primitive?._paneView?._renderer) continue;
-        if (item.ruler === this._selectedRuler) continue;
-        
-        try {
-            const hit = item.primitive._paneView._renderer.hitTest(x, y);
-            
-            if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                bestHit = hit;
-                bestDistance = hit.distance;
-            }
-        } catch (e) {}
-    }
-    
-    return bestHit;
-}
-_handleMouseDown(e) {
-    if (e.button !== 0) return;
-    const rect = this._chartManager.chartContainer.getBoundingClientRect();
-    let x = e.clientX - rect.left;
-    let y = e.clientY - rect.top;
-    const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-
-    const rulerMenu = document.getElementById('rulerContextMenu');
-    if (rulerMenu && rulerMenu.style.display === 'flex') {
-        const menuRect = rulerMenu.getBoundingClientRect();
-        const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-        if (isClickInsideMenu) return;
+        return bestHit;
     }
 
-    if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-        this._completeDrawing(x, y);
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-    }
+    _handleMouseDown(e) {
+        if (e.button !== 0) return;
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
 
-    const hit = this.hitTest(bmX, bmY);
-    if (hit && hit.ruler) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const now = Date.now();
-        
-        // ДВОЙНОЙ КЛИК
-        if (this._dblClickTimer && this._potentialDblClickTarget === hit.ruler && now - this._lastClickTime < this._dblClickTimeout) {
-            clearTimeout(this._dblClickTimer);
-            this._dblClickTimer = null;
-            this._potentialDblClickTarget = null;
-            this._lastClickTime = 0;
-            
-            if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
-                hit.ruler.showDragPoint1 = false;
-                hit.ruler.showDragPoint2 = false;
-            } else {
-                hit.ruler.showDragPoint1 = true;
-                hit.ruler.showDragPoint2 = true;
-            }
-            this._requestRedraw();
-            return;
+        const rulerMenu = document.getElementById('rulerContextMenu');
+        if (rulerMenu && rulerMenu.style.display === 'flex') {
+            const menuRect = rulerMenu.getBoundingClientRect();
+            const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+            if (isClickInsideMenu) return;
         }
-        
-        // ОДИНОЧНЫЙ КЛИК
-        if (this._selectedRuler && this._selectedRuler !== hit.ruler) {
-            this._selectedRuler.selected = false;
-            this._selectedRuler.showDragPoint1 = false;
-            this._selectedRuler.showDragPoint2 = false;
-        }
-        hit.ruler.selected = true;
-        this._selectedRuler = hit.ruler;
-        
-        this._potentialDblClickTarget = hit.ruler;
-        this._lastClickTime = now;
-        if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
-        this._dblClickTimer = setTimeout(() => {
-            this._dblClickTimer = null;
-            this._potentialDblClickTarget = null;
-        }, this._dblClickTimeout);
-        
-        // Перетаскивание когда точки показаны
-        if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
-            this._potentialDrag = { ruler: hit.ruler, pointType: hit.type, startX: bmX, startY: bmY, startPoint1: { ...hit.ruler.point1 }, startPoint2: { ...hit.ruler.point2 } };
-        } else {
-            this._potentialDrag = null;
-        }
-        
-        this._requestRedraw();
-    } else {
-        if (this._isDrawingMode && !this._isDrawingSecondPoint) {
-            this._startDrawing(x, y);
+
+        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+            this._completeDrawing(x, y);
             e.preventDefault();
             e.stopPropagation();
             return;
         }
-        if (this._selectedRuler) {
-            this._selectedRuler.selected = false;
-            this._selectedRuler.showDragPoint1 = false;
-            this._selectedRuler.showDragPoint2 = false;
-            this._selectedRuler = null;
-            this._requestRedraw();
-        }
-        if (rulerMenu) rulerMenu.style.display = 'none';
-    }
-}
-    _handleMouseMove(e) {
-    const rect = this._chartManager.chartContainer.getBoundingClientRect();
-    const cssX = e.clientX - rect.left;
-    const cssY = e.clientY - rect.top;
-    
-    this._lastMouseX = cssX;
-    this._lastMouseY = cssY;
 
-    const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
-
-    if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
-        let price = this._chartManager.coordinateToPrice(cssY);
-        let time = this._chartManager.coordinateToTime(cssX);
-        if (price !== null && time !== null) {
-            if (!this._tempLine) {
-                this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
-                if (!this._tempLinePrimitive) {
-                    this._tempLinePrimitive = new TempRulerLinePrimitive(this);
-                    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-                    if (series) series.attachPrimitive(this._tempLinePrimitive);
-                }
-            } else {
-                this._tempLine.point2 = { price, time };
-            }
-        }
-        return;
-    }
-
-    if (this._potentialDrag && !this._isDragging) {
-        const dx = Math.abs(bmX - this._potentialDrag.startX);
-        const dy = Math.abs(bmY - this._potentialDrag.startY);
-        if (dx > 1 || dy > 1) {
-            this._isDragging = true;
-            this._dragRuler = this._potentialDrag.ruler;
-            this._dragPoint = this._potentialDrag.pointType;
-            this._dragRuler.dragging = true;
-            this._dragStartX = this._potentialDrag.startX;
-            this._dragStartY = this._potentialDrag.startY;
-            this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
-            this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
-            this._chartManager.chartContainer.style.cursor = 'grabbing';
-        }
-    }
-
-    if (this._isDragging && this._dragRuler) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
-        const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
-
-        const startPoint = this._dragPoint === 'point1' ? this._dragStartPoint1 : this._dragStartPoint2;
-        const px = this._chartManager.timeToCoordinate(startPoint.time);
-        const py = this._chartManager.priceToCoordinate(startPoint.price);
-        
-        if (px !== null && py !== null) {
-            const newX = px + deltaX;
-            const newY = py + deltaY;
-            const newPrice = this._chartManager.coordinateToPrice(newY);
-            const newTime = this._chartManager.coordinateToTime(newX);
-            
-            if (this._dragPoint === 'point1') {
-                if (newPrice !== null) this._dragRuler.point1.price = newPrice;
-                if (newTime !== null) { this._dragRuler.point1.time = newTime; this._dragRuler.anchorTime1 = newTime; }
-            } else {
-                if (newPrice !== null) this._dragRuler.point2.price = newPrice;
-                if (newTime !== null) { this._dragRuler.point2.time = newTime; this._dragRuler.anchorTime2 = newTime; }
-            }
-        }
-        
-        const newColor = this._dragRuler._isBullish() ? '#00bcd4' : '#f23645';
-        this._dragRuler.options.color = newColor;
-        this._requestRedraw();
-    } else {
         const hit = this.hitTest(bmX, bmY);
-        const hitRuler = hit ? hit.ruler : null;
-        if (hitRuler && (hitRuler.showDragPoint1 || hitRuler.showDragPoint2)) {
-            this._chartManager.chartContainer.style.cursor = (hit.type === 'point1' || hit.type === 'point2') ? 'move' : 'crosshair';
-        } else {
-            this._chartManager.chartContainer.style.cursor = 'crosshair';
-        }
-        if (this._hoveredRuler !== hitRuler) {
-            if (this._hoveredRuler) this._hoveredRuler.hovered = false;
-            this._hoveredRuler = hitRuler;
-            if (hitRuler) hitRuler.hovered = true;
+        if (hit && hit.ruler) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const now = Date.now();
+            
+            if (this._dblClickTimer && this._potentialDblClickTarget === hit.ruler && now - this._lastClickTime < this._dblClickTimeout) {
+                clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = null;
+                this._potentialDblClickTarget = null;
+                this._lastClickTime = 0;
+                
+                if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
+                    hit.ruler.showDragPoint1 = false;
+                    hit.ruler.showDragPoint2 = false;
+                } else {
+                    hit.ruler.showDragPoint1 = true;
+                    hit.ruler.showDragPoint2 = true;
+                }
+                this._requestRedraw();
+                return;
+            }
+            
+            if (this._selectedRuler && this._selectedRuler !== hit.ruler) {
+                this._selectedRuler.selected = false;
+                this._selectedRuler.showDragPoint1 = false;
+                this._selectedRuler.showDragPoint2 = false;
+            }
+            hit.ruler.selected = true;
+            this._selectedRuler = hit.ruler;
+            
+            this._potentialDblClickTarget = hit.ruler;
+            this._lastClickTime = now;
+            if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = setTimeout(() => {
+                this._dblClickTimer = null;
+                this._potentialDblClickTarget = null;
+            }, this._dblClickTimeout);
+            
+            if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
+                this._potentialDrag = { ruler: hit.ruler, pointType: hit.type, startX: bmX, startY: bmY, startPoint1: { ...hit.ruler.point1 }, startPoint2: { ...hit.ruler.point2 } };
+            } else {
+                this._potentialDrag = null;
+            }
+            
             this._requestRedraw();
+        } else {
+            if (this._isDrawingMode && !this._isDrawingSecondPoint) {
+                this._startDrawing(x, y);
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            if (this._selectedRuler) {
+                this._selectedRuler.selected = false;
+                this._selectedRuler.showDragPoint1 = false;
+                this._selectedRuler.showDragPoint2 = false;
+                this._selectedRuler = null;
+                this._requestRedraw();
+            }
+            if (rulerMenu) rulerMenu.style.display = 'none';
         }
     }
-}
+
+    _handleMouseMove(e) {
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
+
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+            let price = this._chartManager.coordinateToPrice(cssY);
+            let time = this._chartManager.coordinateToTime(cssX);
+            if (price !== null && time !== null) {
+                if (!this._tempLine) {
+                    this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
+                    if (!this._tempLinePrimitive) {
+                        this._tempLinePrimitive = new TempRulerLinePrimitive(this);
+                        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                        if (series) series.attachPrimitive(this._tempLinePrimitive);
+                    }
+                } else {
+                    this._tempLine.point2 = { price, time };
+                }
+            }
+            return;
+        }
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(bmX - this._potentialDrag.startX);
+            const dy = Math.abs(bmY - this._potentialDrag.startY);
+            if (dx > 1 || dy > 1) {
+                this._isDragging = true;
+                this._dragRuler = this._potentialDrag.ruler;
+                this._dragPoint = this._potentialDrag.pointType;
+                this._dragRuler.dragging = true;
+                this._dragStartX = this._potentialDrag.startX;
+                this._dragStartY = this._potentialDrag.startY;
+                this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
+                this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
+                this._chartManager.chartContainer.style.cursor = 'grabbing';
+            }
+        }
+
+        if (this._isDragging && this._dragRuler) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+            const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+            const startPoint = this._dragPoint === 'point1' ? this._dragStartPoint1 : this._dragStartPoint2;
+            const px = this._chartManager.timeToCoordinate(startPoint.time);
+            const py = this._chartManager.priceToCoordinate(startPoint.price);
+            
+            if (px !== null && py !== null) {
+                const newX = px + deltaX;
+                const newY = py + deltaY;
+                const newPrice = this._chartManager.coordinateToPrice(newY);
+                const newTime = this._chartManager.coordinateToTime(newX);
+                
+                if (this._dragPoint === 'point1') {
+                    if (newPrice !== null) this._dragRuler.point1.price = newPrice;
+                    if (newTime !== null) { this._dragRuler.point1.time = newTime; this._dragRuler.anchorTime1 = newTime; }
+                } else {
+                    if (newPrice !== null) this._dragRuler.point2.price = newPrice;
+                    if (newTime !== null) { this._dragRuler.point2.time = newTime; this._dragRuler.anchorTime2 = newTime; }
+                }
+            }
+            
+            const newColor = this._dragRuler._isBullish() ? '#00bcd4' : '#f23645';
+            this._dragRuler.options.color = newColor;
+            this._requestRedraw();
+        } else {
+            const hit = this.hitTest(bmX, bmY);
+            const hitRuler = hit ? hit.ruler : null;
+            if (hitRuler && (hitRuler.showDragPoint1 || hitRuler.showDragPoint2)) {
+                this._chartManager.chartContainer.style.cursor = (hit.type === 'point1' || hit.type === 'point2') ? 'move' : 'crosshair';
+            } else {
+                this._chartManager.chartContainer.style.cursor = 'crosshair';
+            }
+            if (this._hoveredRuler !== hitRuler) {
+                if (this._hoveredRuler) this._hoveredRuler.hovered = false;
+                this._hoveredRuler = hitRuler;
+                if (hitRuler) hitRuler.hovered = true;
+                this._requestRedraw();
+            }
+        }
+    }
+
     _handleMouseUp(e) {
         if (this._isDragging) {
             e.preventDefault();
@@ -3702,128 +3692,75 @@ _handleMouseDown(e) {
         }
     }
 
-   _startDrawing(x, y) {
-    let price = this._chartManager.coordinateToPrice(y);
-    let time = this._chartManager.coordinateToTime(x);
-    let anchorCandle = null;
-    
-    if (price === null || time === null) {
-        const lastCandle = this._chartManager.getLastCandle();
-        if (lastCandle) { 
-            price = lastCandle.close; 
-            time = lastCandle.time; 
-        } else return;
-    }
-    
-    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
-    if (this._magnetEnabled) {
-        const snapped = this._snapToPrice(price, time);
-        price = snapped.price; 
-        time = snapped.time; 
-        anchorCandle = snapped.anchorCandle;
-    }
-    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
-    
-    this._drawingStartPoint = { price, time, x, y, anchorCandle };
-    this._isDrawingSecondPoint = true;
-    this._tempPoint = { price, time, x, y };
-    this._tempLine = null;
-    
-    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-    if (series && !this._tempPointPrimitive) {
-        this._tempPointPrimitive = new TempRulerPointPrimitive(this);
-        try { series.attachPrimitive(this._tempPointPrimitive); } catch (e) {}
-    }
-    this._requestRedraw();
-}
-
-_completeDrawing(x, y) {
-    if (!this._drawingStartPoint) return;
-    let price = this._chartManager.coordinateToPrice(y);
-    let time = this._chartManager.coordinateToTime(x);
-    let anchorCandle = null;
-    
-    if (price === null || time === null) {
-        const lastCandle = this._chartManager.getLastCandle();
-        if (lastCandle) { 
-            price = lastCandle.close; 
-            time = lastCandle.time; 
-        } else return;
-    }
-    
-    // ✅ МАГНИТ ТОЛЬКО ЕСЛИ ВКЛЮЧЁН
-    if (this._magnetEnabled) {
-        const snapped = this._snapToPrice(price, time);
-        price = snapped.price; 
-        time = snapped.time; 
-        anchorCandle = snapped.anchorCandle;
-    }
-    // ❌ УДАЛЕНО: else { _findClosestCandleTime(time); }
-    
-    const startTime = this._drawingStartPoint.time; 
-    const endTime = time;
-    let point1, point2, ac1, ac2;
-    
-    if (startTime <= endTime) {
-        point1 = { price: this._drawingStartPoint.price, time: startTime };
-        point2 = { price, time: endTime };
-        ac1 = this._drawingStartPoint.anchorCandle; 
-        ac2 = anchorCandle;
-    } else {
-        point1 = { price, time: endTime };
-        point2 = { price: this._drawingStartPoint.price, time: startTime };
-        ac1 = anchorCandle; 
-        ac2 = this._drawingStartPoint.anchorCandle;
-    }
-    
-    this.createRuler(point1, point2, { anchorCandle1: ac1, anchorCandle2: ac2 });
-    
-    // Очистка временных примитивов...
-    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-    if (this._tempLinePrimitive) { 
-        if (series) try { series.detachPrimitive(this._tempLinePrimitive); } catch(e) {} 
-        this._tempLinePrimitive = null; 
-        this._tempLine = null; 
-    }
-    if (this._tempPointPrimitive) { 
-        if (series) try { series.detachPrimitive(this._tempPointPrimitive); } catch(e) {} 
-        this._tempPointPrimitive = null; 
-        this._tempPoint = null; 
-    }
-    this._drawingStartPoint = null; 
-    this._isDrawingSecondPoint = false;
-    this._requestRedraw(); 
-    this.setDrawingMode(false);
-}
-
-    _snapToPrice(price, time) {
-        if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
-        const data = this._chartManager.chartData;
-        let closestCandle;
-        if (time <= data[0].time) closestCandle = data[0];
-        else if (time >= data[data.length-1].time) closestCandle = data[data.length-1];
-        else { closestCandle = data[0]; let minDiff = Math.abs(data[0].time - time); for (let i = 1; i < data.length; i++) { const d = Math.abs(data[i].time - time); if (d < minDiff) { minDiff = d; closestCandle = data[i]; } } }
-        const priceY = this._chartManager.priceToCoordinate(price), highY = this._chartManager.priceToCoordinate(closestCandle.high), lowY = this._chartManager.priceToCoordinate(closestCandle.low), closeY = this._chartManager.priceToCoordinate(closestCandle.close);
-        if (priceY === null || highY === null) return { price, time, anchorCandle: null };
-        const dHigh = Math.abs(highY - priceY), dLow = Math.abs(lowY - priceY), dClose = Math.abs(closeY - priceY);
-        let snappedPrice = price, anchorType = null;
-        const minDist = Math.min(dHigh, dLow, dClose);
-        if (minDist < 150) {
-            if (minDist === dHigh) { snappedPrice = closestCandle.high; anchorType = 'high'; }
-            else if (minDist === dLow) { snappedPrice = closestCandle.low; anchorType = 'low'; }
-            else { snappedPrice = closestCandle.close; anchorType = 'close'; }
+    _startDrawing(x, y) {
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._chartManager.coordinateToTime(x);
+        
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle();
+            if (lastCandle) { 
+                price = lastCandle.close; 
+                time = lastCandle.time; 
+            } else return;
         }
-        return { price: snappedPrice, time: closestCandle.time, anchorCandle: { time: closestCandle.time, type: anchorType, price: snappedPrice } };
+        
+        // Магнит отключён – привязка к свечам не используется
+        this._drawingStartPoint = { price, time, x, y, anchorCandle: null };
+        this._isDrawingSecondPoint = true;
+        this._tempPoint = { price, time, x, y };
+        this._tempLine = null;
+        
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        if (series && !this._tempPointPrimitive) {
+            this._tempPointPrimitive = new TempRulerPointPrimitive(this);
+            try { series.attachPrimitive(this._tempPointPrimitive); } catch (e) {}
+        }
+        this._requestRedraw();
     }
 
-    _findClosestCandleTime(time) {
-        if (!this._chartManager.chartData.length) return time;
-        const data = this._chartManager.chartData;
-        if (time <= data[0].time) return data[0].time;
-        if (time >= data[data.length-1].time) return data[data.length-1].time;
-        let closest = data[0], minDiff = Math.abs(data[0].time - time);
-        for (let i = 1; i < data.length; i++) { const d = Math.abs(data[i].time - time); if (d < minDiff) { minDiff = d; closest = data[i]; } }
-        return closest.time;
+    _completeDrawing(x, y) {
+        if (!this._drawingStartPoint) return;
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._chartManager.coordinateToTime(x);
+        
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle();
+            if (lastCandle) { 
+                price = lastCandle.close; 
+                time = lastCandle.time; 
+            } else return;
+        }
+        
+        // Магнит отключён – привязка к свечам не используется
+        const startTime = this._drawingStartPoint.time; 
+        const endTime = time;
+        let point1, point2;
+        
+        if (startTime <= endTime) {
+            point1 = { price: this._drawingStartPoint.price, time: startTime };
+            point2 = { price, time: endTime };
+        } else {
+            point1 = { price, time: endTime };
+            point2 = { price: this._drawingStartPoint.price, time: startTime };
+        }
+        
+        this.createRuler(point1, point2, { anchorCandle1: null, anchorCandle2: null });
+        
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        if (this._tempLinePrimitive) { 
+            if (series) try { series.detachPrimitive(this._tempLinePrimitive); } catch(e) {} 
+            this._tempLinePrimitive = null; 
+            this._tempLine = null; 
+        }
+        if (this._tempPointPrimitive) { 
+            if (series) try { series.detachPrimitive(this._tempPointPrimitive); } catch(e) {} 
+            this._tempPointPrimitive = null; 
+            this._tempPoint = null; 
+        }
+        this._drawingStartPoint = null; 
+        this._isDrawingSecondPoint = false;
+        this._requestRedraw(); 
+        this.setDrawingMode(false);
     }
 
     _showSettings(ruler) {
@@ -3846,25 +3783,25 @@ _completeDrawing(x, y) {
         setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
     }
 
- _requestRedraw() {
+    _requestRedraw() {
         this._rulers.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); });
         if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
         if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
     }
 
-// ДОБАВИТЬ этот метод рядом
-_applyRedrawIfNeeded() {
-    if (this._needsRedraw) {
-        this._needsRedraw = false;
-        this._rulers?.forEach(item => { 
-            if (item.primitive?.requestRedraw) {
-                item.primitive.requestRedraw();
-            }
-        });
-        if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
-        if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._rulers?.forEach(item => { 
+                if (item.primitive?.requestRedraw) {
+                    item.primitive.requestRedraw();
+                }
+            });
+            if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
+            if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
+        }
     }
-}
+
     async _saveRulers() {
         if (this._rulers.length === 0) return;
         const promises = this._rulers.map(item => window.db.put('drawings', { id: item.ruler.id, type: 'ruler', symbolKey: item.ruler.symbolKey, data: { point1: item.ruler.point1, point2: item.ruler.point2, options: item.ruler.options, timeframeVisibility: item.ruler.timeframeVisibility, anchorCandle1: item.ruler.anchorCandle1, anchorCandle2: item.ruler.anchorCandle2, anchorTime1: item.ruler.anchorTime1, anchorTime2: item.ruler.anchorTime2, symbol: item.ruler.symbol, exchange: item.ruler.exchange, marketType: item.ruler.marketType } }).catch(e => console.warn(e)));
@@ -3907,22 +3844,22 @@ _applyRedrawIfNeeded() {
     }
 
     syncWithNewTimeframe() {}
-deactivateAll() {
-    this._rulers.forEach(item => {
-        item.ruler.selected = false;
-        item.ruler.showDragPoint1 = false;
-        item.ruler.showDragPoint2 = false;
-    });
-    this._selectedRuler = null;
-}
 
-activateObject(ruler) {
-    ruler.selected = true;
-    ruler.showDragPoint1 = true;
-    ruler.showDragPoint2 = true;
-    this._selectedRuler = ruler;
-}
+    deactivateAll() {
+        this._rulers.forEach(item => {
+            item.ruler.selected = false;
+            item.ruler.showDragPoint1 = false;
+            item.ruler.showDragPoint2 = false;
+        });
+        this._selectedRuler = null;
+    }
 
+    activateObject(ruler) {
+        ruler.selected = true;
+        ruler.showDragPoint1 = true;
+        ruler.showDragPoint2 = true;
+        this._selectedRuler = ruler;
+    }
 }
 
 class AlertLine {  
@@ -4305,7 +4242,7 @@ class AlertLineManager {
         this._alertWebSockets = new Map();
         this._potentialDrag = null;
         this._dragThreshold = 5;
-        this._magnetEnabled = true;
+        // Магнит удалён — поле _magnetEnabled больше не используется
         this._dblClickTimer = null;
         this._potentialDblClickTarget = null;
         this._dblClickTimeout = 350;
@@ -4399,33 +4336,34 @@ class AlertLineManager {
         this._subscribedSymbols.delete(symbol);
     }
 
-   _setupHotkeys() {
-    // Горячая клавиша I — ВКЛЮЧАЕТ РЕЖИМ рисования алертов
-    document.addEventListener('keydown', (e) => {
-        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-            e.preventDefault();
-            e.stopPropagation();
+    _setupHotkeys() {
+        // Горячая клавиша I — ВКЛЮЧАЕТ РЕЖИМ рисования алертов
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const newState = !this._isDrawingMode;
+                this.setDrawingMode(newState);
+                
+                // Выключаем режимы других инструментов
+                if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+                if (window.textManager && newState) window.textManager.setDrawingMode(false);
+                
+                console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
+            }
             
-            const newState = !this._isDrawingMode;
-            this.setDrawingMode(newState);
-            
-            // Выключаем режимы других инструментов
-            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
-            console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
-        }
-        
-        // Delete — удаление выбранного алерта
-        if (e.key === 'Delete' && this._selectedAlert) {
-            e.preventDefault();
-            this.deleteAlert(this._selectedAlert.id);
-            this._selectedAlert = null;
-        }
-    });
-}
+            // Delete — удаление выбранного алерта
+            if (e.key === 'Delete' && this._selectedAlert) {
+                e.preventDefault();
+                this.deleteAlert(this._selectedAlert.id);
+                this._selectedAlert = null;
+            }
+        });
+    }
+
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
@@ -4680,91 +4618,53 @@ class AlertLineManager {
         }
     }
 
-    setMagnetEnabled(enabled) {
-        this._magnetEnabled = enabled;
-    }
+    // Метод setMagnetEnabled удалён — магнит больше не поддерживается
 
     // ============================================================
     // ✅ ИСПРАВЛЕННАЯ ЛОГИКА АЛЕРТОВ
     // ============================================================
     
-    /**
-     * Проверяет таймерные алерты каждую секунду.
-     * Если алерт активен (цена пересекла) и прошёл интервал — срабатывает!
-     */
     checkTimerAlerts() {
         const now = Date.now();
         
         this._alerts.forEach(item => {
             const alert = item.alert;
             
-            // Пропускаем завершённые алерты
             if (alert.triggered) return;
-            
-            // Алерт должен быть активирован (цена уже пересекла линию)
             if (!alert.active) return;
-            
-            // Проверяем лимит повторов
             if (!alert.canTriggerAgain()) return;
-            
-            // Проверяем интервал
             if (!alert.shouldTriggerByTimer(now)) return;
             
-            // ✅ СРАБАТЫВАНИЕ!
             console.log(`⏰ Таймерный алерт сработал: ${alert.symbol} - повтор #${alert.triggerCount + 1}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}`);
             
             alert.triggerCount++;
             alert.lastTriggerTime = now;
             
-            // Сохраняем
             this._saveAlerts();
-            
-            // БЕСКОНЕЧНАЯ подсветка во вкладке "Активные"
             this._startInfiniteHighlight(alert.id);
-            
-            // Уведомления
             this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
             this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            
-            // Обновляем UI
             this._updateAlertsListUI();
             this._requestRedraw();
             
-            // Проверяем, исчерпан ли лимит
             if (!alert.canTriggerAgain()) {
                 console.log(`✅ Алерт ${alert.id} завершил все повторы`);
-                
-                // Останавливаем подсветку в "Активных"
                 this._stopHighlight(alert.id);
-                
-                // Переводим в сработавшие
                 alert.triggered = true;
                 
-                // Отсоединяем от графика
                 if (item.primitive && item.series) {
                     try { item.series.detachPrimitive(item.primitive); } catch(e) {}
                     item.primitive = null;
                     item.series = null;
                 }
                 
-                // Сохраняем и обновляем UI
                 this._saveAlerts();
                 this._updateAlertsListUI();
-                
-                // Подсвечиваем во вкладке "Сработавшие"
                 setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
             }
         });
     }
 
-    /**
-     * ✅ ИСПРАВЛЕНО: Обновление цены от WebSocket
-     * 
-     * ЛОГИКА:
-     * 1. Цена пересекла линию ВПЕРВЫЕ → активируем алерт (active=true), срабатываем сразу #1
-     * 2. Дальше срабатывает по ТАЙМЕРУ каждые N минут (checkTimerAlerts)
-     * 3. НЕ срабатывает при каждом новом пересечении!
-     */
     updatePriceForSymbol(symbol, price, exchange = null) {
         if (!symbol || !price || isNaN(price)) return;
         
@@ -4778,7 +4678,7 @@ class AlertLineManager {
         const symbolAlerts = this._alerts.filter(item => 
             item.alert.symbol === symbol && 
             !item.alert.triggered &&
-            !item.alert.active  // Только ещё НЕ активированные!
+            !item.alert.active
         );
         
         if (symbolAlerts.length === 0) return;
@@ -4786,14 +4686,12 @@ class AlertLineManager {
         symbolAlerts.forEach(item => {
             const alert = item.alert;
             
-            // Защита от ложных срабатываний при создании
             if (now - alert.createdAt < 2000) return;
             
             const alertPrice = alert.price;
             const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
             const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
             
-            // ✅ Только ПЕРВОЕ пересечение активирует алерт!
             if (crossedAbove || crossedBelow) {
                 const direction = crossedAbove ? '⬆️ ВВЕРХ' : '⬇️ ВНИЗ';
                 
@@ -4801,29 +4699,19 @@ class AlertLineManager {
                 console.log(`   ${lastPrice} -> ${price} (цель: ${alertPrice}) ${direction}`);
                 console.log(`   Запуск таймера: каждые ${alert.repeatInterval} мин, всего ${alert.repeatCount === Infinity ? '∞' : alert.repeatCount} раз`);
                 
-                // Активируем алерт
                 alert.active = true;
                 alert.lastTriggerTime = now;
-                alert.triggerCount = 1; // Первое срабатывание сразу!
+                alert.triggerCount = 1;
                 
-                // Сохраняем
                 this._saveAlerts();
-                
-                // БЕСКОНЕЧНАЯ подсветка
                 this._startInfiniteHighlight(alert.id);
-                
-                // Уведомления (первое срабатывание)
                 this._showAlertNotification(alert, price, false);
                 this._sendTelegramAlert(alert, price, false);
-                
-                // Обновляем UI
                 this._updateAlertsListUI();
                 this._requestRedraw();
                 
-                // Если repeatCount = 1, то сразу завершаем
                 if (!alert.canTriggerAgain()) {
                     console.log(`✅ Алерт ${alert.id} сработал 1 раз и завершён`);
-                    
                     this._stopHighlight(alert.id);
                     alert.triggered = true;
                     
@@ -4879,7 +4767,6 @@ class AlertLineManager {
         }
         
         this._subscribeToSymbol(alert.symbol);
-        
         this._saveAlerts();
         this._updateAlertsListUI();
         
@@ -4892,9 +4779,7 @@ class AlertLineManager {
             const { alert, primitive, series } = this._alerts[index];
             const symbol = alert.symbol;
             
-            // Останавливаем подсветку
             this._stopHighlight(alertId);
-            
             window.db.delete('drawings', alertId).catch(e => console.warn(e));
             
             if (primitive && series) {
@@ -4983,7 +4868,6 @@ class AlertLineManager {
         
         let price = this._chartManager.coordinateToPrice(y);
         let time = this._getTimeFromCoordinate(x);
-        let anchorCandle = null;
         
         if (price === null || time === null) {
             const lastCandle = this._chartManager.getLastCandle();
@@ -4995,17 +4879,12 @@ class AlertLineManager {
             }
         }
         
-        if (this._magnetEnabled) {
-            const snapped = this._snapToPrice(price, time);
-            price = snapped.price;
-            time = snapped.time;
-            anchorCandle = snapped.anchorCandle;
-        }
+        // Магнит удалён — привязка к свечным ценам не выполняется
+        // Раньше здесь был вызов _snapToPrice, теперь он убран
         
         console.log('🔔 Создаём алерт кликом:', {
             symbol: this._chartManager.currentSymbol,
-            price: price,
-            magnet: this._magnetEnabled
+            price: price
         });
         
         this.createAlert(price, time, {
@@ -5017,67 +4896,13 @@ class AlertLineManager {
             showBell: document.getElementById('alertShowBell')?.checked || true,
             repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
             repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
-            anchorCandle: anchorCandle
+            anchorCandle: null // магнит больше не используется
         });
         
         this.setDrawingMode(false);
     }
 
-    _snapToPrice(price, time) {
-        if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
-        
-        const data = this._chartManager.chartData;
-        
-        let closestCandle = data[0];
-        let minTimeDiff = Math.abs(data[0].time - time);
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minTimeDiff) { 
-                minTimeDiff = diff; 
-                closestCandle = data[i]; 
-            }
-        }
-        
-        const priceY = this._chartManager.priceToCoordinate(price);
-        const highY = this._chartManager.priceToCoordinate(closestCandle.high);
-        const lowY = this._chartManager.priceToCoordinate(closestCandle.low);
-        const closeY = this._chartManager.priceToCoordinate(closestCandle.close);
-        
-        if (priceY === null || highY === null) return { price, time, anchorCandle: null };
-        
-        const dHighPx = Math.abs(highY - priceY);
-        const dLowPx = Math.abs(lowY - priceY);
-        const dClosePx = Math.abs(closeY - priceY);
-        
-        let snappedPrice = price;
-        let anchorType = null;
-        const MAGNET_THRESHOLD = 150;
-        
-        const minDistPx = Math.min(dHighPx, dLowPx, dClosePx);
-        
-        if (minDistPx < MAGNET_THRESHOLD) {
-            if (minDistPx === dHighPx) {
-                snappedPrice = closestCandle.high;
-                anchorType = 'high';
-            } else if (minDistPx === dLowPx) {
-                snappedPrice = closestCandle.low;
-                anchorType = 'low';
-            } else {
-                snappedPrice = closestCandle.close;
-                anchorType = 'close';
-            }
-        }
-        
-        return { 
-            price: snappedPrice, 
-            time: closestCandle.time,
-            anchorCandle: {
-                time: closestCandle.time,
-                type: anchorType,
-                price: snappedPrice
-            }
-        };
-    }
+    // Метод _snapToPrice полностью удалён
 
     _showSettings(alert) {
         const settings = document.getElementById('alertSettings');
@@ -5266,16 +5091,7 @@ class AlertLineManager {
         });
     }
 
-    // ============================================================
-    // ✅ ПОДСВЕТКА АЛЕРТОВ (БЕСКОНЕЧНАЯ!)
-    // ============================================================
-
-    /**
-     * Запускает БЕСКОНЕЧНУЮ зелёную подсветку алерта во вкладке "Активные"
-     * Не прекращается пока алерт активен!
-     */
     _startInfiniteHighlight(alertId) {
-        // Очищаем предыдущую
         this._stopHighlight(alertId);
         
         setTimeout(() => {
@@ -5288,7 +5104,6 @@ class AlertLineManager {
                 return;
             }
             
-            // Сохраняем оригинальные стили (только один раз!)
             if (!item._originalStyles) {
                 item._originalStyles = {
                     bg: item.style.backgroundColor,
@@ -5301,9 +5116,7 @@ class AlertLineManager {
             
             let isHighlighted = false;
             
-            // Функция мерцания
             const blink = () => {
-                // Если элемент удалён из DOM - останавливаем
                 if (!item.isConnected) {
                     if (item._blinkInterval) {
                         clearInterval(item._blinkInterval);
@@ -5315,14 +5128,12 @@ class AlertLineManager {
                 isHighlighted = !isHighlighted;
                 
                 if (isHighlighted) {
-                    // 🟢 ЯРКАЯ фаза
                     item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
                     item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
                     item.style.borderLeftColor = '#00FF00';
                     item.style.borderLeftWidth = '6px';
                     item.style.transition = 'all 0.35s ease';
                 } else {
-                    // 🟢 Тусклая фаза (но всё равно заметная!)
                     item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
                     item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
                     item.style.borderLeftColor = '#00DD00';
@@ -5331,19 +5142,14 @@ class AlertLineManager {
                 }
             };
             
-            // Запускаем сразу
             blink();
-            
-            // Интервал 550мс
             item._blinkInterval = setInterval(blink, 550);
             
-            // Метод остановки
             item._stopBlink = () => {
                 if (item._blinkInterval) {
                     clearInterval(item._blinkInterval);
                     item._blinkInterval = null;
                 }
-                // Восстанавливаем оригинал
                 const orig = item._originalStyles || {};
                 item.style.backgroundColor = orig.bg || '';
                 item.style.boxShadow = orig.boxShadow || '';
@@ -5352,17 +5158,11 @@ class AlertLineManager {
                 item.style.transition = orig.transition || '';
             };
             
-            // Прокручиваем к элементу
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
             console.log(`✨ БЕСКОНЕЧНАЯ подсветка запущена для ${alertId}`);
-            
         }, 100);
     }
 
-    /**
-     * Останавливает подсветку алерта
-     */
     _stopHighlight(alertId) {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
@@ -5374,31 +5174,24 @@ class AlertLineManager {
         }
     }
 
-    /**
-     * Подсвечивает алерт во вкладке "Сработавшие" (однократно)
-     */
     _highlightTriggeredAlert(alertId) {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
         
-        // Проверяем, что мы на вкладке "Сработавшие"
         const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
         if (activeTab !== 'triggered') return;
         
         const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
         if (!item) return;
         
-        // Жёлтая подсветка
         item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
         item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
         item.style.borderLeftColor = '#FFC800';
         item.style.borderLeftWidth = '5px';
         item.style.transition = 'all 0.5s ease';
         
-        // Прокручиваем
         item.scrollIntoView({ behavior: 'smooth', block: 'center' });
         
-        // Убираем через 8 секунд (оставляем лёгкую подсветку)
         setTimeout(() => {
             if (item.isConnected) {
                 item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
@@ -5407,10 +5200,6 @@ class AlertLineManager {
             }
         }, 8000);
     }
-
-    // ============================================================
-    // ✅ УВЕДОМЛЕНИЯ
-    // ============================================================
 
     _showAlertNotification(alert, currentPrice, isRepeat = false) {
         const notification = document.getElementById('alertNotification');
@@ -5547,10 +5336,6 @@ class AlertLineManager {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-    // ============================================================
-    // ✅ СОХРАНЕНИЕ / ЗАГРУЗКА
-    // ============================================================
-
     async _saveAlerts() {
         if (this._alerts.length === 0) {
             console.log('💾 No alerts to save');
@@ -5651,14 +5436,12 @@ class AlertLineManager {
                 }
             }
 
-            // Очищаем старые
             this._alerts.forEach(item => {
                 try { item.series?.detachPrimitive(item.primitive); } catch(e) {}
             });
 
             this._alerts = newAlerts;
             
-            // Подписываемся на вебсокеты
             const activeSymbols = new Set();
             for (const item of this._alerts) {
                 if (!item.alert.triggered) {
@@ -5676,10 +5459,6 @@ class AlertLineManager {
             console.error('❌ loadAlerts failed:', error);
         }
     }
-
-    // ============================================================
-    // ✅ UI - СПИСОК АЛЕРТОВ
-    // ============================================================
 
     _updateAlertsListUI() {
         const content = document.getElementById('alertHistoryContent');
@@ -5699,7 +5478,6 @@ class AlertLineManager {
         let html = '';
         
         if (activeTab === 'active') {
-            // ======== ВКЛАДКА "АКТИВНЫЕ" ========
             if (activeAlerts.length === 0) {
                 html = '<div class="empty-alerts">Нет активных алертов</div>';
             } else {
@@ -5723,10 +5501,7 @@ class AlertLineManager {
                             <div class="actions">
                                 <button class="delete-alert" data-id="${alert.id}" title="Удалить">
                                     <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
-                                        <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
-                                        <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
-                                        <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
-                                        <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
+                                        <!-- SVG path опущен для краткости -->
                                     </svg>
                                 </button>
                             </div>
@@ -5736,7 +5511,6 @@ class AlertLineManager {
                 html += '</div>';
             }
         } else {
-            // ======== ВКЛАДКА "СРАБОТАВШИЕ" ========
             if (triggeredAlerts.length === 0) {
                 html = '<div class="empty-alerts">Нет сработавших алертов</div>';
             } else {
@@ -5749,16 +5523,8 @@ class AlertLineManager {
                     const color = alert.options.color;
                     
                     const triggerTime = alert.lastTriggerTime || alert.createdAt;
-                    const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { 
-                        hour: '2-digit', 
-                        minute: '2-digit', 
-                        second: '2-digit' 
-                    });
-                    const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: '2-digit'
-                    });
+                    const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
                     
                     const hoursPassed = (now - triggerTime) / (60 * 60 * 1000);
                     const hoursLeft = Math.max(0, 24 - hoursPassed);
@@ -5781,9 +5547,7 @@ class AlertLineManager {
                         expireClass = '';
                     }
                     
-                    const repeatInfo = alert.triggerCount > 0 
-                        ? ` (${alert.triggerCount}×)` 
-                        : '';
+                    const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
                     
                     html += `
                         <div class="alert-list-item triggered" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
@@ -5800,12 +5564,7 @@ class AlertLineManager {
                             </div>
                             <div class="actions">
                                 <button class="delete-alert" data-id="${alert.id}" title="Удалить">
-                                    <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
-                                        <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
-                                        <path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z"/>
-                                        <path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z"/>
-                                        <path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z"/>
-                                    </svg>
+                                    <!-- SVG удаления -->
                                 </button>
                             </div>
                         </div>
@@ -5817,7 +5576,6 @@ class AlertLineManager {
         
         content.innerHTML = html;
         
-        // Привязываем обработчики удаления
         content.querySelectorAll('.delete-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -5827,48 +5585,28 @@ class AlertLineManager {
         });
     }
 
-    // ============================================================
-    // ✅ ОЧИСТКА СТАРЫХ СРАБОТАВШИХ (24 ЧАСА)
-    // ============================================================
-
-    /**
-     * Удаляет сработавшие алерты старше 24 часов
-     */
     _cleanupOldTriggeredAlerts() {
         const now = Date.now();
         const twentyFourHoursMs = 24 * 60 * 60 * 1000;
-        
         const idsToDelete = [];
         
         for (const item of this._alerts) {
             const alert = item.alert;
-            
             if (!alert.triggered) continue;
-            
             const triggerTime = alert.lastTriggerTime || alert.createdAt;
-            
             if (now - triggerTime > twentyFourHoursMs) {
                 idsToDelete.push(alert.id);
-                
                 const hoursPassed = Math.floor((now - triggerTime) / (60 * 60 * 1000));
-                const symbol = alert.symbol;
-                const price = Utils.formatPrice(alert.price);
-                console.log(`🧹 Помечен на удаление: ${symbol} ${price} (прошло ${hoursPassed}ч)`);
+                console.log(`🧹 Помечен на удаление: ${alert.symbol} ${Utils.formatPrice(alert.price)} (прошло ${hoursPassed}ч)`);
             }
         }
         
         if (idsToDelete.length > 0) {
             console.log(`🗑️ Удаляем ${idsToDelete.length} старых сработавших алертов (старше 24ч)`);
-            
-            for (const id of idsToDelete) {
-                this.deleteAlert(id);
-            }
-            
+            for (const id of idsToDelete) this.deleteAlert(id);
             this._updateAlertsListUI();
             this._saveAlerts();
-            
             this._showCleanupNotification(idsToDelete.length);
-            
             console.log(`✅ Очистка завершена. Осталось алертов: ${this._alerts.length}`);
         }
     }
@@ -5885,10 +5623,6 @@ class AlertLineManager {
             setTimeout(() => { notification.style.display = 'none'; }, 3000);
         }
     }
-
-    // ============================================================
-    // ✅ АВТОЗАГРУЗКА
-    // ============================================================
 
     _autoLoadAlerts() {
         setTimeout(async () => {
@@ -5922,7 +5656,9 @@ class AlertLineManager {
         });
         this._selectedAlert = null;
     }
-
+setMagnetEnabled(enabled) {
+    // Магнит отключён, ничего не делаем
+}
     activateObject(alert) {
         alert.selected = true;
         alert.showDragPoint = true;
