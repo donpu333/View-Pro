@@ -452,35 +452,36 @@ startTickerPanelPriceEngine() {
 };
 
     this._processRestQueue = async () => {
-        // ✅ Ждём fetchBatchSnapshots
-        while (TickerPanel._fetchBatchInProgress) {
-            await new Promise(r => setTimeout(r, 100));
+    while (TickerPanel._fetchBatchInProgress) {
+        await new Promise(r => setTimeout(r, 100));
+    }
+    
+    if (this._isRestRunning) return;
+    this._isRestRunning = true;
+    TickerPanel._restInProgress = true;
+    
+    let count = 0;
+    try {
+        while (this._restQueue.length > 0) {
+            const task = this._restQueue.shift();
+            count++;
+            await task();
+            await new Promise(r => setTimeout(r, 3000));
         }
-        
-        if (this._isRestRunning) return;
-        this._isRestRunning = true;
-        TickerPanel._restInProgress = true;
-        
-        let count = 0;
-        try {
-            while (this._restQueue.length > 0) {
-                const task = this._restQueue.shift();
-                count++;
-                await task();
-                await new Promise(r => setTimeout(r, 3000));
-            }
-        } finally {
-            this._isRestRunning = false;
-            TickerPanel._restInProgress = false;
-        }
-        
-        console.log(`✅ REST завершён (${count} запросов)`);
-        
-        if (!this._blockDOMUpdates) {
-            this.renderTickerList();
-            this.updatePriceElements?.();
-        }
-    };
+    } finally {
+        this._isRestRunning = false;
+        TickerPanel._restInProgress = false;
+    }
+    
+    console.log(`✅ REST завершён (${count} запросов)`);
+    
+    // ✅✅✅ ДОБАВЬ ЭТО — принудительная пересортировка после загрузки ВСЕХ цен
+    if (!this._blockDOMUpdates) {
+        this.filterCache = null;  // ← сброс кэша фильтра
+        this.renderTickerList();  // ← полная пересортировка
+        this.updatePriceElements?.();
+    }
+};
 
     const loadAllData = async () => {
         // ✅ Ждём fetchBatchSnapshots и другие процессы
