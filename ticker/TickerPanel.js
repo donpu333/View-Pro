@@ -405,7 +405,7 @@ addInitialSymbols() {
                     );
                 }
             }
-        }, 1500);  // ← УВЕЛИЧЕНО С 1500 ДО 3000 МС!
+        }, 3000);  // ← УВЕЛИЧЕНО С 1500 ДО 3000 МС!
     });
 }
 startTickerPanelPriceEngine() {
@@ -417,7 +417,8 @@ startTickerPanelPriceEngine() {
     this._restQueue = [];           
     this._isRestRunning = false;    
 
-  this._safeFetch = async (url, retries = 5) => {
+  this._safeFetch = async (url, retries = 3) => {
+    // ✅ Ждём ChartManager, но не больше 5 секунд
     let waited = 0;
     while (ChartManager._fetchInProgress && waited < 50) {
         await new Promise(r => setTimeout(r, 100));
@@ -426,22 +427,12 @@ startTickerPanelPriceEngine() {
     
     for (let i = 0; i < retries; i++) {
         try {
-            if (i > 0) {
-                const delay = Math.min(2000 * Math.pow(2, i - 1), 30000);
-                await new Promise(r => setTimeout(r, delay));
-            }
+            if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 15000);
             const response = await fetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
-            
-            // ВОТ ЭТО ДОБАВЬ
-            if (response.status === 418 || response.status === 429) {
-                console.warn(`🚨 ${response.status} — ждём 20с`);
-                await new Promise(r => setTimeout(r, 20000));
-                continue;
-            }
-            
+            if (response.status === 418 || response.status === 429) continue;
             if (!response.ok) return null;
             return await response.json();
         } catch (e) {
@@ -499,7 +490,7 @@ startTickerPanelPriceEngine() {
             if (t.exchange === 'bybit' && t.marketType === 'spot') groups.bySpot.push(t.symbol);
         }
 
-        const BATCH = 25;
+        const BATCH = 12;
         this._restQueue = [];
 
         // Binance Futures
@@ -706,7 +697,7 @@ startTickerPanelPriceEngine() {
         if (!this._isRestRunning && this._restQueue.length === 0) {
             loadAllData().catch(e => console.warn('⚠️ Ошибка:', e));
         }
-   }, 600000);
+    }, 300000);
 
     this.pollRestData = loadAllData;
 }
@@ -834,10 +825,15 @@ syncWithActiveWatchlist() {
     if (render) this.renderTickerList();
     
     // ✅ Загрузить данные для нового тикера
-   
+    setTimeout(() => {
+        if (this.pollRestData && !this._isRestRunning) {
+            this.pollRestData();
+        }
+    }, 300);
+    
     return true;
 }
- async addSymbolsBatch(symbolsData) {
+async addSymbolsBatch(symbolsData) {
     if (!symbolsData || symbolsData.length === 0) return;
     
     const addedKeys = [];
@@ -972,6 +968,7 @@ async _fetchPricesForNewSymbols(symbols) {
     this.renderTickerList();
     this.updatePriceElements?.();
 }
+
 async fetchBatchSnapshots(symbols) {
     if (!symbols || symbols.length === 0) return;
     
