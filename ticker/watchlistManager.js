@@ -185,8 +185,8 @@ class WatchlistManager {
     this.tickerPanel.tickers = [];
     this.tickerPanel.tickersMap.clear();
     this.tickerPanel.tickerElements?.clear();
-    this.tickerPanel.displayedTickers = [];
-    this.tickerPanel.totalItems = newList.symbols.length;
+   this.tickerPanel.renderer.displayedTickers = [];
+this.tickerPanel.renderer.totalItems = newList.symbols.length;
     this.tickerPanel.filterCache = null;
 
     const container = document.getElementById('tickerListContainer');
@@ -459,8 +459,8 @@ _schedulePriceLoadForList(symbols) {
         this.tickerPanel.tickers = [];
         this.tickerPanel.tickersMap.clear();
         this.tickerPanel.tickerElements?.clear();
-        this.tickerPanel.displayedTickers = [];
-        this.tickerPanel.totalItems = list.symbols.length;
+       this.tickerPanel.renderer.displayedTickers = [];
+this.tickerPanel.renderer.totalItems = list.symbols.length;
         this.tickerPanel.filterCache = null;
         this.tickerPanel.state.customSymbols = [...list.symbols];
 
