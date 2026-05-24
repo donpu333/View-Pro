@@ -104,9 +104,6 @@ class TickerRenderer {
             }
         }
         
-        if (domUpdates > 0 && this.parent.debugMode) {
-            console.log(`🎨 DOM обновлений: ${domUpdates}`);
-        }
     }
     
     // =========================================================================
@@ -197,59 +194,106 @@ class TickerRenderer {
     // =========================================================================
     // 📋 ПОЛУЧИТЬ ОТФИЛЬТРОВАННЫЕ (И ОТСОРТИРОВАННЫЕ!) ТИКЕРЫ
     // =========================================================================
-    getFilteredTickers() {
-        const flagPart = this.parent.state.activeTab === 'flags' 
-            ? this.parent.state.activeFlagTab 
-            : 'none';
-        
-        const cacheKey = `${this.parent.state.marketFilter}:${this.parent.state.exchangeFilter}:${this.parent.state.activeTab}:${flagPart}:${this.parent.state.sortBy}:${this.parent.state.sortDirection}`;
-        
-        // ✅ Возвращаем из кэша если есть
-        if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
-            return this.parent.filterCache.result;
-        }
-        
-        // Копируем массив (чтобы не мутировать оригинал при фильтрации)
-        let filtered = [...this.parent.tickers];
-        
-        // Фильтр по рынку
-        if (this.parent.state.marketFilter !== 'all') {
-            filtered = filtered.filter(t => t.marketType === this.parent.state.marketFilter);
-        }
-        
-        // Фильтр по бирже
-        if (this.parent.state.exchangeFilter !== 'all') {
-            filtered = filtered.filter(t => t.exchange === this.parent.state.exchangeFilter);
-        }
-        
-        // Фильтр по вкладкам
-        if (this.parent.state.activeTab === 'favorites') {
-            filtered = filtered.filter(t => this.parent.state.favorites.includes(t.symbol));
-        } else if (this.parent.state.activeTab === 'flags') {
-            if (this.parent.state.activeFlagTab) {
-                filtered = filtered.filter(t => {
-                    const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
-                    return this.parent.state.flags[key] === this.parent.state.activeFlagTab;
-                });
-            } else {
-                filtered = filtered.filter(t => {
-                    const key = `${t.symbol}:${t.exchange}:${t.marketType}`;
-                    return this.parent.state.flags[key] !== undefined;
-                });
-            }
-        }
-        
-        // ✅ СОРТИРУЕМ отфильтрованный результат
-        const result = this.sortTickers(filtered);
-        
-        // Сохраняем в кэш
-        this.parent.filterCache = {
-            key: cacheKey,
-            result: result
-        };
-        
-        return result;
+   getFilteredTickers() {
+    const cacheKey = `${this.parent.state?.marketFilter || 'all'}:${this.parent.state?.exchangeFilter || 'all'}:${this.parent.state?.activeTab || 'all'}:${this.parent.state?.sortBy || 'volume'}:${this.parent.state?.sortDirection || 'desc'}`;
+    
+    // Из кэша
+    if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
+        return this.parent.filterCache.result;
     }
+    
+    let result = [];
+    const state = this.parent.state;
+    
+    try {
+        // ✅ Выбираем источник данных
+        switch (state?.activeTab) {
+            
+            case 'favorites':
+                const favSet = new Set(state.favorites || []);
+                result = Array.from(this.parent.tickersMap.values()).filter(t => 
+                    favSet.has(t.symbol)
+                );
+                break;
+                
+            case 'flags':
+                const flags = state.flags || {};
+                const flagTab = state.activeFlagTab;
+                
+                result = Object.entries(flags)
+                    .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
+                    .map(([key]) => this.parent.tickersMap.get(key))
+                    .filter(t => t !== undefined);
+                break;
+                
+            default:
+                // ✅✅✅ ОСНОВНОЙ СПИСОК — надёжный способ!
+                
+                // Берём ключи из state.customSymbols (где они точно есть!)
+                const sourceKeys = state.customSymbols || [];
+                
+                if (sourceKeys.length === 0) {
+                    // Если пустой — берём ВСЕ из tickersMap
+                    console.warn('⚠️ customSymbols пустой! Используем tickersMap');
+                    result = Array.from(this.parent.tickersMap.values());
+                } else {
+                    // Фильтруем по бирже/рынку (работаем со строками)
+                    let filteredKeys = [...sourceKeys];
+                    
+                    if (state.marketFilter && state.marketFilter !== 'all') {
+                        filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                    }
+                    
+                    if (state.exchangeFilter && state.exchangeFilter !== 'all') {
+                        filteredKeys = filteredKeys.filter(k => {
+                            const parts = k.split(':');
+                            return parts[1] === state.exchangeFilter;
+                        });
+                    }
+                    
+                    // ✅ Получаем объекты из Map
+                    result = filteredKeys
+                        .map(key => this.parent.tickersMap.get(key))
+                        .filter(t => t !== undefined);
+                }
+                break;
+        }
+        
+        // ✅ СОРТИРОВКА
+        const sortBy = state.sortBy || 'volume';
+        const direction = state.sortDirection === 'asc' ? 1 : -1;
+        
+        result.sort((a, b) => {
+            if (!a || !b) return 0;
+            
+            let res = 0;
+            switch (sortBy) {
+                case 'name':   res = (a.symbol||'').localeCompare(b.symbol||''); break;
+                case 'price':  res = (parseFloat(a.price)||0) - (parseFloat(b.price)||0); break;
+                case 'change': res = (parseFloat(a.change)||0) - (parseFloat(b.change)||0); break;
+                case 'volume': res = (parseFloat(a.volume)||0) - (parseFloat(b.volume||0)); break;
+                case 'trades': res = (parseInt(a.trades)||0) - (parseInt(b.trades)||0); break;
+            }
+            
+            return direction * res;
+        });
+        
+    } catch (error) {
+        console.error('❌ Ошибка getFilteredTickers:', error);
+        
+        // Fallback: возвращаем всё из tickersMap
+        result = Array.from(this.parent.tickersMap.values());
+    }
+    
+    // Сохраняем
+    this.displayedTickers = result;
+    this.totalItems = result.length;
+    
+    // Кэшируем
+    this.parent.filterCache = { key: cacheKey, result };
+    
+    return result;
+}
     
     // =========================================================================
     // 🎨 ГЛАВНЫЙ МЕТОД РЕНДЕРИНГА СПИСКА
@@ -284,17 +328,7 @@ class TickerRenderer {
         // Очищаем кэш DOM-элементов
         this.tickerElements.clear();
 
-        // Пустой список
-        if (this.totalItems === 0) {
-            container.style.height = 'auto';
-            container.innerHTML = `
-                <div style="padding: 40px; text-align: center; color: #666;">
-                    <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 16px; display: block;"></i>
-                    Нет символов для отображения
-                </div>
-            `;
-            return;
-        }
+     
 
         // Настройка контейнера для виртуального скроллинга
         container.style.position = 'relative';
