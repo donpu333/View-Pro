@@ -465,14 +465,22 @@ class TickerModal {
         this._doAddNextBatch(allPairs);
     }
 
-   async _doAddNextBatch(allPairs) {
+  async _doAddNextBatch(allPairs) {
     if (!this.parent.state.isAddingAllInProgress) return;
 
     const batchSize = 20;
     const start = this.parent.state.addingAllOffset;
     const end = Math.min(start + batchSize, allPairs.length);
 
-    // Добавляем в память
+    // ✅✅✅ ПЕРВЫЙ БАТЧ — ВКЛЮЧАЕМ ЗАЩИТУ!
+    if (start === 0) {
+        console.log('🛡️ ВКЛЮЧЕНА ЗАЩИТА от лишних запросов к API');
+        this.parent._isBulkAdding = true;           // Блокируем addSymbol→pollRestData
+        this.parent._suppressWatchlistLoad = true;   // Блокируем WatchlistManager.activateList
+        this._startTime = Date.now(); // Запоминаем время старта
+    }
+
+    // Добавляем текущую партию (без загрузки данных!)
     for (let i = start; i < end; i++) {
         const item = allPairs[i];
         if (item && item.symbol) {
@@ -480,10 +488,10 @@ class TickerModal {
                 item.symbol, 
                 true, 
                 item.exchange, 
-                item.marketType,  // ✅ Правильное поле!
-                false,           // render=false
-                true,            // skipInitialFetch=true
-                true             // skipWatchlistSync=true
+                item.marketType, 
+                false,   // render=false
+                true,    // skipInitialFetch=true (не грузим!)
+                true     // skipWatchlistSync=true (не синхронизируем каждый раз)
             );
         }
     }
@@ -493,15 +501,25 @@ class TickerModal {
     const btn = document.getElementById('modalAddAllBtn');
     if (btn) {
         const progress = Math.round((end / allPairs.length) * 100);
-        const realCount = this.parent.tickersMap.size; // Реальное кол-во!
-        
-        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${end}/${allPairs.length} (${progress}%) — ✅ ${realCount}`;
+        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${end}/${allPairs.length} (${progress}%)`;
     }
 
     if (end < allPairs.length) {
+        // Следующая партия через 80мс
         setTimeout(() => this._doAddNextBatch(allPairs), 80);
     } else {
-        await this._finalizeAddAllFixed(allPairs); // ✅ Исправленный метод!
+        // ✅ ВСЕ ДОБАВЛЕНЫ — СНИМАЕМ ПЕРВЫЙ ФЛАГ
+        console.log(`📦 Все символы добавлены в память за ${Date.now() - this._startTime}ms`);
+        
+        this.parent._isBulkAdding = false; // Разблокируем addSymbol
+        
+        await this._finalizeAddAllFixed(allPairs);
+        
+        // ✅ СНИМАЕМ ВТОРОЙ ФЛАГ ПОСЛЕ ЗАГРУЗКИ ЦЕН (через 3 сек)
+        setTimeout(() => {
+            this.parent._suppressWatchlistLoad = false;
+            console.log('🛡️ Защита ОТКЛЮЧЕНА. WatchlistManager снова активен.');
+        }, 3000);
     }
 }
 
