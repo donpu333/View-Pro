@@ -32,6 +32,12 @@ class TickerPanel {
         this._isRefreshing = this.storage._isRefreshing;
         this._eventsInitialized = this.storage._eventsInitialized;
         
+ // ✅✅✅ ДОБАВЬ ЭТИ 2 СТРОКИ ✅✅✅
+    this._isBulkAdding = false;          // Флаг: идёт массовое добавление?
+    this._suppressWatchlistLoad = false;  // Флаг: блокировать загрузку Watchlist?
+    
+
+
         this.rowHeight = 36;
         this.visibleCount = 30;
         this.tickerElements = this.renderer.tickerElements;
@@ -818,21 +824,16 @@ syncWithActiveWatchlist() {
         }
     }
 }
- addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', 
-          render = true, skipInitialFetch = false, skipWatchlistSync = false) {
-    
+addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
     symbol = symbol.trim().toUpperCase();
     if (!symbol.endsWith('USDT')) return false;
-    
     const key = `${symbol}:${exchange}:${marketType}`;
     
-    // Синхронизация с вотчлистом
     if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
         this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
         this.watchlistManager.renderDropdown(); 
     }
 
-    // Если уже есть - просто добавляем в массив (если нет)
     if (this.tickersMap.has(key)) {
         const existingTicker = this.tickersMap.get(key);
         if (!this.tickers.includes(existingTicker)) {
@@ -843,7 +844,6 @@ syncWithActiveWatchlist() {
         return true;
     }
     
-    // Создаем новый тикер
     const newTicker = {
         symbol,
         price: 0,
@@ -864,7 +864,6 @@ syncWithActiveWatchlist() {
         this.state.customSymbols.push(key);
     }
     
-    // Подписываемся на WebSocket обновления цен
     if (window.priceManagerInstance) {
         window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
     }
@@ -872,16 +871,14 @@ syncWithActiveWatchlist() {
     this.filterCache = null;
     if (render) this.renderTickerList();
     
-    // ✅✅✅ ИСПРАВЛЕНИЕ: Только если НЕ массовое добавление!
-    if (!skipInitialFetch) {
+    // ✅✅✅ ИСПРАВЛЕНИЕ: НЕ грузим если идёт массовое добавление!
+    if (!skipInitialFetch && !this._isBulkAdding) {
         setTimeout(() => {
             if (this.pollRestData && !this._isRestRunning) {
                 this.pollRestData();
             }
         }, 300);
     }
-    // Если skipInitialFetch=true → НЕ триггерим загрузку!
-    // Данные будут загружены ОДИН раз в _finalizeAddAll()
     
     return true;
 }
