@@ -156,6 +156,14 @@ class WatchlistManager {
     // ПЕРЕКЛЮЧЕНИЕ (ВИРТУАЛЬНЫЙ СКРОЛЛ + ФОНОВАЯ ЗАГРУЗКА + ПЕРЕСОРТИРОВКА)
     // ============================================
     async activateList(listId) {
+
+   
+        // ✅✅✅ ДОБАВЬ ЭТИ 3 СТРОКИ СРАЗУ ПОСЛЕ ОТКРЫВАЮЩЕЙ СКОБКИ! ✅✅✅
+        if (this.parent?._suppressWatchlistLoad) {
+            console.log('⏸️ activateList(): ПРОПУЩЕНО — идёт массовое добавление');
+            return;
+        }
+
         await this._initPromise;
         if (!this.lists.has(listId)) return;
         if (this.activeListId === listId) { this.closeDropdown(); return; }
@@ -319,6 +327,14 @@ class WatchlistManager {
     // ЗАГРУЗКА ЦЕН (Fallback)
     // ============================================
     async fetchPricesForActiveList() {
+
+ 
+        // ✅✅✅ ДОБАВЬ ЭТОТ БЛОК В САМОЕ НАЧАЛО МЕТОДА! ✅✅✅
+        if (this.parent?._suppressWatchlistLoad) {
+            console.log('⏸️ fetchPricesForActiveList(): ПРОПУЩЕНО — идёт массовое добавление');
+            return false;
+        }
+
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
 
