@@ -3871,17 +3871,14 @@ class RulerLineManager {
         this._selectedRuler = ruler;
     }
 }
-
 class AlertLine {  
     constructor(price, time, options = {}) {
         this.price = price;
         this.time = time;
-        this.anchorTime = time; // Якорь - неизменное время свечи
+        this.anchorTime = time;
         this.triggered = options.triggered || false;
-        // FIX: substr заменен на substring
         this.id = `alert_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         
-        // Информация о символе
         this.symbol = options.symbol || 'BTCUSDT';
         this.exchange = options.exchange || 'binance';
         this.marketType = options.marketType || 'futures';
@@ -3895,6 +3892,9 @@ class AlertLine {
         this.repeatInterval = options.repeatInterval || 1;
         this.lastTriggerTime = options.lastTriggerTime || null;
         this.triggerLimit = options.repeatCount === Infinity ? Infinity : (options.repeatCount || 5);
+        
+        // Статус алерта: 'active', 'paused', 'completed'
+        this.status = options.status || 'active';
         
         // Стили
         this.options = {
@@ -3944,6 +3944,7 @@ class AlertLine {
     }
     
     canTriggerAgain() {
+        if (this.status === 'paused') return false;
         if (this.triggerLimit === Infinity) return true;
         return this.triggerCount < this.triggerLimit;
     }
@@ -3952,6 +3953,29 @@ class AlertLine {
         if (!this.lastTriggerTime) return true;
         const minutesSinceLast = (now - this.lastTriggerTime) / (60 * 1000);
         return minutesSinceLast >= this.repeatInterval;
+    }
+    
+    isActive() {
+        return this.status === 'active' && !this.triggered;
+    }
+    
+    isCompleted() {
+        return this.status === 'completed' || this.triggered;
+    }
+    
+    pause() {
+        this.status = 'paused';
+    }
+    
+    resume() {
+        if (!this.triggered) {
+            this.status = 'active';
+        }
+    }
+    
+    complete() {
+        this.status = 'completed';
+        this.triggered = true;
     }
 }
 
@@ -3965,7 +3989,6 @@ class AlertLineRenderer {
     }
     
     draw(target) {
-        // ... БЕЗ ИЗМЕНЕНИЙ (оригинальный draw) ...
         const currentKey = this._chartManager.getCurrentSymbolKey?.();
         if (currentKey && this._alert.symbolKey !== currentKey) return;
         target.useBitmapCoordinateSpace(scope => {
@@ -4031,7 +4054,7 @@ class AlertLineRenderer {
             ctx.lineTo(endPos, yPos + yLength / 2);
             ctx.stroke();
 
-          if (alert.showDragPoint) {
+            if (alert.showDragPoint) {
                 ctx.fillStyle = '#FFFFFF';
                 ctx.shadowColor = 'rgba(0,0,0,0.5)';
                 ctx.shadowBlur = 4;
@@ -4047,9 +4070,20 @@ class AlertLineRenderer {
 
             if (alert.options.showPrice) {
                 let priceText = Utils.formatPrice(alert.price);
-                if (alert.options.showBell) {
-                    priceText = '🔔 ' + priceText;
+                
+                // 🔔 Добавляем индикатор статуса
+                let statusIcon = '';
+                if (alert.status === 'active' && alert.active) {
+                    statusIcon = '🟢 ';
+                } else if (alert.status === 'paused') {
+                    statusIcon = '⏸️ ';
+                } else if (alert.status === 'completed' || alert.triggered) {
+                    statusIcon = '✅ ';
+                } else if (alert.options.showBell) {
+                    statusIcon = '🔔 ';
                 }
+                
+                priceText = statusIcon + priceText;
 
                 ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
                 const textMetrics = ctx.measureText(priceText);
@@ -4106,52 +4140,49 @@ class AlertLineRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ hitTest - возвращает distance
-   hitTest(x, y) {
-    let bestHit = null;
-    let bestDistance = Infinity;
+    hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
 
-    // Проверка линии
-    if (this._hitArea) {
-        const buffer = 10;
-        const centerY = this._hitArea.y + this._hitArea.height / 2;
-        const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-        const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
-        const inX = x >= 0 && x <= chartWidth;
-        
-        if (inX && inY) {
-            const distance = Math.abs(y - centerY);
-            if (distance < bestDistance) {
-                bestHit = { type: 'line', alert: this._alert, distance: distance };  // ← ray → alert
-                bestDistance = distance;
+        if (this._hitArea) {
+            const buffer = 10;
+            const centerY = this._hitArea.y + this._hitArea.height / 2;
+            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+            const chartWidth = (this._chartManager?.chartContainer?.offsetWidth || 426) * this._pixelRatio;
+            const inX = x >= 0 && x <= chartWidth;
+            
+            if (inX && inY) {
+                const distance = Math.abs(y - centerY);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'line', alert: this._alert, distance: distance };
+                    bestDistance = distance;
+                }
             }
         }
-    }
 
-    // Проверка ценовой метки
-    if (this._priceLabelHitArea) {
-        const padding = 15;
-        const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
-        const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
-        
-        const inX = x >= this._priceLabelHitArea.x - padding && 
-                    x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
-        const inY = y >= this._priceLabelHitArea.y - padding && 
-                    y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
-                    
-        if (inX && inY) {
-            const dx = x - centerX;
-            const dy = y - centerY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < bestDistance) {
-                bestHit = { type: 'label', alert: this._alert, distance: distance };  // ← ray → alert
-                bestDistance = distance;
+        if (this._priceLabelHitArea) {
+            const padding = 15;
+            const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+            const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+            
+            const inX = x >= this._priceLabelHitArea.x - padding && 
+                        x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+            const inY = y >= this._priceLabelHitArea.y - padding && 
+                        y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+                        
+            if (inX && inY) {
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'label', alert: this._alert, distance: distance };
+                    bestDistance = distance;
+                }
             }
         }
-    }
 
-    return bestHit;
-}
+        return bestHit;
+    }
 }
 
 class AlertLinePaneView {
@@ -4180,7 +4211,7 @@ class AlertLinePrimitive {
         this._chart = chart;
         this._series = series;
         this._requestUpdate = requestUpdate;
-        this._syncTime(); // первая синхронизация
+        this._syncTime();
     }
     
     updateAllViews() {
@@ -4191,7 +4222,6 @@ class AlertLinePrimitive {
         }
     }
     
-    // FIX: Бинарный поиск вместо цикла для высокой производительности
     _syncTime() {
         const chartData = this._chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
@@ -4230,6 +4260,7 @@ class AlertLinePrimitive {
     
     requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
 }
+
 class AlertLineManager {
     constructor(chartManager) {
         this._pixelRatio = window.devicePixelRatio || 1;
@@ -4252,7 +4283,6 @@ class AlertLineManager {
         this._alertWebSockets = new Map();
         this._potentialDrag = null;
         this._dragThreshold = 5;
-        // Магнит удалён — поле _magnetEnabled больше не используется
         this._dblClickTimer = null;
         this._potentialDblClickTarget = null;
         this._dblClickTimeout = 350;
@@ -4268,15 +4298,10 @@ class AlertLineManager {
         // Проверка таймерных алертов каждую секунду
         setInterval(() => { this.checkTimerAlerts(); }, 1000);
         
-        // Очистка старых сработавших алертов каждые 5 минут
-        this._cleanupInterval = setInterval(() => { 
-            this._cleanupOldTriggeredAlerts(); 
-        }, 5 * 60 * 1000);
-        
-        // Первая очистка через 10 секунд после создания
-        setTimeout(() => { 
-            this._cleanupOldTriggeredAlerts(); 
-        }, 10000);
+        // ✅ ОЧИСТКА АЛЕРТОВ ПОЛНОСТЬЮ ОТКЛЮЧЕНА
+        // Алерты удаляются только вручную пользователем
+        console.log('🛡️ Автоматическая очистка алертов ОТКЛЮЧЕНА');
+        console.log('ℹ️ Алерты будут храниться бесконечно и удаляются только вручную');
     }
 
     _toBitmapCoords(cssX, cssY) {
@@ -4347,7 +4372,6 @@ class AlertLineManager {
     }
 
     _setupHotkeys() {
-        // Горячая клавиша I — ВКЛЮЧАЕТ РЕЖИМ рисования алертов
         document.addEventListener('keydown', (e) => {
             if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
                 e.preventDefault();
@@ -4356,7 +4380,6 @@ class AlertLineManager {
                 const newState = !this._isDrawingMode;
                 this.setDrawingMode(newState);
                 
-                // Выключаем режимы других инструментов
                 if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
                 if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
                 if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
@@ -4365,7 +4388,6 @@ class AlertLineManager {
                 console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
             }
             
-            // Delete — удаление выбранного алерта
             if (e.key === 'Delete' && this._selectedAlert) {
                 e.preventDefault();
                 this.deleteAlert(this._selectedAlert.id);
@@ -4400,7 +4422,6 @@ class AlertLineManager {
                 
                 const now = Date.now();
                 
-                // ДВОЙНОЙ КЛИК
                 if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
                     clearTimeout(this._dblClickTimer);
                     this._dblClickTimer = null;
@@ -4412,7 +4433,6 @@ class AlertLineManager {
                     return;
                 }
                 
-                // ОДИНОЧНЫЙ КЛИК
                 if (this._selectedAlert && this._selectedAlert !== hit.alert) {
                     this._selectedAlert.selected = false;
                     this._selectedAlert.showDragPoint = false;
@@ -4600,6 +4620,26 @@ class AlertLineManager {
                 settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
                 newSettingsBtn.onclick = (event) => { event.stopPropagation(); this._showSettings(hit.alert); menu.style.display = 'none'; };
                 
+                // ✅ Добавляем кнопку паузы/возобновления
+                const pauseBtn = document.getElementById('alertContextPauseBtn');
+                if (pauseBtn) {
+                    const newPauseBtn = pauseBtn.cloneNode(true);
+                    pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
+                    newPauseBtn.textContent = hit.alert.status === 'paused' ? '▶️ Возобновить' : '⏸️ Пауза';
+                    newPauseBtn.onclick = (event) => { 
+                        event.stopPropagation(); 
+                        if (hit.alert.status === 'paused') {
+                            hit.alert.resume();
+                        } else {
+                            hit.alert.pause();
+                        }
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                        this._requestRedraw();
+                        menu.style.display = 'none'; 
+                    };
+                }
+                
                 const deleteBtn = document.getElementById('alertContextDeleteBtn');
                 const newDeleteBtn = deleteBtn.cloneNode(true);
                 deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
@@ -4628,10 +4668,8 @@ class AlertLineManager {
         }
     }
 
-    // Метод setMagnetEnabled удалён — магнит больше не поддерживается
-
     // ============================================================
-    // ✅ ИСПРАВЛЕННАЯ ЛОГИКА АЛЕРТОВ
+    // ✅ ИСПРАВЛЕННАЯ ЛОГИКА АЛЕРТОВ - НЕ УДАЛЯЕМ АКТИВНЫЕ
     // ============================================================
     
     checkTimerAlerts() {
@@ -4640,8 +4678,11 @@ class AlertLineManager {
         this._alerts.forEach(item => {
             const alert = item.alert;
             
+            // ✅ Пропускаем только завершенные и на паузе
             if (alert.triggered) return;
             if (!alert.active) return;
+            if (alert.status === 'paused') return;
+            if (alert.status === 'completed') return;
             if (!alert.canTriggerAgain()) return;
             if (!alert.shouldTriggerByTimer(now)) return;
             
@@ -4660,8 +4701,9 @@ class AlertLineManager {
             if (!alert.canTriggerAgain()) {
                 console.log(`✅ Алерт ${alert.id} завершил все повторы`);
                 this._stopHighlight(alert.id);
-                alert.triggered = true;
+                alert.complete(); // ✅ Помечаем как завершенный, но НЕ УДАЛЯЕМ
                 
+                // ✅ Открепляем primitive, но сохраняем алерт в списке
                 if (item.primitive && item.series) {
                     try { item.series.detachPrimitive(item.primitive); } catch(e) {}
                     item.primitive = null;
@@ -4688,7 +4730,9 @@ class AlertLineManager {
         const symbolAlerts = this._alerts.filter(item => 
             item.alert.symbol === symbol && 
             !item.alert.triggered &&
-            !item.alert.active
+            !item.alert.active &&
+            item.alert.status !== 'paused' &&
+            item.alert.status !== 'completed'
         );
         
         if (symbolAlerts.length === 0) return;
@@ -4723,8 +4767,9 @@ class AlertLineManager {
                 if (!alert.canTriggerAgain()) {
                     console.log(`✅ Алерт ${alert.id} сработал 1 раз и завершён`);
                     this._stopHighlight(alert.id);
-                    alert.triggered = true;
+                    alert.complete(); // ✅ Помечаем как завершенный, но НЕ УДАЛЯЕМ
                     
+                    // ✅ Открепляем primitive, но сохраняем алерт в списке
                     if (item.primitive && item.series) {
                         try { item.series.detachPrimitive(item.primitive); } catch(e) {}
                         item.primitive = null;
@@ -4758,7 +4803,8 @@ class AlertLineManager {
             repeatInterval: options.repeatInterval || 1,
             triggerCount: options.triggerCount || 0,
             lastTriggerTime: options.lastTriggerTime || null,
-            active: options.active || false
+            active: options.active || false,
+            status: options.status || 'active' // ✅ Добавляем статус
         });
         
         alert.anchorTime = time;
@@ -4812,7 +4858,50 @@ class AlertLineManager {
         return false;
     }
 
+    // ✅ Метод для паузы алерта
+    pauseAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'active') {
+            item.alert.pause();
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+    
+    // ✅ Метод для возобновления алерта
+    resumeAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'paused' && !item.alert.triggered) {
+            item.alert.resume();
+            
+            // Восстанавливаем primitive если нужно
+            if (!item.primitive && !item.alert.triggered) {
+                const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
+                const series = this._chartManager.currentChartType === 'candle' 
+                    ? this._chartManager.candleSeries 
+                    : this._chartManager.barSeries;
+                series.attachPrimitive(primitive);
+                item.primitive = primitive;
+                item.series = series;
+            }
+            
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
     deleteAllAlerts() {
+        // Спрашиваем подтверждение
+        if (!confirm('Вы уверены, что хотите удалить ВСЕ алерты? Это действие нельзя отменить.')) {
+            return;
+        }
+        
         for (const symbol of this._subscribedSymbols) {
             this._unsubscribeFromSymbol(symbol);
         }
@@ -4832,6 +4921,28 @@ class AlertLineManager {
         this._saveAlerts();
         this._updateAlertsListUI();
         this._requestRedraw();
+    }
+    
+    // ✅ Метод для удаления только завершенных алертов
+    deleteCompletedAlerts() {
+        const completedAlerts = this._alerts.filter(item => 
+            item.alert.status === 'completed' || item.alert.triggered
+        );
+        
+        if (completedAlerts.length === 0) {
+            console.log('Нет завершенных алертов для удаления');
+            return;
+        }
+        
+        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) {
+            return;
+        }
+        
+        completedAlerts.forEach(item => {
+            this.deleteAlert(item.alert.id);
+        });
+        
+        console.log(`✅ Удалено ${completedAlerts.length} завершенных алертов`);
     }
 
     hitTest(x, y) {
@@ -4866,7 +4977,12 @@ class AlertLineManager {
     }
 
     syncWithNewTimeframe() {
-        // Ничего не делаем – updateAllViews сам всё обновит
+        // Обновляем только primitive для видимых алертов
+        for (const item of this._alerts) {
+            if (item.primitive) {
+                item.primitive.updateAllViews();
+            }
+        }
     }
 
     _handleChartClick(event) {
@@ -4889,9 +5005,6 @@ class AlertLineManager {
             }
         }
         
-        // Магнит удалён — привязка к свечным ценам не выполняется
-        // Раньше здесь был вызов _snapToPrice, теперь он убран
-        
         console.log('🔔 Создаём алерт кликом:', {
             symbol: this._chartManager.currentSymbol,
             price: price
@@ -4906,13 +5019,12 @@ class AlertLineManager {
             showBell: document.getElementById('alertShowBell')?.checked || true,
             repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
             repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
-            anchorCandle: null // магнит больше не используется
+            anchorCandle: null,
+            status: 'active' // ✅ Новый алерт всегда активный
         });
         
         this.setDrawingMode(false);
     }
-
-    // Метод _snapToPrice полностью удалён
 
     _showSettings(alert) {
         const settings = document.getElementById('alertSettings');
@@ -5347,11 +5459,18 @@ class AlertLineManager {
     }
 
     async _saveAlerts() {
-        if (this._alerts.length === 0) {
-            console.log('💾 No alerts to save');
-            return;
+        // ✅ Сохраняем ВСЕ алерты, включая завершенные
+        const allDrawings = await window.db.getAll('drawings');
+        const alertIds = new Set(this._alerts.map(item => item.alert.id));
+        
+        // Удаляем из БД только те алерты, которых нет в памяти
+        for (const drawing of allDrawings) {
+            if (drawing.type === 'alert' && !alertIds.has(drawing.id)) {
+                await window.db.delete('drawings', drawing.id);
+            }
         }
         
+        // Сохраняем все текущие алерты
         const promises = this._alerts.map(item => 
             window.db.put('drawings', {
                 id: item.alert.id,
@@ -5372,17 +5491,26 @@ class AlertLineManager {
                     repeatInterval: item.alert.repeatInterval,
                     lastTriggerTime: item.alert.lastTriggerTime,
                     active: item.alert.active,
+                    status: item.alert.status, // ✅ Сохраняем статус
                     anchorCandle: item.alert.anchorCandle
                 }
             }).catch(e => console.warn('Save alert error:', e))
         );
         
         await Promise.all(promises);
-        console.log(`💾 Saved ${this._alerts.length} alerts`);
+        console.log(`💾 Saved ${this._alerts.length} alerts (${this._alerts.filter(a => a.alert.status === 'active').length} active, ${this._alerts.filter(a => a.alert.status === 'completed' || a.alert.triggered).length} completed)`);
     }
 
     async loadAlerts() {
         try {
+            // ✅ Защита от повторной загрузки
+            if (this._isLoading) {
+                console.log('⏳ Loading already in progress, skipping...');
+                return;
+            }
+            
+            this._isLoading = true;
+            
             let attempts = 0;
             while (!window.dbReady && attempts < 100) {
                 await new Promise(r => setTimeout(r, 100));
@@ -5391,11 +5519,13 @@ class AlertLineManager {
             
             if (!window.dbReady) {
                 console.error('❌ Database not ready');
+                this._isLoading = false;
                 return;
             }
             
             if (!this._chartManager?.chartData?.length) {
                 console.log('⏳ Chart data not ready yet');
+                this._isLoading = false;
                 return;
             }
             
@@ -5405,15 +5535,27 @@ class AlertLineManager {
             
             if (!series) {
                 console.error('❌ No series available');
+                this._isLoading = false;
                 return;
             }
 
             console.log('📊 Loading alerts from database...');
+            console.log('  Текущие алерты до загрузки:', this._alerts.length);
 
             const allDrawings = await window.db.getAll('drawings');
             const alertRecords = allDrawings.filter(d => d.type === 'alert');
             
+            // ✅ Сохраняем существующие primitive для переиспользования
+            const existingMap = new Map();
+            for (const item of this._alerts) {
+                if (item.primitive && item.series) {
+                    existingMap.set(item.alert.id, item);
+                }
+            }
+            
+            const currentSymbolKey = this._getCurrentSymbolKey();
             const newAlerts = [];
+            
             for (const rec of alertRecords) {
                 try {
                     const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
@@ -5430,15 +5572,26 @@ class AlertLineManager {
                     alert.repeatInterval = rec.data.repeatInterval || 1;
                     alert.lastTriggerTime = rec.data.lastTriggerTime || null;
                     alert.active = rec.data.active || false;
+                    alert.status = rec.data.status || 'active'; // ✅ Восстанавливаем статус
                     alert.anchorCandle = rec.data.anchorCandle || null;
 
-                    const isCurrentSymbol = rec.symbolKey === this._getCurrentSymbolKey();
+                    const isCurrentSymbol = rec.symbolKey === currentSymbolKey;
                     
-                    if (!alert.triggered && isCurrentSymbol) {
-                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                        series.attachPrimitive(primitive);
-                        newAlerts.push({ alert, primitive, series });
+                    // ✅ Создаем primitive только для активных алертов текущего символа
+                    if (!alert.triggered && alert.status !== 'completed' && isCurrentSymbol) {
+                        const existing = existingMap.get(alert.id);
+                        if (existing && existing.primitive && existing.series) {
+                            // Переиспользуем существующий primitive
+                            existing.alert = alert;
+                            newAlerts.push(existing);
+                        } else {
+                            // Создаем новый primitive
+                            const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                            series.attachPrimitive(primitive);
+                            newAlerts.push({ alert, primitive, series });
+                        }
                     } else {
+                        // Для завершенных, triggered или чужих символов - без primitive
                         newAlerts.push({ alert, primitive: null, series: null });
                     }
                 } catch (e) {
@@ -5446,15 +5599,23 @@ class AlertLineManager {
                 }
             }
 
-            this._alerts.forEach(item => {
-                try { item.series?.detachPrimitive(item.primitive); } catch(e) {}
-            });
+            // ✅ Открепляем только те primitive, которых больше нет в новом списке
+            const newIds = new Set(newAlerts.map(item => item.alert.id));
+            for (const item of this._alerts) {
+                if (!newIds.has(item.alert.id) && item.primitive && item.series) {
+                    try { 
+                        item.series.detachPrimitive(item.primitive); 
+                    } catch(e) {
+                        console.warn('Error detaching primitive:', e);
+                    }
+                }
+            }
 
             this._alerts = newAlerts;
             
             const activeSymbols = new Set();
             for (const item of this._alerts) {
-                if (!item.alert.triggered) {
+                if (!item.alert.triggered && item.alert.status !== 'completed') {
                     activeSymbols.add(item.alert.symbol);
                 }
             }
@@ -5464,9 +5625,15 @@ class AlertLineManager {
             
             this._updateAlertsListUI();
             this._requestRedraw();
+            
             console.log(`✅ Loaded ${this._alerts.length} alerts`);
+            console.log(`  Active: ${this._alerts.filter(a => !a.alert.triggered && a.alert.status !== 'completed').length}`);
+            console.log(`  Completed: ${this._alerts.filter(a => a.alert.triggered || a.alert.status === 'completed').length}`);
+            
+            this._isLoading = false;
         } catch (error) {
             console.error('❌ loadAlerts failed:', error);
+            this._isLoading = false;
         }
     }
 
@@ -5474,13 +5641,18 @@ class AlertLineManager {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
         
+        // ✅ Разделяем алерты по статусам
         const activeAlerts = this._alerts
             .map(a => a.alert)
-            .filter(alert => !alert.triggered);
+            .filter(alert => !alert.triggered && alert.status !== 'completed');
             
-        const triggeredAlerts = this._alerts
+        const pausedAlerts = this._alerts
             .map(a => a.alert)
-            .filter(alert => alert.triggered)
+            .filter(alert => alert.status === 'paused');
+            
+        const completedAlerts = this._alerts
+            .map(a => a.alert)
+            .filter(alert => alert.triggered || alert.status === 'completed')
             .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
         
         const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
@@ -5488,31 +5660,39 @@ class AlertLineManager {
         let html = '';
         
         if (activeTab === 'active') {
-            if (activeAlerts.length === 0) {
+            const displayAlerts = [...activeAlerts, ...pausedAlerts];
+            
+            if (displayAlerts.length === 0) {
                 html = '<div class="empty-alerts">Нет активных алертов</div>';
             } else {
                 html = '<div class="alert-list">';
-                activeAlerts.forEach(alert => {
+                displayAlerts.forEach(alert => {
                     const priceFormatted = Utils.formatPrice(alert.price);
                     const color = alert.options.color;
                     const isActive = alert.active;
+                    const isPaused = alert.status === 'paused';
+                    
+                    const statusIcon = isPaused ? '⏸️' : (isActive ? '🟢' : '🔔');
+                    const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
                     
                     html += `
-                        <div class="alert-list-item ${isActive ? 'is-active' : ''}" style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}" data-id="${alert.id}">
-                            <div class="trigger-bell">${isActive ? '🟢' : '🔔'}</div>
+                        <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}" 
+                             style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}" 
+                             data-id="${alert.id}">
+                            <div class="trigger-bell">${statusIcon}</div>
                             <div>
                                 <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
                                 <div class="info">
                                     <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
-                                    <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
-                                    ${isActive ? `<span style="color:#00FF00;font-weight:bold;">#${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}</span>` : ''}
+                                    <span>${statusText}</span>
                                 </div>
                             </div>
                             <div class="actions">
+                                <button class="pause-alert" data-id="${alert.id}" title="${isPaused ? 'Возобновить' : 'Пауза'}">
+                                    ${isPaused ? '▶️' : '⏸️'}
+                                </button>
                                 <button class="delete-alert" data-id="${alert.id}" title="Удалить">
-                                    <svg width="16" height="16" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
-                                        <!-- SVG path опущен для краткости -->
-                                    </svg>
+                                    ❌
                                 </button>
                             </div>
                         </div>
@@ -5521,14 +5701,11 @@ class AlertLineManager {
                 html += '</div>';
             }
         } else {
-            if (triggeredAlerts.length === 0) {
-                html = '<div class="empty-alerts">Нет сработавших алертов</div>';
+            if (completedAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет завершенных алертов</div>';
             } else {
-                const now = Date.now();
-                const twentyFourHoursMs = 24 * 60 * 60 * 1000;
-                
                 html = '<div class="alert-list">';
-                triggeredAlerts.forEach(alert => {
+                completedAlerts.forEach(alert => {
                     const priceFormatted = Utils.formatPrice(alert.price);
                     const color = alert.options.color;
                     
@@ -5536,31 +5713,10 @@ class AlertLineManager {
                     const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                     const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
                     
-                    const hoursPassed = (now - triggerTime) / (60 * 60 * 1000);
-                    const hoursLeft = Math.max(0, 24 - hoursPassed);
-                    
-                    let expireText = '';
-                    let expireClass = '';
-                    
-                    if (hoursLeft <= 0) {
-                        expireText = '⚠️ Будет удалён при следующей очистке';
-                        expireClass = 'soon';
-                    } else if (hoursLeft < 1) {
-                        const minutesLeft = Math.ceil(hoursLeft * 60);
-                        expireText = `⏳ Удаление через ${minutesLeft} мин`;
-                        expireClass = 'soon';
-                    } else if (hoursLeft < 5) {
-                        expireText = `⏳ Удаление через ${Math.ceil(hoursLeft)} ч`;
-                        expireClass = 'soon';
-                    } else {
-                        expireText = `⏳ Удаление через ${Math.floor(hoursLeft)} ч`;
-                        expireClass = '';
-                    }
-                    
                     const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
                     
                     html += `
-                        <div class="alert-list-item triggered" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
+                        <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
                             <div>
                                 <div class="price">
                                     <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
@@ -5568,24 +5724,33 @@ class AlertLineManager {
                                 </div>
                                 <div class="info">
                                     <span>🕐 ${dateStr} ${timeStr}</span>
-                                    <span>${alert.exchange === 'binance' ? 'B' : 'BY'} ${alert.marketType === 'futures' ? 'F' : 'S'}</span>
+                                    <span>✅ Завершен</span>
                                 </div>
-                                <div class="expire-info ${expireClass}">${expireText}</div>
                             </div>
                             <div class="actions">
                                 <button class="delete-alert" data-id="${alert.id}" title="Удалить">
-                                    <!-- SVG удаления -->
+                                    ❌
                                 </button>
                             </div>
                         </div>
                     `;
                 });
                 html += '</div>';
+                
+                // ✅ Добавляем кнопку очистки всех завершенных
+                html += `
+                    <div style="padding: 10px; text-align: center;">
+                        <button class="clear-completed-btn" style="background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                            🗑️ Удалить все завершенные (${completedAlerts.length})
+                        </button>
+                    </div>
+                `;
             }
         }
         
         content.innerHTML = html;
         
+        // Обработчики для кнопок удаления
         content.querySelectorAll('.delete-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -5593,45 +5758,42 @@ class AlertLineManager {
                 this.deleteAlert(id);
             });
         });
+        
+        // Обработчики для кнопок паузы
+        content.querySelectorAll('.pause-alert').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const alert = this._alerts.find(a => a.alert.id === id)?.alert;
+                if (alert) {
+                    if (alert.status === 'paused') {
+                        this.resumeAlert(id);
+                    } else {
+                        this.pauseAlert(id);
+                    }
+                }
+            });
+        });
+        
+        // Обработчик для кнопки очистки завершенных
+        const clearBtn = content.querySelector('.clear-completed-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.deleteCompletedAlerts();
+            });
+        }
     }
 
+    // ✅ Метод очистки полностью ОТКЛЮЧЕН
     _cleanupOldTriggeredAlerts() {
-        const now = Date.now();
-        const twentyFourHoursMs = 24 * 60 * 60 * 1000;
-        const idsToDelete = [];
-        
-        for (const item of this._alerts) {
-            const alert = item.alert;
-            if (!alert.triggered) continue;
-            const triggerTime = alert.lastTriggerTime || alert.createdAt;
-            if (now - triggerTime > twentyFourHoursMs) {
-                idsToDelete.push(alert.id);
-                const hoursPassed = Math.floor((now - triggerTime) / (60 * 60 * 1000));
-                console.log(`🧹 Помечен на удаление: ${alert.symbol} ${Utils.formatPrice(alert.price)} (прошло ${hoursPassed}ч)`);
-            }
-        }
-        
-        if (idsToDelete.length > 0) {
-            console.log(`🗑️ Удаляем ${idsToDelete.length} старых сработавших алертов (старше 24ч)`);
-            for (const id of idsToDelete) this.deleteAlert(id);
-            this._updateAlertsListUI();
-            this._saveAlerts();
-            this._showCleanupNotification(idsToDelete.length);
-            console.log(`✅ Очистка завершена. Осталось алертов: ${this._alerts.length}`);
-        }
+        // Алерты больше не удаляются автоматически
+        console.log('🛡️ Автоочистка отключена. Алерты удаляются только вручную.');
+        return;
     }
 
     _showCleanupNotification(count) {
-        const notification = document.getElementById('alertNotification');
-        if (notification) {
-            notification.innerHTML = `
-                <div class="alert-title">🧹 Автоочистка</div>
-                <div class="alert-price">Удалено ${count} старых алертов (>24ч)</div>
-            `;
-            notification.style.display = 'block';
-            notification.style.borderLeftColor = '#FFA500';
-            setTimeout(() => { notification.style.display = 'none'; }, 3000);
-        }
+        // Уведомление об очистке больше не нужно
+        return;
     }
 
     _autoLoadAlerts() {
@@ -5666,9 +5828,11 @@ class AlertLineManager {
         });
         this._selectedAlert = null;
     }
-setMagnetEnabled(enabled) {
-    // Магнит отключён, ничего не делаем
-}
+    
+    setMagnetEnabled(enabled) {
+        // Магнит отключён, ничего не делаем
+    }
+    
     activateObject(alert) {
         alert.selected = true;
         alert.showDragPoint = true;
