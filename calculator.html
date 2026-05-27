@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* ... стили остаются без изменений ... */
         :root {
             --primary: #2196F3;
             --secondary: #1976D2;
@@ -633,15 +634,36 @@
             'distance': 'По расстоянию'
         };
 
+        function formatUsdt(num) {
+            if (isNaN(num) || num === 0) return '0.00';
+            return parseFloat(num).toFixed(2);
+        }
+
+        function formatPrice(num) {
+            if (isNaN(num) || num === 0) return '0.0000';
+            const assetType = document.getElementById('assetType').value;
+            let dec = 4;
+            if (assetType === 'custom') dec = parseInt(document.getElementById('customDecimals').value) || 4;
+            else dec = parseInt(assetType);
+            return parseFloat(num).toFixed(dec);
+        }
+
+        function formatPositionSize(num) {
+            if (isNaN(num) || num === 0) return '0.0';
+            if (num < 0.01) return parseFloat(num).toFixed(8);
+            if (num < 1) return parseFloat(num).toFixed(4);
+            return parseFloat(num).toFixed(1);
+        }
+
+        function formatCommission(num) {
+            if (isNaN(num) || num === 0) return '0.0000';
+            return parseFloat(num).toFixed(4);
+        }
+
         function formatDisplayNumber(num, maxDecimals = 8) {
             if (isNaN(num) || num === 0) return '0';
             const number = parseFloat(num);
-            const str = number.toString();
-            if (!str.includes('.')) return str;
-            let [intPart, decPart] = str.split('.');
-            if (decPart.length > maxDecimals) decPart = decPart.substring(0, maxDecimals);
-            decPart = decPart.replace(/0+$/, '');
-            return decPart ? intPart + '.' + decPart : intPart;
+            return number.toString();
         }
 
         function showNotification(message, type = 'success') {
@@ -671,16 +693,6 @@
             return Math.pow(10, -dec);
         }
 
-        function formatNumber(num, decimals = 8) {
-            if (isNaN(num)) return '0';
-            const assetType = document.getElementById('assetType').value;
-            let dec = 4;
-            if (assetType === 'custom') dec = parseInt(document.getElementById('customDecimals').value) || 4;
-            else dec = parseInt(assetType);
-            const factor = Math.pow(10, dec);
-            return (Math.round(num * factor) / factor).toFixed(dec);
-        }
-
         function normalizeNumber(value) {
             if (typeof value === 'string') return value.replace(',', '.');
             return value;
@@ -690,7 +702,7 @@
             return Math.abs((target - entry) / entry * 100).toFixed(2);
         }
 
-        function generateCalculationText() {
+       function generateCalculationText() {
             const entry = parseFloat(normalizeNumber(document.getElementById('entryPrice').value)) || 0;
             const lev = parseFloat(document.getElementById('leverage').value) || 1;
             const atr = parseFloat(document.getElementById('atr').value) || 0;
@@ -702,29 +714,63 @@
             const slPercent = parseFloat(document.getElementById('stopLossPercentInput').value) || 0;
             const stopDist = parseFloat(normalizeNumber(document.getElementById('stopDistance').value)) || 0;
             const fee = parseFloat(document.getElementById('exchangeFee').value) / 100 || 0.0005;
+            
             let priceDiff;
             if (stopMethod === 'atr') priceDiff = atr * (riskPercent / 100);
             else if (stopMethod === 'price') priceDiff = Math.abs(entry - slPriceDirect);
             else if (stopMethod === 'percent') priceDiff = entry * (slPercent / 100);
             else priceDiff = stopDist;
+            
             const posSize = priceDiff > 0 ? riskAmount / priceDiff : 0;
-            const posUsdt = entry * posSize;
+            const posUsdt = entry * posSize * lev;
             const entryFee = entry * posSize * fee;
-            const tp1 = isLong ? entry + (riskAmount * r1 + entryFee + (entry * posSize * fee)) / posSize : entry - (riskAmount * r1 + entryFee + (entry * posSize * fee)) / posSize;
-            const tp2 = isLong ? entry + (riskAmount * r2 + entryFee + (entry * posSize * fee)) / posSize : entry - (riskAmount * r2 + entryFee + (entry * posSize * fee)) / posSize;
+            
+            const tp1 = isLong 
+                ? entry + (riskAmount * r1 + entryFee * 2) / (posSize * lev)
+                : entry - (riskAmount * r1 + entryFee * 2) / (posSize * lev);
+            
+            const tp2 = isLong 
+                ? entry + (riskAmount * r2 + entryFee * 2) / (posSize * lev)
+                : entry - (riskAmount * r2 + entryFee * 2) / (posSize * lev);
+            
             const slPrice = stopMethod === 'price' ? slPriceDirect : (isLong ? entry - priceDiff : entry + priceDiff);
             const slPercentVal = calculatePercentageChange(entry, slPrice);
             const tp1Percent = calculatePercentageChange(entry, tp1);
             const tp2Percent = calculatePercentageChange(entry, tp2);
+            
             const exitFee = tp2 * posSize * fee;
             const totalFee = entryFee + exitFee;
+            
+            const profitTP1 = riskAmount * r1;
+            const profitTP2 = riskAmount * r2;
+            const lossAtSL = priceDiff * posSize * lev;
             
             const now = new Date();
             const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}, ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
             
-            return `Дата: ${dateStr}\n===============================\nТип: ${tradeTypeRu[tradeType] || tradeType}\nСтоп метод: ${stopMethodRu[stopMethod] || stopMethod}\n===============================\nРиск: ${riskAmount} USDT\nЦена входа: ${formatNumber(entry)} USDT\nРазмер позиции: ${formatNumber(posSize,1)} монет (${formatNumber(posUsdt,2)} USDT)\nСтоп-лосс: ${formatNumber(slPrice)} USDT (${slPercentVal}%)\nTP 1:${r1} -> ${formatNumber(tp1)} USDT (${tp1Percent}%)\nTP 2:${r2} -> ${formatNumber(tp2)} USDT (${tp2Percent}%)\nКомиссии: ${formatNumber(totalFee,8)} USDT`;
+            return `Дата: ${dateStr}
+===============================
+Тип сделки: ${tradeTypeRu[tradeType] || tradeType}
+Направление: ${isLong ? 'Лонг' : 'Шорт'}
+Стоп метод: ${stopMethodRu[stopMethod] || stopMethod}
+===============================
+Плечо: ${lev}x
+Риск на сделку: ${formatUsdt(riskAmount)} USDT
+Цена входа: ${formatPrice(entry)} USDT
+Размер позиции: ${formatPositionSize(posSize)} монет
+Размер позиции в USDT: ${formatUsdt(posUsdt)} USDT (с плечом ${lev}x)
+Стоп-лосс: ${formatPrice(slPrice)} USDT (${slPercentVal}%)
+Убыток при SL: -${formatUsdt(lossAtSL)} USDT
+TP 1:${r1} -> ${formatPrice(tp1)} USDT (${tp1Percent}%)
+Прибыль TP1: +${formatUsdt(profitTP1)} USDT
+TP 2:${r2} -> ${formatPrice(tp2)} USDT (${tp2Percent}%)
+Прибыль TP2: +${formatUsdt(profitTP2)} USDT
+Комиссия за вход: ${formatCommission(entryFee)} USDT
+Комиссия за выход: ${formatCommission(exitFee)} USDT
+Общая комиссия: ${formatCommission(totalFee)} USDT
+Цена ликвидации: ${formatPrice(isLong ? entry * (1 - 0.9/lev) : entry * (1 + 0.9/lev))} USDT`;
         }
-
+        
         function copyCalculationToClipboard() {
             navigator.clipboard.writeText(generateCalculationText()).then(() => showNotification('Расчет скопирован')).catch(() => showNotification('Ошибка', 'error'));
         }
@@ -757,23 +803,15 @@
             const price = match ? match[0] : text;
             navigator.clipboard.writeText(price).then(() => showNotification(`Скопировано: ${price}`));
         }
-  function copyText(elementId) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    const text = el.textContent.trim();
-    
-    if (elementId === 'positionSizeUsdtText' || elementId === 'partsBreakdownText') {
-        const num = parseFloat(text.replace(',', '.'));
-        if (!isNaN(num)) {
-            navigator.clipboard.writeText(num.toFixed(1)).then(() => showNotification(`Скопировано: ${num.toFixed(1)}`));
-            return;
+        
+        function copyText(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const text = el.textContent.trim();
+            const match = text.match(/-?[\d,.]+/);
+            const num = match ? match[0] : text;
+            navigator.clipboard.writeText(num).then(() => showNotification(`Скопировано: ${num}`));
         }
-    }
-    
-    const match = text.match(/-?[\d,.]+/);
-    const num = match ? match[0] : text;
-    navigator.clipboard.writeText(num).then(() => showNotification(`Скопировано: ${num}`));
-}
 
         function setupArrowButtons() {
             document.querySelectorAll('.number-input-arrow').forEach(arrow => {
@@ -805,7 +843,7 @@
             });
         }
 
-        function calculateRisk() {
+       function calculateRisk() {
             const entry = parseFloat(normalizeNumber(document.getElementById('entryPrice').value)) || 0;
             const lev = parseFloat(document.getElementById('leverage').value) || 1;
             const atr = parseFloat(document.getElementById('atr').value) || 0;
@@ -829,39 +867,64 @@
             else stopPrice = isLong ? entry - priceDiff : entry + priceDiff;
 
             const positionSize = priceDiff > 0 ? riskAmount / priceDiff : 0;
-            const positionSizeUsdt = entry * positionSize;
+            const positionSizeUsdt = entry * positionSize * lev;
             const entryFee = entry * positionSize * fee;
-            const tp1 = isLong ? entry + (riskAmount * r1 + entryFee + (entry * positionSize * fee)) / positionSize : entry - (riskAmount * r1 + entryFee + (entry * positionSize * fee)) / positionSize;
-            const tp2 = isLong ? entry + (riskAmount * r2 + entryFee + (entry * positionSize * fee)) / positionSize : entry - (riskAmount * r2 + entryFee + (entry * positionSize * fee)) / positionSize;
-            const liqPrice = isLong ? entry * (1 - 1/lev) : entry * (1 + 1/lev);
+            
+            const tp1 = isLong 
+                ? entry + (riskAmount * r1 + entryFee * 2) / (positionSize * lev)
+                : entry - (riskAmount * r1 + entryFee * 2) / (positionSize * lev);
+            
+            const tp2 = isLong 
+                ? entry + (riskAmount * r2 + entryFee * 2) / (positionSize * lev)
+                : entry - (riskAmount * r2 + entryFee * 2) / (positionSize * lev);
+            
+            const liqPrice = isLong 
+                ? entry * (1 - 0.9/lev)
+                : entry * (1 + 0.9/lev);
+            
             const slPercentVal = calculatePercentageChange(entry, stopPrice);
             const tp1Percent = calculatePercentageChange(entry, tp1);
             const tp2Percent = calculatePercentageChange(entry, tp2);
             const liqPercent = calculatePercentageChange(entry, liqPrice);
-            const lossUsdt = priceDiff * positionSize;
+            
+            const lossUsdt = priceDiff * positionSize * lev;
 
-            document.getElementById('entryPriceResult').textContent = formatNumber(entry) + ' USDT';
-            document.getElementById('positionSize').textContent = formatNumber(positionSize,1) + ' монет';
-          document.getElementById('positionSizeUsdtText').textContent = positionSizeUsdt.toFixed(1) + ' USDT';
-            document.getElementById('stopLossPriceText').textContent = formatNumber(stopPrice) + ' USDT';
+            // Форматирование с учетом типа данных
+            document.getElementById('entryPriceResult').textContent = formatPrice(entry) + ' USDT';
+            document.getElementById('positionSize').textContent = formatPositionSize(positionSize) + ' монет';
+            document.getElementById('positionSizeUsdtText').textContent = formatUsdt(positionSizeUsdt) + ' USDT';
+            document.getElementById('stopLossPriceText').textContent = formatPrice(stopPrice) + ' USDT';
             document.getElementById('stopLossPercentText').textContent = `(${slPercentVal}%)`;
-            document.getElementById('stopLossUsdt').textContent = `-${lossUsdt.toFixed(1)} USDT`;
-            document.getElementById('liquidationPriceText').textContent = formatNumber(liqPrice) + ' USDT';
+            document.getElementById('stopLossUsdt').textContent = `-${formatUsdt(lossUsdt)} USDT`;
+            document.getElementById('liquidationPriceText').textContent = formatPrice(liqPrice) + ' USDT';
             document.getElementById('liquidationPricePercent').textContent = `(${liqPercent}%)`;
-            document.getElementById('stopDistanceResult').innerHTML = `${formatDisplayNumber(priceDiff,8)} USDT <span class="usdt-value">(${formatNumber(lossUsdt,2)} USDT)</span>`;
-            document.getElementById('exchangeFeeResult').textContent = formatNumber(fee*100,4) + '%';
-            document.getElementById('atrResult').textContent = formatNumber(atr,8) + ' USDT';
+            document.getElementById('stopDistanceResult').innerHTML = `${formatPrice(priceDiff)} USDT <span class="loss-usdt">(-${formatUsdt(lossUsdt)} USDT)</span>`;
+            document.getElementById('exchangeFeeResult').textContent = (fee * 100).toFixed(4) + '%';
+            document.getElementById('atrResult').textContent = formatPrice(atr) + ' USDT';
 
             const levelsDiv = document.getElementById('takeProfitLevels');
             levelsDiv.innerHTML = '';
             [r1, r2].forEach(ratio => {
                 let targetProfit = riskAmount * ratio;
-                let tpPrice = isLong ? entry + (targetProfit + entryFee + (entry * positionSize * fee)) / positionSize : entry - (targetProfit + entryFee + (entry * positionSize * fee)) / positionSize;
+                let tpPrice = isLong 
+                    ? entry + (targetProfit + entryFee * 2) / (positionSize * lev)
+                    : entry - (targetProfit + entryFee * 2) / (positionSize * lev);
                 let profitPercent = calculatePercentageChange(entry, tpPrice);
                 let exitFee = tpPrice * positionSize * fee;
+                
                 let div = document.createElement('div');
                 div.className = 'take-profit-item';
-                div.innerHTML = `<span class="take-profit-ratio">TP 1:${ratio}</span><span class="take-profit-price"><span class="price-value-with-btn"><span>${formatNumber(tpPrice)} USDT</span><button class="copy-price-btn copy-price-btn-profit" onclick="copyPriceFromTakeProfit(this)"><i class="fas fa-copy"></i></button></span><span class="percentage-value">(${profitPercent}%)</span></span><span class="take-profit-value">+${formatNumber(targetProfit,1)} USDT (ком:${formatNumber(exitFee,8)})</span>`;
+                div.innerHTML = `<span class="take-profit-ratio">TP 1:${ratio}</span>
+                    <span class="take-profit-price">
+                        <span class="price-value-with-btn">
+                            <span>${formatPrice(tpPrice)} USDT</span>
+                            <button class="copy-price-btn copy-price-btn-profit" onclick="copyPriceFromTakeProfit(this)">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </span>
+                        <span class="percentage-value">(${profitPercent}%)</span>
+                    </span>
+                    <span class="take-profit-value">+${formatUsdt(targetProfit)} USDT (ком:${formatCommission(exitFee)})</span>`;
                 levelsDiv.appendChild(div);
             });
 
@@ -870,7 +933,7 @@
             if (partsCount > 1 && positionSizeUsdt > 0) {
                 const partSize = positionSizeUsdt / partsCount;
                 document.getElementById('partsCountDisplay').textContent = partsCount;
-document.getElementById('partsBreakdownText').textContent = `по ${partSize.toFixed(1)} USDT`;
+                document.getElementById('partsBreakdownText').textContent = `по ${formatUsdt(partSize)} USDT`;
                 partsContainer.style.display = 'flex';
             } else partsContainer.style.display = 'none';
         }
@@ -903,7 +966,6 @@ document.getElementById('partsBreakdownText').textContent = `по ${partSize.toF
                     document.getElementById('decimalsInfo').style.display = 'block';
                     document.getElementById('decimalsInfo').textContent = `Авто: ${dec} знаков`;
                     document.getElementById('assetType').value = dec.toString();
-                    if (dec === 8) document.getElementById('assetType').value = '8';
                     if (document.getElementById('assetType').value === 'custom') document.getElementById('customDecimalsGroup').style.display = 'block';
                     else document.getElementById('customDecimalsGroup').style.display = 'none';
                 } else document.getElementById('decimalsInfo').style.display = 'none';
@@ -916,14 +978,14 @@ document.getElementById('partsBreakdownText').textContent = `по ${partSize.toF
             });
             document.getElementById('atr').addEventListener('input', () => {
                 let v = parseFloat(document.getElementById('atr').value) || 0;
-                document.getElementById('atrValue').textContent = formatNumber(v,8) + ' USDT';
-                document.getElementById('previewAtrPercent').textContent = formatNumber(v * (parseFloat(document.getElementById('riskPercent').value)/100),8) + ' USDT';
+                document.getElementById('atrValue').textContent = formatPrice(v) + ' USDT';
+                document.getElementById('previewAtrPercent').textContent = formatPrice(v * (parseFloat(document.getElementById('riskPercent').value)/100)) + ' USDT';
                 calculateRisk();
             });
             document.getElementById('riskPercent').addEventListener('input', () => {
                 document.getElementById('riskPercentValue').textContent = document.getElementById('riskPercent').value;
                 let atr = parseFloat(document.getElementById('atr').value) || 0;
-                document.getElementById('previewAtrPercent').textContent = formatNumber(atr * (document.getElementById('riskPercent').value/100),8) + ' USDT';
+                document.getElementById('previewAtrPercent').textContent = formatPrice(atr * (document.getElementById('riskPercent').value/100)) + ' USDT';
                 document.getElementById('previewAtrPercentValue').textContent = document.getElementById('riskPercent').value + '%';
                 calculateRisk();
             });
@@ -950,14 +1012,14 @@ document.getElementById('partsBreakdownText').textContent = `по ${partSize.toF
             document.getElementById('stopLossPrice').addEventListener('input', () => {
                 let entry = parseFloat(document.getElementById('entryPrice').value) || 0;
                 let stop = parseFloat(document.getElementById('stopLossPrice').value) || 0;
-                document.getElementById('priceDifference').textContent = formatNumber(Math.abs(entry - stop),8) + ' USDT';
+                document.getElementById('priceDifference').textContent = formatPrice(Math.abs(entry - stop)) + ' USDT';
                 calculateRisk();
             });
             document.getElementById('stopLossPercentInput').addEventListener('input', () => {
                 document.getElementById('stopLossPercentValue').textContent = document.getElementById('stopLossPercentInput').value;
                 let entry = parseFloat(document.getElementById('entryPrice').value) || 0;
                 let percent = parseFloat(document.getElementById('stopLossPercentInput').value) / 100;
-                document.getElementById('previewPercentValue').textContent = formatNumber(entry * percent,8) + ' USDT';
+                document.getElementById('previewPercentValue').textContent = formatPrice(entry * percent) + ' USDT';
                 document.getElementById('previewPercent').textContent = document.getElementById('stopLossPercentInput').value + '%';
                 calculateRisk();
             });
