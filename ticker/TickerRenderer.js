@@ -10,9 +10,9 @@ class TickerRenderer {
         this._renderScheduled = false;
         this._renderRafId = null;
         this._firstRender = true;
-        this._updatePriceRaf = null; // RAF-троттлинг
+        this._updatePriceRaf = null;
         
-        // Инжектим CSS для мигания один раз
+        // Инжектим CSS для мигания
         this._injectFlashCSS();
     }
     
@@ -45,6 +45,54 @@ class TickerRenderer {
     }
     
     // =========================================================================
+    // 💫 УНИВЕРСАЛЬНЫЙ МЕТОД ОБНОВЛЕНИЯ ЦЕНЫ С АНИМАЦИЕЙ
+    // =========================================================================
+    _updatePriceWithAnimation(priceEl, ticker) {
+        if (!priceEl || !ticker) return false;
+        
+        const newPrice = this.formatPrice(ticker.price);
+        
+        // Если цена не изменилась - просто выходим
+        if (priceEl.textContent === newPrice) return false;
+        
+        // Обновляем текст
+        priceEl.textContent = newPrice;
+        
+        // Обновляем цвет
+        const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
+        
+        // Определяем flash-класс
+        let flashClass = null;
+        if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
+            flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
+        }
+        
+        // Собираем все классы
+        const classes = ['ticker-price', colorClass];
+        if (flashClass) classes.push(flashClass);
+        
+        // Применяем классы
+        priceEl.className = classes.join(' ');
+        
+        // Если была анимация - сбрасываем и перезапускаем
+        if (flashClass) {
+            // Удаляем анимацию
+            priceEl.classList.remove('flash-up', 'flash-down');
+            
+            // Форсируем reflow
+            void priceEl.offsetWidth;
+            
+            // Запускаем анимацию заново
+            priceEl.classList.add(flashClass);
+            
+            // Обновляем prevPrice после анимации
+            ticker.prevPrice = ticker.price;
+        }
+        
+        return true;
+    }
+    
+    // =========================================================================
     // ⚡ RAF-троттлинг — DOM обновляется строго 1 раз за кадр (60fps)
     // =========================================================================
     updatePriceElements() {
@@ -70,56 +118,43 @@ class TickerRenderer {
             const volumeEl = el.querySelector('.ticker-volume');
             const tradesEl = el.querySelector('.ticker-trades');
             
-            const newPrice = this.formatPrice(ticker.price);
-            const newChange = this.formatChange(ticker.change) + '%';
-            const newVolume = this.formatVolume(ticker.volume);
-            const newTrades = this.formatTrades(ticker);
-            
-            if (priceEl && priceEl.textContent !== newPrice) {
-                priceEl.textContent = newPrice;
-                const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
-                priceEl.className = `ticker-price ${colorClass}`;
-                
-                if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
-                    const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-                    priceEl.classList.remove('flash-up', 'flash-down');
-                    void priceEl.offsetWidth; 
-                    priceEl.classList.add(flashClass);
-                    ticker.prevPrice = ticker.price;
-                }
-                domUpdates++;
+            // ✅ Используем универсальный метод с анимацией
+            if (priceEl) {
+                const updated = this._updatePriceWithAnimation(priceEl, ticker);
+                if (updated) domUpdates++;
             }
+            
+            const newChange = this.formatChange(ticker.change) + '%';
             if (changeEl && changeEl.textContent !== newChange) {
                 changeEl.textContent = newChange;
                 changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                 domUpdates++;
             }
+            
+            const newVolume = this.formatVolume(ticker.volume);
             if (volumeEl && volumeEl.textContent !== newVolume) {
                 volumeEl.textContent = newVolume;
                 domUpdates++;
             }
+            
+            const newTrades = this.formatTrades(ticker);
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
                 domUpdates++;
             }
         }
         
+        if (this.parent?.debugMode && domUpdates > 0) {
+            console.log(`🔄 Обновлено ${domUpdates} DOM-элементов`);
+        }
     }
     
     // =========================================================================
-    // 🔄 СОРТИРОВКА ТИКЕРОВ (ИСПРАВЛЕНА! Работает с/без аргумента)
+    // 🔄 СОРТИРОВКА ТИКЕРОВ
     // =========================================================================
-    /**
-     * Сортировка тикеров по выбранному критерию
-     * @param {Array} [tickers] - Опциональный массив для сортировки.
-     *                            Если не передан — сортирует this.parent.tickers
-     * @returns {Array} Отсортированный массив
-     */
     sortTickers(tickers) {
-        // ✅ Если массив не передан — сортируем основной массив this.parent.tickers
         const arrayToSort = tickers || this.parent.tickers;
         
-        // ✅ Защита: проверяем что есть что сортировать
         if (!arrayToSort || !Array.isArray(arrayToSort)) {
             if (this.parent?.debugMode) {
                 console.warn('⚠️ sortTickers: нет данных для сортировки');
@@ -127,7 +162,6 @@ class TickerRenderer {
             return Array.isArray(arrayToSort) ? arrayToSort : [];
         }
         
-        // ✅ Защита: проверяем настройки сортировки
         if (!this.parent?.state?.sortBy) {
             return arrayToSort;
         }
@@ -139,7 +173,6 @@ class TickerRenderer {
             console.log(`🔄 Сортировка: ${sortBy} (${direction === 1 ? '↑ ASC' : '↓ DESC'}), элементов: ${arrayToSort.length}`);
         }
         
-        // Создаём НОВЫЙ отсортированный массив (не мутируем оригинал!)
         const sorted = [...arrayToSort].sort((a, b) => {
             if (!a || !b) return 0;
             
@@ -155,7 +188,7 @@ class TickerRenderer {
                 case 'change':
                     result = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
                     break;
-                case 'volume': // ⭐ ПО ОБЪЁМУ!
+                case 'volume':
                     result = (parseFloat(a.volume) || 0) - (parseFloat(b.volume) || 0);
                     break;
                 case 'trades':
@@ -165,21 +198,17 @@ class TickerRenderer {
                     result = 0;
             }
             
-            return direction * result; // asc = 1, desc = -1
+            return direction * result;
         });
         
-        // ✅ Если сортировали this.parent.tickets — заменяем его на отсортированный!
         if (!tickers && arrayToSort === this.parent.tickers) {
             this.parent.tickers.length = 0;
             this.parent.tickers.push(...sorted);
-            
-            // Сбрасываем кэш фильтрации (важно после сортировки!)
             this.parent.filterCache = null;
             
             if (this.parent?.debugMode) {
                 console.log(`✅ this.parent.tickers обновлён (отсортировано по ${sortBy})`);
                 
-                // Диагностика топ-3
                 if (sortBy === 'volume' && sorted.length > 0) {
                     console.log('🏆 Топ-3:', 
                         sorted.slice(0, 3).map(t => `${t.symbol}: $${(t.volume / 1e9).toFixed(2)}B`)
@@ -194,112 +223,97 @@ class TickerRenderer {
     // =========================================================================
     // 📋 ПОЛУЧИТЬ ОТФИЛЬТРОВАННЫЕ (И ОТСОРТИРОВАННЫЕ!) ТИКЕРЫ
     // =========================================================================
-   getFilteredTickers() {
-    const cacheKey = `${this.parent.state?.marketFilter || 'all'}:${this.parent.state?.exchangeFilter || 'all'}:${this.parent.state?.activeTab || 'all'}:${this.parent.state?.sortBy || 'volume'}:${this.parent.state?.sortDirection || 'desc'}`;
-    
-    // Из кэша
-    if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
-        return this.parent.filterCache.result;
-    }
-    
-    let result = [];
-    const state = this.parent.state;
-    
-    try {
-        // ✅ Выбираем источник данных
-        switch (state?.activeTab) {
-            
-            case 'favorites':
-                const favSet = new Set(state.favorites || []);
-                result = Array.from(this.parent.tickersMap.values()).filter(t => 
-                    favSet.has(t.symbol)
-                );
-                break;
-                
-            case 'flags':
-                const flags = state.flags || {};
-                const flagTab = state.activeFlagTab;
-                
-                result = Object.entries(flags)
-                    .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
-                    .map(([key]) => this.parent.tickersMap.get(key))
-                    .filter(t => t !== undefined);
-                break;
-                
-            default:
-                // ✅✅✅ ОСНОВНОЙ СПИСОК — надёжный способ!
-                
-                // Берём ключи из state.customSymbols (где они точно есть!)
-                const sourceKeys = state.customSymbols || [];
-                
-                if (sourceKeys.length === 0) {
-                    // Если пустой — берём ВСЕ из tickersMap
-                    console.warn('⚠️ customSymbols пустой! Используем tickersMap');
-                    result = Array.from(this.parent.tickersMap.values());
-                } else {
-                    // Фильтруем по бирже/рынку (работаем со строками)
-                    let filteredKeys = [...sourceKeys];
-                    
-                    if (state.marketFilter && state.marketFilter !== 'all') {
-                        filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
-                    }
-                    
-                    if (state.exchangeFilter && state.exchangeFilter !== 'all') {
-                        filteredKeys = filteredKeys.filter(k => {
-                            const parts = k.split(':');
-                            return parts[1] === state.exchangeFilter;
-                        });
-                    }
-                    
-                    // ✅ Получаем объекты из Map
-                    result = filteredKeys
-                        .map(key => this.parent.tickersMap.get(key))
-                        .filter(t => t !== undefined);
-                }
-                break;
+    getFilteredTickers() {
+        const cacheKey = `${this.parent.state?.marketFilter || 'all'}:${this.parent.state?.exchangeFilter || 'all'}:${this.parent.state?.activeTab || 'all'}:${this.parent.state?.sortBy || 'volume'}:${this.parent.state?.sortDirection || 'desc'}`;
+        
+        if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
+            return this.parent.filterCache.result;
         }
         
-        // ✅ СОРТИРОВКА
-        const sortBy = state.sortBy || 'volume';
-        const direction = state.sortDirection === 'asc' ? 1 : -1;
+        let result = [];
+        const state = this.parent.state;
         
-        result.sort((a, b) => {
-            if (!a || !b) return 0;
-            
-            let res = 0;
-            switch (sortBy) {
-                case 'name':   res = (a.symbol||'').localeCompare(b.symbol||''); break;
-                case 'price':  res = (parseFloat(a.price)||0) - (parseFloat(b.price)||0); break;
-                case 'change': res = (parseFloat(a.change)||0) - (parseFloat(b.change)||0); break;
-                case 'volume': res = (parseFloat(a.volume)||0) - (parseFloat(b.volume||0)); break;
-                case 'trades': res = (parseInt(a.trades)||0) - (parseInt(b.trades)||0); break;
+        try {
+            switch (state?.activeTab) {
+                case 'favorites':
+                    const favSet = new Set(state.favorites || []);
+                    result = Array.from(this.parent.tickersMap.values()).filter(t => 
+                        favSet.has(t.symbol)
+                    );
+                    break;
+                    
+                case 'flags':
+                    const flags = state.flags || {};
+                    const flagTab = state.activeFlagTab;
+                    
+                    result = Object.entries(flags)
+                        .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
+                        .map(([key]) => this.parent.tickersMap.get(key))
+                        .filter(t => t !== undefined);
+                    break;
+                    
+                default:
+                    const sourceKeys = state.customSymbols || [];
+                    
+                    if (sourceKeys.length === 0) {
+                        console.warn('⚠️ customSymbols пустой! Используем tickersMap');
+                        result = Array.from(this.parent.tickersMap.values());
+                    } else {
+                        let filteredKeys = [...sourceKeys];
+                        
+                        if (state.marketFilter && state.marketFilter !== 'all') {
+                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                        }
+                        
+                        if (state.exchangeFilter && state.exchangeFilter !== 'all') {
+                            filteredKeys = filteredKeys.filter(k => {
+                                const parts = k.split(':');
+                                return parts[1] === state.exchangeFilter;
+                            });
+                        }
+                        
+                        result = filteredKeys
+                            .map(key => this.parent.tickersMap.get(key))
+                            .filter(t => t !== undefined);
+                    }
+                    break;
             }
             
-            return direction * res;
-        });
+            const sortBy = state.sortBy || 'volume';
+            const direction = state.sortDirection === 'asc' ? 1 : -1;
+            
+            result.sort((a, b) => {
+                if (!a || !b) return 0;
+                
+                let res = 0;
+                switch (sortBy) {
+                    case 'name':   res = (a.symbol||'').localeCompare(b.symbol||''); break;
+                    case 'price':  res = (parseFloat(a.price)||0) - (parseFloat(b.price)||0); break;
+                    case 'change': res = (parseFloat(a.change)||0) - (parseFloat(b.change)||0); break;
+                    case 'volume': res = (parseFloat(a.volume)||0) - (parseFloat(b.volume||0)); break;
+                    case 'trades': res = (parseInt(a.trades)||0) - (parseInt(b.trades)||0); break;
+                }
+                
+                return direction * res;
+            });
+            
+        } catch (error) {
+            console.error('❌ Ошибка getFilteredTickers:', error);
+            result = Array.from(this.parent.tickersMap.values());
+        }
         
-    } catch (error) {
-        console.error('❌ Ошибка getFilteredTickers:', error);
+        this.displayedTickers = result;
+        this.totalItems = result.length;
         
-        // Fallback: возвращаем всё из tickersMap
-        result = Array.from(this.parent.tickersMap.values());
+        this.parent.filterCache = { key: cacheKey, result };
+        
+        return result;
     }
-    
-    // Сохраняем
-    this.displayedTickers = result;
-    this.totalItems = result.length;
-    
-    // Кэшируем
-    this.parent.filterCache = { key: cacheKey, result };
-    
-    return result;
-}
     
     // =========================================================================
     // 🎨 ГЛАВНЫЙ МЕТОД РЕНДЕРИНГА СПИСКА
     // =========================================================================
     renderTickerList() {
-        // Управление вкладками флагов
         const flagTabs = document.getElementById('flagTabs');
         if (flagTabs) {
             flagTabs.classList.toggle('show', this.parent.state.activeTab === 'flags');
@@ -308,33 +322,25 @@ class TickerRenderer {
         const container = document.getElementById('tickerListContainer');
         if (!container) return;
 
-        // ✅ Получаем отфильтрованные И отсортированные тикеры
         const displayed = this.getFilteredTickers();
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
 
-        // Чистим старые обработчики скролла
         if (this._scrollHandler) {
             container.removeEventListener('scroll', this._scrollHandler);
         }
         
-        // Удаляем старые элементы
         const spacer = container.querySelector('.ticker-spacer');
         if (spacer) spacer.remove();
         
         const itemsContainer = container.querySelector('.ticker-items-container');
         if (itemsContainer) itemsContainer.remove();
         
-        // Очищаем кэш DOM-элементов
         this.tickerElements.clear();
 
-     
-
-        // Настройка контейнера для виртуального скроллинга
         container.style.position = 'relative';
         container.style.overflowY = 'auto';
         
-        // Spacer (задаёт полную высоту для скроллбара)
         const newSpacer = document.createElement('div');
         newSpacer.className = 'ticker-spacer';
         newSpacer.style.height = (this.totalItems * this.rowHeight) + 'px';
@@ -342,7 +348,6 @@ class TickerRenderer {
         newSpacer.style.pointerEvents = 'none';
         container.appendChild(newSpacer);
         
-        // Контейнер для видимых элементов (absolute positioning)
         const newItemsContainer = document.createElement('div');
         newItemsContainer.className = 'ticker-items-container';
         newItemsContainer.style.position = 'absolute';
@@ -351,10 +356,8 @@ class TickerRenderer {
         newItemsContainer.style.right = '0';
         container.appendChild(newItemsContainer);
         
-        // Первый рендеринг видимых элементов
         this.renderVisibleTickers();
 
-        // Обработчик скролла (виртуальный скроллинг)
         this._scrollHandler = () => {
             this.renderVisibleTickers();
         };
@@ -404,14 +407,18 @@ class TickerRenderer {
             el.style.width = '100%';
             el.style.display = '';
             
-            // Обновляем данные в существующем элементе
+            // ✅ Обновляем данные в существующем элементе С АНИМАЦИЕЙ
             if (!isNewElement) {
                 const priceEl = el.querySelector('.ticker-price');
                 const changeEl = el.querySelector('.ticker-change');
                 const volumeEl = el.querySelector('.ticker-volume');
                 const tradesEl = el.querySelector('.ticker-trades');
                 
-                if (priceEl) priceEl.textContent = this.formatPrice(ticker.price);
+                // ✅ ИСПОЛЬЗУЕМ УНИВЕРСАЛЬНЫЙ МЕТОД С АНИМАЦИЕЙ
+                if (priceEl) {
+                    this._updatePriceWithAnimation(priceEl, ticker);
+                }
+                
                 if (changeEl) {
                     changeEl.textContent = this.formatChange(ticker.change) + '%';
                     changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
@@ -458,7 +465,12 @@ class TickerRenderer {
         div.style.minHeight = '36px';
         div.style.borderBottom = '1px solid #2B3139';
 
-        // Ручка для перетаскивания (ПКМ как в TradingView)
+        // ✅ Инициализируем prevPrice при создании
+        if (!ticker.prevPrice && ticker.price > 0) {
+            ticker.prevPrice = ticker.price;
+        }
+
+        // Ручка для перетаскивания
         const dragHandle = document.createElement('div');
         dragHandle.className = 'drag-handle';
         dragHandle.title = 'ПКМ → перетащить';
@@ -475,7 +487,7 @@ class TickerRenderer {
         const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
         const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
         
-        // Отображаемое имя (укороченное)
+        // Отображаемое имя
         let displayName = ticker.symbol.replace('USDT', '');
         const match = displayName.match(/^(\d+)([A-Z]+)$/);
         if (match) displayName = '1' + match[2];
@@ -502,7 +514,7 @@ class TickerRenderer {
     }
     
     // =========================================================================
-    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ (с подстрочной нотацией для мелких цен)
+    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ
     // =========================================================================
     formatPrice(price) {
         if (!price || price <= 0) return '...';
@@ -515,13 +527,10 @@ class TickerRenderer {
         
         let result;
         
-        // Подстрочная нотация для очень маленьких цен (< 0.001)
-        // 0.00002534 → "0.0₄2534"
-        // 0.00000089 → "0.0₆89"
         if (price < 0.001) {
             const priceStr = price.toFixed(10);
             const match = priceStr.match(/^0\.(0+)(.+)$/);
-            if (match && match[1].length >= 3) { // минимум 3 нуля
+            if (match && match[1].length >= 3) {
                 const zeros = match[1].length;
                 const digits = match[2].replace(/0+$/, '');
                 if (digits.length === 0) {
@@ -538,7 +547,6 @@ class TickerRenderer {
             result = this._formatAsIs(price);
         }
         
-        // Кэшируем
         this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
         if (this.parent.formatCache.prices.size > 500) {
             const oldestKey = this.parent.formatCache.prices.keys().next().value;
@@ -548,9 +556,6 @@ class TickerRenderer {
         return result;
     }
 
-    /**
-     * Форматирование "как приходит" — без лишних нулей
-     */
     _formatAsIs(price) {
         let str = price.toFixed(8);
         str = str.replace(/\.?0+$/, '');
@@ -591,7 +596,7 @@ class TickerRenderer {
     }
     
     // =========================================================================
-    // 📊 ФОРМАТИРОВАНИЯ ОБЪЁМА
+    // 📊 ФОРМАТИРОВАНИЕ ОБЪЁМА
     // =========================================================================
     formatVolume(volume) {
         if (!volume || volume === 0) return '0';
@@ -621,7 +626,7 @@ class TickerRenderer {
     }
     
     // =========================================================================
-    // 🔢 ФОРМАТИРОВАНИЯ КОЛИЧЕСТВА СДЕЛОК
+    // 🔢 ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА СДЕЛОК
     // =========================================================================
     formatTrades(ticker) {
         if (ticker.exchange !== 'binance' || !ticker.trades || ticker.trades <= 0) return '—';
@@ -632,7 +637,7 @@ class TickerRenderer {
     }
     
     // =========================================================================
-    // 🧹 ОЧИСТКА КЭША ФОРМАТИРОВАНИЯ (каждые 30 сек)
+    // 🧹 ОЧИСТКА КЭША ФОРМАТИРОВАНИЯ
     // =========================================================================
     startCacheCleanup() {
         setInterval(() => {
@@ -649,17 +654,15 @@ class TickerRenderer {
     }
     
     // =========================================================================
-    // ⬆️⬇️ НАСТРОЙКА СОРТИРОВКИ ПО ЗАГОЛОВКАМ ТАБЛИЦЫ
+    // ⬆️⬇️ НАСТРОЙКА СОРТИРОВКИ ПО ЗАГОЛОВКАМ
     // =========================================================================
     setupHeaderSorting() {
-        // Удаляем старые обработчики
         if (this.parent._sortClickHandler) {
             document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
                 header.removeEventListener('click', this.parent._sortClickHandler);
             });
         }
         
-        // Восстанавливаем сохранённую сортировку
         const savedSortBy = localStorage.getItem('tickerSortBy');
         const savedSortDir = localStorage.getItem('tickerSortDir');
         
@@ -668,33 +671,28 @@ class TickerRenderer {
         
         this.parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) 
             ? savedSortBy 
-            : 'volume'; // ← По умолчанию: по объёму!
+            : 'volume';
         
         this.parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) 
             ? savedSortDir 
-            : 'desc'; // ← По умолчанию: по убыванию!
+            : 'desc';
         
-        // Новый обработчик кликов по заголовкам
         this.parent._sortClickHandler = (e) => {
             e.stopPropagation();
             
             const header = e.currentTarget;
             const sortBy = header.dataset.sort;
             
-            // Клик по той же колонке — меняем направление
             if (this.parent.state.sortBy === sortBy) {
                 this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
             } else {
-                // Новая колонка → всегда desc (кроме name)
                 this.parent.state.sortBy = sortBy;
                 this.parent.state.sortDirection = sortBy === 'name' ? 'asc' : 'desc';
             }
             
-            // Сохраняем выбор
             localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
             localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
             
-            // Обновляем иконки
             document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
                 icon.className = 'fas fa-sort';
             });
@@ -704,17 +702,14 @@ class TickerRenderer {
                 icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
             }
             
-            // Перерисовываем с новой сортировкой
             this.parent.filterCache = null;
             this.parent.renderTickerList();
         };
         
-        // Вешаем обработчики
         document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
             header.addEventListener('click', this.parent._sortClickHandler);
         });
         
-        // Обновляем иконку активной сортировки
         const activeHeader = document.querySelector(`.table-header span[data-sort="${this.parent.state.sortBy}"]`);
         if (activeHeader) {
             const icon = activeHeader.querySelector('i');
