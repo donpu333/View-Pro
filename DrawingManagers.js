@@ -4896,33 +4896,71 @@ class AlertLineManager {
         return false;
     }
 
-    deleteAllAlerts() {
-        // Спрашиваем подтверждение
-        if (!confirm('Вы уверены, что хотите удалить ВСЕ алерты? Это действие нельзя отменить.')) {
-            return;
-        }
-        
-        for (const symbol of this._subscribedSymbols) {
-            this._unsubscribeFromSymbol(symbol);
-        }
-        
-        for (const item of this._alerts) {
-            window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
-        }
-        
-        this._alerts.forEach(({ primitive, series }) => {
-            if (primitive && series) {
-                try { series.detachPrimitive(primitive); } catch (e) {}
-            }
-        });
-        this._alerts = [];
-        this._selectedAlert = null;
-        this._dragAlert = null;
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        this._requestRedraw();
+  deleteAllAlerts() {
+    const currentSymbolKey = this._getCurrentSymbolKey();
+    const currentSymbol = this._chartManager.currentSymbol;
+    
+    // ✅ Фильтруем алерты только текущего символа
+    const alertsToDelete = this._alerts.filter(item => 
+        item.alert.symbolKey === currentSymbolKey
+    );
+    
+    if (alertsToDelete.length === 0) {
+        console.log(`Нет алертов для символа ${currentSymbol}`);
+        return;
     }
     
+    if (!confirm(`Вы уверены, что хотите удалить ВСЕ алерты для ${currentSymbol}?\nБудет удалено ${alertsToDelete.length} алертов.\nЭто действие нельзя отменить.`)) {
+        return;
+    }
+    
+    console.log(`🗑️ Удаляем ${alertsToDelete.length} алертов для ${currentSymbol}`);
+    
+    // Удаляем только алерты текущего символа
+    alertsToDelete.forEach(item => {
+        const { alert, primitive, series } = item;
+        
+        // Удаляем из БД
+        window.db.delete('drawings', alert.id).catch(e => console.warn(e));
+        
+        // Открепляем от графика
+        if (primitive && series) {
+            try { series.detachPrimitive(primitive); } catch (e) {}
+        }
+        
+        // Удаляем из массива
+        const index = this._alerts.indexOf(item);
+        if (index !== -1) {
+            this._alerts.splice(index, 1);
+        }
+        
+        // Сбрасываем выбранный алерт если нужно
+        if (this._selectedAlert && this._selectedAlert.id === alert.id) {
+            this._selectedAlert = null;
+        }
+        if (this._dragAlert && this._dragAlert.id === alert.id) {
+            this._dragAlert = null;
+        }
+    });
+    
+    // Отписываемся от WebSocket если больше нет алертов для этого символа
+    const hasOtherAlerts = this._alerts.some(item => 
+        item.alert.symbol === currentSymbol && 
+        !item.alert.triggered && 
+        item.alert.status !== 'completed'
+    );
+    
+    if (!hasOtherAlerts) {
+        this._unsubscribeFromSymbol(currentSymbol);
+    }
+    
+    this._saveAlerts();
+    this._updateAlertsListUI();
+    this._requestRedraw();
+    
+    console.log(`✅ Удалено ${alertsToDelete.length} алертов для ${currentSymbol}`);
+    console.log(`📊 Осталось алертов всего: ${this._alerts.length}`);
+}
     // ✅ Метод для удаления только завершенных алертов
     deleteCompletedAlerts() {
         const completedAlerts = this._alerts.filter(item => 
