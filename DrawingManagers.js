@@ -4671,52 +4671,42 @@ class AlertLineManager {
     // ============================================================
     // ✅ ИСПРАВЛЕННАЯ ЛОГИКА АЛЕРТОВ - НЕ УДАЛЯЕМ АКТИВНЫЕ
     // ============================================================
+  // В классе AlertLineManager, найти метод checkTimerAlerts и ИСПРАВИТЬ:
+checkTimerAlerts() {
+    const now = Date.now();
     
-    checkTimerAlerts() {
-        const now = Date.now();
+    this._alerts.forEach(item => {
+        const alert = item.alert;
         
-        this._alerts.forEach(item => {
-            const alert = item.alert;
+        // ✅ Пропускаем только завершенные и на паузе
+        if (alert.triggered) return;
+        if (!alert.active) return;
+        if (alert.status === 'paused') return;
+        if (alert.status === 'completed') return;
+        if (!alert.canTriggerAgain()) return;
+        if (!alert.shouldTriggerByTimer(now)) return;
+        
+        console.log(`⏰ Таймерный алерт сработал: ${alert.symbol} - повтор #${alert.triggerCount + 1}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}`);
+        
+        alert.triggerCount++;
+        alert.lastTriggerTime = now;
+        
+        this._saveAlerts();
+        this._startInfiniteHighlight(alert.id);
+        this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
+        this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
+        this._updateAlertsListUI();
+        this._requestRedraw();
+        
+        if (!alert.canTriggerAgain()) {
+            console.log(`✅ Алерт ${alert.id} завершил все повторы, УДАЛЯЕМ с графика`);
+            this._stopHighlight(alert.id);
             
-            // ✅ Пропускаем только завершенные и на паузе
-            if (alert.triggered) return;
-            if (!alert.active) return;
-            if (alert.status === 'paused') return;
-            if (alert.status === 'completed') return;
-            if (!alert.canTriggerAgain()) return;
-            if (!alert.shouldTriggerByTimer(now)) return;
-            
-            console.log(`⏰ Таймерный алерт сработал: ${alert.symbol} - повтор #${alert.triggerCount + 1}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}`);
-            
-            alert.triggerCount++;
-            alert.lastTriggerTime = now;
-            
-            this._saveAlerts();
-            this._startInfiniteHighlight(alert.id);
-            this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            
-            if (!alert.canTriggerAgain()) {
-                console.log(`✅ Алерт ${alert.id} завершил все повторы`);
-                this._stopHighlight(alert.id);
-                alert.complete(); // ✅ Помечаем как завершенный, но НЕ УДАЛЯЕМ
-                
-                // ✅ Открепляем primitive, но сохраняем алерт в списке
-                if (item.primitive && item.series) {
-                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                    item.primitive = null;
-                    item.series = null;
-                }
-                
-                this._saveAlerts();
-                this._updateAlertsListUI();
-                setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
-            }
-        });
-    }
-
+            // ✅ ПОЛНОСТЬЮ УДАЛЯЕМ АЛЕРТ, а не просто помечаем как completed
+            this.deleteAlert(alert.id);
+        }
+    });
+}
     updatePriceForSymbol(symbol, price, exchange = null) {
         if (!symbol || !price || isNaN(price)) return;
         
