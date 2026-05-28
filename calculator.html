@@ -842,102 +842,175 @@ TP 2:${r2} -> ${formatPrice(tp2)} USDT (${tp2Percent}%)
                 slider.style.setProperty('--fill-percent', `${percent}%`);
             });
         }
+function calculateRisk() {
+    // --- 1. Получение сырых значений ---
+    const entry = parseFloat(normalizeNumber(document.getElementById('entryPrice').value)) || 0;
+    const lev = parseFloat(document.getElementById('leverage').value) || 1;
+    const atr = parseFloat(document.getElementById('atr').value) || 0;
+    const riskPercent = parseFloat(document.getElementById('riskPercent').value) / 100;
+    const riskAmount = parseFloat(document.getElementById('riskAmount').value) || 0;
+    const r1 = parseFloat(document.getElementById('rewardRatio1').value) || 3;
+    const r2 = parseFloat(document.getElementById('rewardRatio2').value) || 5;
+    const slPriceDirect = parseFloat(normalizeNumber(document.getElementById('stopLossPrice').value)) || 0;
+    const slPercent = parseFloat(document.getElementById('stopLossPercentInput').value) / 100;
+    const stopDist = parseFloat(normalizeNumber(document.getElementById('stopDistance').value)) || 0;
+    const fee = parseFloat(document.getElementById('exchangeFee').value) / 100 || 0.0005;
 
-       function calculateRisk() {
-            const entry = parseFloat(normalizeNumber(document.getElementById('entryPrice').value)) || 0;
-            const lev = parseFloat(document.getElementById('leverage').value) || 1;
-            const atr = parseFloat(document.getElementById('atr').value) || 0;
-            const riskPercent = parseFloat(document.getElementById('riskPercent').value) / 100;
-            const riskAmount = parseFloat(document.getElementById('riskAmount').value) || 0;
-            const r1 = parseFloat(document.getElementById('rewardRatio1').value) || 3;
-            const r2 = parseFloat(document.getElementById('rewardRatio2').value) || 5;
-            const slPriceDirect = parseFloat(normalizeNumber(document.getElementById('stopLossPrice').value)) || 0;
-            const slPercent = parseFloat(document.getElementById('stopLossPercentInput').value) / 100;
-            const stopDist = parseFloat(normalizeNumber(document.getElementById('stopDistance').value)) || 0;
-            const fee = parseFloat(document.getElementById('exchangeFee').value) / 100 || 0.0005;
+    // --- 2. Вычисление расстояния до стоп-лосса ---
+    let priceDiff;
+    if (stopMethod === 'atr') priceDiff = atr * riskPercent;
+    else if (stopMethod === 'price') priceDiff = Math.abs(entry - slPriceDirect);
+    else if (stopMethod === 'percent') priceDiff = entry * slPercent;
+    else priceDiff = stopDist;
 
-            let priceDiff;
-            if (stopMethod === 'atr') priceDiff = atr * riskPercent;
-            else if (stopMethod === 'price') priceDiff = Math.abs(entry - slPriceDirect);
-            else if (stopMethod === 'percent') priceDiff = entry * slPercent;
-            else priceDiff = stopDist;
+    // Проверка на валидность данных
+    if (entry <= 0 || priceDiff <= 0) {
+        document.getElementById('entryPriceResult').textContent = '0.0000 USDT';
+        document.getElementById('positionSize').textContent = '0.0 монет';
+        document.getElementById('positionSizeUsdtText').textContent = '0.00 USDT';
+        document.getElementById('stopLossPriceText').textContent = '0.0000 USDT';
+        document.getElementById('stopLossPercentText').textContent = '';
+        document.getElementById('stopLossUsdt').textContent = '';
+        document.getElementById('liquidationPriceText').textContent = '0.0000 USDT';
+        document.getElementById('liquidationPricePercent').textContent = '';
+        document.getElementById('stopDistanceResult').textContent = '0.0000 USDT';
+        document.getElementById('atrResult').textContent = formatPrice(atr) + ' USDT';
+        document.getElementById('exchangeFeeResult').textContent = (fee * 100).toFixed(4) + '%';
+        document.getElementById('takeProfitLevels').innerHTML = '';
+        document.getElementById('partsBreakdownContainer').style.display = 'none';
+        return;
+    }
 
-            let stopPrice;
-            if (stopMethod === 'price') stopPrice = slPriceDirect;
-            else stopPrice = isLong ? entry - priceDiff : entry + priceDiff;
+    // --- 3. Расчёт позиции ---
+    // Количество монет
+    const positionSize = riskAmount / priceDiff;
+    
+    // ОБЩАЯ СТОИМОСТЬ ПОЗИЦИИ в USDT (без плеча, просто монеты × цена)
+    const totalPositionValue = entry * positionSize;
+    
+    // --- 4. Расчёт комиссий ---
+    const entryFeeUsdt = totalPositionValue * fee;
+    const exitFeeUsdt = totalPositionValue * fee; // Приблизительно для TP
 
-            const positionSize = priceDiff > 0 ? riskAmount / priceDiff : 0;
-            const positionSizeUsdt = entry * positionSize * lev;
-            const entryFee = entry * positionSize * fee;
-            
-            const tp1 = isLong 
-                ? entry + (riskAmount * r1 + entryFee * 2) / (positionSize * lev)
-                : entry - (riskAmount * r1 + entryFee * 2) / (positionSize * lev);
-            
-            const tp2 = isLong 
-                ? entry + (riskAmount * r2 + entryFee * 2) / (positionSize * lev)
-                : entry - (riskAmount * r2 + entryFee * 2) / (positionSize * lev);
-            
-            const liqPrice = isLong 
-                ? entry * (1 - 0.9/lev)
-                : entry * (1 + 0.9/lev);
-            
-            const slPercentVal = calculatePercentageChange(entry, stopPrice);
-            const tp1Percent = calculatePercentageChange(entry, tp1);
-            const tp2Percent = calculatePercentageChange(entry, tp2);
-            const liqPercent = calculatePercentageChange(entry, liqPrice);
-            
-            const lossUsdt = priceDiff * positionSize * lev;
+    // --- 5. Расчёт стоп-лосса ---
+    let stopPrice;
+    if (stopMethod === 'price') {
+        stopPrice = slPriceDirect;
+    } else {
+        stopPrice = isLong ? entry - priceDiff : entry + priceDiff;
+    }
 
-            // Форматирование с учетом типа данных
-            document.getElementById('entryPriceResult').textContent = formatPrice(entry) + ' USDT';
-            document.getElementById('positionSize').textContent = formatPositionSize(positionSize) + ' монет';
-            document.getElementById('positionSizeUsdtText').textContent = formatUsdt(positionSizeUsdt) + ' USDT';
-            document.getElementById('stopLossPriceText').textContent = formatPrice(stopPrice) + ' USDT';
-            document.getElementById('stopLossPercentText').textContent = `(${slPercentVal}%)`;
-            document.getElementById('stopLossUsdt').textContent = `-${formatUsdt(lossUsdt)} USDT`;
-            document.getElementById('liquidationPriceText').textContent = formatPrice(liqPrice) + ' USDT';
-            document.getElementById('liquidationPricePercent').textContent = `(${liqPercent}%)`;
-            document.getElementById('stopDistanceResult').innerHTML = `${formatPrice(priceDiff)} USDT <span class="loss-usdt">(-${formatUsdt(lossUsdt)} USDT)</span>`;
-            document.getElementById('exchangeFeeResult').textContent = (fee * 100).toFixed(4) + '%';
-            document.getElementById('atrResult').textContent = formatPrice(atr) + ' USDT';
+    // --- 6. Расчёт Тейк-Профитов ---
+    const desiredProfitTP1 = riskAmount * r1;
+    const desiredProfitTP2 = riskAmount * r2;
+    
+    let tp1, tp2;
+    if (isLong) {
+        tp1 = entry + (desiredProfitTP1 + entryFeeUsdt + exitFeeUsdt) / positionSize;
+        tp2 = entry + (desiredProfitTP2 + entryFeeUsdt + exitFeeUsdt) / positionSize;
+    } else {
+        tp1 = entry - (desiredProfitTP1 + entryFeeUsdt + exitFeeUsdt) / positionSize;
+        tp2 = entry - (desiredProfitTP2 + entryFeeUsdt + exitFeeUsdt) / positionSize;
+    }
 
-            const levelsDiv = document.getElementById('takeProfitLevels');
-            levelsDiv.innerHTML = '';
-            [r1, r2].forEach(ratio => {
-                let targetProfit = riskAmount * ratio;
-                let tpPrice = isLong 
-                    ? entry + (targetProfit + entryFee * 2) / (positionSize * lev)
-                    : entry - (targetProfit + entryFee * 2) / (positionSize * lev);
-                let profitPercent = calculatePercentageChange(entry, tpPrice);
-                let exitFee = tpPrice * positionSize * fee;
-                
-                let div = document.createElement('div');
-                div.className = 'take-profit-item';
-                div.innerHTML = `<span class="take-profit-ratio">TP 1:${ratio}</span>
-                    <span class="take-profit-price">
-                        <span class="price-value-with-btn">
-                            <span>${formatPrice(tpPrice)} USDT</span>
-                            <button class="copy-price-btn copy-price-btn-profit" onclick="copyPriceFromTakeProfit(this)">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                        </span>
-                        <span class="percentage-value">(${profitPercent}%)</span>
-                    </span>
-                    <span class="take-profit-value">+${formatUsdt(targetProfit)} USDT (ком:${formatCommission(exitFee)})</span>`;
-                levelsDiv.appendChild(div);
-            });
+    // --- 7. Расчёт цены ликвидации ---
+    let liqPrice;
+    if (isLong) {
+        liqPrice = entry * (1 - 1/lev) + (entryFeeUsdt / positionSize);
+    } else {
+        liqPrice = entry * (1 + 1/lev) - (entryFeeUsdt / positionSize);
+    }
 
-            const partsCount = parseInt(document.getElementById('partsCount').value) || 1;
-            const partsContainer = document.getElementById('partsBreakdownContainer');
-            if (partsCount > 1 && positionSizeUsdt > 0) {
-                const partSize = positionSizeUsdt / partsCount;
-                document.getElementById('partsCountDisplay').textContent = partsCount;
-                document.getElementById('partsBreakdownText').textContent = `по ${formatUsdt(partSize)} USDT`;
-                partsContainer.style.display = 'flex';
-            } else partsContainer.style.display = 'none';
-        }
+    // --- 8. Убыток при стоп-лоссе ---
+    const lossUsdt = priceDiff * positionSize;
 
+    // --- 9. Процентные изменения ---
+    const slPercentVal = calculatePercentageChange(entry, stopPrice);
+    const tp1Percent = calculatePercentageChange(entry, tp1);
+    const tp2Percent = calculatePercentageChange(entry, tp2);
+    const liqPercent = calculatePercentageChange(entry, liqPrice);
+
+    // --- 10. Обновление интерфейса ---
+    document.getElementById('entryPriceResult').textContent = formatPrice(entry) + ' USDT';
+    document.getElementById('positionSize').textContent = formatPositionSize(positionSize) + ' монет';
+    
+    // Показываем ОБЩУЮ СТОИМОСТЬ позиции (без плеча)
+    document.getElementById('positionSizeUsdtText').textContent = formatUsdt(totalPositionValue) + ' USDT';
+    
+    document.getElementById('stopLossPriceText').textContent = formatPrice(stopPrice) + ' USDT';
+    document.getElementById('stopLossPercentText').textContent = `(${slPercentVal}%)`;
+    document.getElementById('stopLossUsdt').textContent = `-${formatUsdt(lossUsdt)} USDT`;
+    document.getElementById('liquidationPriceText').textContent = formatPrice(liqPrice) + ' USDT';
+    document.getElementById('liquidationPricePercent').textContent = `(${liqPercent}%)`;
+    
+    document.getElementById('stopDistanceResult').innerHTML = 
+        `${formatPrice(priceDiff)} USDT <span class="loss-usdt">(-${formatUsdt(lossUsdt)} USDT)</span>`;
+    
+    document.getElementById('exchangeFeeResult').textContent = (fee * 100).toFixed(4) + '%';
+    document.getElementById('atrResult').textContent = formatPrice(atr) + ' USDT';
+
+    // --- 11. Отрисовка Тейк-Профитов ---
+    const levelsDiv = document.getElementById('takeProfitLevels');
+    levelsDiv.innerHTML = '';
+    
+    const levels = [
+        { ratio: r1, price: tp1, profit: desiredProfitTP1 },
+        { ratio: r2, price: tp2, profit: desiredProfitTP2 }
+    ];
+    
+    levels.forEach(level => {
+        const profitPercent = calculatePercentageChange(entry, level.price);
+        const exitFeeForTp = totalPositionValue * fee;
+        
+        const div = document.createElement('div');
+        div.className = 'take-profit-item';
+        div.innerHTML = `
+            <span class="take-profit-ratio">TP 1:${level.ratio}</span>
+            <span class="take-profit-price">
+                <span class="price-value-with-btn">
+                    <span>${formatPrice(level.price)} USDT</span>
+                    <button class="copy-price-btn copy-price-btn-profit" onclick="copyPriceFromTakeProfit(this)">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </span>
+                <span class="percentage-value">(${profitPercent}%)</span>
+            </span>
+            <span class="take-profit-value">+${formatUsdt(level.profit)} USDT (ком: ${formatCommission(exitFeeForTp)})</span>`;
+        levelsDiv.appendChild(div);
+    });
+
+    // --- 12. Разбивка на части (по общей стоимости) ---
+    const partsCount = parseInt(document.getElementById('partsCount').value) || 1;
+    const partsContainer = document.getElementById('partsBreakdownContainer');
+    
+    if (partsCount > 1 && totalPositionValue > 0) {
+        const partValue = totalPositionValue / partsCount;
+        const partCoins = positionSize / partsCount;
+        document.getElementById('partsCountDisplay').textContent = partsCount;
+        document.getElementById('partsBreakdownText').textContent = 
+            `по ${formatUsdt(partValue)} USDT (${formatPositionSize(partCoins)} монет)`;
+        partsContainer.style.display = 'flex';
+    } else {
+        partsContainer.style.display = 'none';
+    }
+
+    // --- 13. Обновление превью значений ---
+    document.getElementById('atrValue').textContent = formatPrice(atr) + ' USDT';
+    const previewAtrPercent = atr * (parseFloat(document.getElementById('riskPercent').value) / 100);
+    document.getElementById('previewAtrPercent').textContent = formatPrice(previewAtrPercent) + ' USDT';
+    document.getElementById('previewAtrPercentValue').textContent = document.getElementById('riskPercent').value + '%';
+    
+    if (stopMethod === 'price') {
+        const diff = Math.abs(entry - slPriceDirect);
+        document.getElementById('priceDifference').textContent = formatPrice(diff) + ' USDT';
+    }
+    
+    if (stopMethod === 'percent') {
+        const percentVal = parseFloat(document.getElementById('stopLossPercentInput').value) / 100;
+        document.getElementById('previewPercentValue').textContent = formatPrice(entry * percentVal) + ' USDT';
+        document.getElementById('previewPercent').textContent = document.getElementById('stopLossPercentInput').value + '%';
+    }
+}
         function copyPriceFromTakeProfit(btn) {
             const priceSpan = btn.previousElementSibling;
             const priceText = priceSpan.textContent;
