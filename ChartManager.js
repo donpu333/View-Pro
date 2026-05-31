@@ -324,10 +324,68 @@ _startNewCandleChecker() {
         };
         const step = stepMap[this.currentInterval] || 3600;
         const nowSec = Math.floor(Date.now() / 1000);
-        const aligned = Math.floor(nowSec / step) * step;
+        
+        // 🔧 Для недельных и месячных свечей — не выравниваем математически,
+        // а ждём реального наступления нового периода
+        let aligned;
+        if (this.currentInterval === '1w') {
+            // Неделя начинается в понедельник 00:00 UTC
+            const now = new Date(nowSec * 1000);
+            const dayOfWeek = now.getUTCDay(); // 0 = воскресенье
+            const daysToMonday = dayOfWeek === 0 ? 1 : (8 - dayOfWeek) % 7;
+            const monday = new Date(Date.UTC(
+                now.getUTCFullYear(), 
+                now.getUTCMonth(), 
+                now.getUTCDate() + daysToMonday
+            ));
+            aligned = Math.floor(monday.getTime() / 1000);
+        } else if (this.currentInterval === '1M') {
+            // Месяц начинается 1-го числа 00:00 UTC
+            const now = new Date(nowSec * 1000);
+            const firstDayOfNextMonth = new Date(Date.UTC(
+                now.getUTCFullYear(), 
+                now.getUTCMonth() + 1, 
+                1
+            ));
+            aligned = Math.floor(firstDayOfNextMonth.getTime() / 1000);
+        } else {
+            // Для остальных интервалов — стандартное выравнивание
+            aligned = Math.floor(nowSec / step) * step;
+        }
+        
         const last = this.chartData[this.chartData.length - 1];
         
-        if (last && aligned > last.time) {
+        // ✅ Дополнительная проверка: aligned должно быть СТРОГО БОЛЬШЕ последней свечи
+        // и НЕ ДОЛЖНО быть в будущем (aligned <= nowSec)
+        if (last && aligned > last.time && aligned <= nowSec) {
+            // Дополнительная проверка для недельных/месячных:
+            // убеждаемся что мы действительно находимся в новом периоде
+            if (this.currentInterval === '1w' || this.currentInterval === '1M') {
+                const lastDate = new Date(last.time * 1000);
+                const alignedDate = new Date(aligned * 1000);
+                
+                // Проверяем что это действительно новый период
+                if (this.currentInterval === '1w') {
+                    const lastWeekStart = new Date(Date.UTC(
+                        lastDate.getUTCFullYear(),
+                        lastDate.getUTCMonth(),
+                        lastDate.getUTCDate() - ((lastDate.getUTCDay() + 6) % 7)
+                    ));
+                    if (alignedDate.getTime() === lastWeekStart.getTime()) {
+                        // Это та же самая неделя — не создаём новую свечу
+                        setTimeout(check, 500);
+                        return;
+                    }
+                } else if (this.currentInterval === '1M') {
+                    if (alignedDate.getUTCFullYear() === lastDate.getUTCFullYear() && 
+                        alignedDate.getUTCMonth() === lastDate.getUTCMonth()) {
+                        // Это тот же самый месяц — не создаём новую свечу
+                        setTimeout(check, 500);
+                        return;
+                    }
+                }
+            }
+            
             const newCandle = {
                 time: aligned,
                 open: last.close,
