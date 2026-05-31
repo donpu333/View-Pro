@@ -6,7 +6,7 @@ class HorizontalRay {
         this.id = `ray_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`; // FIX: substr заменен на substring
         this.options = {
             color: options.color || '#4A90E2',
-            lineWidth: options.lineWidth || 2,
+            lineWidth: options.lineWidth || 1,
             lineStyle: options.lineStyle || 'solid',
             opacity: options.opacity !== undefined ? options.opacity : 0.9,
             extendLeft: options.extendLeft || false,
