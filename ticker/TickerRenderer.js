@@ -152,164 +152,202 @@ class TickerRenderer {
     // =========================================================================
     // 🔄 СОРТИРОВКА ТИКЕРОВ
     // =========================================================================
-    sortTickers(tickers) {
-        const arrayToSort = tickers || this.parent.tickers;
-        
-        if (!arrayToSort || !Array.isArray(arrayToSort)) {
-            if (this.parent?.debugMode) {
-                console.warn('⚠️ sortTickers: нет данных для сортировки');
-            }
-            return Array.isArray(arrayToSort) ? arrayToSort : [];
-        }
-        
-        if (!this.parent?.state?.sortBy) {
-            return arrayToSort;
-        }
-        
-        const sortBy = this.parent.state.sortBy;
-        const direction = this.parent.state.sortDirection === 'asc' ? 1 : -1;
-        
+   // =========================================================================
+// 🔄 СОРТИРОВКА ТИКЕРОВ (ВОЗВРАЩАЕТ НОВЫЙ МАССИВ)
+// =========================================================================
+sortTickers(tickers) {
+    const arrayToSort = tickers || this.parent.tickers;
+    
+    if (!arrayToSort || !Array.isArray(arrayToSort)) {
         if (this.parent?.debugMode) {
-            console.log(`🔄 Сортировка: ${sortBy} (${direction === 1 ? '↑ ASC' : '↓ DESC'}), элементов: ${arrayToSort.length}`);
+            console.warn('⚠️ sortTickers: нет данных для сортировки');
         }
-        
-        const sorted = [...arrayToSort].sort((a, b) => {
-            if (!a || !b) return 0;
-            
-            let result = 0;
-            
-            switch (sortBy) {
-                case 'name':
-                    result = (a.symbol || '').localeCompare(b.symbol || '');
-                    break;
-                case 'price':
-                    result = (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
-                    break;
-                case 'change':
-                    result = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
-                    break;
-                case 'volume':
-                    result = (parseFloat(a.volume) || 0) - (parseFloat(b.volume) || 0);
-                    break;
-                case 'trades':
-                    result = (parseInt(a.trades) || 0) - (parseInt(b.trades) || 0);
-                    break;
-                default:
-                    result = 0;
-            }
-            
-            return direction * result;
-        });
-        
-        if (!tickers && arrayToSort === this.parent.tickers) {
-            this.parent.tickers.length = 0;
-            this.parent.tickers.push(...sorted);
-            this.parent.filterCache = null;
-            
-            if (this.parent?.debugMode) {
-                console.log(`✅ this.parent.tickers обновлён (отсортировано по ${sortBy})`);
-                
-                if (sortBy === 'volume' && sorted.length > 0) {
-                    console.log('🏆 Топ-3:', 
-                        sorted.slice(0, 3).map(t => `${t.symbol}: $${(t.volume / 1e9).toFixed(2)}B`)
-                    );
-                }
-            }
-        }
-        
-        return sorted;
+        return [];
     }
+    
+    if (!this.parent?.state?.sortBy) {
+        return [...arrayToSort];
+    }
+    
+    const sortBy = this.parent.state.sortBy;
+    const direction = this.parent.state.sortDirection === 'asc' ? 1 : -1;
+    
+    // ✅ Приоритет флагов (обновлён с учётом lime и cyan)
+    const flagPriority = {
+        'red': 1,      // 🔴 Красный
+        'yellow': 2,   // 🟡 Жёлтый
+        'green': 3,    // 🟢 Зелёный
+        'lime': 4,     // 🟢💚 Лайм
+        'blue': 5,     // 🔵 Синий
+        'cyan': 6,     // 💙 Бирюзовый
+        'purple': 7,   // 🟣 Фиолетовый
+        null: 999      // Без флага
+    };
+    
+    const sorted = [...arrayToSort].sort((a, b) => {
+        if (!a || !b) return 0;
+        
+        let result = 0;
+        
+        switch (sortBy) {
+            case 'flag':
+                // ✅ Сортировка по флагам
+                const aFlag = a.flag || null;
+                const bFlag = b.flag || null;
+                const aPriority = flagPriority[aFlag];
+                const bPriority = flagPriority[bFlag];
+                result = aPriority - bPriority;
+                break;
+                
+            case 'price':
+                result = (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
+                break;
+                
+            case 'change':
+                result = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
+                break;
+                
+            case 'volume':
+                const aVol = parseFloat(a.volume) || 0;
+                const bVol = parseFloat(b.volume) || 0;
+                result = aVol - bVol;
+                break;
+                
+            case 'trades':
+                result = (parseInt(a.trades) || 0) - (parseInt(b.trades) || 0);
+                break;
+                
+            default:
+                result = 0;
+        }
+        
+        return direction * result;
+    });
+    
+    if (this.parent?.debugMode && sortBy === 'flag' && sorted.length > 0) {
+        console.log('🏁 Сортировка по флагам:', 
+            sorted.slice(0, 5).map(t => `${t.symbol}: ${t.flag || 'нет'}`)
+        );
+    }
+    
+    return sorted;
+}
     
     // =========================================================================
     // 📋 ПОЛУЧИТЬ ОТФИЛЬТРОВАННЫЕ (И ОТСОРТИРОВАННЫЕ!) ТИКЕРЫ
     // =========================================================================
-    getFilteredTickers() {
-        const cacheKey = `${this.parent.state?.marketFilter || 'all'}:${this.parent.state?.exchangeFilter || 'all'}:${this.parent.state?.activeTab || 'all'}:${this.parent.state?.sortBy || 'volume'}:${this.parent.state?.sortDirection || 'desc'}`;
-        
-        if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
-            return this.parent.filterCache.result;
-        }
-        
-        let result = [];
-        const state = this.parent.state;
-        
-        try {
-            switch (state?.activeTab) {
-                case 'favorites':
-                    const favSet = new Set(state.favorites || []);
-                    result = Array.from(this.parent.tickersMap.values()).filter(t => 
-                        favSet.has(t.symbol)
-                    );
-                    break;
-                    
-                case 'flags':
-                    const flags = state.flags || {};
-                    const flagTab = state.activeFlagTab;
-                    
-                    result = Object.entries(flags)
-                        .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
-                        .map(([key]) => this.parent.tickersMap.get(key))
-                        .filter(t => t !== undefined);
-                    break;
-                    
-                default:
-                    const sourceKeys = state.customSymbols || [];
-                    
-                    if (sourceKeys.length === 0) {
-                        console.warn('⚠️ customSymbols пустой! Используем tickersMap');
-                        result = Array.from(this.parent.tickersMap.values());
-                    } else {
-                        let filteredKeys = [...sourceKeys];
-                        
-                        if (state.marketFilter && state.marketFilter !== 'all') {
-                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
-                        }
-                        
-                        if (state.exchangeFilter && state.exchangeFilter !== 'all') {
-                            filteredKeys = filteredKeys.filter(k => {
-                                const parts = k.split(':');
-                                return parts[1] === state.exchangeFilter;
-                            });
-                        }
-                        
-                        result = filteredKeys
-                            .map(key => this.parent.tickersMap.get(key))
-                            .filter(t => t !== undefined);
-                    }
-                    break;
-            }
-            
-            const sortBy = state.sortBy || 'volume';
-            const direction = state.sortDirection === 'asc' ? 1 : -1;
-            
-            result.sort((a, b) => {
-                if (!a || !b) return 0;
-                
-                let res = 0;
-                switch (sortBy) {
-                    case 'name':   res = (a.symbol||'').localeCompare(b.symbol||''); break;
-                    case 'price':  res = (parseFloat(a.price)||0) - (parseFloat(b.price)||0); break;
-                    case 'change': res = (parseFloat(a.change)||0) - (parseFloat(b.change)||0); break;
-                    case 'volume': res = (parseFloat(a.volume)||0) - (parseFloat(b.volume||0)); break;
-                    case 'trades': res = (parseInt(a.trades)||0) - (parseInt(b.trades)||0); break;
-                }
-                
-                return direction * res;
-            });
-            
-        } catch (error) {
-            console.error('❌ Ошибка getFilteredTickers:', error);
-            result = Array.from(this.parent.tickersMap.values());
-        }
-        
-        this.displayedTickers = result;
-        this.totalItems = result.length;
-        
-        this.parent.filterCache = { key: cacheKey, result };
-        
-        return result;
+   getFilteredTickers() {
+    const cacheKey = `${this.parent.state?.marketFilter || 'all'}:${this.parent.state?.exchangeFilter || 'all'}:${this.parent.state?.activeTab || 'all'}:${this.parent.state?.sortBy || 'volume'}:${this.parent.state?.sortDirection || 'desc'}`;
+    
+    if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
+        return this.parent.filterCache.result;
     }
     
+    let result = [];
+    const state = this.parent.state;
+    
+    try {
+        switch (state?.activeTab) {
+            case 'favorites':
+                const favSet = new Set(state.favorites || []);
+                result = Array.from(this.parent.tickersMap.values()).filter(t => 
+                    favSet.has(t.symbol)
+                );
+                break;
+                
+            case 'flags':
+                const flags = state.flags || {};
+                const flagTab = state.activeFlagTab;
+                
+                result = Object.entries(flags)
+                    .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
+                    .map(([key]) => this.parent.tickersMap.get(key))
+                    .filter(t => t !== undefined);
+                break;
+                
+            default:
+                const sourceKeys = state.customSymbols || [];
+                
+                if (sourceKeys.length === 0) {
+                    console.warn('⚠️ customSymbols пустой! Используем tickersMap');
+                    result = Array.from(this.parent.tickersMap.values());
+                } else {
+                    let filteredKeys = [...sourceKeys];
+                    
+                    if (state.marketFilter && state.marketFilter !== 'all') {
+                        filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                    }
+                    
+                    if (state.exchangeFilter && state.exchangeFilter !== 'all') {
+                        filteredKeys = filteredKeys.filter(k => {
+                            const parts = k.split(':');
+                            return parts[1] === state.exchangeFilter;
+                        });
+                    }
+                    
+                    result = filteredKeys
+                        .map(key => this.parent.tickersMap.get(key))
+                        .filter(t => t !== undefined);
+                }
+                break;
+        }
+        
+        const sortBy = state.sortBy || 'volume';
+        const direction = state.sortDirection === 'asc' ? 1 : -1;
+        
+        // ✅ Приоритет флагов (обновлён)
+        const flagPriority = {
+            'red': 1,
+            'yellow': 2,
+            'green': 3,
+            'lime': 4,
+            'blue': 5,
+            'cyan': 6,
+            'purple': 7,
+            null: 999
+        };
+        
+        result.sort((a, b) => {
+            if (!a || !b) return 0;
+            
+            let res = 0;
+            switch (sortBy) {
+                case 'flag':
+                    const aFlag = a.flag || null;
+                    const bFlag = b.flag || null;
+                    res = (flagPriority[aFlag] || 999) - (flagPriority[bFlag] || 999);
+                    break;
+                case 'price':
+                    res = (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
+                    break;
+                case 'change':
+                    res = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
+                    break;
+                case 'volume':
+                    res = (parseFloat(a.volume) || 0) - (parseFloat(b.volume || 0));
+                    break;
+                case 'trades':
+                    res = (parseInt(a.trades) || 0) - (parseInt(b.trades) || 0);
+                    break;
+                default:
+                    res = 0;
+            }
+            
+            return direction * res;
+        });
+        
+    } catch (error) {
+        console.error('❌ Ошибка getFilteredTickers:', error);
+        result = Array.from(this.parent.tickersMap.values());
+    }
+    
+    this.displayedTickers = result;
+    this.totalItems = result.length;
+    
+    this.parent.filterCache = { key: cacheKey, result };
+    
+    return result;
+}
     // =========================================================================
     // 🎨 ГЛАВНЫЙ МЕТОД РЕНДЕРИНГА СПИСКА
     // =========================================================================
@@ -656,68 +694,71 @@ class TickerRenderer {
     // =========================================================================
     // ⬆️⬇️ НАСТРОЙКА СОРТИРОВКИ ПО ЗАГОЛОВКАМ
     // =========================================================================
-    setupHeaderSorting() {
-        if (this.parent._sortClickHandler) {
-            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-                header.removeEventListener('click', this.parent._sortClickHandler);
-            });
+   // В методе setupHeaderSorting() - убираем смену направления
+setupHeaderSorting() {
+    if (this.parent._sortClickHandler) {
+        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+            header.removeEventListener('click', this.parent._sortClickHandler);
+        });
+    }
+    
+    const savedSortBy = localStorage.getItem('tickerSortBy');
+    const savedSortDir = localStorage.getItem('tickerSortDir');
+    
+    // ✅ ЗДЕСЬ - убрал 'name', добавил 'flag'
+    const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
+    const VALID_DIRECTIONS = ['asc', 'desc'];
+    
+    this.parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) 
+        ? savedSortBy 
+        : 'volume';
+    
+    this.parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) 
+        ? savedSortDir 
+        : 'desc';
+    
+    this.parent._sortClickHandler = (e) => {
+        e.stopPropagation();
+        
+        const header = e.currentTarget;
+        const sortBy = header.dataset.sort;
+        
+        if (this.parent.state.sortBy === sortBy) {
+            this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.parent.state.sortBy = sortBy;
+            // ✅ ЗДЕСЬ - вместо 'name' теперь 'flag'
+            this.parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
         }
         
-        const savedSortBy = localStorage.getItem('tickerSortBy');
-        const savedSortDir = localStorage.getItem('tickerSortDir');
+        localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
+        localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
         
-        const VALID_SORT_FIELDS = ['name', 'price', 'change', 'volume', 'trades'];
-        const VALID_DIRECTIONS = ['asc', 'desc'];
-        
-        this.parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) 
-            ? savedSortBy 
-            : 'volume';
-        
-        this.parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) 
-            ? savedSortDir 
-            : 'desc';
-        
-        this.parent._sortClickHandler = (e) => {
-            e.stopPropagation();
-            
-            const header = e.currentTarget;
-            const sortBy = header.dataset.sort;
-            
-            if (this.parent.state.sortBy === sortBy) {
-                this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
-            } else {
-                this.parent.state.sortBy = sortBy;
-                this.parent.state.sortDirection = sortBy === 'name' ? 'asc' : 'desc';
-            }
-            
-            localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
-            localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
-            
-            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                icon.className = 'fas fa-sort';
-            });
-            
-            const icon = header.querySelector('i');
-            if (icon) {
-                icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            }
-            
-            this.parent.filterCache = null;
-            this.parent.renderTickerList();
-        };
-        
-        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.addEventListener('click', this.parent._sortClickHandler);
+        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+            icon.className = 'fas fa-sort';
         });
         
-        const activeHeader = document.querySelector(`.table-header span[data-sort="${this.parent.state.sortBy}"]`);
-        if (activeHeader) {
-            const icon = activeHeader.querySelector('i');
-            if (icon) {
-                icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            }
+        const icon = header.querySelector('i');
+        if (icon) {
+            icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+        }
+        
+        this.parent.filterCache = null;
+        this.parent.renderTickerList();
+    };
+    
+    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+        header.addEventListener('click', this.parent._sortClickHandler);
+    });
+    
+    const activeHeader = document.querySelector(`.table-header span[data-sort="${this.parent.state.sortBy}"]`);
+    if (activeHeader) {
+        const icon = activeHeader.querySelector('i');
+        if (icon) {
+            icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
         }
     }
+}
 }
 
 // Экспорт
