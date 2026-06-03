@@ -140,18 +140,29 @@
   <!-- Вкладки с флагами (изначально скрыты) -->
 <div class="flag-tabs" id="flagTabs" style="display: none;">
     <button class="tab" data-flag="red"><span class="flag-preview-small flag-red-small"></span></button>
-    <button class="tab" data-flag="blue"><span class="flag-preview-small flag-blue-small"></span></button>
-    <button class="tab" data-flag="green"><span class="flag-preview-small flag-green-small"></span></button>
     <button class="tab" data-flag="yellow"><span class="flag-preview-small flag-yellow-small"></span></button>
+     <button class="tab" data-flag="green"><span class="flag-preview-small flag-green-small"></span></button>
+<button class="tab" data-flag="lime"><span class="flag-preview-small flag-lime-small"></span></button>
+
+    <button class="tab" data-flag="blue"><span class="flag-preview-small flag-blue-small"></span></button>
 <button class="tab" data-flag="purple"><span class="flag-preview-small flag-purple-small"></span></button>
 <button class="tab" data-flag="cyan"><span class="flag-preview-small flag-cyan-small"></span></button>
-<button class="tab" data-flag="lime"><span class="flag-preview-small flag-lime-small"></span></button>
+
     
 </div>
 
     <!-- Заголовок таблицы -->
     <div class="table-header">
-        <span data-sort="name">Символ <i class="fas fa-sort"></i></span>
+<!-- Было: -->
+
+<span data-sort="flag" class="sortable flag-header">
+    <span class="flag flag-red" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
+    <span class="flag flag-yellow" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
+    <span class="flag flag-green" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
+    <span class="flag flag-blue" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
+    
+    <i class="fas fa-sort"></i>
+</span>
         <span data-sort="price">Цена <i class="fas fa-sort"></i></span>
         <span data-sort="change">% <i class="fas fa-sort"></i></span>
         <span data-sort="volume">Объём <i class="fas fa-sort"></i></span>
@@ -215,24 +226,26 @@
     <div class="context-menu-item" data-flag="red">
         <span class="flag-preview flag-red"></span>Красный
     </div>
+     <div class="context-menu-item" data-flag="yellow">
+        <span class="flag-preview flag-yellow"></span>Желтый
+    </div>
+      <div class="context-menu-item" data-flag="green">
+        <span class="flag-preview flag-green"></span>Зеленый
+    </div>
+   <div class="context-menu-item" data-flag="lime">
+    <span class="flag-preview flag-lime"></span>Лайм
+</div>
     <div class="context-menu-item" data-flag="blue">
         <span class="flag-preview flag-blue"></span>Синий
     </div>
-    <div class="context-menu-item" data-flag="green">
-        <span class="flag-preview flag-green"></span>Зеленый
-    </div>
-    <div class="context-menu-item" data-flag="yellow">
-        <span class="flag-preview flag-yellow"></span>Желтый
-    </div>
+  
 <div class="context-menu-item" data-flag="purple">
     <span class="flag-preview flag-purple"></span>Фиолетовый
 </div>
 <div class="context-menu-item" data-flag="cyan">
     <span class="flag-preview flag-cyan"></span>Бирюзовый
 </div>
-<div class="context-menu-item" data-flag="lime">
-    <span class="flag-preview flag-lime"></span>Лайм
-</div>
+
 
 
 </div>
