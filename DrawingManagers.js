@@ -938,7 +938,17 @@ _setupHotkeys() {
         this._requestRedraw();
     }
     
-   
+   _detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._rays.filter(item => item.ray.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+    }
+    this._rays = this._rays.filter(item => item.ray.symbolKey !== symbolKey);
+}
 hitTest(x, y) {
     const raysForCurrent = this._getRaysForCurrentSymbol();
     
@@ -1399,7 +1409,7 @@ _applyRedrawIfNeeded() {
         ]);
 
         const currentKey = this._getCurrentSymbolKey();
-        console.log('📊 Loading rays for:', currentKey);
+       this._detachAllPrimitivesForSymbol(currentKey);
 
        
         // ========== КОНЕЦ ЗАГРУЗКИ PRECISION ==========
@@ -2479,7 +2489,17 @@ _completeDrawing(x, y) {
     
     return bestHit;
 }
-
+_detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._trendLines.filter(item => item.trendLine.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+    }
+    this._trendLines = this._trendLines.filter(item => item.trendLine.symbolKey !== symbolKey);
+}
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
         const data = this._chartManager.chartData;
@@ -2637,6 +2657,8 @@ _applyRedrawIfNeeded() {
         try {
             await waitForReady([() => window.dbReady === true, () => this._chartManager?.chartData?.length > 0, () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)]);
             const currentKey = this._getCurrentSymbolKey();
+
+             this._detachAllPrimitivesForSymbol(currentKey);
             const allDrawings = await window.db.getByIndex('drawings', 'symbolKey', currentKey);
             const lineRecords = allDrawings.filter(d => d.type === 'trendline');
             const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
@@ -3822,6 +3844,7 @@ class RulerLineManager {
         try {
             await waitForReady([() => window.dbReady === true, () => this._chartManager?.chartData?.length > 0, () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)]);
             const currentKey = this._getCurrentSymbolKey();
+             this._detachAllPrimitivesForSymbol(currentKey);
             const allDrawings = await window.db.getByIndex('drawings', 'symbolKey', currentKey);
             const rulerRecords = allDrawings.filter(d => d.type === 'ruler');
             const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
@@ -3852,7 +3875,17 @@ class RulerLineManager {
             } catch (e) { console.error(e); }
         }, 200);
     }
-
+_detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+    }
+    this._rulers = this._rulers.filter(item => item.ruler.symbolKey !== symbolKey);
+}
     syncWithNewTimeframe() {}
 
     deactivateAll() {
@@ -4972,7 +5005,17 @@ checkTimerAlerts() {
         
         console.log(`✅ Удалено ${completedAlerts.length} завершенных алертов`);
     }
-
+_detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+    }
+    this._alerts = this._alerts.filter(item => item.alert.symbolKey !== symbolKey);
+}
     hitTest(x, y) {
         if (this._selectedAlert) {
             const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
@@ -5582,6 +5625,7 @@ checkTimerAlerts() {
             }
             
             const currentSymbolKey = this._getCurrentSymbolKey();
+                this._detachAllPrimitivesForSymbol(currentKey);
             const newAlerts = [];
             
             for (const rec of alertRecords) {
@@ -6655,6 +6699,18 @@ this._lastClickTime = 0;
         this._saveTexts();
         this._requestRedraw();
     }
+_detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._texts.filter(item => item.text.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+    }
+    this._texts = this._texts.filter(item => item.text.symbolKey !== symbolKey);
+}
+
 hitTest(x, y) {
     // ✅ Приоритет: выбранный текст проверяем первым
     if (this._selectedText) {
@@ -7021,46 +7077,68 @@ _applyRedrawIfNeeded() {
         await Promise.all(promises);
     }
 
-    async loadTexts() {
-        while (this._isLoading) { await new Promise(r => setTimeout(r, 50)); }
-        this._isLoading = true;
-        try {
-            await waitForReady([
-                () => window.dbReady === true,
-                () => this._chartManager?.chartData?.length > 0,
-                () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)
-            ]);
-            const currentKey = this._getCurrentSymbolKey();
-            const allDrawings = await window.db.getByIndex('drawings', 'symbolKey', currentKey);
-            const textRecords = allDrawings.filter(d => d.type === 'text');
-            const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-            const newTexts = [];
-            for (const rec of textRecords) {
-                try {
-                    const textDrawing = new TextDrawing(rec.data.text, rec.data.time, rec.data.price, rec.data.options);
-                    textDrawing.id = rec.id;
-                    textDrawing.symbolKey = rec.symbolKey;
-                    textDrawing.symbol = rec.data.symbol;
-                    textDrawing.exchange = rec.data.exchange;
-                    textDrawing.marketType = rec.data.marketType;
-                    textDrawing.anchorTime = rec.data.anchorTime || rec.data.time;
-                    textDrawing.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    textDrawing.anchorCandle = rec.data.anchorCandle || null;
-                    const primitive = new TextPrimitive(textDrawing, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    newTexts.push({ text: textDrawing, primitive, series });
-                } catch (e) { console.warn('Failed to load text:', rec.id, e); }
+ async loadTexts() {
+    while (this._isLoading) { await new Promise(r => setTimeout(r, 50)); }
+    this._isLoading = true;
+    try {
+        await waitForReady([
+            () => window.dbReady === true,
+            () => this._chartManager?.chartData?.length > 0,
+            () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)
+        ]);
+        
+        const currentKey = this._getCurrentSymbolKey();
+        const allDrawings = await window.db.getByIndex('drawings', 'symbolKey', currentKey);
+        const textRecords = allDrawings.filter(d => d.type === 'text');
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        
+        // ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Открепляем ВСЕ старые примитивы для текущего символа
+        const oldItemsForCurrentSymbol = this._texts.filter(item => item.text.symbolKey === currentKey);
+        for (const item of oldItemsForCurrentSymbol) {
+            if (item.primitive && item.series) {
+                try { 
+                    item.series.detachPrimitive(item.primitive); 
+                } catch(e) {
+                    console.warn('Error detaching old primitive:', e);
+                }
             }
-            this._texts.forEach(item => { try { item.series?.detachPrimitive(item.primitive); } catch(e) {} });
-            this._texts = newTexts;
-            this._requestRedraw();
-        } catch (error) {
-            console.error('❌ loadTexts failed:', error);
-        } finally {
-            this._isLoading = false;
         }
+        
+        // Удаляем старые записи для текущего символа из массива
+        this._texts = this._texts.filter(item => item.text.symbolKey !== currentKey);
+        
+        const newTexts = [];
+        for (const rec of textRecords) {
+            try {
+                const textDrawing = new TextDrawing(rec.data.text, rec.data.time, rec.data.price, rec.data.options);
+                textDrawing.id = rec.id;
+                textDrawing.symbolKey = rec.symbolKey;
+                textDrawing.symbol = rec.data.symbol;
+                textDrawing.exchange = rec.data.exchange;
+                textDrawing.marketType = rec.data.marketType;
+                textDrawing.anchorTime = rec.data.anchorTime || rec.data.time;
+                textDrawing.timeframeVisibility = rec.data.timeframeVisibility || {};
+                textDrawing.anchorCandle = rec.data.anchorCandle || null;
+                
+                const primitive = new TextPrimitive(textDrawing, this._chartManager);
+                series.attachPrimitive(primitive);
+                newTexts.push({ text: textDrawing, primitive, series });
+            } catch (e) { 
+                console.warn('Failed to load text:', rec.id, e); 
+            }
+        }
+        
+        this._texts.push(...newTexts);
+        this._requestRedraw();
+        
+        console.log(`✅ Loaded ${newTexts.length} texts for ${currentKey}`);
+        
+    } catch (error) {
+        console.error('❌ loadTexts failed:', error);
+    } finally {
+        this._isLoading = false;
     }
-
+}
     syncWithNewTimeframe() {}
 
     deactivateAll() {
@@ -7079,9 +7157,16 @@ activateObject(text) {
 }
 
 
-
 // ========== ГОРЯЧИЕ КЛАВИШИ ==========
+function isTyping() {
+    const active = document.activeElement;
+    return active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+}
+
 document.addEventListener('keydown', (e) => {
+    // ЕСЛИ ПЕЧАТАЕМ В ПОЛЕ - НИЧЕГО НЕ ДЕЛАЕМ
+    if (isTyping()) return;
+    
     // Магнит - клавиша Z
     if (e.code === 'KeyZ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
@@ -7114,13 +7199,11 @@ document.addEventListener('keydown', (e) => {
             const newState = !window.trendLineManager._isDrawingMode;
             window.trendLineManager.setDrawingMode(newState);
             
-            // Выключаем режимы других инструментов
             if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
             if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
             if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
             if (window.textManager && newState) window.textManager.setDrawingMode(false);
             
-            // Меняем стиль кнопки
             const trendBtn = document.getElementById('toolTrendLine');
             if (trendBtn) {
                 if (newState) {
@@ -7138,7 +7221,7 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
-  // Горизонтальный луч - клавиша O (как было, НО теперь включает режим)
+    // Горизонтальный луч - клавиша O
     if (e.code === 'KeyO' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault();
         
@@ -7146,13 +7229,11 @@ document.addEventListener('keydown', (e) => {
             const newState = !window.rayManager._isDrawingMode;
             window.rayManager.setDrawingMode(newState);
             
-            // Выключаем режимы других инструментов
             if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
             if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
             if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
             if (window.textManager && newState) window.textManager.setDrawingMode(false);
             
-            // Меняем стиль кнопки
             const rayBtn = document.getElementById('toolHorizontalRay');
             if (rayBtn) {
                 if (newState) {
@@ -7170,11 +7251,7 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
-// ========== ГОРЯЧИЕ КЛАВИШИ ==========
-document.addEventListener('keydown', (e) => {
-    // ... существующие обработчики (Z, U, Y, O, T) ...
-
-    // Алерт - клавиша I (включает режим)
+    // Алерт - клавиша I
     if (e.code === 'KeyI' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault();
         
@@ -7182,13 +7259,11 @@ document.addEventListener('keydown', (e) => {
             const newState = !window.alertLineManager._isDrawingMode;
             window.alertLineManager.setDrawingMode(newState);
             
-            // Выключаем режимы других инструментов
             if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
             if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
             if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
             if (window.textManager && newState) window.textManager.setDrawingMode(false);
             
-            // Меняем стиль кнопки
             const alertBtn = document.getElementById('toolAlert');
             if (alertBtn) {
                 if (newState) {
@@ -7205,8 +7280,7 @@ document.addEventListener('keydown', (e) => {
             console.log(`Алерты ${newState ? 'включены' : 'выключены'}`);
         }
     }
-});
-
+    
     // Линейка - клавиша Y
     if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
@@ -7215,13 +7289,11 @@ document.addEventListener('keydown', (e) => {
             const newState = !window.rulerLineManager._isDrawingMode;
             window.rulerLineManager.setDrawingMode(newState);
             
-            // Выключаем режимы других инструментов
             if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
             if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
             if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
             if (window.textManager && newState) window.textManager.setDrawingMode(false);
             
-            // Меняем стиль кнопки
             const rulerBtn = document.getElementById('toolRuler');
             if (rulerBtn) {
                 if (newState) {
@@ -7239,10 +7311,6 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
-
-    
-
-
     // Текст - клавиша T
     if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
@@ -7251,13 +7319,11 @@ document.addEventListener('keydown', (e) => {
             const newState = !window.textManager._isDrawingMode;
             window.textManager.setDrawingMode(newState);
             
-            // Выключаем режимы других инструментов
             if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
             if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
             if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
             if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
             
-            // Меняем стиль кнопки
             const textBtn = document.getElementById('toolText');
             if (textBtn) {
                 if (newState) {
@@ -7273,9 +7339,9 @@ document.addEventListener('keydown', (e) => {
             
             console.log(`Текст ${newState ? 'включён' : 'выключён'}`);
         }
-        
     }
 });
+
 (function() {
     const container = document.getElementById('chart-container');
     if (!container) return;
