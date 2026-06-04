@@ -18,7 +18,7 @@ class AppCoordinator {
     }
     
     async init() {
-        console.log('🚀 Запуск приложения...');
+        
 
         this.chartManager = new ChartManager(document.getElementById('chart-container'));
         window.chartManagerInstance = this.chartManager;
@@ -51,7 +51,7 @@ class AppCoordinator {
             }
         }, 300);
         
-        console.log('✅ Приложение готово (график активен)');
+        
     }
 
     _waitForChart() {
@@ -74,7 +74,7 @@ class AppCoordinator {
         const defaultMarketType = this.chartManager.currentMarketType || 'futures';
         const defaultInterval = localStorage.getItem('lastTimeframe') || '1h';
         
-        console.log('📊 Загружаем:', defaultSymbol, defaultExchange, defaultMarketType, defaultInterval);
+        
         
         // ✅ ОДИН ВЫЗОВ ВМЕСТО fetchKlines + setDataQuick + wsManager.updateSymbol
         await this.chartManager.switchSymbol(defaultSymbol, defaultExchange, defaultMarketType);
@@ -351,7 +351,49 @@ class AppCoordinator {
 if (typeof window !== 'undefined') {
     window.AppCoordinator = AppCoordinator;
 }
+(function() {
+    const container = document.getElementById('chart-container');
+    if (!container) return;
 
+    container.addEventListener('contextmenu', (e) => {
+        const rect = container.getBoundingClientRect();
+        const pixelRatio = window.devicePixelRatio || 1;
+        const x = (e.clientX - rect.left) * pixelRatio;
+        const y = (e.clientY - rect.top) * pixelRatio;
+
+        const managers = [
+            window.rayManager,
+            window.trendLineManager,
+            window.rulerLineManager,
+            window.alertLineManager,
+            window.textManager
+        ];
+
+        let hitFound = false;
+        for (const m of managers) {
+            if (m && typeof m.hitTest === 'function') {
+                const hit = m.hitTest(x, y);
+                if (hit) {
+                    hitFound = true;
+                    break;
+                }
+            }
+        }
+
+        // Если нет ни одного объекта под курсором – скрываем все меню
+        if (!hitFound) {
+            const menuIds = ['drawingContextMenu', 'trendContextMenu', 'alertContextMenu', 'rulerContextMenu', 'textContextMenu'];
+            for (const id of menuIds) {
+                const menu = document.getElementById(id);
+                if (menu) menu.style.display = 'none';
+            }
+            // Предотвращаем стандартное контекстное меню браузера
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        // Если хит есть – ничего не делаем, пусть менеджер сам показывает своё меню
+    }, true); // Фаза перехвата, чтобы сработать до других обработчиков
+})();
 (function setupGlobalDblClick() {
     const container = document.getElementById('chart-container');
     if (!container) return;
