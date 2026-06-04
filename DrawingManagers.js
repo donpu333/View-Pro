@@ -4403,31 +4403,36 @@ class AlertLineManager {
         }
         this._subscribedSymbols.delete(symbol);
     }
-
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const newState = !this._isDrawingMode;
-                this.setDrawingMode(newState);
-                
-                if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-                if (window.textManager && newState) window.textManager.setDrawingMode(false);
-                
-                console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
-            }
+_setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        // Проверка - не печатаем ли мы в поле ввода
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+            return;
+        }
+        
+        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
             
-            if (e.key === 'Delete' && this._selectedAlert) {
-                e.preventDefault();
-                this.deleteAlert(this._selectedAlert.id);
-                this._selectedAlert = null;
-            }
-        });
-    }
+            const newState = !this._isDrawingMode;
+            this.setDrawingMode(newState);
+            
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            
+            console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
+        }
+        
+        if (e.key === 'Delete' && this._selectedAlert) {
+            e.preventDefault();
+            this.deleteAlert(this._selectedAlert.id);
+            this._selectedAlert = null;
+        }
+    });
+}
 
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
@@ -7157,190 +7162,6 @@ activateObject(text) {
 }
 
 
-// ========== ГОРЯЧИЕ КЛАВИШИ ==========
-function isTyping() {
-    const active = document.activeElement;
-    return active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
-}
-
-document.addEventListener('keydown', (e) => {
-    // ЕСЛИ ПЕЧАТАЕМ В ПОЛЕ - НИЧЕГО НЕ ДЕЛАЕМ
-    if (isTyping()) return;
-    
-    // Магнит - клавиша Z
-    if (e.code === 'KeyZ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        
-        const newState = !window.rayManager?._magnetEnabled;
-        
-        if (window.rayManager) window.rayManager.setMagnetEnabled(newState);
-        if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(newState);
-        if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(newState);
-        if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(newState);
-        if (window.textManager) window.textManager.setMagnetEnabled(newState);
-        
-        const magnetBtn = document.getElementById('toolMagnet');
-        if (magnetBtn) {
-            if (newState) {
-                magnetBtn.classList.add('magnet-active');
-            } else {
-                magnetBtn.classList.remove('magnet-active');
-            }
-        }
-        
-        console.log(`Магнит ${newState ? 'включён' : 'выключён'}`);
-    }
-    
-    // Трендовая линия - клавиша U
-    if (e.code === 'KeyU' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        
-        if (window.trendLineManager) {
-            const newState = !window.trendLineManager._isDrawingMode;
-            window.trendLineManager.setDrawingMode(newState);
-            
-            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
-            const trendBtn = document.getElementById('toolTrendLine');
-            if (trendBtn) {
-                if (newState) {
-                    trendBtn.style.background = '#4A90E2';
-                    trendBtn.style.color = '#FFFFFF';
-                    trendBtn.classList.add('active');
-                } else {
-                    trendBtn.style.background = '';
-                    trendBtn.style.color = '';
-                    trendBtn.classList.remove('active');
-                }
-            }
-            
-            console.log(`Трендовая линия ${newState ? 'включена' : 'выключена'}`);
-        }
-    }
-    
-    // Горизонтальный луч - клавиша O
-    if (e.code === 'KeyO' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-        e.preventDefault();
-        
-        if (window.rayManager) {
-            const newState = !window.rayManager._isDrawingMode;
-            window.rayManager.setDrawingMode(newState);
-            
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
-            const rayBtn = document.getElementById('toolHorizontalRay');
-            if (rayBtn) {
-                if (newState) {
-                    rayBtn.style.background = '#4A90E2';
-                    rayBtn.style.color = '#FFFFFF';
-                    rayBtn.classList.add('active');
-                } else {
-                    rayBtn.style.background = '';
-                    rayBtn.style.color = '';
-                    rayBtn.classList.remove('active');
-                }
-            }
-            
-            console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
-        }
-    }
-    
-    // Алерт - клавиша I
-    if (e.code === 'KeyI' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-        e.preventDefault();
-        
-        if (window.alertLineManager) {
-            const newState = !window.alertLineManager._isDrawingMode;
-            window.alertLineManager.setDrawingMode(newState);
-            
-            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
-            const alertBtn = document.getElementById('toolAlert');
-            if (alertBtn) {
-                if (newState) {
-                    alertBtn.style.background = '#4A90E2';
-                    alertBtn.style.color = '#FFFFFF';
-                    alertBtn.classList.add('active');
-                } else {
-                    alertBtn.style.background = '';
-                    alertBtn.style.color = '';
-                    alertBtn.classList.remove('active');
-                }
-            }
-            
-            console.log(`Алерты ${newState ? 'включены' : 'выключены'}`);
-        }
-    }
-    
-    // Линейка - клавиша Y
-    if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        
-        if (window.rulerLineManager) {
-            const newState = !window.rulerLineManager._isDrawingMode;
-            window.rulerLineManager.setDrawingMode(newState);
-            
-            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
-            const rulerBtn = document.getElementById('toolRuler');
-            if (rulerBtn) {
-                if (newState) {
-                    rulerBtn.style.background = '#4A90E2';
-                    rulerBtn.style.color = '#FFFFFF';
-                    rulerBtn.classList.add('active');
-                } else {
-                    rulerBtn.style.background = '';
-                    rulerBtn.style.color = '';
-                    rulerBtn.classList.remove('active');
-                }
-            }
-            
-            console.log(`Линейка ${newState ? 'включена' : 'выключена'}`);
-        }
-    }
-    
-    // Текст - клавиша T
-    if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        
-        if (window.textManager) {
-            const newState = !window.textManager._isDrawingMode;
-            window.textManager.setDrawingMode(newState);
-            
-            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
-            
-            const textBtn = document.getElementById('toolText');
-            if (textBtn) {
-                if (newState) {
-                    textBtn.style.background = '#4A90E2';
-                    textBtn.style.color = '#FFFFFF';
-                    textBtn.classList.add('active');
-                } else {
-                    textBtn.style.background = '';
-                    textBtn.style.color = '';
-                    textBtn.classList.remove('active');
-                }
-            }
-            
-            console.log(`Текст ${newState ? 'включён' : 'выключён'}`);
-        }
-    }
-});
 
 (function() {
     const container = document.getElementById('chart-container');
