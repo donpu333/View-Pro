@@ -7162,6 +7162,89 @@ activateObject(text) {
 }
 
 
+// ========== ГОРЯЧИЕ КЛАВИШИ ==========
+function isTyping() {
+    const a = document.activeElement;
+    return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
+}
+
+document.addEventListener('keydown', (e) => {
+    if (isTyping()) return;
+    
+    // Z - магнит
+    if (e.code === 'KeyZ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        const newState = !window.rayManager?._magnetEnabled;
+        if (window.rayManager) window.rayManager.setMagnetEnabled(newState);
+        if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(newState);
+        if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(newState);
+        if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(newState);
+        if (window.textManager) window.textManager.setMagnetEnabled(newState);
+        const btn = document.getElementById('toolMagnet');
+        if (btn) btn.classList.toggle('magnet-active', newState);
+    }
+    
+    // U - трендовая линия
+    if (e.code === 'KeyU' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (window.trendLineManager) {
+            const ns = !window.trendLineManager._isDrawingMode;
+            window.trendLineManager.setDrawingMode(ns);
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            const btn = document.getElementById('toolTrendLine');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+    
+    // O - горизонтальный луч
+    if (e.code === 'KeyO' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        if (window.rayManager) {
+            const ns = !window.rayManager._isDrawingMode;
+            window.rayManager.setDrawingMode(ns);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            const btn = document.getElementById('toolHorizontalRay');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+    
+
+    // Y - линейка
+    if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (window.rulerLineManager) {
+            const ns = !window.rulerLineManager._isDrawingMode;
+            window.rulerLineManager.setDrawingMode(ns);
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            const btn = document.getElementById('toolRuler');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+    
+    // T - текст
+    if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (window.textManager) {
+            const ns = !window.textManager._isDrawingMode;
+            window.textManager.setDrawingMode(ns);
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
+ 
+            const btn = document.getElementById('toolText');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+});
 
 (function() {
     const container = document.getElementById('chart-container');
