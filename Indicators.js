@@ -257,7 +257,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     constructor(manager) {
         super(manager, 'multiatr', 'ATR Multi', '#FFA500', 'main');
         
-        // 🔥 ЗАГРУЖАЕМ СОХРАНЁННЫЕ НАСТРОЙКИ
         const savedSettings = this._loadSettings();
         
         this.settings = {
@@ -296,13 +295,13 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._isUpdating = false;
         this._updateTimeout = null;
         this._fallbackTimer = null;
+        this._currentPeriod = this.settings.atrPeriod; // 🔥 храним фактически используемый период для текущего графика
         
         this._setupEventHandlers();
         this._initTableDOM();
         setTimeout(() => this.updateAllMetrics(), 500);
     }
     
-    // 🔥 СОХРАНЕНИЕ НАСТРОЕК
     _loadSettings() {
         try {
             const key = 'atr_multi_settings';
@@ -466,22 +465,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return Math.max(Math.floor(hours * 60 / parseInt(minuteTFStr)), 1);
     }
     
-    _rma(src, length) {
-        const result = new Array(src.length).fill(0);
-        
-        let sum = 0;
-        for (let i = 0; i < length; i++) {
-            sum += src[i];
-        }
-        result[length - 1] = sum / length;
-        
-        for (let i = length; i < src.length; i++) {
-            result[i] = (src[i] + (length - 1) * result[i - 1]) / length;
-        }
-        
-        return result;
-    }
-    
     computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
         if (!data || data.length < period + 1) {
             return { 
@@ -592,7 +575,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const isSmallAnomaly = currentRange < lowerBound;
             const isAnomaly = isLargeAnomaly || isSmallAnomaly;
             
-            // ЗАМЕНИ НА:
             if (isAnomaly) {
                 filteredRanges[i] = prevFilteredATR;
             }
@@ -611,7 +593,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const isCurrentlyAnomaly = isCurrentlyLarge || isCurrentlySmall;
         
         const distFromOpen = Math.abs(lastCandle.close - lastCandle.open);
-        // ИСПРАВЛЕНО: progress считается всегда, если atr > 0, без учёта флага isCurrentlyAnomaly
         const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
         
         return {
@@ -646,19 +627,33 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             }
 
             const currentData = chartManager.chartData;
+            const currentInterval = chartManager.currentInterval || '1h'; // 🔥 получаем текущий интервал
             
-            if (currentData.length < this.settings.atrPeriod + 1) {
-                console.warn(`ATR Multi: недостаточно данных (нужно минимум ${this.settings.atrPeriod + 1})`);
-                return;
+            // 🔥 ИСПРАВЛЕНО: Определяем период для текущего графика
+            let currentPeriod = this.settings.atrPeriod;
+            
+            if (this.settings.showMinute1TF && currentInterval === this.settings.minute1TF + 'm') {
+                currentPeriod = this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF);
+            } else if (this.settings.showMinuteTF && currentInterval === this.settings.minuteTF + 'm') {
+                currentPeriod = this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF);
+            } else if (this.settings.showHourTF && currentInterval === this.settings.hourTF + 'h') {
+                currentPeriod = this.settings.hourATRPeriod;
+            } else if (this.settings.showDayTF && currentInterval === '1d') {
+                currentPeriod = this.settings.dayATRPeriod;
+            } else if (this.settings.showWeekTF && currentInterval === '1w') {
+                currentPeriod = this.settings.weekATRPeriod;
             }
+            // Если ТФ не совпадает ни с одним дополнительным – остаётся atrPeriod
+            
+            this._currentPeriod = currentPeriod; // сохраняем для таблицы
             
             this.cache.current = this.computeATRMetrics(
                 currentData,
-                this.settings.atrPeriod, 
+                currentPeriod,
                 this.settings.rangeMode,
-                this.settings.useFilter, 
-                this.settings.filterType, 
-                this.settings.devFactor, 
+                this.settings.useFilter,
+                this.settings.filterType,
+                this.settings.devFactor,
                 this.settings.fixedMult
             );
 
@@ -857,7 +852,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         } catch(e) {}
         
         const formatATR = (v) => (!v || v === 0) ? '—' : v.toFixed(decimals);
-        // ИСПРАВЛЕНО: formatPercent теперь показывает 0.0% вместо '—%'
         const formatPercent = (v) => {
             if (v === undefined || v === null || isNaN(v)) return '—%';
             return v.toFixed(1) + '%';
@@ -905,7 +899,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         if (this.settings.showMinute1TF) rowsHTML += addRow(`${this.settings.minute1TF}M (${this.settings.minute1ATRPeriod}ч)`, '#00FFFF', c.minute1.atr, c.minute1.natr, c.minute1.progress, c.minute1.remaining);
         
         rowsHTML += `<tr style="border-top:1px solid #2A2A4A;">`;
-        rowsHTML += addRow(`⭐ ${currentChartTF} (${this.settings.atrPeriod})`, '#FFD700', current.atr, current.natr, current.progress, current.remaining);
+        // 🔥 ИСПРАВЛЕНО: показываем фактический период, использованный для текущего графика
+        rowsHTML += addRow(`⭐ ${currentChartTF} (${this._currentPeriod})`, '#FFD700', current.atr, current.natr, current.progress, current.remaining);
         
         rowsHTML += `
             <tr style="border-top:1px solid #2A2A4A;">
@@ -1024,7 +1019,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this.settings.minute1TF = document.getElementById('minute1TF')?.value || '1';
         this.settings.minute1ATRPeriod = parseInt(document.getElementById('minute1ATRPeriod')?.value || 1);
         
-        // 🔥 СОХРАНЯЕМ НАСТРОЙКИ
         this._saveSettings();
         
         this.updateAllMetrics();
