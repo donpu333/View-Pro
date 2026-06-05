@@ -593,9 +593,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const isAnomaly = isLargeAnomaly || isSmallAnomaly;
             
             // ЗАМЕНИ НА:
-if (isAnomaly) {
-    filteredRanges[i] = prevFilteredATR;
-}
+            if (isAnomaly) {
+                filteredRanges[i] = prevFilteredATR;
+            }
             
             filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
         }
@@ -611,7 +611,8 @@ if (isAnomaly) {
         const isCurrentlyAnomaly = isCurrentlyLarge || isCurrentlySmall;
         
         const distFromOpen = Math.abs(lastCandle.close - lastCandle.open);
-        const progress = !isCurrentlyAnomaly && atr > 0 ? (distFromOpen / atr) * 100 : 0;
+        // ИСПРАВЛЕНО: progress считается всегда, если atr > 0, без учёта флага isCurrentlyAnomaly
+        const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
         
         return {
             atr,
@@ -856,7 +857,11 @@ if (isAnomaly) {
         } catch(e) {}
         
         const formatATR = (v) => (!v || v === 0) ? '—' : v.toFixed(decimals);
-        const formatPercent = (v) => v > 0 ? v.toFixed(1) + '%' : '—%';
+        // ИСПРАВЛЕНО: formatPercent теперь показывает 0.0% вместо '—%'
+        const formatPercent = (v) => {
+            if (v === undefined || v === null || isNaN(v)) return '—%';
+            return v.toFixed(1) + '%';
+        };
         const progressColor = (p) => p > 80 ? '#FF4444' : p > 50 ? '#FFA500' : '#FFFFFF';
         const remainingColor = (r) => r < 20 ? '#FF4444' : r < 50 ? '#FFA500' : '#FFFFFF';
         
