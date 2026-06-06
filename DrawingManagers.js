@@ -5534,48 +5534,36 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-    async _saveAlerts() {
-        // ✅ Сохраняем ВСЕ алерты, включая завершенные
-        const allDrawings = await window.db.getAll('drawings');
-        const alertIds = new Set(this._alerts.map(item => item.alert.id));
-        
-        // Удаляем из БД только те алерты, которых нет в памяти
-        for (const drawing of allDrawings) {
-            if (drawing.type === 'alert' && !alertIds.has(drawing.id)) {
-                await window.db.delete('drawings', drawing.id);
+  async _saveAlerts() {
+    if (this._alerts.length === 0) return;
+    const promises = this._alerts.map(item => 
+        window.db.put('drawings', {
+            id: item.alert.id,
+            type: 'alert',
+            symbolKey: item.alert.symbolKey,
+            data: {
+                price: item.alert.price,
+                time: item.alert.time,
+                anchorTime: item.alert.anchorTime,
+                symbol: item.alert.symbol,
+                exchange: item.alert.exchange,
+                marketType: item.alert.marketType,
+                options: item.alert.options,
+                timeframeVisibility: item.alert.timeframeVisibility,
+                triggered: item.alert.triggered,
+                triggerCount: item.alert.triggerCount,
+                repeatCount: item.alert.repeatCount,
+                repeatInterval: item.alert.repeatInterval,
+                lastTriggerTime: item.alert.lastTriggerTime,
+                active: item.alert.active,
+                status: item.alert.status,
+                anchorCandle: item.alert.anchorCandle
             }
-        }
-        
-        // Сохраняем все текущие алерты
-        const promises = this._alerts.map(item => 
-            window.db.put('drawings', {
-                id: item.alert.id,
-                type: 'alert',
-                symbolKey: item.alert.symbolKey,
-                data: {
-                    price: item.alert.price,
-                    time: item.alert.time,
-                    anchorTime: item.alert.anchorTime,
-                    symbol: item.alert.symbol,
-                    exchange: item.alert.exchange,
-                    marketType: item.alert.marketType,
-                    options: item.alert.options,
-                    timeframeVisibility: item.alert.timeframeVisibility,
-                    triggered: item.alert.triggered,
-                    triggerCount: item.alert.triggerCount,
-                    repeatCount: item.alert.repeatCount,
-                    repeatInterval: item.alert.repeatInterval,
-                    lastTriggerTime: item.alert.lastTriggerTime,
-                    active: item.alert.active,
-                    status: item.alert.status, // ✅ Сохраняем статус
-                    anchorCandle: item.alert.anchorCandle
-                }
-            }).catch(e => console.warn('Save alert error:', e))
-        );
-        
-        await Promise.all(promises);
-        console.log(`💾 Saved ${this._alerts.length} alerts (${this._alerts.filter(a => a.alert.status === 'active').length} active, ${this._alerts.filter(a => a.alert.status === 'completed' || a.alert.triggered).length} completed)`);
-    }
+        }).catch(e => console.warn('Save alert error:', e))
+    );
+    await Promise.all(promises);
+    console.log(`💾 Saved ${this._alerts.length} alerts`);
+}
 
     async loadAlerts() {
         try {
@@ -5630,7 +5618,7 @@ _detachAllPrimitivesForSymbol(symbolKey) {
             }
             
             const currentSymbolKey = this._getCurrentSymbolKey();
-                this._detachAllPrimitivesForSymbol(currentKey);
+               this._detachAllPrimitivesForSymbol(currentSymbolKey);
             const newAlerts = [];
             
             for (const rec of alertRecords) {
