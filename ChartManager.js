@@ -1654,6 +1654,17 @@ updateRealPrice(price) {
 _syncPriceLine(price) {
     if (!price) return;
     
+    // ✅ 1. THROTTLE — не обновляем чаще чем раз в 100ms
+    const now = Date.now();
+    if (this._lastPriceUpdateTime && now - this._lastPriceUpdateTime < 100) {
+        return;
+    }
+    this._lastPriceUpdateTime = now;
+    
+    // ✅ 2. ОКРУГЛЕНИЕ ДО МИНИМАЛЬНОГО ШАГА (убираем микропрыжки)
+    const precision = this._getPrecision();
+    const roundedPrice = Math.round(price * Math.pow(10, precision)) / Math.pow(10, precision);
+    
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (!series) return;
     
@@ -1661,14 +1672,14 @@ _syncPriceLine(price) {
     if (!lastCandle) return;
     
     // Обновляем данные свечи
-    lastCandle.close = price;
-    if (price > lastCandle.high) lastCandle.high = price;
-    if (price < lastCandle.low) lastCandle.low = price;
+    lastCandle.close = roundedPrice;
+    if (roundedPrice > lastCandle.high) lastCandle.high = roundedPrice;
+    if (roundedPrice < lastCandle.low) lastCandle.low = roundedPrice;
     
-    const isBullish = price >= lastCandle.open;
+    const isBullish = roundedPrice >= lastCandle.open;
     const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
     
-    this.currentRealPrice = price;
+    this.currentRealPrice = roundedPrice;
     this._lastAppliedColor = lineColor;
     this.lastCandle = lastCandle;
     
@@ -1678,25 +1689,46 @@ _syncPriceLine(price) {
         open: lastCandle.open,
         high: lastCandle.high,
         low: lastCandle.low,
-        close: price
+        close: roundedPrice
     });
     
     // Линия
     series.applyOptions({
-        priceLineSource: price,
+        priceLineSource: roundedPrice,
         priceLineColor: lineColor
     });
     
     // Таймер
     const prim = this.timerManager?._primitive;
     if (prim) {
-        if (prim.setPrice) prim.setPrice(price);
+        if (prim.setPrice) prim.setPrice(roundedPrice);
         if (prim.setColor) prim.setColor(lineColor);
         if (prim.isEnabled()) prim.requestRedraw();
     }
     
     this.scheduleUpdatePosition();
-    this._updatePageTitle(); // 👈 ОБНОВЛЯЕМ ЗАГОЛОВОК ВКЛАДКИ
+    this._updatePageTitle();
+}
+
+// ✅ ДОБАВЬ ЭТОТ МЕТОД ДЛЯ ОПРЕДЕЛЕНИЯ ТОЧНОСТИ
+_getPrecision() {
+    // Пробуем из формата серии
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    const cachedPrecision = series?.options()?.priceFormat?.precision;
+    if (cachedPrecision) return cachedPrecision;
+    
+    // Определяем по последней цене
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (lastCandle && lastCandle.close) {
+        const price = lastCandle.close;
+        if (price >= 100) return 1;      // 1000.0
+        if (price >= 10) return 2;       // 50.00
+        if (price >= 1) return 3;        // 1.234
+        if (price >= 0.01) return 4;     // 0.1234
+        if (price >= 0.0001) return 6;   // 0.000123
+        return 8;                         // 0.00000001
+    }
+    return 2;
 }
     autoScale() {
         if (this.chart && this.chartData.length > 0) {
@@ -2138,7 +2170,12 @@ _createNewCandle(candle) {
     
     console.log('🕯️ Новая свеча создана:', new Date(candle.time * 1000).toISOString());
 }
-  async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
+ async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
+    // ✅ ЗАДЕРЖКА ПЕРЕД ЗАПРОСОМ К BINANCE
+    if (exchange === 'binance') {
+        await new Promise(r => setTimeout(r, 100));
+    }
+    
     // Ждём только предыдущий fetchKlines, но не тикеры
     while (ChartManager._fetchInProgress) {
         await new Promise(r => setTimeout(r, 100));
