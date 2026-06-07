@@ -42,44 +42,57 @@ class PriceManager {
             this.wsBinance = ws;
         };
         
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                const tickers = Array.isArray(data) ? data : [data];
-                
-                const now = Date.now();
-                if (now - _lastBatchUpdate < 100) return;
-                _lastBatchUpdate = now;
-                
-                tickers.forEach(ticker => {
-                    if (!ticker.s || !ticker.c) return;
-                    
-                    const symbol = ticker.s;
-                    const price = parseFloat(ticker.c);
-                    
-                    if (isNaN(price)) return;
-                    
-                    const lastPrice = _lastPrices.get(symbol);
-                    if (lastPrice !== undefined && Math.abs(price - lastPrice) < 0.01) return;
-                    _lastPrices.set(symbol, price);
-                    
-                    this.prices.set(symbol, {
-                        price: price,
-                        time: Date.now(),
-                        exchange: 'binance'
-                    });
-                    
-                    if (this.subscribers.has(symbol)) {
-                        const cbs = this.subscribers.get(symbol);
-                        for (let i = 0; i < cbs.length; i++) {
-                            try { 
-                                cbs[i](price, symbol); 
-                            } catch(e) {}
-                        }
-                    }
-                });
-            } catch (error) {}
-        };
+       ws.onmessage = (event) => {
+    try {
+        const data = JSON.parse(event.data);
+        const tickers = Array.isArray(data) ? data : [data];
+        
+        tickers.forEach(ticker => {
+            if (!ticker.s) return;
+            
+            const symbol = ticker.s;
+            const price = parseFloat(ticker.c);
+            const change = parseFloat(ticker.P);      // ✅ процент
+            const volume = parseFloat(ticker.q);      // ✅ объем
+            const trades = parseInt(ticker.n);        // ✅ сделки
+            
+            if (isNaN(price)) return;
+            
+            // Сохраняем ВСЕ данные
+            this.prices.set(symbol, {
+                price: price,
+                change: change,
+                volume: volume,
+                trades: trades,
+                time: Date.now(),
+                exchange: 'binance'
+            });
+            
+            // Обновляем TickerPanel напрямую
+            if (window.tickerPanel && window.tickerPanel.tickersMap) {
+                const key = `${symbol}:binance:futures`;
+                const panelTicker = window.tickerPanel.tickersMap.get(key);
+                if (panelTicker) {
+                    panelTicker.price = price;
+                    panelTicker.change = change;
+                    panelTicker.volume = volume;
+                    panelTicker.trades = trades;
+                    window.tickerPanel.renderer.updatePriceElements();
+                }
+            }
+            
+            // Вызываем подписчиков
+            if (this.subscribers.has(symbol)) {
+                const cbs = this.subscribers.get(symbol);
+                for (let i = 0; i < cbs.length; i++) {
+                    try { 
+                        cbs[i](price, symbol, { change, volume, trades }); 
+                    } catch(e) {}
+                }
+            }
+        });
+    } catch (error) {}
+};
         
         ws.onclose = (event) => {
             console.log('❌ PriceManager: Binance закрыт, переподключение...');
