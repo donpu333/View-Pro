@@ -106,80 +106,111 @@ class PriceManager {
         };
     }
     
-    _initBybit() {
-        if (this.bybitReconnectTimer) {
-            clearTimeout(this.bybitReconnectTimer);
-            this.bybitReconnectTimer = null;
-        }
-        
-        if (this.wsBybit) {
-            try { 
-                this.wsBybit.onclose = null; 
-                this.wsBybit.onerror = null; 
-                this.wsBybit.onmessage = null; 
-                this.wsBybit.close(); 
-            } catch(e) {}
-            this.wsBybit = null;
-        }
-        
-        console.log('🔄 PriceManager: Подключение к Bybit...');
-        
-        const ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
-        
-        ws.onopen = () => {
-            console.log('✅ PriceManager: Bybit подключен');
-            this.wsBybit = ws;
-            try {
-                ws.send(JSON.stringify({ 
-                    op: "subscribe", 
-                    args: ["tickers.BTCUSDT"] 
-                }));
-            } catch(e) {
-                console.error('Ошибка подписки Bybit:', e);
-            }
-        };
-        
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                
-                if (data.op === 'subscribe' && data.success) {
-                    console.log('✅ PriceManager: Bybit подписка успешна');
-                    return;
-                }
-                
-                if (data.topic && data.topic.startsWith('tickers.') && data.data) {
-                    const symbol = data.data.symbol;
-                    const price = parseFloat(data.data.lastPrice);
-                    
-                    if (!symbol || isNaN(price)) return;
-                    
-                    this.prices.set(symbol, {
-                        price: price,
-                        time: Date.now(),
-                        exchange: 'bybit'
-                    });
-                    
-                    if (this.subscribers.has(symbol)) {
-                        const cbs = this.subscribers.get(symbol);
-                        for (let i = 0; i < cbs.length; i++) {
-                            try { cbs[i](price, symbol); } catch(e) {}
-                        }
-                    }
-                }
-            } catch (error) {}
-        };
-        
-        ws.onclose = (event) => {
-            console.warn('❌ PriceManager: Bybit закрыт, код:', event.code, 'причина:', event.reason);
-            this.wsBybit = null;
-            this.bybitReconnectTimer = setTimeout(() => this._initBybit(), 5000);
-        };
-        
-        ws.onerror = (error) => {
-            console.error('⚠️ PriceManager: Bybit ошибка');
-        };
+   _initBybit() {
+    if (this.bybitReconnectTimer) {
+        clearTimeout(this.bybitReconnectTimer);
+        this.bybitReconnectTimer = null;
     }
+    
+    if (this.wsBybit) {
+        try { 
+            this.wsBybit.onclose = null; 
+            this.wsBybit.onerror = null; 
+            this.wsBybit.onmessage = null; 
+            this.wsBybit.close(); 
+        } catch(e) {}
+        this.wsBybit = null;
+    }
+    
+    console.log('🔄 PriceManager: Подключение к Bybit...');
+    
+    const ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
+    
+    ws.onopen = () => {
+        console.log('✅ PriceManager: Bybit подключен');
+        this.wsBybit = ws;
+        
+        // ✅ ПОДПИСЫВАЕМСЯ НА ВСЕ СИМВОЛЫ ИЗ TICKERPANEL
+        const symbols = [];
+        if (window.tickerPanel && window.tickerPanel.tickersMap) {
+            for (const key of window.tickerPanel.tickersMap.keys()) {
+                if (key.includes(':bybit:')) {
+                    const symbol = key.split(':')[0];
+                    symbols.push(`tickers.${symbol}`);
+                }
+            }
+        }
+        
+        // Если нет символов — подписываемся на BTCUSDT по умолчанию
+        const args = symbols.length > 0 ? symbols : ["tickers.BTCUSDT"];
+        console.log(`📡 Bybit подписка на ${args.length} символов`);
+        
+        ws.send(JSON.stringify({ 
+            op: "subscribe", 
+            args: args
+        }));
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.op === 'subscribe' && data.success) {
+                console.log('✅ Bybit подписка успешна:', data.args);
+                return;
+            }
+            
+            if (data.topic && data.topic.startsWith('tickers.') && data.data) {
+                const symbol = data.data.symbol;
+                const price = parseFloat(data.data.lastPrice);
+                const change = parseFloat(data.data.price24hPcnt) * 100;
+                const volume = parseFloat(data.data.volume24h);
+                
+                if (!symbol || isNaN(price)) return;
+                
+                // Сохраняем в PriceManager
+                this.prices.set(symbol, {
+                    price, change, volume,
+                    time: Date.now(),
+                    exchange: 'bybit'
+                });
+                
+                // Обновляем TickerPanel
+                const key = `${symbol}:bybit:futures`;
+                const panelTicker = window.tickerPanel?.tickersMap?.get(key);
+                if (panelTicker) {
+                    const now = Date.now();
+                    if (panelTicker.price !== price) {
+                        panelTicker.prevPrice = panelTicker.price || price;
+                        panelTicker.price = price;
+                        panelTicker._flashDir = price > panelTicker.prevPrice ? 'up' : 'down';
+                        panelTicker._flashTime = now;
+                    }
+                    panelTicker.change = change;
+                    panelTicker.volume = volume;
+                    window.tickerPanel.renderer.updatePriceElements();
+                    window.tickerPanel._flashUpdatedRows(now);
+                }
+                
+                // Вызываем подписчиков
+                if (this.subscribers.has(symbol)) {
+                    const cbs = this.subscribers.get(symbol);
+                    cbs.forEach(cb => cb(price, symbol, { change, volume }));
+                }
+            }
+        } catch (error) {}
+    };
+    
+    ws.onclose = (event) => {
+        console.warn('❌ PriceManager: Bybit закрыт');
+        this.wsBybit = null;
+        this.bybitReconnectTimer = setTimeout(() => this._initBybit(), 5000);
+    };
+    
+    ws.onerror = (error) => {
+        console.error('⚠️ PriceManager: Bybit ошибка');
+    };
+}
 
     subscribe(symbol, callback) {
         if (!symbol || typeof callback !== 'function') return;
