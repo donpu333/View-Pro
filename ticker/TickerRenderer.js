@@ -145,7 +145,7 @@ class TickerRenderer {
         }
         
         if (this.parent?.debugMode && domUpdates > 0) {
-            console.log(`🔄 Обновлено ${domUpdates} DOM-элементов`);
+          
         }
     }
     
