@@ -9,20 +9,33 @@ class WebSocketManager {
         this.currentInterval = '1h';
         this.currentExchange = 'binance';
         this.currentMarketType = 'futures';
+        this._klineConnecting = false;  // флаг, чтобы не создавать второй раз параллельно
+        this._tradeConnecting = false;
     }
 
     connectKline(symbol, interval, exchange, marketType) {
-        if (!symbol) { symbol = this.currentSymbol || 'BTCUSDT'; }
-        if (!exchange) { exchange = this.currentExchange || 'binance'; }
-        if (!marketType) { marketType = this.currentMarketType || 'futures'; }
-        if (!interval) { interval = this.currentInterval || '1h'; }
+        if (!symbol) symbol = this.currentSymbol || 'BTCUSDT';
+        if (!exchange) exchange = this.currentExchange || 'binance';
+        if (!marketType) marketType = this.currentMarketType || 'futures';
+        if (!interval) interval = this.currentInterval || '1h';
 
-        this.currentSymbol = symbol;
-        this.currentInterval = interval;
-        this.currentExchange = exchange;
-        this.currentMarketType = marketType;
+        // Если уже подключены к тем же параметрам — не пересоздаём
+        if (this.wsKline && 
+            this.wsKline.readyState === WebSocket.OPEN &&
+            this.currentSymbol === symbol &&
+            this.currentInterval === interval &&
+            this.currentExchange === exchange &&
+            this.currentMarketType === marketType) {
+            return;
+        }
 
-        if (this.klineReconnectTimer) { clearTimeout(this.klineReconnectTimer); this.klineReconnectTimer = null; }
+        // Если уже идёт подключение к другим параметрам, отменяем старый таймер
+        if (this.klineReconnectTimer) {
+            clearTimeout(this.klineReconnectTimer);
+            this.klineReconnectTimer = null;
+        }
+
+        // Закрываем старый сокет
         if (this.wsKline) {
             this.wsKline.onclose = null;
             this.wsKline.onerror = null;
@@ -33,10 +46,15 @@ class WebSocketManager {
             this.wsKline = null;
         }
 
+        this.currentSymbol = symbol;
+        this.currentInterval = interval;
+        this.currentExchange = exchange;
+        this.currentMarketType = marketType;
+
         let wsUrl;
         if (exchange === 'bybit') {
-           let category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
-wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
+            let category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
+            wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
             if (marketType === 'spot') {
                 wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${interval}`;
@@ -75,53 +93,52 @@ wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
                         };
                     }
                 } else {
-                  const k = data.k;
-if (k) {
-    const cm = self.chartManager;
-    const candleTime = Math.floor(k.t / 1000);
-    const lastCandle = cm?.chartData?.[cm.chartData.length - 1];
-    
-    // Создаём новую свечу если её время больше последней
-    if (cm && lastCandle && candleTime > lastCandle.time) {
-        const exists = cm.chartData.some(c => c.time === candleTime);
-        if (!exists) {
-            const newCandle = {
-                time: candleTime,
-                open: parseFloat(k.o),
-                high: parseFloat(k.h),
-                low: parseFloat(k.l),
-                close: parseFloat(k.c),
-                volume: parseFloat(k.v)
-            };
-            cm.chartData.push(newCandle);
-            cm.lastCandle = newCandle;
-            
-            const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-            if (series) series.setData(cm.chartData);
-            
-            if (cm.volumeSeries) {
-                const volData = cm.chartData.map(c => ({
-                    time: c.time,
-                    value: c.volume || 0,
-                    color: c.close >= c.open ? cm.bullishColor : cm.bearishColor
-                }));
-                cm.volumeSeries.setData(volData);
-            }
-            
-            if (cm.timerManager) cm.timerManager.start(interval);
-            console.log('🕯️ Новая свеча:', new Date(candleTime * 1000));
-        }
-    }
-    
-    candle = {
-        time: candleTime,
-        open: parseFloat(k.o),
-        high: parseFloat(k.h),
-        low: parseFloat(k.l),
-        close: parseFloat(k.c),
-        volume: parseFloat(k.v)
-    };
-}
+                    const k = data.k;
+                    if (k) {
+                        const cm = self.chartManager;
+                        const candleTime = Math.floor(k.t / 1000);
+                        const lastCandle = cm?.chartData?.[cm.chartData.length - 1];
+                        
+                        if (cm && lastCandle && candleTime > lastCandle.time) {
+                            const exists = cm.chartData.some(c => c.time === candleTime);
+                            if (!exists) {
+                                const newCandle = {
+                                    time: candleTime,
+                                    open: parseFloat(k.o),
+                                    high: parseFloat(k.h),
+                                    low: parseFloat(k.l),
+                                    close: parseFloat(k.c),
+                                    volume: parseFloat(k.v)
+                                };
+                                cm.chartData.push(newCandle);
+                                cm.lastCandle = newCandle;
+                                
+                                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+                                if (series) series.setData(cm.chartData);
+                                
+                                if (cm.volumeSeries) {
+                                    const volData = cm.chartData.map(c => ({
+                                        time: c.time,
+                                        value: c.volume || 0,
+                                        color: c.close >= c.open ? cm.bullishColor : cm.bearishColor
+                                    }));
+                                    cm.volumeSeries.setData(volData);
+                                }
+                                
+                                if (cm.timerManager) cm.timerManager.start(interval);
+                                console.log('🕯️ Новая свеча:', new Date(candleTime * 1000));
+                            }
+                        }
+                        
+                        candle = {
+                            time: candleTime,
+                            open: parseFloat(k.o),
+                            high: parseFloat(k.h),
+                            low: parseFloat(k.l),
+                            close: parseFloat(k.c),
+                            volume: parseFloat(k.v)
+                        };
+                    }
                 }
 
                 if (candle && self.chartManager && self.chartManager.currentSymbol === symbol) {
@@ -132,22 +149,37 @@ if (k) {
 
         ws.onclose = () => {
             console.log('❌ Kline WS закрыт, переподключение...');
+            // Переподключаемся только если текущий символ не изменился
             if (self.currentSymbol === symbol) {
                 self.klineReconnectTimer = setTimeout(() => {
                     self.connectKline(symbol, interval, exchange, marketType);
-                }, 3000);
+                }, 5000); // увеличил задержку до 5 сек
             }
         };
 
-        ws.onerror = () => {};
+        ws.onerror = () => {
+            // Не нужно логировать ошибку, она приведёт к закрытию
+        };
     }
 
     connectTrade(symbol, exchange, marketType) {
-        if (!symbol) { symbol = this.currentSymbol || 'BTCUSDT'; }
-        if (!exchange) { exchange = this.currentExchange || 'binance'; }
-        if (!marketType) { marketType = this.currentMarketType || 'futures'; }
+        if (!symbol) symbol = this.currentSymbol || 'BTCUSDT';
+        if (!exchange) exchange = this.currentExchange || 'binance';
+        if (!marketType) marketType = this.currentMarketType || 'futures';
 
-        if (this.tradeReconnectTimer) { clearTimeout(this.tradeReconnectTimer); this.tradeReconnectTimer = null; }
+        if (this.wsTrade && 
+            this.wsTrade.readyState === WebSocket.OPEN &&
+            this.currentSymbol === symbol &&
+            this.currentExchange === exchange &&
+            this.currentMarketType === marketType) {
+            return;
+        }
+
+        if (this.tradeReconnectTimer) {
+            clearTimeout(this.tradeReconnectTimer);
+            this.tradeReconnectTimer = null;
+        }
+
         if (this.wsTrade) {
             this.wsTrade.onclose = null;
             this.wsTrade.onerror = null;
@@ -160,8 +192,8 @@ if (k) {
 
         let wsUrl;
         if (exchange === 'bybit') {
-         let category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
-wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
+            let category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
+            wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
             if (marketType === 'spot') {
                 wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`;
@@ -208,7 +240,7 @@ wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
             if (self.currentSymbol === symbol) {
                 self.tradeReconnectTimer = setTimeout(() => {
                     self.connectTrade(symbol, exchange, marketType);
-                }, 3000);
+                }, 5000);
             }
         };
 
@@ -216,8 +248,17 @@ wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
     }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
-        this.connectKline(symbol, interval, exchange, marketType);
-        this.connectTrade(symbol, exchange, marketType);
+        // Закрываем старые сокеты только если параметры изменились
+        const needReconnectKline = 
+            this.currentSymbol !== symbol ||
+            this.currentInterval !== interval ||
+            this.currentExchange !== exchange ||
+            this.currentMarketType !== marketType;
+
+        if (needReconnectKline) {
+            this.connectKline(symbol, interval, exchange, marketType);
+            this.connectTrade(symbol, exchange, marketType);
+        }
     }
 
     closeAll() {
