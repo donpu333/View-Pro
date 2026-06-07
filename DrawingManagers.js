@@ -456,28 +456,26 @@ class HorizontalRayManager {
         return this._rays.filter(item => item.ray.symbolKey === currentKey);
     }
 
-// В HorizontalRayManager._setupHotkeys() - ЗАМЕНИТЕ существующий код
 _setupHotkeys() {
-    // Горячая клавиша H (как Horizontal) - ВКЛЮЧАЕТ РЕЖИМ, а не создаёт луч
     document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
         if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
             e.preventDefault();
             e.stopPropagation();
-            
             const newState = !this._isDrawingMode;
             this.setDrawingMode(newState);
-            
-            // Выключаем режимы других инструментов
             if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
             if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
             if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
             if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
             console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
         }
         
-        // Delete - удаление выбранного луча
-        if (e.key === 'Delete' && this._selectedRay) {
+        // ✅ Удаляем только если луч готов к перетаскиванию (есть точка)
+        if (e.key === 'Delete' && this._selectedRay && this._selectedRay.readyToDrag === true) {
+            e.preventDefault();
             this.deleteRay(this._selectedRay.id);
             this._selectedRay = null;
         }
@@ -2016,8 +2014,21 @@ this._lastClickTime = 0;
         });
     }
 
-    _setupHotkeys() { document.addEventListener('keydown', this._handleKeyDown); }
-
+   _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        // ... обработка U, других клавиш ...
+        
+        // ✅ Удаляем только если линия в режиме редактирования (editMode === true)
+        if (e.key === 'Delete' && this._selectedLine && this._selectedLine.editMode === true) {
+            e.preventDefault();
+            this.deleteTrendLine(this._selectedLine.id);
+            this._selectedLine = null;
+        }
+    });
+}
     _getCurrentSymbolKey() {
         const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
         const exchange = this._chartManager.currentExchange || 'binance';
@@ -3334,10 +3345,21 @@ class RulerLineManager {
             this._lastMouseY = y;
         });
     }
-
-    _setupHotkeys() {
-        document.addEventListener('keydown', this._handleKeyDown);
-    }
+_setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        // ... обработка Y ...
+        
+        // ✅ Удаляем только если есть активная точка перетаскивания
+        if (e.key === 'Delete' && this._selectedRuler && (this._selectedRuler.showDragPoint1 || this._selectedRuler.showDragPoint2)) {
+            e.preventDefault();
+            this.deleteRuler(this._selectedRuler.id);
+            this._selectedRuler = null;
+        }
+    });
+}
 
     _getCurrentSymbolKey() {
         const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
@@ -4405,35 +4427,29 @@ class AlertLineManager {
     }
 _setupHotkeys() {
     document.addEventListener('keydown', (e) => {
-        // Проверка - не печатаем ли мы в поле ввода
         const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-            return;
-        }
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
         
         if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
             e.preventDefault();
             e.stopPropagation();
-            
             const newState = !this._isDrawingMode;
             this.setDrawingMode(newState);
-            
             if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
             if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
             if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
             if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            
             console.log(`🔔 Алерты ${newState ? 'включены' : 'выключены'}`);
         }
         
-        if (e.key === 'Delete' && this._selectedAlert) {
+        // ✅ Удаляем только если есть точка перетаскивания
+        if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
             e.preventDefault();
             this.deleteAlert(this._selectedAlert.id);
             this._selectedAlert = null;
         }
     });
 }
-
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
 
@@ -6274,14 +6290,21 @@ this._lastClickTime = 0;
         return `${symbol}:${exchange}:${marketType}`;
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Delete' && this._selectedText) {
-                this.deleteText(this._selectedText.id);
-                this._selectedText = null;
-            }
-        });
-    }
+   _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        // ... обработка T ...
+        
+        // ✅ Удаляем только если есть точка перетаскивания
+        if (e.key === 'Delete' && this._selectedText && this._selectedText.showDragPoint === true) {
+            e.preventDefault();
+            this.deleteText(this._selectedText.id);
+            this._selectedText = null;
+        }
+    });
+}
 
     _handleContextMenu(e) {
         e.preventDefault();
