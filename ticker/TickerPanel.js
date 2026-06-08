@@ -747,15 +747,17 @@ startTickerPanelPriceEngine() {
 // ============================================
 // ✅ АНИМАЦИЯ
 // ============================================
-
 _flashUpdatedRows(flashTime) {
     var container = document.getElementById('tickerListContainer');
     if (!container) return;
     
+    var now = Date.now();
+    
     for (var key of this.tickersMap.keys()) {
         var ticker = this.tickersMap.get(key);
         
-        if (ticker && ticker._flashTime === flashTime) {
+        // ✅ Проверяем, что флаг установлен и не старше 500 мс
+        if (ticker && ticker._flashTime && (now - ticker._flashTime) < 500) {
             var row = container.querySelector(
                 '.ticker-item[data-symbol="' + ticker.symbol + '"][data-exchange="' + ticker.exchange + '"][data-market-type="' + ticker.marketType + '"]'
             );
@@ -766,16 +768,18 @@ _flashUpdatedRows(flashTime) {
                 row.classList.add(ticker._flashDir === 'up' ? 'price-flash-up' : 'price-flash-down');
                 
                 setTimeout(function() {
-                    row.classList.remove('price-flash-up', 'price-flash-down');
+                    if (row) {
+                        row.classList.remove('price-flash-up', 'price-flash-down');
+                    }
                 }, 400);
             }
             
-            delete ticker._flashTime;
-            delete ticker._flashDir;
+            // ❌ НЕ УДАЛЯЕМ — пусть живут, но проверяем по времени
+            // delete ticker._flashTime;
+            // delete ticker._flashDir;
         }
     }
 }
-
 
 clearAllSymbols() {
     console.log('🗑️ Начало очистки всех символов...');
