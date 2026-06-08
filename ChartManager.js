@@ -35,11 +35,7 @@ class ChartManager {
         this._switchingSymbol = false;
         this._currentFetchController = null;
         this._updateTimeout = null;
- this._lastPriceUpdateTime = 0;
-    this._priceUpdateThrottleMs = 50;      // 20 обновлений/сек
-    this._pendingPrice = null;
-    this._priceUpdateTimer = null;
-    this._lastCachedClose = null;    
+
         this._visibilityHandler = () => {
             if (document.hidden) {
                 // Ничего не делаем при скрытии
@@ -1658,17 +1654,6 @@ updateRealPrice(price) {
 _syncPriceLine(price) {
     if (!price) return;
     
-    // ✅ 1. THROTTLE — не обновляем чаще чем раз в 100ms
-    const now = Date.now();
-    if (this._lastPriceUpdateTime && now - this._lastPriceUpdateTime < 100) {
-        return;
-    }
-    this._lastPriceUpdateTime = now;
-    
-    // ✅ 2. ОКРУГЛЕНИЕ ДО МИНИМАЛЬНОГО ШАГА (убираем микропрыжки)
-    const precision = this._getPrecision();
-    const roundedPrice = Math.round(price * Math.pow(10, precision)) / Math.pow(10, precision);
-    
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (!series) return;
     
@@ -1676,14 +1661,14 @@ _syncPriceLine(price) {
     if (!lastCandle) return;
     
     // Обновляем данные свечи
-    lastCandle.close = roundedPrice;
-    if (roundedPrice > lastCandle.high) lastCandle.high = roundedPrice;
-    if (roundedPrice < lastCandle.low) lastCandle.low = roundedPrice;
+    lastCandle.close = price;
+    if (price > lastCandle.high) lastCandle.high = price;
+    if (price < lastCandle.low) lastCandle.low = price;
     
-    const isBullish = roundedPrice >= lastCandle.open;
+    const isBullish = price >= lastCandle.open;
     const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
     
-    this.currentRealPrice = roundedPrice;
+    this.currentRealPrice = price;
     this._lastAppliedColor = lineColor;
     this.lastCandle = lastCandle;
     
@@ -1693,46 +1678,25 @@ _syncPriceLine(price) {
         open: lastCandle.open,
         high: lastCandle.high,
         low: lastCandle.low,
-        close: roundedPrice
+        close: price
     });
     
     // Линия
     series.applyOptions({
-        priceLineSource: roundedPrice,
+        priceLineSource: price,
         priceLineColor: lineColor
     });
     
     // Таймер
     const prim = this.timerManager?._primitive;
     if (prim) {
-        if (prim.setPrice) prim.setPrice(roundedPrice);
+        if (prim.setPrice) prim.setPrice(price);
         if (prim.setColor) prim.setColor(lineColor);
         if (prim.isEnabled()) prim.requestRedraw();
     }
     
     this.scheduleUpdatePosition();
-    this._updatePageTitle();
-}
-
-// ✅ ДОБАВЬ ЭТОТ МЕТОД ДЛЯ ОПРЕДЕЛЕНИЯ ТОЧНОСТИ
-_getPrecision() {
-    // Пробуем из формата серии
-    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-    const cachedPrecision = series?.options()?.priceFormat?.precision;
-    if (cachedPrecision) return cachedPrecision;
-    
-    // Определяем по последней цене
-    const lastCandle = this.chartData[this.chartData.length - 1];
-    if (lastCandle && lastCandle.close) {
-        const price = lastCandle.close;
-        if (price >= 100) return 1;      // 1000.0
-        if (price >= 10) return 2;       // 50.00
-        if (price >= 1) return 3;        // 1.234
-        if (price >= 0.01) return 4;     // 0.1234
-        if (price >= 0.0001) return 6;   // 0.000123
-        return 8;                         // 0.00000001
-    }
-    return 2;
+    this._updatePageTitle(); // 👈 ОБНОВЛЯЕМ ЗАГОЛОВОК ВКЛАДКИ
 }
     autoScale() {
         if (this.chart && this.chartData.length > 0) {
