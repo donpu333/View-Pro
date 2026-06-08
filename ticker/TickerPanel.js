@@ -622,84 +622,111 @@ startTickerPanelPriceEngine() {
     // ============================================
     
     const connectBinanceWs = (id, url, marketType) => {
-        if (this._wsConnections[id]) return;
-        var ws = new WebSocket(url);
-        this._wsConnections[id] = ws;
-        ws.onopen = function() { console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;'); };
-        ws.onmessage = (event) => {
-            try {
-                var tickers = JSON.parse(event.data);
-                if (!Array.isArray(tickers)) return;
-                var now = Date.now();
-                for (var i = 0; i < tickers.length; i++) {
-                    var t = tickers[i];
-                    if (!t.s || !t.c) continue;
-                    var key = t.s + ':binance:' + marketType;
-                    var tk = this.tickersMap.get(key);
-                    if (tk) {
-                        var newPrice = parseFloat(t.c);
-                        if (tk.price !== newPrice) {
-                            tk.prevPrice = tk.price || newPrice;
-                            tk.price = newPrice;
-                            tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
-                            tk._flashTime = now;
-                        }
+    if (this._wsConnections[id]) return;
+    var ws = new WebSocket(url);
+    this._wsConnections[id] = ws;
+    
+    ws.onopen = function() { 
+        console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;'); 
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            var tickers = JSON.parse(event.data);
+            if (!Array.isArray(tickers)) return;
+            var now = Date.now();
+            
+            for (var i = 0; i < tickers.length; i++) {
+                var t = tickers[i];
+                if (!t.s || !t.c) continue;
+                var key = t.s + ':binance:' + marketType;
+                var tk = this.tickersMap.get(key);
+                
+                if (tk) {
+                    var newPrice = parseFloat(t.c);
+                    if (tk.price !== newPrice) {
+                        tk.prevPrice = tk.price || newPrice;
+                        tk.price = newPrice;
+                        // ✅ МЕРЦАНИЕ — ЭТИ 2 СТРОКИ
+                        tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
+                        tk._flashTime = now;
                     }
+                    
+                    // ✅ ОБНОВЛЯЕМ 24h ДАННЫЕ
+                    if (t.P !== undefined) tk.change = parseFloat(t.P);
+                    if (t.q !== undefined) tk.volume = parseFloat(t.q);
+                    if (t.n !== undefined) tk.trades = parseInt(t.n);
                 }
+            }
+            
+            if (!this._blockDOMUpdates) {
+                this.renderer.updatePriceElements();
+                this._flashUpdatedRows(now);
+            }
+        } catch(e) {}
+    };
+    
+    ws.onclose = function() { 
+        if (this._wsConnections) this._wsConnections[id] = null;
+        setTimeout(function() { connectBinanceWs(id, url, marketType); }, 5000); 
+    };
+    
+    ws.onerror = function() { ws.close(); };
+};
+  const connectBybitWs = (id, url, marketType) => {
+    if (this._wsConnections[id]) return;
+    var ws = new WebSocket(url);
+    this._wsConnections[id] = ws;
+    
+    ws.onopen = function() {
+        console.log('%c✅ [WS] ' + id, 'color:#F7A600;font-weight:bold;');
+        var topic = marketType === 'futures' ? 'tickers.linear' : 'tickers.spot';
+        ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            var msg = JSON.parse(event.data);
+            var data = msg.data;
+            if (!data || !data.topic || !data.topic.startsWith('tickers.')) return;
+            var d = data.data;
+            if (!d) return;
+            
+            var symbol = d.s || d.symbol;
+            var newPrice = parseFloat(d.lastPrice || d.c || d.p);
+            if (!symbol || isNaN(newPrice)) return;
+            
+            var mt = data.topic.includes('linear') ? 'futures' : 'spot';
+            var key = symbol + ':bybit:' + mt;
+            var tk = this.tickersMap.get(key);
+            
+            if (tk && tk.price !== newPrice) {
+                var now = Date.now();
+                tk.prevPrice = tk.price || newPrice;
+                tk.price = newPrice;
+                // ✅ МЕРЦАНИЕ ДЛЯ BYBIT
+                tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
+                tk._flashTime = now;
+                
+                // ✅ 24h ДАННЫЕ ДЛЯ BYBIT
+                if (d.price24hPcnt !== undefined) tk.change = parseFloat(d.price24hPcnt) * 100;
+                if (d.volume24h !== undefined) tk.volume = parseFloat(d.volume24h);
+                
                 if (!this._blockDOMUpdates) {
                     this.renderer.updatePriceElements();
                     this._flashUpdatedRows(now);
                 }
-            } catch(e) {}
-        };
-        ws.onclose = function() { 
-            if (this._wsConnections) this._wsConnections[id] = null;
-            setTimeout(function() { connectBinanceWs(id, url, marketType); }, 5000); 
-        };
-        ws.onerror = function() { ws.close(); };
+            }
+        } catch(e) {}
     };
-
-    const connectBybitWs = (id, url, marketType) => {
-        if (this._wsConnections[id]) return;
-        var ws = new WebSocket(url);
-        this._wsConnections[id] = ws;
-        ws.onopen = function() {
-            console.log('%c✅ [WS] ' + id, 'color:#F7A600;font-weight:bold;');
-            var topic = marketType === 'futures' ? 'tickers.linear' : 'tickers.spot';
-            ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
-        };
-        ws.onmessage = (event) => {
-            try {
-                var msg = JSON.parse(event.data);
-                var data = msg.data;
-                if (!data || !data.topic || !data.topic.startsWith('tickers.')) return;
-                var d = data.data;
-                if (!d) return;
-                var symbol = d.s || d.symbol;
-                var newPrice = parseFloat(d.lastPrice || d.c || d.p);
-                if (!symbol || isNaN(newPrice)) return;
-                var mt = data.topic.includes('linear') ? 'futures' : 'spot';
-                var key = symbol + ':bybit:' + mt;
-                var tk = this.tickersMap.get(key);
-                if (tk && tk.price !== newPrice) {
-                    var now = Date.now();
-                    tk.prevPrice = tk.price || newPrice;
-                    tk.price = newPrice;
-                    tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
-                    tk._flashTime = now;
-                    if (!this._blockDOMUpdates) {
-                        this.renderer.updatePriceElements();
-                        this._flashUpdatedRows(now);
-                    }
-                }
-            } catch(e) {}
-        };
-        ws.onclose = () => { 
-            if (this._wsConnections) this._wsConnections[id] = null;
-            setTimeout(() => { connectBybitWs(id, url, marketType); }, 5000); 
-        };
-        ws.onerror = function() { ws.close(); };
+    
+    ws.onclose = () => { 
+        if (this._wsConnections) this._wsConnections[id] = null;
+        setTimeout(() => { connectBybitWs(id, url, marketType); }, 5000); 
     };
+    
+    ws.onerror = function() { ws.close(); };
+};
 
     connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
     connectBinanceWs('bn-spot', 'wss://stream.binance.com/ws/!miniTicker@arr', 'spot');
