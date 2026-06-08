@@ -620,8 +620,7 @@ startTickerPanelPriceEngine() {
     // ============================================
     // WEBSOCKET — без изменений
     // ============================================
-    
-    const connectBinanceWs = (id, url, marketType) => {
+ const connectBinanceWs = (id, url, marketType) => {
     if (this._wsConnections[id]) return;
     var ws = new WebSocket(url);
     this._wsConnections[id] = ws;
@@ -644,13 +643,15 @@ startTickerPanelPriceEngine() {
                 
                 if (tk) {
                     var newPrice = parseFloat(t.c);
-                    if (tk.price !== newPrice) {
-                        tk.prevPrice = tk.price || newPrice;
-                        tk.price = newPrice;
-                        // ✅ МЕРЦАНИЕ — ЭТИ 2 СТРОКИ
-                        tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
-                        tk._flashTime = now;
-                    }
+                    var oldPrice = tk.price;
+                    
+                    // ✅ ВСЕГДА ОБНОВЛЯЕМ ЦЕНУ
+                    tk.prevPrice = oldPrice || newPrice;
+                    tk.price = newPrice;
+                    
+                    // ✅ ВСЕГДА УСТАНАВЛИВАЕМ ФЛАГИ МЕРЦАНИЯ
+                    tk._flashDir = (oldPrice !== undefined && newPrice > oldPrice) ? 'up' : 'down';
+                    tk._flashTime = now;
                     
                     // ✅ ОБНОВЛЯЕМ 24h ДАННЫЕ
                     if (t.P !== undefined) tk.change = parseFloat(t.P);
@@ -673,7 +674,7 @@ startTickerPanelPriceEngine() {
     
     ws.onerror = function() { ws.close(); };
 };
-  const connectBybitWs = (id, url, marketType) => {
+ const connectBybitWs = (id, url, marketType) => {
     if (this._wsConnections[id]) return;
     var ws = new WebSocket(url);
     this._wsConnections[id] = ws;
@@ -700,12 +701,20 @@ startTickerPanelPriceEngine() {
             var key = symbol + ':bybit:' + mt;
             var tk = this.tickersMap.get(key);
             
-            if (tk && tk.price !== newPrice) {
+            if (tk) {
                 var now = Date.now();
-                tk.prevPrice = tk.price || newPrice;
+                var oldPrice = tk.price;
+                
+                // ✅ ВСЕГДА ОБНОВЛЯЕМ ЦЕНУ
+                tk.prevPrice = oldPrice || newPrice;
                 tk.price = newPrice;
-                // ✅ МЕРЦАНИЕ ДЛЯ BYBIT
-                tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
+                
+                // ✅ ВСЕГДА УСТАНАВЛИВАЕМ ФЛАГИ МЕРЦАНИЯ
+                if (oldPrice !== undefined && oldPrice !== newPrice) {
+                    tk._flashDir = newPrice > oldPrice ? 'up' : 'down';
+                } else {
+                    tk._flashDir = oldPrice === undefined ? 'up' : (tk._flashDir || 'up');
+                }
                 tk._flashTime = now;
                 
                 // ✅ 24h ДАННЫЕ ДЛЯ BYBIT
@@ -728,21 +737,12 @@ startTickerPanelPriceEngine() {
     ws.onerror = function() { ws.close(); };
 };
 
-    connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
-    connectBinanceWs('bn-spot', 'wss://stream.binance.com/ws/!miniTicker@arr', 'spot');
+  connectBinanceWs('bn-fut', 'wss://fstream.binance.com/market/ws/!miniTicker@arr', 'futures');
+connectBinanceWs('bn-spot', 'wss://stream.binance.com/market/ws/!miniTicker@arr', 'spot');
     connectBybitWs('by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures');
     connectBybitWs('by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot');
 
-    console.log('⏳ Первичная загрузка...');
-    setTimeout(() => loadAllData(), 500);
 
-    setInterval(() => {
-        if (!this._isRestRunning && this._restQueue.length === 0) {
-            loadAllData().catch(e => console.warn('⚠️ Ошибка:', e));
-        }
-    }, 300000);
-
-    this.pollRestData = loadAllData;
 }
 // ============================================
 // ✅ АНИМАЦИЯ
