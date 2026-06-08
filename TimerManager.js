@@ -2,9 +2,13 @@ class TimerRenderer {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this.enabled = true;
-        this._cachedColor = null;
+        this._forcedColor = null;
         this._lastCandleTime = 0;
         this._lastDrawInfo = null;
+    }
+
+    setColor(color) {
+        this._forcedColor = color;
     }
 
     draw(target) {
@@ -23,17 +27,14 @@ class TimerRenderer {
 
             const data = chartManager.chartData;
             const lastCandle = data[data.length - 1];
-            
             if (!lastCandle) return;
 
-            // ✅ БЕРЁМ CLOSE - ЭТО ТОЧНО ТА ЖЕ ЦЕНА ЧТО И ЛИНИЯ!
             const price = lastCandle.close;
             if (price == null || isNaN(price) || price <= 0) return;
 
             const activeSeries = chartManager.currentChartType === 'candle' 
                 ? chartManager.candleSeries 
                 : chartManager.barSeries;
-            
             if (!activeSeries) return;
 
             const yCoord = activeSeries.priceToCoordinate(price);
@@ -46,33 +47,27 @@ class TimerRenderer {
             const fontSize = Math.round(11 * vpr);
             ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
             const textWidth = ctx.measureText(timerText).width;
-            
             const rectWidth = Math.ceil(textWidth + 8 * hpr);
             const rectHeight = Math.ceil(fontSize + 6 * vpr);
-
-            // ✅ УПОР В ПРАВЫЙ КРАЙ
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
-            
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // Кешируем
-            this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
+            // Используем цвет, переданный через setColor, либо вычисляем на основе свечи
+            let bgColor = this._forcedColor;
+            if (!bgColor) {
+                const isBullish = lastCandle.close > lastCandle.open;
+                bgColor = isBullish 
+                    ? (chartManager.bullishColor || '#00bcd4')
+                    : (chartManager.bearishColor || '#f23645');
+            }
 
-            // Цвет
-            const isBullish = lastCandle.close > lastCandle.open;
-            const bgColor = isBullish 
-                ? (chartManager.bullishColor || '#00bcd4')
-                : (chartManager.bearishColor || '#f23645');
-
-            // Рисуем
             ctx.save();
             ctx.fillStyle = bgColor + 'DD';
             ctx.shadowColor = 'rgba(0,0,0,0.3)';
             ctx.shadowBlur = 3 * hpr;
             this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
             ctx.fill();
-            
             ctx.shadowBlur = 0;
             ctx.fillStyle = '#fff';
             ctx.textAlign = 'center';
@@ -138,8 +133,18 @@ class TimerPrimitive {
 
     isEnabled() { return this._paneView?._renderer?.enabled ?? false; }
     updateDisplay() { this.requestRedraw(); }
-    setPrice(p) { if (this._paneView) this._paneView._price = p; }
-    setColor(c) { if (this._paneView) this._paneView._color = c; }
+    setPrice(p) { 
+        // Можно не использовать, цена берётся из последней свечи
+    }
+    
+    // ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: цвет передаётся в рендерер
+    setColor(c) {
+        if (this._paneView?._renderer) {
+            this._paneView._renderer.setColor(c);
+            this.requestRedraw();
+        }
+    }
+    
     setDataReady(r) { this._dataReady = r; }
     isDataReady() { return this._dataReady; }
 }
@@ -280,6 +285,13 @@ class TimerManager {
         if (series) {
             try {
                 series.attachPrimitive(this._primitive);
+                // Восстанавливаем цвет из последней свечи
+                const lastCandle = this._chartManager.chartData?.[this._chartManager.chartData.length - 1];
+                if (lastCandle) {
+                    const isBullish = lastCandle.close >= lastCandle.open;
+                    const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+                    this._primitive.setColor(lineColor);
+                }
                 if (on && !['1d','1w','1M'].includes(this._currentTf)) {
                     this._primitive.setEnabled(false);
                     this._waitForData();
