@@ -39,9 +39,9 @@ class WebSocketManager {
 wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
             if (marketType === 'spot') {
-               wsUrl = `wss://stream.binance.com/market/ws/${symbol.toLowerCase()}@kline_${interval}`;
+            wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${interval}`;
             } else {
-                wsUrl = `wss://fstream.binance.com/market/ws/${symbol.toLowerCase()}@kline_${interval}`;
+              wsUrl = `wss://fstream.binance.com/ws/${symbol.toLowerCase()}@kline_${interval}`;
             }
         }
 
@@ -164,9 +164,9 @@ if (k) {
 wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
             if (marketType === 'spot') {
-             wsUrl = `wss://stream.binance.com/market/ws/${symbol.toLowerCase()}@trade`;
+                wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`;
             } else {
-               wsUrl = `wss://fstream.binance.com/market/ws/${symbol.toLowerCase()}@trade`;
+                wsUrl = `wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`;
             }
         }
 
