@@ -1246,8 +1246,7 @@ _startNewCandleChecker() {
             this.priceLineTimer.classList.add(isBullish ? 'bullish' : 'bearish');
         }
     }
-
-  _performUpdate() {
+    _performUpdate() {
     if (!this.chartData.length) return;
     
     const cachedPrecision = localStorage.getItem(
@@ -1295,10 +1294,14 @@ _startNewCandleChecker() {
             if (this.timerManager._primitive.isEnabled()) {
                 this.timerManager._primitive.requestRedraw();
             }
+        } else {
+            // ✅ Сохраняем цвет если primitive ещё не создан
+            this.timerManager._pendingColor = lineColor;
         }
     }
 
     this._lastAppliedColor = lineColor;
+    this._syncColorsToTimer();
     this.scheduleUpdatePosition();
 }
 updateLastCandle(candle) {
@@ -2280,12 +2283,12 @@ getPrecisionFromExchange(symbol, exchange, marketType).then(p => {
             this._switchingSymbol = false;
         }
     }
-_syncColorsToTimer() {
-    if (!this.lastCandle || !this.timerManager?._primitive) return;
+    _syncColorsToTimer() {
+    if (!this.lastCandle) return;
     
-    const isBullish = this.lastCandle.close >= this.lastCandle.open;
-    const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
     const price = this.currentRealPrice || this.lastCandle.close;
+    const isBullish = price >= this.lastCandle.open;
+    const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
     
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (series) {
@@ -2295,10 +2298,17 @@ _syncColorsToTimer() {
         });
     }
     
-    const prim = this.timerManager._primitive;
-    if (prim.setColor) prim.setColor(lineColor);
-    if (price && prim.setPrice) prim.setPrice(price);
-    if (prim.isEnabled()) prim.requestRedraw();
+    if (this.timerManager) {
+        if (this.timerManager._primitive) {
+            const prim = this.timerManager._primitive;
+            if (prim.setColor) prim.setColor(lineColor);
+            if (price && prim.setPrice) prim.setPrice(price);
+            if (prim.isEnabled()) prim.requestRedraw();
+        } else {
+            // Сохраняем цвет до создания primitive
+            this.timerManager._pendingColor = lineColor;
+        }
+    }
 }
     _abortAllProcesses() {
         if (this.priceManager && this._priceUpdateHandler) {
