@@ -661,23 +661,21 @@ startTickerPanelPriceEngine() {
     };
 
     // ============================================
-    // WEBSOCKET — МЕТОДЫ КЛАССА (для автовосстановления)
+    // WEBSOCKET - ИСПРАВЛЕНО (СТРЕЛОЧНЫЕ ФУНКЦИИ)
     // ============================================
-    
+    const self = this;
+
     this._connectBinanceWs = (id, url, marketType) => {
-        // ✅ Проверяем, не подключен ли уже
-        if (this._wsConnections[id]?.readyState === WebSocket.OPEN) return;
-        // Закрываем старый если есть
-        if (this._wsConnections[id]) {
-            try { this._wsConnections[id].close(); } catch(e) {}
+        if (self._wsConnections[id]?.readyState === WebSocket.OPEN) return;
+        if (self._wsConnections[id]) {
+            try { self._wsConnections[id].close(); } catch(e) {}
         }
         
         const ws = new WebSocket(url);
-        this._wsConnections[id] = ws;
-        const self = this;
+        self._wsConnections[id] = ws;
         
-        ws.onopen = function() { 
-            console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;'); 
+        ws.onopen = () => {
+            console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;');
         };
         
         ws.onmessage = (event) => {
@@ -709,32 +707,32 @@ startTickerPanelPriceEngine() {
             } catch(e) {}
         };
         
-        ws.onclose = function() { 
-            console.log('❌ [WS] ' + id + ' закрыт');
+        ws.onclose = (event) => {
+            console.log('❌ [WS] ' + id + ' закрыт, код: ' + event.code);
             self._wsConnections[id] = null;
-            // Автопереподключение через 5 секунд
-            setTimeout(() => {
-                if (self.tickersMap.size > 0) {
-                    self._connectBinanceWs(id, url, marketType);
-                }
-            }, 5000);
+            if (event.code !== 1000) {
+                setTimeout(() => {
+                    if (self.tickersMap && self.tickersMap.size > 0) {
+                        console.log('🔄 Переподключаю ' + id + '...');
+                        self._connectBinanceWs(id, url, marketType);
+                    }
+                }, 5000);
+            }
         };
         
-        ws.onerror = function() { ws.close(); };
+        ws.onerror = () => { ws.close(); };
     };
 
     this._connectBybitWs = (id, url, marketType) => {
-        // ✅ Проверяем, не подключен ли уже
-        if (this._wsConnections[id]?.readyState === WebSocket.OPEN) return;
-        if (this._wsConnections[id]) {
-            try { this._wsConnections[id].close(); } catch(e) {}
+        if (self._wsConnections[id]?.readyState === WebSocket.OPEN) return;
+        if (self._wsConnections[id]) {
+            try { self._wsConnections[id].close(); } catch(e) {}
         }
         
         const ws = new WebSocket(url);
-        this._wsConnections[id] = ws;
-        const self = this;
+        self._wsConnections[id] = ws;
         
-        ws.onopen = function() {
+        ws.onopen = () => {
             console.log('%c✅ [WS] ' + id, 'color:#F7A600;font-weight:bold;');
             const topic = marketType === 'futures' ? 'tickers.linear' : 'tickers.spot';
             ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
@@ -770,24 +768,26 @@ startTickerPanelPriceEngine() {
             } catch(e) {}
         };
         
-        ws.onclose = () => { 
-            console.log('❌ [WS] ' + id + ' закрыт');
+        ws.onclose = (event) => {
+            console.log('❌ [WS] ' + id + ' закрыт, код: ' + event.code);
             self._wsConnections[id] = null;
-            setTimeout(() => {
-                if (self.tickersMap.size > 0) {
-                    self._connectBybitWs(id, url, marketType);
-                }
-            }, 5000);
+            if (event.code !== 1000) {
+                setTimeout(() => {
+                    if (self.tickersMap && self.tickersMap.size > 0) {
+                        console.log('🔄 Переподключаю ' + id + '...');
+                        self._connectBybitWs(id, url, marketType);
+                    }
+                }, 5000);
+            }
         };
         
-        ws.onerror = function() { ws.close(); };
+        ws.onerror = () => { ws.close(); };
     };
 
     // ============================================
     // ВОССТАНОВЛЕНИЕ ПРИ ВОЗВРАТЕ НА ВКЛАДКУ
     // ============================================
     this._restoreWebSockets = () => {
-        // Проверяем все WebSocket соединения
         const connections = [
             { id: 'bn-fut', fn: this._connectBinanceWs, args: ['bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures'] },
             { id: 'bn-spot', fn: this._connectBinanceWs, args: ['bn-spot', 'wss://data-stream.binance.com/ws/!miniTicker@arr', 'spot'] },
@@ -803,14 +803,12 @@ startTickerPanelPriceEngine() {
             }
         });
         
-        // Запускаем REST если очередь пуста
         if (!this._isRestRunning && this._restQueue?.length === 0 && this.tickersMap.size > 0) {
             console.log('📡 Запускаю обновление цен...');
             loadAllData().catch(e => console.warn('Ошибка обновления:', e));
         }
     };
 
-    // Обработчики видимости страницы
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             console.log('👁️ Вкладка активна, восстанавливаем...');
@@ -829,10 +827,8 @@ startTickerPanelPriceEngine() {
     this._healthCheckInterval = setInterval(() => {
         if (document.hidden) return;
         
-        // Проверяем WebSocket
         this._restoreWebSockets();
         
-        // Проверяем свежесть данных
         const now = Date.now();
         let staleCount = 0;
         for (const [key, ticker] of this.tickersMap.entries()) {
@@ -858,7 +854,6 @@ startTickerPanelPriceEngine() {
     console.log('⏳ Первичная загрузка...');
     setTimeout(() => loadAllData(), 500);
 
-    // Периодическое обновление (каждые 5 минут)
     this._pollInterval = setInterval(() => {
         if (!this._isRestRunning && this._restQueue.length === 0 && !document.hidden) {
             loadAllData().catch(e => console.warn('⚠️ Ошибка:', e));
