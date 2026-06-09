@@ -350,8 +350,18 @@ sortTickers(tickers) {
 }
     // =========================================================================
     // 🎨 ГЛАВНЫЙ МЕТОД РЕНДЕРИНГА СПИСКА
-    // =========================================================================
-    renderTickerList() {
+  // ============================================
+// ✅ ИСПРАВЛЕННЫЙ renderTickerList (замени полностью)
+// ============================================
+
+renderTickerList() {
+    // ✅ ЗАЩИТА ОТ ПОВТОРНОГО ВЫЗОВА В ОДНОМ КАДРЕ
+    if (this._renderScheduled) return;
+    this._renderScheduled = true;
+    
+    requestAnimationFrame(() => {
+        this._renderScheduled = false;
+        
         const flagTabs = document.getElementById('flagTabs');
         if (flagTabs) {
             flagTabs.classList.toggle('show', this.parent.state.activeTab === 'flags');
@@ -400,8 +410,8 @@ sortTickers(tickers) {
             this.renderVisibleTickers();
         };
         container.addEventListener('scroll', this._scrollHandler);
-    }
-    
+    });
+}
     // =========================================================================
     // 📜 РЕНДЕРИНГ ВИДИМЫХ ЭЛЕМЕНТОВ (виртуальный скроллинг)
     // =========================================================================
