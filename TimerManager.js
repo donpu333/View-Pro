@@ -6,11 +6,13 @@ class TimerRenderer {
         this._lastCandleTime = 0;
         this._lastDrawInfo = null;
     }
-setColor(color) {
-    if (color) {
-        this._cachedColor = color;
+
+    setColor(color) {
+        if (color) {
+            this._cachedColor = color;
+        }
     }
-}
+
     draw(target) {
         if (!this.enabled) return;
         
@@ -30,7 +32,7 @@ setColor(color) {
             
             if (!lastCandle) return;
 
-            // ✅ БЕРЁМ CLOSE - ЭТО ТОЧНО ТА ЖЕ ЦЕНА ЧТО И ЛИНИЯ!
+            // Берём close — та же цена, что и линия
             const price = lastCandle.close;
             if (price == null || isNaN(price) || price <= 0) return;
 
@@ -54,7 +56,7 @@ setColor(color) {
             const rectWidth = Math.ceil(textWidth + 8 * hpr);
             const rectHeight = Math.ceil(fontSize + 6 * vpr);
 
-            // ✅ УПОР В ПРАВЫЙ КРАЙ
+            // Упор в правый край
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
             
             let rectY = Math.round(bitmapY - rectHeight / 2);
@@ -63,23 +65,18 @@ setColor(color) {
             // Кешируем
             this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
-            // Цвет
-           // ✅ СТАЛО - цвет ТОЧНО как у линии цены:
-let bgColor;
-
-// Пробуем взять цвет из crosshair маркеров (самый точный способ)
-if (chartManager._lastCrosshairPrice !== undefined && 
-    chartManager._lastCrosshairColor !== undefined &&
-    chartManager._lastCrosshairPrice === price) {
-    bgColor = chartManager._lastCrosshairColor;
-} 
-// Затем пробуем текущую свечу
-else {
-    const isBullish = lastCandle.close >= lastCandle.open;
-    bgColor = isBullish 
-        ? (chartManager.bullishColor || '#26a69a')
-        : (chartManager.bearishColor || '#ef5350');
-}
+            // ✅ ЦВЕТ: приоритет — кешированный из _syncPriceLine, затем расчётный
+            let bgColor;
+            if (this._cachedColor) {
+                bgColor = this._cachedColor;
+            } else if (chartManager._lastAppliedColor) {
+                bgColor = chartManager._lastAppliedColor;
+            } else {
+                const isBullish = lastCandle.close >= lastCandle.open;
+                bgColor = isBullish 
+                    ? (chartManager.bullishColor || '#26a69a')
+                    : (chartManager.bearishColor || '#ef5350');
+            }
 
             // Рисуем
             ctx.save();
@@ -114,7 +111,10 @@ class TimerPaneView {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this._renderer = new TimerRenderer(timerManager);
+        this._price = null;
+        this._color = null;
     }
+
     renderer() { return this._renderer; }
 }
 
@@ -144,13 +144,7 @@ class TimerPrimitive {
     requestRedraw() {
         if (this._requestUpdate) this._requestUpdate();
     }
-// В TimerPrimitive:
-setColor(c) { 
-    if (this._paneView?._renderer) {
-        this._paneView._renderer.setColor(c);
-        this._paneView._color = c; 
-    }
-}
+
     setEnabled(enabled) {
         if (this._paneView?._renderer) {
             this._paneView._renderer.enabled = enabled;
@@ -160,8 +154,18 @@ setColor(c) {
 
     isEnabled() { return this._paneView?._renderer?.enabled ?? false; }
     updateDisplay() { this.requestRedraw(); }
-    setPrice(p) { if (this._paneView) this._paneView._price = p; }
-    setColor(c) { if (this._paneView) this._paneView._color = c; }
+
+    setPrice(p) { 
+        if (this._paneView) this._paneView._price = p; 
+    }
+
+    setColor(c) { 
+        if (this._paneView?._renderer) {
+            this._paneView._renderer.setColor(c);
+        }
+        if (this._paneView) this._paneView._color = c; 
+    }
+
     setDataReady(r) { this._dataReady = r; }
     isDataReady() { return this._dataReady; }
 }
@@ -270,6 +274,9 @@ class TimerManager {
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
 
+        // ✅ Синхронизируем цвет из ChartManager перед каждой отрисовкой
+        this._syncColorFromChartManager();
+
         if (this._timerElement.textContent !== txt) {
             this._timerElement.textContent = txt;
             if (this._primitive) {
@@ -279,13 +286,39 @@ class TimerManager {
             }
         }
     }
-// В TimerManager добавьте:
-updateColor(bullishColor, bearishColor) {
-    if (this._primitive?._paneView?._renderer) {
-        this._primitive._paneView._renderer._cachedBullishColor = bullishColor;
-        this._primitive._paneView._renderer._cachedBearishColor = bearishColor;
+
+    // ✅ Синхронизация цвета с ChartManager._lastAppliedColor
+    _syncColorFromChartManager() {
+        const cm = this._chartManager;
+        if (!cm || !this._primitive) return;
+
+        const renderer = this._primitive._paneView?._renderer;
+        if (!renderer) return;
+
+        // Приоритет: _lastAppliedColor из _syncPriceLine
+        if (cm._lastAppliedColor) {
+            renderer._cachedColor = cm._lastAppliedColor;
+        }
+        // Запасной вариант: вычисляем по последней свече
+        else if (cm.chartData?.length > 0) {
+            const lastCandle = cm.chartData[cm.chartData.length - 1];
+            if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
+                const isBullish = lastCandle.close >= lastCandle.open;
+                renderer._cachedColor = isBullish
+                    ? (cm.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
+                    : (cm.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
+            }
+        }
     }
-}
+
+    // ✅ Принудительное обновление цвета — вызывать из _syncPriceLine
+    forceColorUpdate() {
+        this._syncColorFromChartManager();
+        if (this._primitive?.isEnabled()) {
+            this._primitive.requestRedraw();
+        }
+    }
+
     stop() {
         if (this._interval) { clearInterval(this._interval); this._interval = null; }
     }
