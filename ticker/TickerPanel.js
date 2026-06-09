@@ -673,7 +673,7 @@ startTickerPanelPriceEngine() {
             
             if (!this._blockDOMUpdates) {
                 this.renderer.updatePriceElements();
-                this._flashUpdatedRows(now);
+             
             }
         } catch(e) {}
     };
@@ -734,7 +734,7 @@ startTickerPanelPriceEngine() {
                 
                 if (!this._blockDOMUpdates) {
                     this.renderer.updatePriceElements();
-                    this._flashUpdatedRows(now);
+               
                 }
             }
         } catch(e) {}
@@ -756,40 +756,13 @@ connectBinanceWs('bn-spot', 'wss://stream.binance.com/market/ws/!miniTicker@arr'
 
 }
 // ============================================
-// ✅ АНИМАЦИЯ
 // ============================================
+// ✅ ЗАМЕНИ ВЕСЬ МЕТОД НА ЭТО (отключает мерцание)
+// ============================================
+
 _flashUpdatedRows(flashTime) {
-    var container = document.getElementById('tickerListContainer');
-    if (!container) return;
-    
-    var now = Date.now();
-    
-    for (var key of this.tickersMap.keys()) {
-        var ticker = this.tickersMap.get(key);
-        
-        // ✅ Проверяем, что флаг установлен и не старше 500 мс
-        if (ticker && ticker._flashTime && (now - ticker._flashTime) < 500) {
-            var row = container.querySelector(
-                '.ticker-item[data-symbol="' + ticker.symbol + '"][data-exchange="' + ticker.exchange + '"][data-market-type="' + ticker.marketType + '"]'
-            );
-            
-            if (row) {
-                row.classList.remove('price-flash-up', 'price-flash-down');
-                void row.offsetWidth;
-                row.classList.add(ticker._flashDir === 'up' ? 'price-flash-up' : 'price-flash-down');
-                
-                setTimeout(function() {
-                    if (row) {
-                        row.classList.remove('price-flash-up', 'price-flash-down');
-                    }
-                }, 400);
-            }
-            
-            // ❌ НЕ УДАЛЯЕМ — пусть живут, но проверяем по времени
-            // delete ticker._flashTime;
-            // delete ticker._flashDir;
-        }
-    }
+    // ❌ ОТКЛЮЧЕНО — анимация мерцания жрёт CPU
+    return;
 }
 
 clearAllSymbols() {
