@@ -32,7 +32,8 @@ class TimerRenderer {
         
         if (!lastCandle) return;
 
-        const price = lastCandle.close;
+        // ✅ ИСПОЛЬЗУЕМ currentRealPrice КАК ЛИНИЯ, А НЕ close СВЕЧИ
+        const price = chartManager.currentRealPrice || lastCandle.close;
         if (price == null || isNaN(price) || price <= 0) return;
 
         const activeSeries = chartManager.currentChartType === 'candle' 
@@ -62,11 +63,11 @@ class TimerRenderer {
 
         this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
-        // ✅ ТОЧНО ТАК ЖЕ КАК В _syncPriceLine: price >= open
-        const isBullish = price >= lastCandle.open;
-        const bgColor = isBullish 
-            ? (chartManager.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
-            : (chartManager.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
+        // ✅ ЦВЕТ НАПРЯМУЮ ИЗ chartManager (устанавливается в _syncPriceLine)
+        const bgColor = chartManager._lastAppliedColor 
+            || (price >= lastCandle.open 
+                ? (chartManager.bullishColor || '#26a69a') 
+                : (chartManager.bearishColor || '#ef5350'));
 
         ctx.save();
         ctx.fillStyle = bgColor + 'DD';
