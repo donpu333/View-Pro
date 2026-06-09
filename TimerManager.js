@@ -6,7 +6,11 @@ class TimerRenderer {
         this._lastCandleTime = 0;
         this._lastDrawInfo = null;
     }
-
+setColor(color) {
+    if (color) {
+        this._cachedColor = color;
+    }
+}
     draw(target) {
         if (!this.enabled) return;
         
@@ -140,7 +144,13 @@ class TimerPrimitive {
     requestRedraw() {
         if (this._requestUpdate) this._requestUpdate();
     }
-
+// В TimerPrimitive:
+setColor(c) { 
+    if (this._paneView?._renderer) {
+        this._paneView._renderer.setColor(c);
+        this._paneView._color = c; 
+    }
+}
     setEnabled(enabled) {
         if (this._paneView?._renderer) {
             this._paneView._renderer.enabled = enabled;
