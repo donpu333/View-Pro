@@ -1697,6 +1697,10 @@ _syncPriceLine(price) {
     
     this.scheduleUpdatePosition();
     this._updatePageTitle(); // 👈 ОБНОВЛЯЕМ ЗАГОЛОВОК ВКЛАДКИ
+
+     if (this.timerManager?.forceColorUpdate) {
+        this.timerManager.forceColorUpdate();
+    }
 }
     autoScale() {
         if (this.chart && this.chartData.length > 0) {
