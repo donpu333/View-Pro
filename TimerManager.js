@@ -32,7 +32,8 @@ class TimerRenderer {
             
             if (!lastCandle) return;
 
-            const price = lastCandle.close;
+            // 🔥 ТУПО БЕРЁМ ТО ЧТО В _syncPriceLine ЗАПИСАЛО
+            const price = chartManager.currentRealPrice || lastCandle.close;
             if (price == null || isNaN(price) || price <= 0) return;
 
             const activeSeries = chartManager.currentChartType === 'candle' 
@@ -62,10 +63,13 @@ class TimerRenderer {
 
             this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
-            const isBullish = lastCandle.close >= lastCandle.open;
-            const bgColor = isBullish 
-                ? (chartManager.bullishColor || '#26a69a')
-                : (chartManager.bearishColor || '#ef5350');
+            // 🔥🔥🔥 БЕРЁМ ЦВЕТ ПРЯМО ИЗ chartManager._lastAppliedColor 🔥🔥🔥
+            // Это ТОЧНО тот же цвет что у линии цены
+            const bgColor = this._cachedColor 
+                || chartManager._lastAppliedColor 
+                || (lastCandle.close >= lastCandle.open 
+                    ? (chartManager.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
+                    : (chartManager.bearishColor || CONFIG?.colors?.bearish || '#ef5350'));
 
             ctx.save();
             ctx.fillStyle = bgColor + 'DD';
@@ -262,6 +266,11 @@ class TimerManager {
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
 
+        // 🔥 Сбрасываем кэш цвета перед отрисовкой, чтобы брал из _lastAppliedColor
+        if (this._primitive?._paneView?._renderer) {
+            this._primitive._paneView._renderer._cachedColor = null;
+        }
+
         if (this._timerElement.textContent !== txt) {
             this._timerElement.textContent = txt;
             if (this._primitive) {
@@ -273,6 +282,9 @@ class TimerManager {
     }
 
     forceColorUpdate() {
+        if (this._primitive?._paneView?._renderer) {
+            this._primitive._paneView._renderer._cachedColor = null;
+        }
         if (this._primitive?.isEnabled()) {
             this._primitive.requestRedraw();
         }
