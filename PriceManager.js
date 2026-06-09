@@ -42,8 +42,8 @@ class PriceManager {
     
     // ========== BINANCE SPOT ==========
     _initBinanceSpot() {
-        const key = 'binance:spot';
-        this._connectWebSocket(key, 'wss://stream.binance.com:9443/ws/!ticker@arr', (data) => {
+    const key = 'binance:spot';
+    this._connectWebSocket(key, 'wss://data-stream.binance.com/ws/!ticker@arr', (data) => {
             const tickers = Array.isArray(data) ? data : [data];
             tickers.forEach(ticker => {
                 if (!ticker.s || !ticker.c) return;
