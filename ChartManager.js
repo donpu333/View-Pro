@@ -1651,7 +1651,7 @@ updateRealPrice(price) {
             priceScale.applyOptions({ autoScale: true });
         }
     }
-_syncPriceLine(price) {
+__syncPriceLine(price) {
     if (!price) return;
     
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -1664,7 +1664,7 @@ _syncPriceLine(price) {
     if (price > lastCandle.high) lastCandle.high = price;
     if (price < lastCandle.low) lastCandle.low = price;
     
-    // ✅ ТОЧНО ТАК ЖЕ КАК В ТАЙМЕРЕ
+    // Определяем цвет
     const isBullish = price >= lastCandle.open;
     const lineColor = isBullish 
         ? (this.bullishColor || CONFIG.colors.bullish)
@@ -1687,11 +1687,18 @@ _syncPriceLine(price) {
         priceLineColor: lineColor
     });
     
+    // 🔥🔥🔥 ВОТ ЭТО ГЛАВНОЕ ИСПРАВЛЕНИЕ 🔥🔥🔥
+    // Обновляем таймер НЕМЕДЛЕННО, а не ждём тика
     const prim = this.timerManager?._primitive;
     if (prim) {
+        // Передаём актуальную цену и цвет
         if (prim.setPrice) prim.setPrice(price);
         if (prim.setColor) prim.setColor(lineColor);
-        if (prim.isEnabled()) prim.requestRedraw();
+        
+        // И СРАЗУ ЖЕ вызываем перерисовку
+        if (prim.isEnabled()) {
+            prim.requestRedraw();
+        }
     }
     
     this.scheduleUpdatePosition();
@@ -2373,6 +2380,88 @@ async switchSymbol(symbol, exchange, marketType) {
     } finally {
         this._switchingSymbol = false;
     }
+}
+// В ChartManager, добавьте новый метод:
+updateColorsForSettings(bullishColor, bearishColor) {
+    // Обновляем конфигурацию
+    CONFIG.colors.bullish = bullishColor;
+    CONFIG.colors.bearish = bearishColor;
+    this.bullishColor = bullishColor;
+    this.bearishColor = bearishColor;
+    
+    // Обновляем свечи
+    this.candleSeries.applyOptions({
+        upColor: bullishColor,
+        downColor: bearishColor,
+        wickUpColor: bullishColor,
+        wickDownColor: bearishColor
+    });
+    
+    this.barSeries.applyOptions({
+        upColor: bullishColor,
+        downColor: bearishColor
+    });
+    
+    // 🔥 СИНХРОНИЗИРУЕМ ЛИНИЮ ЦЕНЫ И ТАЙМЕР
+    this._syncLineAndTimerColor();
+    
+    // Обновляем volume если есть
+    if (this.volumeSeries && this.chartData.length > 0) {
+        const volumeData = this.chartData.map(c => ({
+            time: c.time,
+            value: c.volume || 0,
+            color: c.close >= c.open ? bullishColor : bearishColor
+        }));
+        this.volumeSeries.setData(volumeData);
+    }
+    
+    console.log('✅ Цвета обновлены:', { bullishColor, bearishColor });
+}
+
+// НОВЫЙ МЕТОД: Синхронизация линии цены и таймера
+_syncLineAndTimerColor() {
+    if (!this.chartData || this.chartData.length === 0) return;
+    
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    // Определяем актуальную цену
+    let price = this.currentRealPrice;
+    if (!price || isNaN(price)) {
+        price = lastCandle.close;
+    }
+    
+    // Определяем цвет на основе bullish/bearish
+    const isBullish = price >= lastCandle.open;
+    const lineColor = isBullish 
+        ? (this.bullishColor || CONFIG.colors.bullish)
+        : (this.bearishColor || CONFIG.colors.bearish);
+    
+    // Обновляем линию цены
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (series && price) {
+        series.applyOptions({
+            priceLineColor: lineColor,
+            priceLineSource: price
+        });
+    }
+    
+    // Обновляем таймер
+    if (this.timerManager) {
+        const prim = this.timerManager._primitive;
+        if (prim) {
+            if (prim.setColor) prim.setColor(lineColor);
+            if (prim.setPrice && price) prim.setPrice(price);
+            if (prim.isEnabled()) prim.requestRedraw();
+        }
+        
+        // Принудительно обновляем цвет в forceColorUpdate
+        if (this.timerManager.forceColorUpdate) {
+            this.timerManager.forceColorUpdate();
+        }
+    }
+    
+    this._lastAppliedColor = lineColor;
 }
     _abortAllProcesses() {
         if (this.priceManager && this._priceUpdateHandler) {
