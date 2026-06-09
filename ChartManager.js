@@ -1954,7 +1954,7 @@ _syncPriceLine(price) {
         this._savedZoomRange = null;
     }
 
- _subscribeToPrice() {
+_subscribeToPrice() {
     if (!this.priceManager) {
         setTimeout(() => this._subscribeToPrice(), 100);
         return;
@@ -1976,6 +1976,22 @@ _syncPriceLine(price) {
     const cachedPrice = this.priceManager.getPrice(this.currentSymbol);
     if (cachedPrice !== null) {
         this.currentRealPrice = cachedPrice;
+        
+        // ✅ УСТАНАВЛИВАЕМ ЦВЕТ СРАЗУ ПОСЛЕ ПОЛУЧЕНИЯ КЕШИРОВАННОЙ ЦЕНЫ
+        if (this.chartData && this.chartData.length > 0) {
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            if (lastCandle) {
+                const isBullish = cachedPrice >= lastCandle.open;
+                this._lastAppliedColor = isBullish 
+                    ? (this.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
+                    : (this.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
+            }
+        }
+        
+        // ✅ ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ ТАЙМЕР
+        if (this.timerManager?.forceColorUpdate) {
+            this.timerManager.forceColorUpdate();
+        }
     }
 }
     setSymbol(symbol) {
@@ -2269,66 +2285,100 @@ _createNewCandle(candle) {
     // ============================================================
     //  НОВЫЕ МЕТОДЫ: switchSymbol + _abortAllProcesses
     // ============================================================
-
-    async switchSymbol(symbol, exchange, marketType) {
-        if (this._switchingSymbol) {
-            console.warn('⚠️ Переключение уже выполняется, игнорируем');
-            return;
-        }
-        this._switchingSymbol = true;
-
-        try {
-            console.log(`🔄 ПЕРЕКЛЮЧЕНИЕ: ${this.currentSymbol} → ${symbol}`);
-
-            this._abortAllProcesses();
-
-            this.candleSeries.setData([]);
-            this.barSeries.setData([]);
-            if (this.volumeSeries) this.volumeSeries.setData([]);
-            this.chartData = [];
-            this.lastCandle = null;
-            this.currentRealPrice = null;
-            this._lastAppliedColor = null;
-
-            this.currentSymbol = symbol;
-            this.currentExchange = exchange;
-            this.currentMarketType = marketType;
-// Заранее спрашиваем у биржи точность
-getPrecisionFromExchange(symbol, exchange, marketType).then(p => {
-    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, p);
-}).catch(() => {});
-            const candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
-
-            if (!candles || candles.length === 0) {
-                throw new Error('Нет данных для ' + symbol);
-            }
-
-            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
-
-            this._subscribeToPrice();
-
-            await this.loadDrawingsForCurrentSymbol();
-
-            if (this.timerManager) {
-                this.timerManager.destroy();
-                this.timerManager.start(this.currentInterval);
-            }
-
-            localStorage.setItem('lastSymbol', symbol);
-            localStorage.setItem('lastExchange', exchange);
-            localStorage.setItem('lastMarketType', marketType);
-
-            console.log(`✅ Переключено: ${symbol} (${exchange}, ${marketType})`);
-            
-            this._notifySymbolChange();
-
-        } catch (error) {
-            console.error('❌ Ошибка переключения:', error);
-        } finally {
-            this._switchingSymbol = false;
-        }
+async switchSymbol(symbol, exchange, marketType) {
+    if (this._switchingSymbol) {
+        console.warn('⚠️ Переключение уже выполняется, игнорируем');
+        return;
     }
+    this._switchingSymbol = true;
 
+    try {
+        console.log(`🔄 ПЕРЕКЛЮЧЕНИЕ: ${this.currentSymbol} → ${symbol}`);
+
+        this._abortAllProcesses();
+
+        this.candleSeries.setData([]);
+        this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
+        this.chartData = [];
+        this.lastCandle = null;
+        this.currentRealPrice = null;
+        this._lastAppliedColor = null;
+
+        this.currentSymbol = symbol;
+        this.currentExchange = exchange;
+        this.currentMarketType = marketType;
+        
+        // Заранее спрашиваем у биржи точность
+        getPrecisionFromExchange(symbol, exchange, marketType).then(p => {
+            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, p);
+        }).catch(() => {});
+        
+        const candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+
+        if (!candles || candles.length === 0) {
+            throw new Error('Нет данных для ' + symbol);
+        }
+
+        this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
+
+        this._subscribeToPrice();
+
+        await this.loadDrawingsForCurrentSymbol();
+
+        if (this.timerManager) {
+            this.timerManager.destroy();
+            this.timerManager.start(this.currentInterval);
+        }
+
+        localStorage.setItem('lastSymbol', symbol);
+        localStorage.setItem('lastExchange', exchange);
+        localStorage.setItem('lastMarketType', marketType);
+
+        console.log(`✅ Переключено: ${symbol} (${exchange}, ${marketType})`);
+
+        // ✅✅✅ ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ЦВЕТА ТАЙМЕРА ✅✅✅
+        // Даём время на отрисовку свечей и получение первой цены
+        setTimeout(() => {
+            // Определяем цвет по последней свече
+            if (this.chartData && this.chartData.length > 0) {
+                const lastCandle = this.chartData[this.chartData.length - 1];
+                if (lastCandle) {
+                    const isBullish = lastCandle.close >= lastCandle.open;
+                    this._lastAppliedColor = isBullish 
+                        ? (this.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
+                        : (this.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
+                }
+            }
+            
+            // Обновляем таймер
+            if (this.timerManager?.forceColorUpdate) {
+                this.timerManager.forceColorUpdate();
+            } else if (this.timerManager?._syncColorFromChartManager) {
+                this.timerManager._syncColorFromChartManager();
+            } else if (this.timerManager?._primitive?._paneView?._renderer) {
+                this.timerManager._primitive._paneView._renderer._cachedColor = this._lastAppliedColor;
+                if (this.timerManager._primitive.isEnabled()) {
+                    this.timerManager._primitive.requestRedraw();
+                }
+            }
+        }, 300);
+
+        // ✅✅✅ ПОВТОРНАЯ СИНХРОНИЗАЦИЯ ПОСЛЕ ПОЛУЧЕНИЯ ЦЕНЫ ✅✅✅
+        setTimeout(() => {
+            if (this.timerManager?.forceColorUpdate) {
+                this.timerManager.forceColorUpdate();
+            }
+        }, 1500);
+
+        this._notifySymbolChange();
+
+    } catch (error) {
+        console.error('❌ Ошибка переключения:', error);
+    } finally {
+        this._switchingSymbol = false;
+    }
+}
     _abortAllProcesses() {
         if (this.priceManager && this._priceUpdateHandler) {
             this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
