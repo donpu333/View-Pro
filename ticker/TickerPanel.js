@@ -241,31 +241,42 @@ this.init();
         }
     }
     
-_onPriceUpdate(symbol, price, exchange, marketType) {
-    // Формируем составной ключ
+_onPriceUpdate(symbol, price, exchange, marketType, extra = {}) {
     const compositeKey = `${symbol}:${exchange}:${marketType}`;
     const ticker = this.tickersMap.get(compositeKey);
     if (!ticker) return;
 
-    // Обновляем только если цена изменилась
-    if (ticker.price === price) return;
+    let updated = false;
 
-    ticker.prevPrice = ticker.price;
-    ticker.price = price;
-
-    // При желании пересчитываем изменение в процентах
-    if (ticker.prevPrice && ticker.prevPrice !== 0) {
-        ticker.change = ((price - ticker.prevPrice) / ticker.prevPrice) * 100;
+    // Цена
+    if (ticker.price !== price) {
+        ticker.prevPrice = ticker.price;
+        ticker.price = price;
+        updated = true;
     }
 
-    // Обновляем UI (быстрое обновление конкретной строки)
-    if (this.renderer?.updatePriceForSymbol) {
-        this.renderer.updatePriceForSymbol(compositeKey, price, ticker.change);
-    } else if (!this._blockDOMUpdates) {
-        this.updatePriceElements(); // fallback
+    // ✅ Процент изменения (берём из extra, не пересчитываем)
+    if (extra.change !== undefined && ticker.change !== extra.change) {
+        ticker.change = extra.change;
+        updated = true;
+    }
+
+    // ✅ Объём
+    if (extra.volume !== undefined && ticker.volume !== extra.volume) {
+        ticker.volume = extra.volume;
+        updated = true;
+    }
+
+    // ✅ Сделки
+    if (extra.trades !== undefined && ticker.trades !== extra.trades) {
+        ticker.trades = extra.trades;
+        updated = true;
+    }
+
+    if (updated && !this._blockDOMUpdates) {
+        this.updatePriceElements();
     }
 }
-
    processParallelData(results, updateOnly = false) {
     const MAX_SYMBOLS = 4000;
     let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
