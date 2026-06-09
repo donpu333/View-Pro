@@ -29,7 +29,8 @@ class TimerRenderer {
             const lastCandle = data[data.length - 1];
             if (!lastCandle) return;
 
-            const price = lastCandle.close;
+            // ✅ Используем currentRealPrice если есть, иначе close свечи
+            const price = chartManager.currentRealPrice || lastCandle.close;
             if (price == null || isNaN(price) || price <= 0) return;
 
             const activeSeries = chartManager.currentChartType === 'candle' 
@@ -56,7 +57,8 @@ class TimerRenderer {
             // Используем цвет, переданный через setColor, либо вычисляем на основе свечи
             let bgColor = this._forcedColor;
             if (!bgColor) {
-                const isBullish = lastCandle.close > lastCandle.open;
+                // ✅ Исправлено: >= вместо >, и используем currentRealPrice
+                const isBullish = price >= lastCandle.open;
                 bgColor = isBullish 
                     ? (chartManager.bullishColor || '#00bcd4')
                     : (chartManager.bearishColor || '#f23645');
@@ -88,7 +90,6 @@ class TimerRenderer {
         ctx.closePath();
     }
 }
-
 class TimerPaneView {
     constructor(timerManager) {
         this._timerManager = timerManager;
@@ -115,6 +116,11 @@ class TimerPrimitive {
         this._series = series;
         this._requestUpdate = requestUpdate;
         this._dataReady = false;
+        
+        // Применить отложенный цвет если есть
+        if (this._timerManager._pendingColor) {
+            this.setColor(this._timerManager._pendingColor);
+        }
     }
 
     detached() { this._dataReady = false; }
@@ -137,18 +143,18 @@ class TimerPrimitive {
         // Можно не использовать, цена берётся из последней свечи
     }
     
-    // ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: цвет передаётся в рендерер
     setColor(c) {
         if (this._paneView?._renderer) {
             this._paneView._renderer.setColor(c);
-            this.requestRedraw();
         }
+        // Запоминаем цвет даже если renderer ещё не готов
+        this._timerManager._pendingColor = c;
+        this.requestRedraw();
     }
     
     setDataReady(r) { this._dataReady = r; }
     isDataReady() { return this._dataReady; }
 }
-
 class TimerManager {
     constructor(chartManager) {
         this._chartManager = chartManager;
@@ -157,6 +163,7 @@ class TimerManager {
         this._primitive = null;
         this._timerElement = { textContent: '' };
         this._disabled = false;
+        this._pendingColor = null;
 
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 500);
