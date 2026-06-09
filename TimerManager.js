@@ -60,10 +60,22 @@ class TimerRenderer {
             this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
             // Цвет
-            const isBullish = lastCandle.close > lastCandle.open;
-            const bgColor = isBullish 
-                ? (chartManager.bullishColor || '#00bcd4')
-                : (chartManager.bearishColor || '#f23645');
+           // ✅ СТАЛО - цвет ТОЧНО как у линии цены:
+let bgColor;
+
+// Пробуем взять цвет из crosshair маркеров (самый точный способ)
+if (chartManager._lastCrosshairPrice !== undefined && 
+    chartManager._lastCrosshairColor !== undefined &&
+    chartManager._lastCrosshairPrice === price) {
+    bgColor = chartManager._lastCrosshairColor;
+} 
+// Затем пробуем текущую свечу
+else {
+    const isBullish = lastCandle.close >= lastCandle.open;
+    bgColor = isBullish 
+        ? (chartManager.bullishColor || '#26a69a')
+        : (chartManager.bearishColor || '#ef5350');
+}
 
             // Рисуем
             ctx.save();
@@ -257,7 +269,13 @@ class TimerManager {
             }
         }
     }
-
+// В TimerManager добавьте:
+updateColor(bullishColor, bearishColor) {
+    if (this._primitive?._paneView?._renderer) {
+        this._primitive._paneView._renderer._cachedBullishColor = bullishColor;
+        this._primitive._paneView._renderer._cachedBearishColor = bearishColor;
+    }
+}
     stop() {
         if (this._interval) { clearInterval(this._interval); this._interval = null; }
     }
