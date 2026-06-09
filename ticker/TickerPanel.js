@@ -926,62 +926,76 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
     
     return true;
 }
- async addSymbolsBatch(symbolsData) {
-    if (!symbolsData || symbolsData.length === 0) return;
+ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
+    symbol = symbol.trim().toUpperCase();
+    if (!symbol.endsWith('USDT')) return false;
+    const key = `${symbol}:${exchange}:${marketType}`;
     
-    const addedKeys = [];
-    
-    symbolsData.forEach(({ symbol, exchange, marketType }) => {
-        if (!symbol) return; 
-        symbol = symbol.trim().toUpperCase(); 
-        if (!symbol.endsWith('USDT')) return;
-        const key = `${symbol}:${exchange}:${marketType}`; 
-        
-        if (!this.tickersMap.has(key)) {
-            const newTicker = { 
-                symbol, price: 0, change: 0, volume: 0, trades: null, 
-                custom: true, prevPrice: 0, exchange, marketType, 
-                flag: this.state.flags[key] || null 
-            };
-            this.tickers.push(newTicker); 
-            this.tickersMap.set(key, newTicker);
-            addedKeys.push(key);
-            
-            if (window.priceManagerInstance) {
-                window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
-            }
+    if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
+        this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
+        this.watchlistManager.renderDropdown(); 
+    }
+
+    if (this.tickersMap.has(key)) {
+        const existingTicker = this.tickersMap.get(key);
+        if (!this.tickers.includes(existingTicker)) {
+            this.tickers.push(existingTicker);
+            this.filterCache = null;
+            if (render) this.renderTickerList();
         }
-    });
+        return true;
+    }
     
-    if (addedKeys.length === 0) return;
+    const newTicker = {
+        symbol,
+        price: 0,
+        change: 0,
+        volume: 0,
+        trades: null,
+        custom: true,
+        prevPrice: 0,
+        exchange,
+        marketType,
+        flag: this.state.flags[key] || null
+    };
     
-    // ✅ ОДИН раз обновляем вотчлист
-    if (this.watchlistManager) {
-        const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
-        if (list) {
-            for (const key of addedKeys) {
-                if (!list.symbols.includes(key)) {
-                    list.symbols.push(key);
-                }
-            }
-            this.watchlistManager.renderCache.delete(this.watchlistManager.activeListId);
-            this.watchlistManager.saveToStorage();
-            this.watchlistManager.renderDropdown();
+    this.tickers.push(newTicker);
+    this.tickersMap.set(key, newTicker);
+    
+    if (!this.state.customSymbols.includes(key)) {
+        this.state.customSymbols.push(key);
+    }
+    
+    // Подписываемся на PriceManager (для обновлений через WebSocket)
+    if (window.priceManagerInstance) {
+        window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price), exchange, marketType);
+    }
+    
+    this.filterCache = null;
+    if (render) this.renderTickerList();
+    
+    // ✅ Принудительно получаем цену (если не запрещено)
+    if (!skipInitialFetch && window.priceManagerInstance) {
+        const cachedPrice = window.priceManagerInstance.getPrice(symbol, exchange, marketType);
+        if (cachedPrice !== null && cachedPrice > 0) {
+            this._onPriceUpdate(symbol, cachedPrice);
+            this.updatePriceElements();
+        } else {
+            // Пытаемся получить цену через REST (с задержкой, чтобы не банить)
+            setTimeout(() => {
+                window.priceManagerInstance.fetchPrice(symbol, exchange, marketType)
+                    .then(price => {
+                        if (price) {
+                            this._onPriceUpdate(symbol, price);
+                            this.updatePriceElements();
+                        }
+                    })
+                    .catch(() => {});
+            }, 300);
         }
     }
     
-    this.syncWithActiveWatchlist();
-    this.saveState();
-    this.filterCache = null; 
-    this.tickerElements.clear();
-    this.renderTickerList();
-    
-    // ✅ Загружаем цены после рендера
-    setTimeout(() => {
-        if (this.pollRestData) {
-            this.pollRestData();
-        }
-    }, 1000);
+    return true;
 }
 
 async fetchBatchSnapshots(symbols) {
