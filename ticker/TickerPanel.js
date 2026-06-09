@@ -908,65 +908,7 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
         this.state.customSymbols.push(key);
     }
     
-    if (window.priceManagerInstance) {
-        window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price));
-    }
-    
-    this.filterCache = null;
-    if (render) this.renderTickerList();
-    
-    // ✅✅✅ ИСПРАВЛЕНИЕ: НЕ грузим если идёт массовое добавление!
-    if (!skipInitialFetch && !this._isBulkAdding) {
-        setTimeout(() => {
-            if (this.pollRestData && !this._isRestRunning) {
-                this.pollRestData();
-            }
-        }, 300);
-    }
-    
-    return true;
-}
- addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
-    symbol = symbol.trim().toUpperCase();
-    if (!symbol.endsWith('USDT')) return false;
-    const key = `${symbol}:${exchange}:${marketType}`;
-    
-    if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
-        this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
-        this.watchlistManager.renderDropdown(); 
-    }
-
-    if (this.tickersMap.has(key)) {
-        const existingTicker = this.tickersMap.get(key);
-        if (!this.tickers.includes(existingTicker)) {
-            this.tickers.push(existingTicker);
-            this.filterCache = null;
-            if (render) this.renderTickerList();
-        }
-        return true;
-    }
-    
-    const newTicker = {
-        symbol,
-        price: 0,
-        change: 0,
-        volume: 0,
-        trades: null,
-        custom: true,
-        prevPrice: 0,
-        exchange,
-        marketType,
-        flag: this.state.flags[key] || null
-    };
-    
-    this.tickers.push(newTicker);
-    this.tickersMap.set(key, newTicker);
-    
-    if (!this.state.customSymbols.includes(key)) {
-        this.state.customSymbols.push(key);
-    }
-    
-    // Подписываемся на PriceManager (для обновлений через WebSocket)
+    // Подписываемся на PriceManager
     if (window.priceManagerInstance) {
         window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price), exchange, marketType);
     }
@@ -974,14 +916,14 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
     this.filterCache = null;
     if (render) this.renderTickerList();
     
-    // ✅ Принудительно получаем цену (если не запрещено)
+    // ✅ ГЛАВНОЕ: сразу получаем цену
     if (!skipInitialFetch && window.priceManagerInstance) {
         const cachedPrice = window.priceManagerInstance.getPrice(symbol, exchange, marketType);
         if (cachedPrice !== null && cachedPrice > 0) {
             this._onPriceUpdate(symbol, cachedPrice);
             this.updatePriceElements();
         } else {
-            // Пытаемся получить цену через REST (с задержкой, чтобы не банить)
+            // Один REST‑запрос (с задержкой, чтобы не спамить)
             setTimeout(() => {
                 window.priceManagerInstance.fetchPrice(symbol, exchange, marketType)
                     .then(price => {
