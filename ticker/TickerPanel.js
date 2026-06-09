@@ -873,11 +873,13 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
     if (!symbol.endsWith('USDT')) return false;
     const key = `${symbol}:${exchange}:${marketType}`;
     
+    // Вотчлист
     if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
         this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
         this.watchlistManager.renderDropdown(); 
     }
 
+    // Если уже есть в памяти – просто добавляем в рендер
     if (this.tickersMap.has(key)) {
         const existingTicker = this.tickersMap.get(key);
         if (!this.tickers.includes(existingTicker)) {
@@ -888,6 +890,7 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
         return true;
     }
     
+    // Создаём новый тикер
     const newTicker = {
         symbol,
         price: 0,
@@ -908,7 +911,7 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
         this.state.customSymbols.push(key);
     }
     
-    // Подписываемся на PriceManager
+    // Подписываемся на PriceManager (WebSocket)
     if (window.priceManagerInstance) {
         window.priceManagerInstance.subscribe(symbol, (price) => this._onPriceUpdate(symbol, price), exchange, marketType);
     }
@@ -916,14 +919,17 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
     this.filterCache = null;
     if (render) this.renderTickerList();
     
-    // ✅ ГЛАВНОЕ: сразу получаем цену
+    // ===================================================
+    // ✅ ПРИНУДИТЕЛЬНАЯ ЗАГРУЗКА ЦЕНЫ (ДЛЯ ОДИНОЧНЫХ ДОБАВЛЕНИЙ)
+    // ===================================================
     if (!skipInitialFetch && window.priceManagerInstance) {
+        // 1. Пытаемся взять из кэша
         const cachedPrice = window.priceManagerInstance.getPrice(symbol, exchange, marketType);
         if (cachedPrice !== null && cachedPrice > 0) {
             this._onPriceUpdate(symbol, cachedPrice);
             this.updatePriceElements();
         } else {
-            // Один REST‑запрос (с задержкой, чтобы не спамить)
+            // 2. Если кэша нет – делаем REST-запрос (с задержкой)
             setTimeout(() => {
                 window.priceManagerInstance.fetchPrice(symbol, exchange, marketType)
                     .then(price => {
@@ -934,6 +940,11 @@ addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures',
                     })
                     .catch(() => {});
             }, 300);
+        }
+        
+        // 3. ГАРАНТИРОВАННОЕ ОБНОВЛЕНИЕ (как в addSymbolsBatch)
+        if (typeof this.pollRestData === 'function') {
+            setTimeout(() => this.pollRestData(), 600);
         }
     }
     
