@@ -32,7 +32,6 @@ class TimerRenderer {
             
             if (!lastCandle) return;
 
-            // Берём close — та же цена, что и линия
             const price = lastCandle.close;
             if (price == null || isNaN(price) || price <= 0) return;
 
@@ -56,16 +55,14 @@ class TimerRenderer {
             const rectWidth = Math.ceil(textWidth + 8 * hpr);
             const rectHeight = Math.ceil(fontSize + 6 * vpr);
 
-            // Упор в правый край
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
             
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // Кешируем
             this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
-            // ✅ ЦВЕТ: приоритет — кешированный из _syncPriceLine, затем расчётный
+            // ЦВЕТ: приоритет как у линии цены
             let bgColor;
             if (this._cachedColor) {
                 bgColor = this._cachedColor;
@@ -78,7 +75,6 @@ class TimerRenderer {
                     : (chartManager.bearishColor || '#ef5350');
             }
 
-            // Рисуем
             ctx.save();
             ctx.fillStyle = bgColor + 'DD';
             ctx.shadowColor = 'rgba(0,0,0,0.3)';
@@ -148,7 +144,7 @@ class TimerPrimitive {
     setEnabled(enabled) {
         if (this._paneView?._renderer) {
             this._paneView._renderer.enabled = enabled;
-            this.requestRedraw();
+            if (enabled) this.requestRedraw();
         }
     }
 
@@ -214,6 +210,7 @@ class TimerManager {
                         if (!this._primitive.isDataReady()) {
                             this._primitive.setDataReady(true);
                             if (!['1d','1w','1M'].includes(this._currentTf)) {
+                                this._syncColorFromChartManager(); // ✅ Синхронизация цвета
                                 this._primitive.setEnabled(true);
                             }
                         }
@@ -230,6 +227,7 @@ class TimerManager {
             if (++i > 80 || !this._chartManager || !this._primitive) return;
             if (this._chartManager.chartData?.length > 0) {
                 this._primitive.setDataReady(true);
+                this._syncColorFromChartManager(); // ✅ Синхронизация цвета перед включением
                 this._primitive.setEnabled(true);
                 return;
             }
@@ -252,6 +250,7 @@ class TimerManager {
         if (!this._primitive) this._init();
         if (!this._timerElement) this._timerElement = { textContent: '' };
 
+        this._syncColorFromChartManager(); // ✅ Синхронизация цвета перед запуском
         this._tick();
         this.stop();
         this._interval = setInterval(() => this._tick(), 250);
@@ -274,20 +273,20 @@ class TimerManager {
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
 
-        // ✅ Синхронизируем цвет из ChartManager перед каждой отрисовкой
         this._syncColorFromChartManager();
 
         if (this._timerElement.textContent !== txt) {
             this._timerElement.textContent = txt;
             if (this._primitive) {
-                if (!this._primitive.isEnabled() && this._primitive.isDataReady())
+                if (!this._primitive.isEnabled() && this._primitive.isDataReady()) {
+                    this._syncColorFromChartManager(); // ✅ Ещё раз перед включением
                     this._primitive.setEnabled(true);
+                }
                 if (this._primitive.isEnabled()) this._primitive.requestRedraw();
             }
         }
     }
 
-    // ✅ Синхронизация цвета с ChartManager._lastAppliedColor
     _syncColorFromChartManager() {
         const cm = this._chartManager;
         if (!cm || !this._primitive) return;
@@ -295,12 +294,9 @@ class TimerManager {
         const renderer = this._primitive._paneView?._renderer;
         if (!renderer) return;
 
-        // Приоритет: _lastAppliedColor из _syncPriceLine
         if (cm._lastAppliedColor) {
             renderer._cachedColor = cm._lastAppliedColor;
-        }
-        // Запасной вариант: вычисляем по последней свече
-        else if (cm.chartData?.length > 0) {
+        } else if (cm.chartData?.length > 0) {
             const lastCandle = cm.chartData[cm.chartData.length - 1];
             if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
                 const isBullish = lastCandle.close >= lastCandle.open;
@@ -311,7 +307,6 @@ class TimerManager {
         }
     }
 
-    // ✅ Принудительное обновление цвета — вызывать из _syncPriceLine
     forceColorUpdate() {
         this._syncColorFromChartManager();
         if (this._primitive?.isEnabled()) {
