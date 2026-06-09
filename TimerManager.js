@@ -14,76 +14,87 @@ class TimerRenderer {
     }
 
     draw(target) {
-    if (!this.enabled) return;
-    
-    const chartManager = this._timerManager._chartManager;
-    if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
-    
-    const timerText = this._timerManager._timerElement?.textContent || '';
-    if (!timerText) return;
-
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const hpr = scope.horizontalPixelRatio;
-        const vpr = scope.verticalPixelRatio;
-
-        const data = chartManager.chartData;
-        const lastCandle = data[data.length - 1];
+        if (!this.enabled) return;
         
-        if (!lastCandle) return;
-
-        const price = lastCandle.close;
-        if (price == null || isNaN(price) || price <= 0) return;
-
-        const activeSeries = chartManager.currentChartType === 'candle' 
-            ? chartManager.candleSeries 
-            : chartManager.barSeries;
+        const chartManager = this._timerManager._chartManager;
+        if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
         
-        if (!activeSeries) return;
+        const timerText = this._timerManager._timerElement?.textContent || '';
+        if (!timerText) return;
 
-        const yCoord = activeSeries.priceToCoordinate(price);
-        if (yCoord == null || isNaN(yCoord)) return;
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const hpr = scope.horizontalPixelRatio;
+            const vpr = scope.verticalPixelRatio;
 
-        const bitmapY = yCoord * vpr;
-        const bitmapWidth = scope.mediaSize.width * hpr;
-        const bitmapHeight = scope.mediaSize.height * vpr;
+            const data = chartManager.chartData;
+            const lastCandle = data[data.length - 1];
+            
+            if (!lastCandle) return;
 
-        const fontSize = Math.round(11 * vpr);
-        ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-        const textWidth = ctx.measureText(timerText).width;
-        
-        const rectWidth = Math.ceil(textWidth + 8 * hpr);
-        const rectHeight = Math.ceil(fontSize + 6 * vpr);
+            const price = lastCandle.close;
+            if (price == null || isNaN(price) || price <= 0) return;
 
-        const rectX = bitmapWidth - rectWidth - 4 * hpr;
-        
-        let rectY = Math.round(bitmapY - rectHeight / 2);
-        rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
+            const activeSeries = chartManager.currentChartType === 'candle' 
+                ? chartManager.candleSeries 
+                : chartManager.barSeries;
+            
+            if (!activeSeries) return;
 
-        this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
+            const yCoord = activeSeries.priceToCoordinate(price);
+            if (yCoord == null || isNaN(yCoord)) return;
 
-        // ✅ ТОЧНО ТАК ЖЕ КАК В _syncPriceLine: price >= open
-        const isBullish = price >= lastCandle.open;
-        const bgColor = isBullish 
-            ? (chartManager.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
-            : (chartManager.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
+            const bitmapY = yCoord * vpr;
+            const bitmapWidth = scope.mediaSize.width * hpr;
+            const bitmapHeight = scope.mediaSize.height * vpr;
 
-        ctx.save();
-        ctx.fillStyle = bgColor + 'DD';
-        ctx.shadowColor = 'rgba(0,0,0,0.3)';
-        ctx.shadowBlur = 3 * hpr;
-        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
-        ctx.fill();
-        
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#fff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
-        ctx.restore();
-    });
+            const fontSize = Math.round(11 * vpr);
+            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+            const textWidth = ctx.measureText(timerText).width;
+            
+            const rectWidth = Math.ceil(textWidth + 8 * hpr);
+            const rectHeight = Math.ceil(fontSize + 6 * vpr);
+
+            const rectX = bitmapWidth - rectWidth - 4 * hpr;
+            
+            let rectY = Math.round(bitmapY - rectHeight / 2);
+            rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
+
+            this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
+
+            const isBullish = lastCandle.close >= lastCandle.open;
+            const bgColor = isBullish 
+                ? (chartManager.bullishColor || '#26a69a')
+                : (chartManager.bearishColor || '#ef5350');
+
+            ctx.save();
+            ctx.fillStyle = bgColor + 'DD';
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 3 * hpr;
+            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
+            ctx.fill();
+            
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
+            ctx.restore();
+        });
+    }
+
+    _roundRect(ctx, x, y, w, h, r) {
+        r = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+    }
 }
-}
+
 class TimerPaneView {
     constructor(timerManager) {
         this._timerManager = timerManager;
