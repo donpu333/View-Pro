@@ -168,6 +168,47 @@ this.init();
             this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
         }, 4 * 60 * 60 * 1000);
     }, 100);
+    // В методе init(), после существующего кода:
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        console.log('👁️ Вкладка активна, восстанавливаем WebSocket...');
+        this._restoreWebSockets();
+    }
+});
+
+window.addEventListener('focus', () => {
+    console.log('🔄 Фокус восстановлен, проверяем WebSocket...');
+    this._restoreWebSockets();
+});
+}
+
+_restoreWebSockets() {
+    // Проверяем состояние WebSocket соединений
+    const wsKeys = ['bn-fut', 'bn-spot', 'by-fut', 'by-spot'];
+    
+    wsKeys.forEach(key => {
+        const ws = this._wsConnections?.[key];
+        if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+            console.log(`🔄 Переподключаю WebSocket: ${key}`);
+            
+            // Пересоздаём соединение
+            if (key === 'bn-fut') {
+                this._connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
+            } else if (key === 'bn-spot') {
+                this._connectBinanceWs('bn-spot', 'wss://data-stream.binance.com/ws/!miniTicker@arr', 'spot');
+            } else if (key === 'by-fut') {
+                this._connectBybitWs('by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures');
+            } else if (key === 'by-spot') {
+                this._connectBybitWs('by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot');
+            }
+        }
+    });
+    
+    // Также запускаем pollRestData если нужно
+    if (!this._isRestRunning && this._restQueue?.length === 0) {
+        console.log('📡 Запускаю обновление цен...');
+        this.pollRestData?.();
+    }
 }
     async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
@@ -434,33 +475,37 @@ startTickerPanelPriceEngine() {
     this._restQueue = [];           
     this._isRestRunning = false;    
 
-  this._safeFetch = async (url, retries = 3) => {
-    // ✅ Ждём ChartManager, но не больше 5 секунд
-    let waited = 0;
-    while (ChartManager._fetchInProgress && waited < 50) {
-        await new Promise(r => setTimeout(r, 100));
-        waited++;
-    }
-    
-    for (let i = 0; i < retries; i++) {
-        try {
-            if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
-            const response = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (response.status === 418 || response.status === 429) continue;
-            if (!response.ok) return null;
-            return await response.json();
-        } catch (e) {
-            if (e.name !== 'AbortError') continue;
+    // ============================================
+    // SAFE FETCH
+    // ============================================
+    this._safeFetch = async (url, retries = 3) => {
+        let waited = 0;
+        while (ChartManager._fetchInProgress && waited < 50) {
+            await new Promise(r => setTimeout(r, 100));
+            waited++;
         }
-    }
-    return null;
-};
+        
+        for (let i = 0; i < retries; i++) {
+            try {
+                if (i > 0) await new Promise(r => setTimeout(r, Math.min(5000 * i, 20000)));
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+                const response = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (response.status === 418 || response.status === 429) continue;
+                if (!response.ok) return null;
+                return await response.json();
+            } catch (e) {
+                if (e.name !== 'AbortError') continue;
+            }
+        }
+        return null;
+    };
 
+    // ============================================
+    // PROCESS REST QUEUE
+    // ============================================
     this._processRestQueue = async () => {
-        // ✅ Ждём fetchBatchSnapshots
         while (TickerPanel._fetchBatchInProgress) {
             await new Promise(r => setTimeout(r, 100));
         }
@@ -490,71 +535,71 @@ startTickerPanelPriceEngine() {
         }
     };
 
-   const loadAllData = async () => {
-    if (this.tickersMap.size === 0) return;
+    // ============================================
+    // LOAD ALL DATA (REST)
+    // ============================================
+    const loadAllData = async () => {
+        if (this.tickersMap.size === 0) return;
 
-    const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
-    for (const [k, t] of this.tickersMap.entries()) {
-        if (t.exchange === 'binance' && t.marketType === 'futures') groups.bnFut.push(t.symbol);
-        if (t.exchange === 'binance' && t.marketType === 'spot') groups.bnSpot.push(t.symbol);
-        if (t.exchange === 'bybit' && t.marketType === 'futures') groups.byFut.push(t.symbol);
-        if (t.exchange === 'bybit' && t.marketType === 'spot') groups.bySpot.push(t.symbol);
-    }
+        const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
+        for (const [k, t] of this.tickersMap.entries()) {
+            if (t.exchange === 'binance' && t.marketType === 'futures') groups.bnFut.push(t.symbol);
+            if (t.exchange === 'binance' && t.marketType === 'spot') groups.bnSpot.push(t.symbol);
+            if (t.exchange === 'bybit' && t.marketType === 'futures') groups.byFut.push(t.symbol);
+            if (t.exchange === 'bybit' && t.marketType === 'spot') groups.bySpot.push(t.symbol);
+        }
 
-    // ✅ ИСПРАВЛЕНИЕ: Увеличиваем до безопасного лимита (не 100, а 80 для запаса)
-    const BINANCE_BATCH_SIZE = 80;  // Было 12!!!
-    
-    this._restQueue = [];
+        const BINANCE_BATCH_SIZE = 80;
+        this._restQueue = [];
 
-    // Binance Futures - оптимизированный
-    for (let i = 0; i < groups.bnFut.length; i += BINANCE_BATCH_SIZE) {
-        const batch = groups.bnFut.slice(i, i + BINANCE_BATCH_SIZE);
-        const symbolsParam = batch.map(s => `"${s}"`).join(',');
-        
-        this._restQueue.push(async () => {
-            const data = await this._safeFetch(
-                `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]`
-            );
-            if (Array.isArray(data)) data.forEach(t => { 
-                const tk = this.tickersMap.get(`${t.symbol}:binance:futures`);
-                if (tk) { 
-                    const np = parseFloat(t.lastPrice)||0;
-                    if (tk.price !== np && tk.price !== 0) tk.prevPrice = tk.price;
-                    tk.price = np; 
-                    tk.change = parseFloat(t.priceChangePercent)||0; 
-                    tk.volume = parseFloat(t.quoteVolume)||0; 
-                    tk.trades = parseInt(t.count)||0; 
-                } 
+        // Binance Futures
+        for (let i = 0; i < groups.bnFut.length; i += BINANCE_BATCH_SIZE) {
+            const batch = groups.bnFut.slice(i, i + BINANCE_BATCH_SIZE);
+            const symbolsParam = batch.map(s => `"${s}"`).join(',');
+            
+            this._restQueue.push(async () => {
+                const data = await this._safeFetch(
+                    `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]`
+                );
+                if (Array.isArray(data)) data.forEach(t => { 
+                    const tk = this.tickersMap.get(`${t.symbol}:binance:futures`);
+                    if (tk) { 
+                        const np = parseFloat(t.lastPrice)||0;
+                        if (tk.price !== np && tk.price !== 0) tk.prevPrice = tk.price;
+                        tk.price = np; 
+                        tk.change = parseFloat(t.priceChangePercent)||0; 
+                        tk.volume = parseFloat(t.quoteVolume)||0; 
+                        tk.trades = parseInt(t.count)||0; 
+                    } 
+                });
+                this.renderer?.updatePriceElements?.();
             });
-            this.renderer?.updatePriceElements?.();
-        });
-    }
+        }
 
-    // Binance Spot - оптимизированный
-    for (let i = 0; i < groups.bnSpot.length; i += BINANCE_BATCH_SIZE) {
-        const batch = groups.bnSpot.slice(i, i + BINANCE_BATCH_SIZE);
-        const symbolsParam = batch.map(s => `"${s}"`).join(',');
-        
-        this._restQueue.push(async () => {
-            const data = await this._safeFetch(
-                `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`
-            );
-            if (Array.isArray(data)) data.forEach(t => { 
-                const tk = this.tickersMap.get(`${t.symbol}:binance:spot`);
-                if (tk) { 
-                    const np = parseFloat(t.lastPrice)||0;
-                    if (tk.price !== np && tk.price !== 0) tk.prevPrice = tk.price;
-                    tk.price = np; 
-                    tk.change = parseFloat(t.priceChangePercent)||0; 
-                    tk.volume = parseFloat(t.quoteVolume)||0; 
-                    tk.trades = parseInt(t.count)||0; 
-                } 
+        // Binance Spot
+        for (let i = 0; i < groups.bnSpot.length; i += BINANCE_BATCH_SIZE) {
+            const batch = groups.bnSpot.slice(i, i + BINANCE_BATCH_SIZE);
+            const symbolsParam = batch.map(s => `"${s}"`).join(',');
+            
+            this._restQueue.push(async () => {
+                const data = await this._safeFetch(
+                    `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`
+                );
+                if (Array.isArray(data)) data.forEach(t => { 
+                    const tk = this.tickersMap.get(`${t.symbol}:binance:spot`);
+                    if (tk) { 
+                        const np = parseFloat(t.lastPrice)||0;
+                        if (tk.price !== np && tk.price !== 0) tk.prevPrice = tk.price;
+                        tk.price = np; 
+                        tk.change = parseFloat(t.priceChangePercent)||0; 
+                        tk.volume = parseFloat(t.quoteVolume)||0; 
+                        tk.trades = parseInt(t.count)||0; 
+                    } 
+                });
+                this.renderer?.updatePriceElements?.();
             });
-            this.renderer?.updatePriceElements?.();
-        });
-    }
+        }
 
-    
         // Bybit Futures
         if (groups.byFut.length > 0) {
             this._restQueue.push(async () => {
@@ -616,26 +661,38 @@ startTickerPanelPriceEngine() {
     };
 
     // ============================================
-    // WEBSOCKET — без изменений
+    // WEBSOCKET — МЕТОДЫ КЛАССА (для автовосстановления)
     // ============================================
     
-    const connectBinanceWs = (id, url, marketType) => {
-        if (this._wsConnections[id]) return;
-        var ws = new WebSocket(url);
+    this._connectBinanceWs = (id, url, marketType) => {
+        // ✅ Проверяем, не подключен ли уже
+        if (this._wsConnections[id]?.readyState === WebSocket.OPEN) return;
+        // Закрываем старый если есть
+        if (this._wsConnections[id]) {
+            try { this._wsConnections[id].close(); } catch(e) {}
+        }
+        
+        const ws = new WebSocket(url);
         this._wsConnections[id] = ws;
-        ws.onopen = function() { console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;'); };
+        const self = this;
+        
+        ws.onopen = function() { 
+            console.log('%c✅ [WS] ' + id, 'color:#4caf50;font-weight:bold;'); 
+        };
+        
         ws.onmessage = (event) => {
             try {
-                var tickers = JSON.parse(event.data);
+                const tickers = JSON.parse(event.data);
                 if (!Array.isArray(tickers)) return;
-                var now = Date.now();
-                for (var i = 0; i < tickers.length; i++) {
-                    var t = tickers[i];
+                const now = Date.now();
+                
+                for (let i = 0; i < tickers.length; i++) {
+                    const t = tickers[i];
                     if (!t.s || !t.c) continue;
-                    var key = t.s + ':binance:' + marketType;
-                    var tk = this.tickersMap.get(key);
+                    const key = t.s + ':binance:' + marketType;
+                    const tk = self.tickersMap.get(key);
                     if (tk) {
-                        var newPrice = parseFloat(t.c);
+                        const newPrice = parseFloat(t.c);
                         if (tk.price !== newPrice) {
                             tk.prevPrice = tk.price || newPrice;
                             tk.price = newPrice;
@@ -644,71 +701,166 @@ startTickerPanelPriceEngine() {
                         }
                     }
                 }
-                if (!this._blockDOMUpdates) {
-                    this.renderer.updatePriceElements();
-                    this._flashUpdatedRows(now);
+                
+                if (!self._blockDOMUpdates) {
+                    self.renderer.updatePriceElements();
+                    self._flashUpdatedRows(now);
                 }
             } catch(e) {}
         };
+        
         ws.onclose = function() { 
-            if (this._wsConnections) this._wsConnections[id] = null;
-            setTimeout(function() { connectBinanceWs(id, url, marketType); }, 5000); 
+            console.log('❌ [WS] ' + id + ' закрыт');
+            self._wsConnections[id] = null;
+            // Автопереподключение через 5 секунд
+            setTimeout(() => {
+                if (self.tickersMap.size > 0) {
+                    self._connectBinanceWs(id, url, marketType);
+                }
+            }, 5000);
         };
+        
         ws.onerror = function() { ws.close(); };
     };
 
-    const connectBybitWs = (id, url, marketType) => {
-        if (this._wsConnections[id]) return;
-        var ws = new WebSocket(url);
+    this._connectBybitWs = (id, url, marketType) => {
+        // ✅ Проверяем, не подключен ли уже
+        if (this._wsConnections[id]?.readyState === WebSocket.OPEN) return;
+        if (this._wsConnections[id]) {
+            try { this._wsConnections[id].close(); } catch(e) {}
+        }
+        
+        const ws = new WebSocket(url);
         this._wsConnections[id] = ws;
+        const self = this;
+        
         ws.onopen = function() {
             console.log('%c✅ [WS] ' + id, 'color:#F7A600;font-weight:bold;');
-            var topic = marketType === 'futures' ? 'tickers.linear' : 'tickers.spot';
+            const topic = marketType === 'futures' ? 'tickers.linear' : 'tickers.spot';
             ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
         };
+        
         ws.onmessage = (event) => {
             try {
-                var msg = JSON.parse(event.data);
-                var data = msg.data;
-                if (!data || !data.topic || !data.topic.startsWith('tickers.')) return;
-                var d = data.data;
+                const msg = JSON.parse(event.data);
+                if (!msg.data || !msg.topic?.startsWith('tickers.')) return;
+                const d = msg.data;
                 if (!d) return;
-                var symbol = d.s || d.symbol;
-                var newPrice = parseFloat(d.lastPrice || d.c || d.p);
+                
+                const symbol = d.s || d.symbol;
+                const newPrice = parseFloat(d.lastPrice || d.c || d.p);
                 if (!symbol || isNaN(newPrice)) return;
-                var mt = data.topic.includes('linear') ? 'futures' : 'spot';
-                var key = symbol + ':bybit:' + mt;
-                var tk = this.tickersMap.get(key);
+                
+                const mt = msg.topic.includes('linear') ? 'futures' : 'spot';
+                const key = symbol + ':bybit:' + mt;
+                const tk = self.tickersMap.get(key);
+                
                 if (tk && tk.price !== newPrice) {
-                    var now = Date.now();
+                    const now = Date.now();
                     tk.prevPrice = tk.price || newPrice;
                     tk.price = newPrice;
                     tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
                     tk._flashTime = now;
-                    if (!this._blockDOMUpdates) {
-                        this.renderer.updatePriceElements();
-                        this._flashUpdatedRows(now);
+                    
+                    if (!self._blockDOMUpdates) {
+                        self.renderer.updatePriceElements();
+                        self._flashUpdatedRows(now);
                     }
                 }
             } catch(e) {}
         };
+        
         ws.onclose = () => { 
-            if (this._wsConnections) this._wsConnections[id] = null;
-            setTimeout(() => { connectBybitWs(id, url, marketType); }, 5000); 
+            console.log('❌ [WS] ' + id + ' закрыт');
+            self._wsConnections[id] = null;
+            setTimeout(() => {
+                if (self.tickersMap.size > 0) {
+                    self._connectBybitWs(id, url, marketType);
+                }
+            }, 5000);
         };
+        
         ws.onerror = function() { ws.close(); };
     };
 
-    connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
-   connectBinanceWs('bn-spot', 'wss://data-stream.binance.com/ws/!miniTicker@arr', 'spot');
-    connectBybitWs('by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures');
-    connectBybitWs('by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot');
+    // ============================================
+    // ВОССТАНОВЛЕНИЕ ПРИ ВОЗВРАТЕ НА ВКЛАДКУ
+    // ============================================
+    this._restoreWebSockets = () => {
+        // Проверяем все WebSocket соединения
+        const connections = [
+            { id: 'bn-fut', fn: this._connectBinanceWs, args: ['bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures'] },
+            { id: 'bn-spot', fn: this._connectBinanceWs, args: ['bn-spot', 'wss://data-stream.binance.com/ws/!miniTicker@arr', 'spot'] },
+            { id: 'by-fut', fn: this._connectBybitWs, args: ['by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures'] },
+            { id: 'by-spot', fn: this._connectBybitWs, args: ['by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot'] }
+        ];
+        
+        connections.forEach(({ id, fn, args }) => {
+            const ws = this._wsConnections?.[id];
+            if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                console.log(`🔄 Восстанавливаю WebSocket: ${id}`);
+                fn.apply(this, args);
+            }
+        });
+        
+        // Запускаем REST если очередь пуста
+        if (!this._isRestRunning && this._restQueue?.length === 0 && this.tickersMap.size > 0) {
+            console.log('📡 Запускаю обновление цен...');
+            loadAllData().catch(e => console.warn('Ошибка обновления:', e));
+        }
+    };
+
+    // Обработчики видимости страницы
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            console.log('👁️ Вкладка активна, восстанавливаем...');
+            this._restoreWebSockets();
+        }
+    });
+    
+    window.addEventListener('focus', () => {
+        console.log('🔄 Фокус, проверяем WebSocket...');
+        this._restoreWebSockets();
+    });
+
+    // ============================================
+    // HEALTH CHECK (каждые 30 секунд)
+    // ============================================
+    this._healthCheckInterval = setInterval(() => {
+        if (document.hidden) return;
+        
+        // Проверяем WebSocket
+        this._restoreWebSockets();
+        
+        // Проверяем свежесть данных
+        const now = Date.now();
+        let staleCount = 0;
+        for (const [key, ticker] of this.tickersMap.entries()) {
+            if (ticker._flashTime && (now - ticker._flashTime) > 60000) {
+                staleCount++;
+            }
+        }
+        
+        if (staleCount > this.tickersMap.size * 0.5 && this.tickersMap.size > 0) {
+            console.warn(`⚠️ ${staleCount} тикеров устарели, перезапускаем REST`);
+            loadAllData().catch(e => console.warn('Ошибка:', e));
+        }
+    }, 30000);
+
+    // ============================================
+    // ЗАПУСК
+    // ============================================
+    this._connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
+    this._connectBinanceWs('bn-spot', 'wss://data-stream.binance.com/ws/!miniTicker@arr', 'spot');
+    this._connectBybitWs('by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures');
+    this._connectBybitWs('by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot');
 
     console.log('⏳ Первичная загрузка...');
     setTimeout(() => loadAllData(), 500);
 
-    setInterval(() => {
-        if (!this._isRestRunning && this._restQueue.length === 0) {
+    // Периодическое обновление (каждые 5 минут)
+    this._pollInterval = setInterval(() => {
+        if (!this._isRestRunning && this._restQueue.length === 0 && !document.hidden) {
             loadAllData().catch(e => console.warn('⚠️ Ошибка:', e));
         }
     }, 300000);
@@ -718,7 +870,29 @@ startTickerPanelPriceEngine() {
 // ============================================
 // ✅ АНИМАЦИЯ
 // ============================================
-
+destroyPriceEngine() {
+    // Очищаем интервалы
+    if (this._healthCheckInterval) {
+        clearInterval(this._healthCheckInterval);
+        this._healthCheckInterval = null;
+    }
+    if (this._pollInterval) {
+        clearInterval(this._pollInterval);
+        this._pollInterval = null;
+    }
+    
+    // Закрываем WebSocket
+    if (this._wsConnections) {
+        Object.values(this._wsConnections).forEach(ws => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close(1000, 'Component destroyed');
+            }
+        });
+        this._wsConnections = {};
+    }
+    
+    this._priceEngineStarted = false;
+}
 _flashUpdatedRows(flashTime) {
     var container = document.getElementById('tickerListContainer');
     if (!container) return;
