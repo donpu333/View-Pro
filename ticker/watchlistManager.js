@@ -325,138 +325,124 @@ class WatchlistManager {
     // ============================================
     // ИСПРАВЛЕННЫЙ МЕТОД ЗАГРУЗКИ ЦЕН (без ошибки 418)
     // ============================================
-    async fetchPricesForActiveList() {
-        if (this.tickerPanel?._suppressWatchlistLoad) {
-            console.log('⏸️ fetchPricesForActiveList(): ПРОПУЩЕНО — идёт массовое добавление');
-            return false;
-        }
+   // ✅ ИСПРАВЛЕННЫЙ МЕТОД — просто скопируй и вставь ВМЕСТО старого
+async fetchPricesForActiveList() {
+    const activeList = this.lists.get(this.activeListId);
+    if (!activeList || activeList.symbols.length === 0) return false;
 
-        const activeList = this.lists.get(this.activeListId);
-        if (!activeList || activeList.symbols.length === 0) return false;
+    const bnFut = [], bnSpot = [], byFut = [], bySpot = [];
 
-        const bnFut = [], bnSpot = [], byFut = [], bySpot = [];
+    activeList.symbols.forEach(key => {
+        const parts = key.split(':');
+        if (parts.length !== 3) return;
+        const [s, ex, mt] = parts;
+        if (ex === 'binance') { mt === 'futures' ? bnFut.push(s) : bnSpot.push(s); }
+        else if (ex === 'bybit') { mt === 'futures' ? byFut.push(s) : bySpot.push(s); }
+    });
 
-        activeList.symbols.forEach(key => {
-            const parts = key.split(':');
-            if (parts.length !== 3) return;
-            const [s, ex, mt] = parts;
-            if (ex === 'binance') { mt === 'futures' ? bnFut.push(s) : bnSpot.push(s); }
-            else if (ex === 'bybit') { mt === 'futures' ? byFut.push(s) : bySpot.push(s); }
-        });
+    const BATCH = 20;
+    const DELAY = 1200;
+    const HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+    };
 
-        const BATCH = 20;
-        const DELAY = 1200; // увеличенная задержка для предотвращения бана
-        const HEADERS = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json'
-        };
-
-        // Вспомогательная функция для батчевых запросов с кодированием
-        const fetchBatch = async (url, symbolsArray, exchangeType) => {
-            if (symbolsArray.length === 0) return;
-            for (let i = 0; i < symbolsArray.length; i += BATCH) {
-                const batch = symbolsArray.slice(i, i + BATCH);
-                // ✅ КОРРЕКТНОЕ КОДИРОВАНИЕ параметра symbols
-                const symbolsJson = JSON.stringify(batch);
-                const encodedSymbols = encodeURIComponent(symbolsJson);
-                const fullUrl = `${url}?symbols=${encodedSymbols}`;
-                try {
-                    const response = await fetch(fullUrl, { headers: HEADERS });
-                    if (response.status === 418) {
-                        console.warn(`⚠️ 418 на ${url} — увеличенная задержка`);
-                        await new Promise(r => setTimeout(r, 5000));
-                        continue;
-                    }
-                    const data = await response.json();
-                    if (Array.isArray(data)) {
-                        data.forEach(t => {
-                            const key = `${t.symbol}:${exchangeType}`;
-                            const ticker = this.tickerPanel.tickersMap.get(key);
-                            if (ticker) {
-                                ticker.price = +t.lastPrice;
-                                ticker.change = +t.priceChangePercent;
-                                ticker.volume = +t.quoteVolume;
-                                ticker.trades = +t.count || 0;
-                            }
-                        });
-                        this.tickerPanel.renderer?.updatePriceElements?.();
-                    }
-                } catch (e) {
-                    console.error(`Ошибка запроса ${fullUrl}:`, e);
+    const fetchBatch = async (url, symbolsArray, exchangeType) => {
+        if (symbolsArray.length === 0) return;
+        for (let i = 0; i < symbolsArray.length; i += BATCH) {
+            const batch = symbolsArray.slice(i, i + BATCH);
+            const symbolsJson = JSON.stringify(batch);
+            const encodedSymbols = encodeURIComponent(symbolsJson);
+            const fullUrl = `${url}?symbols=${encodedSymbols}`;
+            try {
+                const response = await fetch(fullUrl, { headers: HEADERS });
+                if (response.status === 418) {
+                    console.warn(`⚠️ 418 на ${url} — увеличенная задержка`);
+                    await new Promise(r => setTimeout(r, 5000));
+                    continue;
                 }
-                // Задержка между батчами (кроме последнего)
-                if (i + BATCH < symbolsArray.length) {
-                    await new Promise(r => setTimeout(r, DELAY));
+                const data = await response.json();
+                if (Array.isArray(data)) {
+                    data.forEach(t => {
+                        const key = `${t.symbol}:${exchangeType}`;
+                        const ticker = this.tickerPanel.tickersMap.get(key);
+                        if (ticker) {
+                            ticker.price = +t.lastPrice;
+                            ticker.change = +t.priceChangePercent;
+                            ticker.volume = +t.quoteVolume;
+                            ticker.trades = +t.count || 0;
+                        }
+                    });
+                    this.tickerPanel.renderer?.updatePriceElements?.();
                 }
+            } catch (e) {
+                console.error(`Ошибка запроса ${fullUrl}:`, e);
             }
-        };
-
-        // Запросы к Binance Futures
-        if (bnFut.length) {
-            await fetchBatch('https://fapi.binance.com/fapi/v1/ticker/24hr', bnFut, 'binance:futures');
+            if (i + BATCH < symbolsArray.length) {
+                await new Promise(r => setTimeout(r, DELAY));
+            }
         }
+    };
 
-        // Задержка перед Spot (если оба типа существуют)
-        if (bnFut.length && bnSpot.length) {
-            await new Promise(r => setTimeout(r, 2000));
-        }
-
-        // Binance Spot
-        if (bnSpot.length) {
-            await fetchBatch('https://api.binance.com/api/v3/ticker/24hr', bnSpot, 'binance:spot');
-        }
-
-        // Задержка перед Bybit (если есть бинанс и байбит)
-        if ((bnFut.length || bnSpot.length) && (byFut.length || bySpot.length)) {
-            await new Promise(r => setTimeout(r, 2000));
-        }
-
-        // Bybit Futures (один запрос на все тикеры)
-        if (byFut.length) {
-            try {
-                const response = await fetch('https://api.bybit.com/v5/market/tickers?category=linear', { headers: HEADERS });
-                const data = await response.json();
-                if (data?.retCode === 0) {
-                    const set = new Set(byFut);
-                    data.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
-                            const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:futures`);
-                            if (ticker) {
-                                ticker.price = +t.lastPrice;
-                                ticker.change = +(t.price24hPcnt || 0) * 100;
-                                ticker.volume = +(t.volume24h || 0) * +(t.lastPrice || 0);
-                            }
-                        }
-                    });
-                }
-            } catch (e) {}
-        }
-
-        // Bybit Spot
-        if (bySpot.length) {
-            try {
-                const response = await fetch('https://api.bybit.com/v5/market/tickers?category=spot', { headers: HEADERS });
-                const data = await response.json();
-                if (data?.retCode === 0) {
-                    const set = new Set(bySpot);
-                    data.result.list.forEach(t => {
-                        if (set.has(t.symbol)) {
-                            const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:spot`);
-                            if (ticker) {
-                                ticker.price = +t.lastPrice;
-                                ticker.change = +(t.price24hPcnt || 0) * 100;
-                                ticker.volume = +(t.volume24h || 0) * +(t.lastPrice || 0);
-                            }
-                        }
-                    });
-                }
-            } catch (e) {}
-        }
-
-        this.tickerPanel.renderer?.updatePriceElements?.();
-        return true;
+    if (bnFut.length) {
+        await fetchBatch('https://fapi.binance.com/fapi/v1/ticker/24hr', bnFut, 'binance:futures');
     }
 
+    if (bnFut.length && bnSpot.length) {
+        await new Promise(r => setTimeout(r, 2000));
+    }
+
+    if (bnSpot.length) {
+        await fetchBatch('https://api.binance.com/api/v3/ticker/24hr', bnSpot, 'binance:spot');
+    }
+
+    if ((bnFut.length || bnSpot.length) && (byFut.length || bySpot.length)) {
+        await new Promise(r => setTimeout(r, 2000));
+    }
+
+    if (byFut.length) {
+        try {
+            const response = await fetch('https://api.bybit.com/v5/market/tickers?category=linear', { headers: HEADERS });
+            const data = await response.json();
+            if (data?.retCode === 0) {
+                const set = new Set(byFut);
+                data.result.list.forEach(t => {
+                    if (set.has(t.symbol)) {
+                        const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:futures`);
+                        if (ticker) {
+                            ticker.price = +t.lastPrice;
+                            ticker.change = +(t.price24hPcnt || 0) * 100;
+                            ticker.volume = +(t.volume24h || 0) * +(t.lastPrice || 0);
+                        }
+                    }
+                });
+            }
+        } catch (e) {}
+    }
+
+    if (bySpot.length) {
+        try {
+            const response = await fetch('https://api.bybit.com/v5/market/tickers?category=spot', { headers: HEADERS });
+            const data = await response.json();
+            if (data?.retCode === 0) {
+                const set = new Set(bySpot);
+                data.result.list.forEach(t => {
+                    if (set.has(t.symbol)) {
+                        const ticker = this.tickerPanel.tickersMap.get(`${t.symbol}:bybit:spot`);
+                        if (ticker) {
+                            ticker.price = +t.lastPrice;
+                            ticker.change = +(t.price24hPcnt || 0) * 100;
+                            ticker.volume = +(t.volume24h || 0) * +(t.lastPrice || 0);
+                        }
+                    }
+                });
+            }
+        } catch (e) {}
+    }
+
+    this.tickerPanel.renderer?.updatePriceElements?.();
+    return true;
+}
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
