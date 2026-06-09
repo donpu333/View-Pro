@@ -62,18 +62,11 @@ class TimerRenderer {
 
             this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
-            // ЦВЕТ: приоритет как у линии цены
-            let bgColor;
-            if (this._cachedColor) {
-                bgColor = this._cachedColor;
-            } else if (chartManager._lastAppliedColor) {
-                bgColor = chartManager._lastAppliedColor;
-            } else {
-                const isBullish = lastCandle.close >= lastCandle.open;
-                bgColor = isBullish 
-                    ? (chartManager.bullishColor || '#26a69a')
-                    : (chartManager.bearishColor || '#ef5350');
-            }
+            // ✅ ЦВЕТ ТОЛЬКО ИЗ _lastAppliedColor (как у линии)
+            const bgColor = chartManager._lastAppliedColor 
+                || (lastCandle.close >= lastCandle.open 
+                    ? (chartManager.bullishColor || '#26a69a') 
+                    : (chartManager.bearishColor || '#ef5350'));
 
             ctx.save();
             ctx.fillStyle = bgColor + 'DD';
@@ -210,7 +203,6 @@ class TimerManager {
                         if (!this._primitive.isDataReady()) {
                             this._primitive.setDataReady(true);
                             if (!['1d','1w','1M'].includes(this._currentTf)) {
-                                this._syncColorFromChartManager(); // ✅ Синхронизация цвета
                                 this._primitive.setEnabled(true);
                             }
                         }
@@ -227,7 +219,6 @@ class TimerManager {
             if (++i > 80 || !this._chartManager || !this._primitive) return;
             if (this._chartManager.chartData?.length > 0) {
                 this._primitive.setDataReady(true);
-                this._syncColorFromChartManager(); // ✅ Синхронизация цвета перед включением
                 this._primitive.setEnabled(true);
                 return;
             }
@@ -250,7 +241,6 @@ class TimerManager {
         if (!this._primitive) this._init();
         if (!this._timerElement) this._timerElement = { textContent: '' };
 
-        this._syncColorFromChartManager(); // ✅ Синхронизация цвета перед запуском
         this._tick();
         this.stop();
         this._interval = setInterval(() => this._tick(), 250);
@@ -273,42 +263,17 @@ class TimerManager {
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
 
-        this._syncColorFromChartManager();
-
         if (this._timerElement.textContent !== txt) {
             this._timerElement.textContent = txt;
             if (this._primitive) {
-                if (!this._primitive.isEnabled() && this._primitive.isDataReady()) {
-                    this._syncColorFromChartManager(); // ✅ Ещё раз перед включением
+                if (!this._primitive.isEnabled() && this._primitive.isDataReady())
                     this._primitive.setEnabled(true);
-                }
                 if (this._primitive.isEnabled()) this._primitive.requestRedraw();
             }
         }
     }
 
-    _syncColorFromChartManager() {
-        const cm = this._chartManager;
-        if (!cm || !this._primitive) return;
-
-        const renderer = this._primitive._paneView?._renderer;
-        if (!renderer) return;
-
-        if (cm._lastAppliedColor) {
-            renderer._cachedColor = cm._lastAppliedColor;
-        } else if (cm.chartData?.length > 0) {
-            const lastCandle = cm.chartData[cm.chartData.length - 1];
-            if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
-                const isBullish = lastCandle.close >= lastCandle.open;
-                renderer._cachedColor = isBullish
-                    ? (cm.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
-                    : (cm.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
-            }
-        }
-    }
-
     forceColorUpdate() {
-        this._syncColorFromChartManager();
         if (this._primitive?.isEnabled()) {
             this._primitive.requestRedraw();
         }
