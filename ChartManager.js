@@ -1660,19 +1660,20 @@ _syncPriceLine(price) {
     const lastCandle = this.chartData[this.chartData.length - 1];
     if (!lastCandle) return;
     
-    // Обновляем данные свечи
     lastCandle.close = price;
     if (price > lastCandle.high) lastCandle.high = price;
     if (price < lastCandle.low) lastCandle.low = price;
     
+    // ✅ ТОЧНО ТАК ЖЕ КАК В ТАЙМЕРЕ
     const isBullish = price >= lastCandle.open;
-    const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+    const lineColor = isBullish 
+        ? (this.bullishColor || CONFIG.colors.bullish)
+        : (this.bearishColor || CONFIG.colors.bearish);
     
     this.currentRealPrice = price;
     this._lastAppliedColor = lineColor;
     this.lastCandle = lastCandle;
     
-    // Свеча на графике
     series.update({
         time: lastCandle.time,
         open: lastCandle.open,
@@ -1681,13 +1682,11 @@ _syncPriceLine(price) {
         close: price
     });
     
-    // Линия
     series.applyOptions({
         priceLineSource: price,
         priceLineColor: lineColor
     });
     
-    // Таймер
     const prim = this.timerManager?._primitive;
     if (prim) {
         if (prim.setPrice) prim.setPrice(price);
@@ -1696,11 +1695,7 @@ _syncPriceLine(price) {
     }
     
     this.scheduleUpdatePosition();
-    this._updatePageTitle(); // 👈 ОБНОВЛЯЕМ ЗАГОЛОВОК ВКЛАДКИ
-
-     if (this.timerManager?.forceColorUpdate) {
-        this.timerManager.forceColorUpdate();
-    }
+    this._updatePageTitle();
 }
     autoScale() {
         if (this.chart && this.chartData.length > 0) {
