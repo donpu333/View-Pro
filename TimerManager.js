@@ -27,19 +27,14 @@ class TimerRenderer {
         const hpr = scope.horizontalPixelRatio;
         const vpr = scope.verticalPixelRatio;
 
-        const data = chartManager.chartData;
-        const lastCandle = data[data.length - 1];
-        
+        const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
         if (!lastCandle) return;
 
-        // ✅ ИСПОЛЬЗУЕМ currentRealPrice КАК ЛИНИЯ, А НЕ close СВЕЧИ
-        const price = chartManager.currentRealPrice || lastCandle.close;
-        if (price == null || isNaN(price) || price <= 0) return;
+        const price = lastCandle.close;
+        if (!price || isNaN(price)) return;
 
         const activeSeries = chartManager.currentChartType === 'candle' 
-            ? chartManager.candleSeries 
-            : chartManager.barSeries;
-        
+            ? chartManager.candleSeries : chartManager.barSeries;
         if (!activeSeries) return;
 
         const yCoord = activeSeries.priceToCoordinate(price);
@@ -55,17 +50,15 @@ class TimerRenderer {
         
         const rectWidth = Math.ceil(textWidth + 8 * hpr);
         const rectHeight = Math.ceil(fontSize + 6 * vpr);
-
         const rectX = bitmapWidth - rectWidth - 4 * hpr;
         
         let rectY = Math.round(bitmapY - rectHeight / 2);
         rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-        this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
-
-        // ✅ ЦВЕТ НАПРЯМУЮ ИЗ chartManager (устанавливается в _syncPriceLine)
-        const bgColor = chartManager._lastAppliedColor 
-            || (price >= lastCandle.open 
+        // ✅ ЦВЕТ СТРОГО КАК У ЛИНИИ: _lastAppliedColor
+        const bgColor = this._cachedColor 
+            || chartManager._lastAppliedColor 
+            || (lastCandle.close >= lastCandle.open 
                 ? (chartManager.bullishColor || '#26a69a') 
                 : (chartManager.bearishColor || '#ef5350'));
 
