@@ -700,7 +700,7 @@ startTickerPanelPriceEngine() {
     };
 
     connectBinanceWs('bn-fut', 'wss://fstream.binance.com/ws/!miniTicker@arr', 'futures');
-    connectBinanceWs('bn-spot', 'wss://stream.binance.com/ws/!miniTicker@arr', 'spot');
+   connectBinanceWs('bn-spot', 'wss://data-stream.binance.com/ws/!miniTicker@arr', 'spot');
     connectBybitWs('by-fut', 'wss://stream.bybit.com/v5/public/linear', 'futures');
     connectBybitWs('by-spot', 'wss://stream.bybit.com/v5/public/spot', 'spot');
 
