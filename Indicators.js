@@ -295,7 +295,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._isUpdating = false;
         this._updateTimeout = null;
         this._fallbackTimer = null;
-        this._currentPeriod = this.settings.atrPeriod; // 🔥 храним фактически используемый период для текущего графика
+        this._currentPeriod = this.settings.atrPeriod;
         
         this._setupEventHandlers();
         this._initTableDOM();
@@ -503,6 +503,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             return result;
         };
 
+        // Если фильтр выключен – простой расчёт
         if (!useFilter) {
             const atrArray = rma(ranges, period);
             const lastIdx = ranges.length - 1;
@@ -529,9 +530,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             };
         }
 
+        // === ИСПРАВЛЕНИЕ: ВСЕГДА ВЫЧИСЛЯЕМ ИСХОДНЫЙ RMA ===
+        // Это аналог tfRobustATR в Pine Script – RMA по сырым (нефильтрованным) диапазонам
+        const rawRMA = rma(ranges, period);
+
         const filteredRanges = [...ranges];
         const filteredATR = new Array(ranges.length).fill(0);
         
+        // Инициализация первых period элементов
         for (let i = 0; i < period; i++) {
             filteredRanges[i] = ranges[i];
             if (i === period - 1) {
@@ -556,7 +562,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         
         for (let i = period; i < ranges.length; i++) {
             const currentRange = ranges[i];
-            const prevFilteredATR = filteredATR[i - 1];
+            // 🔥 ИСПРАВЛЕНО: используем предыдущее значение ИСХОДНОГО RMA (не фильтрованного ATR)
+            const prevRawATR = rawRMA[i - 1];
             
             if (filterType === 'Adaptive') {
                 const window = ranges.slice(Math.max(0, i - period), i);
@@ -564,11 +571,11 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
                 const stdDev = Math.sqrt(variance);
                 
-                upperBound = Math.min(prevFilteredATR + stdDev * devFactor, prevFilteredATR * 2.0);
-                lowerBound = Math.max(prevFilteredATR - stdDev * devFactor, prevFilteredATR * 0.3);
+                upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 2.0);
+                lowerBound = Math.max(prevRawATR - stdDev * devFactor, prevRawATR * 0.3);
             } else {
-                upperBound = prevFilteredATR * fixedMult;
-                lowerBound = Math.max(prevFilteredATR / fixedMult, prevFilteredATR * 0.1);
+                upperBound = prevRawATR * fixedMult;
+                lowerBound = Math.max(prevRawATR / fixedMult, prevRawATR * 0.1);
             }
             
             const isLargeAnomaly = currentRange > upperBound;
@@ -576,7 +583,10 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const isAnomaly = isLargeAnomaly || isSmallAnomaly;
             
             if (isAnomaly) {
-                filteredRanges[i] = prevFilteredATR;
+                // 🔥 ИСПРАВЛЕНО: подставляем значение из rawRMA (как в Pine Script)
+                filteredRanges[i] = prevRawATR;
+            } else {
+                filteredRanges[i] = currentRange;
             }
             
             filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
@@ -627,9 +637,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             }
 
             const currentData = chartManager.chartData;
-            const currentInterval = chartManager.currentInterval || '1h'; // 🔥 получаем текущий интервал
+            const currentInterval = chartManager.currentInterval || '1h';
             
-            // 🔥 ИСПРАВЛЕНО: Определяем период для текущего графика
             let currentPeriod = this.settings.atrPeriod;
             
             if (this.settings.showMinute1TF && currentInterval === this.settings.minute1TF + 'm') {
@@ -643,9 +652,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             } else if (this.settings.showWeekTF && currentInterval === '1w') {
                 currentPeriod = this.settings.weekATRPeriod;
             }
-            // Если ТФ не совпадает ни с одним дополнительным – остаётся atrPeriod
             
-            this._currentPeriod = currentPeriod; // сохраняем для таблицы
+            this._currentPeriod = currentPeriod;
             
             this.cache.current = this.computeATRMetrics(
                 currentData,
@@ -899,7 +907,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         if (this.settings.showMinute1TF) rowsHTML += addRow(`${this.settings.minute1TF}M (${this.settings.minute1ATRPeriod}ч)`, '#00FFFF', c.minute1.atr, c.minute1.natr, c.minute1.progress, c.minute1.remaining);
         
         rowsHTML += `<tr style="border-top:1px solid #2A2A4A;">`;
-        // 🔥 ИСПРАВЛЕНО: показываем фактический период, использованный для текущего графика
         rowsHTML += addRow(`⭐ ${currentChartTF} (${this._currentPeriod})`, '#FFD700', current.atr, current.natr, current.progress, current.remaining);
         
         rowsHTML += `
