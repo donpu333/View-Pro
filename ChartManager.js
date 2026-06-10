@@ -1247,7 +1247,7 @@ _startNewCandleChecker() {
         }
     }
 
-  _performUpdate() {
+_performUpdate() {
     if (!this.chartData.length) return;
     
     const cachedPrecision = localStorage.getItem(
@@ -1267,38 +1267,42 @@ _startNewCandleChecker() {
     }
 
     const lastCandle = this.chartData[this.chartData.length - 1];
-    const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-    const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+    const isBullishByCandle = lastCandle ? lastCandle.close >= lastCandle.open : true;
+    const lineColorByCandle = isBullishByCandle ? CONFIG.colors.bullish : CONFIG.colors.bearish;
     const price = this.getCurrentPrice();
 
     if (price !== null) {
+        // 🔥 Главный путь: реальная цена есть → используем _syncPriceLine,
+        // который сам определит цвет (price vs open) и обновит линию + _lastAppliedColor
+        this._syncPriceLine(price);
+    } else {
+        // Реальной цены нет – откатываемся на цвет по последней закрытой свече
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (series) {
             series.applyOptions({
-                priceLineSource: price,
-                priceLineColor: lineColor
+                priceLineSource: lastCandle.close,
+                priceLineColor: lineColorByCandle
             });
         }
+        this._lastAppliedColor = lineColorByCandle;
     }
 
+    // Запускаем таймер (цвет уже правильный из предыдущего шага)
     if (this.timerManager) {
-        this.timerManager.start(this.currentInterval);
-        if (this.timerManager._primitive) {
-            // ✅ Передаём таймеру цену
-            if (price && this.timerManager._primitive.setPrice) {
-                this.timerManager._primitive.setPrice(price);
-            }
-            // ✅ Передаём таймеру цвет
-            if (this.timerManager._primitive.setColor) {
-                this.timerManager._primitive.setColor(lineColor);
-            }
-            if (this.timerManager._primitive.isEnabled()) {
-                this.timerManager._primitive.requestRedraw();
+        const prim = this.timerManager._primitive;
+        if (prim) {
+            if (price !== null) {
+                // _syncPriceLine уже выставил цвет и цену, поэтому просто подтверждаем цену
+                if (prim.setPrice) prim.setPrice(price);
+                // цвет не трогаем – он верный
+            } else {
+                if (prim.setPrice && lastCandle) prim.setPrice(lastCandle.close);
+                if (prim.setColor) prim.setColor(lineColorByCandle);
             }
         }
+        this.timerManager.start(this.currentInterval);
     }
 
-    this._lastAppliedColor = lineColor;
     this.scheduleUpdatePosition();
 }
 updateLastCandle(candle) {
@@ -1651,7 +1655,7 @@ updateRealPrice(price) {
             priceScale.applyOptions({ autoScale: true });
         }
     }
-__syncPriceLine(price) {
+_syncPriceLine(price) {
     if (!price) return;
     
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
