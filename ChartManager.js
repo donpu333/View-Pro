@@ -2118,21 +2118,17 @@ _subscribeToPrice() {
         
         return clean;
     }
-// В класс ChartManager добавь:
 _createNewCandle(candle) {
     if (!candle || !candle.time) return;
     
-    // Проверяем, существует ли уже такая свеча
     const exists = this.chartData.some(c => c.time === candle.time);
     if (exists) return;
     
     const lastCandle = this.chartData[this.chartData.length - 1];
     if (lastCandle && candle.time <= lastCandle.time) return;
     
-    // Добавляем новую свечу
     this.chartData.push(candle);
     
-    // Обрезаем старые если нужно
     const limit = CONFIG.klineLimits?.[this.currentInterval] || 1000;
     if (this.chartData.length > limit) {
         this.chartData.shift();
@@ -2140,11 +2136,22 @@ _createNewCandle(candle) {
     
     this.lastCandle = candle;
     this.currentRealPrice = candle.close;
+
+    // ✅✅✅ ВОТ ЭТО НУЖНО ДОБАВИТЬ:
+    const isBullish = candle.close >= candle.open;
+    this._lastAppliedColor = isBullish 
+        ? (this.bullishColor || CONFIG.colors.bullish)
+        : (this.bearishColor || CONFIG.colors.bearish);
     
     // Обновляем график
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (series) {
         series.setData(this.chartData);
+        // ✅ И сразу задаём правильный цвет линии
+        series.applyOptions({
+            priceLineSource: candle.close,
+            priceLineColor: this._lastAppliedColor
+        });
     }
     
     // Обновляем volume
@@ -2157,8 +2164,9 @@ _createNewCandle(candle) {
         this.volumeSeries.setData(volumeData);
     }
     
-    // Перезапускаем таймер
+    // Перезапускаем таймер с новым цветом
     if (this.timerManager) {
+        this.timerManager.forceColorUpdate(); // это заставит таймер взять свежий _lastAppliedColor
         this.timerManager.start(this.currentInterval);
     }
     
