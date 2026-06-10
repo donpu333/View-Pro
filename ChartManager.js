@@ -10,6 +10,7 @@ class ChartManager {
         console.log('📊 Тип графика:', savedChartType);
         this.isLoadingMore = false;
         this.hasMoreData = true;
+        this._priceSubscriptionKey = null;
         this.currentInterval = localStorage.getItem('lastTimeframe') || CONFIG.defaultInterval;
         console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
         this.currentSymbol = CONFIG.defaultSymbol;
@@ -1269,7 +1270,7 @@ _performUpdate() {
     const lastCandle = this.chartData[this.chartData.length - 1];
     const isBullishByCandle = lastCandle ? lastCandle.close >= lastCandle.open : true;
     const lineColorByCandle = isBullishByCandle ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-    const price = this.getCurrentPrice();
+   const price = this.getCurrentPrice() ?? this.currentRealPrice;
 
     if (price !== null) {
         // 🔥 Главный путь: реальная цена есть → используем _syncPriceLine,
@@ -1965,36 +1966,39 @@ _subscribeToPrice() {
         setTimeout(() => this._subscribeToPrice(), 100);
         return;
     }
-    
-    if (this._priceUpdateHandler) {
-        this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
+
+    // Отписываемся от старого ключа, если он был
+    if (this._priceSubscriptionKey && this._priceUpdateHandler) {
+        this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
         this._priceUpdateHandler = null;
+        this._priceSubscriptionKey = null;
     }
-    
-    this._priceUpdateHandler = (price, symbol) => {
+
+    const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
+    this._priceSubscriptionKey = key;
+
+    this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
         if (document.hidden || this._switchingSymbol) return;
-        if (symbol !== this.currentSymbol) return;
+        if (symbol !== this.currentSymbol ||
+            exchange !== this.currentExchange ||
+            marketType !== this.currentMarketType) return;
         this._syncPriceLine(price);
     };
-    
-    this.priceManager.subscribe(this.currentSymbol, this._priceUpdateHandler);
-    
-    const cachedPrice = this.priceManager.getPrice(this.currentSymbol);
-    if (cachedPrice !== null) {
+
+    // Подписываемся с явным указанием биржи и типа рынка
+    this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+
+    // Если цена уже есть в кеше PriceManager – сразу используем
+    const cachedPrice = this.priceManager.getPrice(key);
+    if (cachedPrice !== null && cachedPrice !== undefined && !isNaN(cachedPrice)) {
         this.currentRealPrice = cachedPrice;
-        
-        // ✅ УСТАНАВЛИВАЕМ ЦВЕТ СРАЗУ ПОСЛЕ ПОЛУЧЕНИЯ КЕШИРОВАННОЙ ЦЕНЫ
-        if (this.chartData && this.chartData.length > 0) {
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            if (lastCandle) {
-                const isBullish = cachedPrice >= lastCandle.open;
-                this._lastAppliedColor = isBullish 
-                    ? (this.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
-                    : (this.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
-            }
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (lastCandle) {
+            const isBullish = cachedPrice >= lastCandle.open;
+            this._lastAppliedColor = isBullish
+                ? (this.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
+                : (this.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
         }
-        
-        // ✅ ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ ТАЙМЕР
         if (this.timerManager?.forceColorUpdate) {
             this.timerManager.forceColorUpdate();
         }
@@ -2316,7 +2320,9 @@ async switchSymbol(symbol, exchange, marketType) {
         if (this.volumeSeries) this.volumeSeries.setData([]);
         this.chartData = [];
         this.lastCandle = null;
-        this.currentRealPrice = null;
+       if (this.currentSymbol !== symbol) {
+    this.currentRealPrice = null;
+}
         this._lastAppliedColor = null;
 
         this.currentSymbol = symbol;
