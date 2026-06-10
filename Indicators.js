@@ -295,7 +295,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._isUpdating = false;
         this._updateTimeout = null;
         this._fallbackTimer = null;
-        this._currentPeriod = this.settings.atrPeriod;
+        this._currentPeriod = this.settings.atrPeriod;  // всегда основной период, как в Pine Script
         
         this._setupEventHandlers();
         this._initTableDOM();
@@ -474,9 +474,19 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             };
         }
 
+        // Построение массива диапазонов с учётом rangeMode (True Range / High-Low)
         const ranges = [];
         for (let i = 0; i < data.length; i++) {
-            ranges.push(data[i].high - data[i].low);
+            if (rangeMode === 'True Range' && i > 0) {
+                const prevClose = data[i - 1].close;
+                ranges.push(Math.max(
+                    data[i].high - data[i].low,
+                    Math.abs(data[i].high - prevClose),
+                    Math.abs(data[i].low - prevClose)
+                ));
+            } else {
+                ranges.push(data[i].high - data[i].low);
+            }
         }
 
         if (ranges.length < period) {
@@ -489,17 +499,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
 
         const rma = (src, len) => {
             const result = new Array(src.length).fill(0);
-            
             let sum = 0;
             for (let i = 0; i < len; i++) {
                 sum += src[i];
             }
             result[len - 1] = sum / len;
-            
             for (let i = len; i < src.length; i++) {
                 result[i] = (src[i] + (len - 1) * result[i - 1]) / len;
             }
-            
             return result;
         };
 
@@ -511,7 +518,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const lastCandle = data[lastIdx];
             const dist = Math.abs(lastCandle.close - lastCandle.open);
             const prog = atr > 0 ? (dist / atr) * 100 : 0;
-            
             return {
                 atr,
                 natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
@@ -530,8 +536,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             };
         }
 
-        // === ИСПРАВЛЕНИЕ: ВСЕГДА ВЫЧИСЛЯЕМ ИСХОДНЫЙ RMA ===
-        // Это аналог tfRobustATR в Pine Script – RMA по сырым (нефильтрованным) диапазонам
+        // === ИСПРАВЛЕНИЕ: ВСЕГДА ВЫЧИСЛЯЕМ ИСХОДНЫЙ RMA (как tfRobustATR) ===
         const rawRMA = rma(ranges, period);
 
         const filteredRanges = [...ranges];
@@ -542,15 +547,11 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             filteredRanges[i] = ranges[i];
             if (i === period - 1) {
                 let sum = 0;
-                for (let j = 0; j < period; j++) {
-                    sum += ranges[j];
-                }
+                for (let j = 0; j < period; j++) sum += ranges[j];
                 filteredATR[i] = sum / period;
             } else if (i > 0) {
                 let sum = 0;
-                for (let j = 0; j <= i; j++) {
-                    sum += ranges[j];
-                }
+                for (let j = 0; j <= i; j++) sum += ranges[j];
                 filteredATR[i] = sum / (i + 1);
             } else {
                 filteredATR[i] = ranges[i];
@@ -562,7 +563,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         
         for (let i = period; i < ranges.length; i++) {
             const currentRange = ranges[i];
-            // 🔥 ИСПРАВЛЕНО: используем предыдущее значение ИСХОДНОГО RMA (не фильтрованного ATR)
             const prevRawATR = rawRMA[i - 1];
             
             if (filterType === 'Adaptive') {
@@ -571,11 +571,13 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
                 const stdDev = Math.sqrt(variance);
                 
-                upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 2.0);
+                // 🔥 ИСПРАВЛЕНО: множитель 3.0 как в Pine Script
+                upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 3.0);
                 lowerBound = Math.max(prevRawATR - stdDev * devFactor, prevRawATR * 0.3);
             } else {
                 upperBound = prevRawATR * fixedMult;
-                lowerBound = Math.max(prevRawATR / fixedMult, prevRawATR * 0.1);
+                // 🔥 ИСПРАВЛЕНО: только /fixedMult, без искусственного *0.1
+                lowerBound = Math.max(prevRawATR / fixedMult, 0);
             }
             
             const isLargeAnomaly = currentRange > upperBound;
@@ -583,7 +585,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const isAnomaly = isLargeAnomaly || isSmallAnomaly;
             
             if (isAnomaly) {
-                // 🔥 ИСПРАВЛЕНО: подставляем значение из rawRMA (как в Pine Script)
+                // 🔥 ИСПРАВЛЕНО: подставляем значение из rawRMA
                 filteredRanges[i] = prevRawATR;
             } else {
                 filteredRanges[i] = currentRange;
@@ -636,27 +638,16 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 return;
             }
 
-            const currentData = chartManager.chartData;
-            const currentInterval = chartManager.currentInterval || '1h';
-            
-            let currentPeriod = this.settings.atrPeriod;
-            
-            if (this.settings.showMinute1TF && currentInterval === this.settings.minute1TF + 'm') {
-                currentPeriod = this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF);
-            } else if (this.settings.showMinuteTF && currentInterval === this.settings.minuteTF + 'm') {
-                currentPeriod = this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF);
-            } else if (this.settings.showHourTF && currentInterval === this.settings.hourTF + 'h') {
-                currentPeriod = this.settings.hourATRPeriod;
-            } else if (this.settings.showDayTF && currentInterval === '1d') {
-                currentPeriod = this.settings.dayATRPeriod;
-            } else if (this.settings.showWeekTF && currentInterval === '1w') {
-                currentPeriod = this.settings.weekATRPeriod;
-            }
-            
+            // 🔥 ИСПРАВЛЕНО: для текущего графика всегда используем основной период atrPeriod (как в Pine Script)
+            const currentPeriod = this.settings.atrPeriod;
             this._currentPeriod = currentPeriod;
             
+            // 🔥 ИСПРАВЛЕНО: удаляем последний (незакрытый) бар, чтобы считать только по закрытым свечам
+            const currentData = chartManager.chartData;
+            const closedData = currentData.length > 1 ? currentData.slice(0, -1) : currentData;
+            
             this.cache.current = this.computeATRMetrics(
-                currentData,
+                closedData,
                 currentPeriod,
                 this.settings.rangeMode,
                 this.settings.useFilter,
@@ -688,6 +679,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         try {
             const data = await this.fetchDataForTF(tf, limit);
             if (data && data.length >= period + 1) {
+                // Данные из API уже закрытые свечи
                 const m = this.computeATRMetrics(
                     data, period, this.settings.rangeMode, 
                     this.settings.useFilter, this.settings.filterType, 
