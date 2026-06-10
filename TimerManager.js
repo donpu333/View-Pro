@@ -32,8 +32,7 @@ class TimerRenderer {
             
             if (!lastCandle) return;
 
-            // 🔥 ТУПО БЕРЁМ ТО ЧТО В _syncPriceLine ЗАПИСАЛО
-            const price = chartManager.currentRealPrice || lastCandle.close;
+           const price = chartManager.getCurrentPrice() || chartManager.currentRealPrice || lastCandle.close;
             if (price == null || isNaN(price) || price <= 0) return;
 
             const activeSeries = chartManager.currentChartType === 'candle' 
@@ -63,10 +62,9 @@ class TimerRenderer {
 
             this._lastDrawInfo = { x: rectX, y: rectY, w: rectWidth, h: rectHeight };
 
-            // 🔥🔥🔥 БЕРЁМ ЦВЕТ ПРЯМО ИЗ chartManager._lastAppliedColor 🔥🔥🔥
-            // Это ТОЧНО тот же цвет что у линии цены
-            const bgColor = this._cachedColor 
-                || chartManager._lastAppliedColor 
+            // ✅ Правильный приоритет цвета
+            const bgColor = chartManager._lastAppliedColor 
+                || this._cachedColor 
                 || (lastCandle.close >= lastCandle.open 
                     ? (chartManager.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
                     : (chartManager.bearishColor || CONFIG?.colors?.bearish || '#ef5350'));
@@ -87,6 +85,7 @@ class TimerRenderer {
         });
     }
 
+    // Вот этот метод ты удалил! Добавь его обратно:
     _roundRect(ctx, x, y, w, h, r) {
         r = Math.min(r, w / 2, h / 2);
         ctx.beginPath();
