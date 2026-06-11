@@ -72,151 +72,155 @@ class HorizontalRayRenderer {
         return (r * 299 + g * 587 + b * 114) / 1000;
     }
 
-    draw(target) {
-        const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        if (currentKey && this._ray.symbolKey !== currentKey) return;
+  draw(target) {
+    // Сброс hit-областей в начале каждого кадра
+    this._hitArea = null;
+    this._priceLabelHitArea = null;
+
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._ray.symbolKey !== currentKey) return;
+
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const ray = this._ray;
+        const chartManager = this._chartManager;
+
+        const currentTf = chartManager.currentInterval;
+        if (!ray.isVisibleOnTimeframe(currentTf)) return;
+
+        const yCoordinate = chartManager.priceToCoordinate(ray.price);
+        const xCoordinate = chartManager.timeToCoordinate(ray.time);
+        if (yCoordinate === null || xCoordinate === null) return;
+
+        const timeScale = chartManager.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (!visibleRange) return;
+
+        let startX = 0;
+        let endX = scope.mediaSize.width;
+        if (!ray.options.extendLeft) startX = xCoordinate;
+        if (!ray.options.extendRight) endX = xCoordinate;
+
+        const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+        const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+        const { position: yPos, length: yLength } = positionsLine(
+            yCoordinate, scope.verticalPixelRatio, ray.options.lineWidth, false
+        );
+
+        this._hitArea = {
+            y: yPos,
+            height: yLength,
+            x1: Math.min(startPos, endPos),
+            x2: Math.max(startPos, endPos)
+        };
+
+        ctx.save();
+
+        const color = ray.options.color;
+        const opacity = ray.options.opacity !== undefined ? ray.options.opacity : 0.9;
+
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : null;
+        };
+
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? {
+                r: parseInt(result[1], 10),
+                g: parseInt(result[2], 10),
+                b: parseInt(result[3], 10)
+            } : null;
+        };
+
+        let rgbaColor;
+        let parsed = parseHex(color) || parseRgb(color);
+        if (parsed) {
+            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        } else {
+            rgbaColor = color;
+        }
+
+        ctx.strokeStyle = rgbaColor;
+        ctx.lineWidth = yLength;
         
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const ray = this._ray;
-            const chartManager = this._chartManager;
+        if (ray.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+        else if (ray.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+        else ctx.setLineDash([]);
+        
+        ctx.beginPath();
+        ctx.moveTo(startPos, yPos + yLength / 2);
+        ctx.lineTo(endPos, yPos + yLength / 2);
+        ctx.stroke();
 
-            const currentTf = chartManager.currentInterval;
-            if (!ray.isVisibleOnTimeframe(currentTf)) return;
-
-            const yCoordinate = chartManager.priceToCoordinate(ray.price);
-            const xCoordinate = chartManager.timeToCoordinate(ray.time);
-            if (yCoordinate === null || xCoordinate === null) return;
-
-            const timeScale = chartManager.chart.timeScale();
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            if (!visibleRange) return;
-
-            let startX = 0;
-            let endX = scope.mediaSize.width;
-            if (!ray.options.extendLeft) startX = xCoordinate;
-            if (!ray.options.extendRight) endX = xCoordinate;
-
-            const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
-            const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
-            const { position: yPos, length: yLength } = positionsLine(
-                yCoordinate, scope.verticalPixelRatio, ray.options.lineWidth, false
-            );
-
-            this._hitArea = {
-                y: yPos,
-                height: yLength,
-                x1: Math.min(startPos, endPos),
-                x2: Math.max(startPos, endPos)
-            };
-
-            ctx.save();
-
-            const color = ray.options.color;
-            const opacity = ray.options.opacity !== undefined ? ray.options.opacity : 0.9;
-
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? {
-                    r: parseInt(result[1], 16),
-                    g: parseInt(result[2], 16),
-                    b: parseInt(result[3], 16)
-                } : null;
-            };
-
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? {
-                    r: parseInt(result[1], 10),
-                    g: parseInt(result[2], 10),
-                    b: parseInt(result[3], 10)
-                } : null;
-            };
-
-            let rgbaColor;
-            let parsed = parseHex(color) || parseRgb(color);
-            if (parsed) {
-                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-            } else {
-                rgbaColor = color;
-            }
-
-            ctx.strokeStyle = rgbaColor;
-            ctx.lineWidth = yLength;
-            
-            if (ray.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
-            else if (ray.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
-            else ctx.setLineDash([]);
-            
+        if (ray.readyToDrag || ray.dragging) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
             ctx.beginPath();
-            ctx.moveTo(startPos, yPos + yLength / 2);
-            ctx.lineTo(endPos, yPos + yLength / 2);
-            ctx.stroke();
-
-            if (ray.readyToDrag || ray.dragging) {
-                ctx.fillStyle = '#FFFFFF';
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-
-            if (ray.options.showPrice) {
-                const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
-                const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
-                const priceText = ray.price.toFixed(precision);
-
-                ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                const textMetrics = ctx.measureText(priceText);
-                const textWidth = textMetrics.width;
-                const padding = 8 * scope.horizontalPixelRatio;
-                const labelWidth = textWidth + padding * 2;
-                const labelHeight = (ray.options.fontSize + 6) * scope.verticalPixelRatio;
-
-                const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
-                const labelYPos = yPos - labelHeight / 2;
-
-                this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
-
-                ctx.fillStyle = rgbaColor;
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = 'rgba(0,0,0,0.3)';
-                ctx.beginPath();
-                this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-                ctx.fill();
-
-                ctx.shadowBlur = 0;
-                ctx.shadowColor = 'transparent';
-                
-                const brightness = this._getBrightness(ray.options.color);
-                const textColor = brightness < 128 ? '#FFFFFF' : '#000000';
-                
-                ctx.shadowColor = brightness < 128 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
-                ctx.shadowBlur = 2;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
-                
-                ctx.fillStyle = textColor;
-                ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
-                
-                ctx.shadowColor = 'transparent';
-                ctx.shadowBlur = 0;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
-            }
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
             
-            ctx.restore();
-        });
-    }
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        if (ray.options.showPrice) {
+            const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
+            const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
+            const priceText = ray.price.toFixed(precision);
+
+            ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            const textMetrics = ctx.measureText(priceText);
+            const textWidth = textMetrics.width;
+            const padding = 8 * scope.horizontalPixelRatio;
+            const labelWidth = textWidth + padding * 2;
+            const labelHeight = (ray.options.fontSize + 6) * scope.verticalPixelRatio;
+
+            const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+            const labelYPos = yPos - labelHeight / 2;
+
+            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
+
+            ctx.fillStyle = rgbaColor;
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.beginPath();
+            this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+            ctx.shadowColor = 'transparent';
+            
+            const brightness = this._getBrightness(ray.options.color);
+            const textColor = brightness < 128 ? '#FFFFFF' : '#000000';
+            
+            ctx.shadowColor = brightness < 128 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 2;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+            
+            ctx.fillStyle = textColor;
+            ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+            
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        ctx.restore();
+    });
+}
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -1682,150 +1686,154 @@ class TrendLineRenderer {
         this._lastValidPoint2 = null;
     }
 
-    draw(target) {
-        const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        if (currentKey && this._trendLine.symbolKey !== currentKey) return;
+ draw(target) {
+    // Сброс hit-областей
+    this._hitAreaLine = null;
+    this._hitAreaPoint1 = null;
+    this._hitAreaPoint2 = null;
 
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const line = this._trendLine;
-            const chartManager = this._chartManager;
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._trendLine.symbolKey !== currentKey) return;
 
-            const currentTf = chartManager.currentInterval;
-            if (!line.isVisibleOnTimeframe(currentTf)) return;
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const line = this._trendLine;
+        const chartManager = this._chartManager;
 
-            let point1X, point1Y, point2X, point2Y;
+        const currentTf = chartManager.currentInterval;
+        if (!line.isVisibleOnTimeframe(currentTf)) return;
 
-            if (line._tempPixel1) {
-                point1X = line._tempPixel1.x / scope.horizontalPixelRatio;
-                point1Y = line._tempPixel1.y / scope.verticalPixelRatio;
+        let point1X, point1Y, point2X, point2Y;
+
+        if (line._tempPixel1) {
+            point1X = line._tempPixel1.x / scope.horizontalPixelRatio;
+            point1Y = line._tempPixel1.y / scope.verticalPixelRatio;
+        } else {
+            point1X = chartManager.timeToCoordinateWithFallback?.(line.point1.time) 
+                      ?? chartManager.timeToCoordinate(line.point1.time);
+            point1Y = chartManager.priceToCoordinateWithFallback?.(line.point1.price)
+                      ?? chartManager.priceToCoordinate(line.point1.price);
+        }
+
+        if (line._tempPixel2) {
+            point2X = line._tempPixel2.x / scope.horizontalPixelRatio;
+            point2Y = line._tempPixel2.y / scope.verticalPixelRatio;
+        } else {
+            point2X = chartManager.timeToCoordinateWithFallback?.(line.point2.time) 
+                      ?? chartManager.timeToCoordinate(line.point2.time);
+            point2Y = chartManager.priceToCoordinateWithFallback?.(line.point2.price)
+                      ?? chartManager.priceToCoordinate(line.point2.price);
+        }
+
+        if (point1X === null || point1Y === null || point2X === null || point2Y === null) {
+            if (this._lastValidPoint1 && this._lastValidPoint2) {
+                point1X = this._lastValidPoint1.x;
+                point1Y = this._lastValidPoint1.y;
+                point2X = this._lastValidPoint2.x;
+                point2Y = this._lastValidPoint2.y;
             } else {
-                point1X = chartManager.timeToCoordinateWithFallback?.(line.point1.time) 
-                          ?? chartManager.timeToCoordinate(line.point1.time);
-                point1Y = chartManager.priceToCoordinateWithFallback?.(line.point1.price)
-                          ?? chartManager.priceToCoordinate(line.point1.price);
+                return;
             }
+        } else {
+            this._lastValidPoint1 = { x: point1X, y: point1Y };
+            this._lastValidPoint2 = { x: point2X, y: point2Y };
+        }
 
-            if (line._tempPixel2) {
-                point2X = line._tempPixel2.x / scope.horizontalPixelRatio;
-                point2Y = line._tempPixel2.y / scope.verticalPixelRatio;
+        const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
+        const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, line.options.lineWidth, false);
+        const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
+        const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, line.options.lineWidth, false);
+
+        this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
+        this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
+        this._hitAreaLine = {
+            x1, y1: y1 + y1Length/2,
+            x2, y2: y2 + y2Length/2,
+            height: y1Length
+        };
+
+        ctx.save();
+
+        const color = line.options.color;
+        const opacity = line.options.opacity !== undefined ? line.options.opacity : 0.9;
+
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+        };
+
+        let rgbaColor;
+        let parsed = parseHex(color) || parseRgb(color);
+        if (parsed) {
+            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        } else {
+            rgbaColor = color;
+        }
+
+        ctx.strokeStyle = rgbaColor;
+        ctx.lineWidth = y1Length;
+
+        if (line.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+        else if (line.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+        else ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1 + y1Length/2);
+        ctx.lineTo(x2, y2 + y2Length/2);
+        ctx.stroke();
+
+        if (line.options.extendRight) {
+            const rightBoundX = scope.bitmapSize.width;
+            let extendX, extendY;
+            
+            if (Math.abs(x2 - x1) < 0.001) {
+                extendX = x1;
+                extendY = y2 + y2Length/2;
             } else {
-                point2X = chartManager.timeToCoordinateWithFallback?.(line.point2.time) 
-                          ?? chartManager.timeToCoordinate(line.point2.time);
-                point2Y = chartManager.priceToCoordinateWithFallback?.(line.point2.price)
-                          ?? chartManager.priceToCoordinate(line.point2.price);
+                const slope = ( (y2 + y2Length/2) - (y1 + y1Length/2) ) / (x2 - x1);
+                const intercept = (y1 + y1Length/2) - slope * x1;
+                extendX = rightBoundX;
+                extendY = slope * extendX + intercept;
             }
-
-            if (point1X === null || point1Y === null || point2X === null || point2Y === null) {
-                if (this._lastValidPoint1 && this._lastValidPoint2) {
-                    point1X = this._lastValidPoint1.x;
-                    point1Y = this._lastValidPoint1.y;
-                    point2X = this._lastValidPoint2.x;
-                    point2Y = this._lastValidPoint2.y;
-                } else {
-                    return;
-                }
-            } else {
-                this._lastValidPoint1 = { x: point1X, y: point1Y };
-                this._lastValidPoint2 = { x: point2X, y: point2Y };
-            }
-
-            const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
-            const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, line.options.lineWidth, false);
-            const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
-            const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, line.options.lineWidth, false);
-
-            this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
-            this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
-            this._hitAreaLine = {
-                x1, y1: y1 + y1Length/2,
-                x2, y2: y2 + y2Length/2,
-                height: y1Length
-            };
-
-            ctx.save();
-
-            const color = line.options.color;
-            const opacity = line.options.opacity !== undefined ? line.options.opacity : 0.9;
-
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
-            };
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
-            };
-
-            let rgbaColor;
-            let parsed = parseHex(color) || parseRgb(color);
-            if (parsed) {
-                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-            } else {
-                rgbaColor = color;
-            }
-
-            ctx.strokeStyle = rgbaColor;
-            ctx.lineWidth = y1Length;
-
-            if (line.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
-            else if (line.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
-            else ctx.setLineDash([]);
-
+            
             ctx.beginPath();
-            ctx.moveTo(x1, y1 + y1Length/2);
-            ctx.lineTo(x2, y2 + y2Length/2);
+            ctx.moveTo(x2, y2 + y2Length/2);
+            ctx.lineTo(extendX, extendY);
             ctx.stroke();
+        }
 
-            if (line.options.extendRight) {
-                const rightBoundX = scope.bitmapSize.width;
-                let extendX, extendY;
-                
-                if (Math.abs(x2 - x1) < 0.001) {
-                    extendX = x1;
-                    extendY = y2 + y2Length/2;
-                } else {
-                    const slope = ( (y2 + y2Length/2) - (y1 + y1Length/2) ) / (x2 - x1);
-                    const intercept = (y1 + y1Length/2) - slope * x1;
-                    extendX = rightBoundX;
-                    extendY = slope * extendX + intercept;
-                }
-                
-                ctx.beginPath();
-                ctx.moveTo(x2, y2 + y2Length/2);
-                ctx.lineTo(extendX, extendY);
-                ctx.stroke();
-            }
+        if (line.editMode) {
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
 
-            if (line.editMode) {
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
 
-                ctx.fillStyle = '#FFFFFF';
-                ctx.beginPath();
-                ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
 
-                ctx.fillStyle = '#FFFFFF';
-                ctx.beginPath();
-                ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
+            ctx.shadowBlur = 0;
+        }
 
-                ctx.shadowBlur = 0;
-            }
-
-            ctx.restore();
-        });
-    }
-
+        ctx.restore();
+    });
+}
     hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
@@ -2895,172 +2903,176 @@ class RulerLineRenderer {
         this._hitAreaInfo = null;
     }
 
-    draw(target) {
-        // ... БЕЗ ИЗМЕНЕНИЙ (оригинальный draw) ...
-         const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        if (currentKey && this._ruler.symbolKey !== currentKey) return;
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const ruler = this._ruler;
-            const chartManager = this._chartManager;
+   draw(target) {
+    // Сброс hit-областей
+    this._hitAreaLine = null;
+    this._hitAreaPoint1 = null;
+    this._hitAreaPoint2 = null;
+    this._hitAreaInfo = null;
 
-            const currentTf = chartManager.currentInterval;
-            if (!ruler.isVisibleOnTimeframe(currentTf)) return;
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._ruler.symbolKey !== currentKey) return;
 
-            const point1X = chartManager.timeToCoordinate(ruler.point1.time);
-            const point1Y = chartManager.priceToCoordinate(ruler.point1.price);
-            const point2X = chartManager.timeToCoordinate(ruler.point2.time);
-            const point2Y = chartManager.priceToCoordinate(ruler.point2.price);
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const ruler = this._ruler;
+        const chartManager = this._chartManager;
 
-            if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
+        const currentTf = chartManager.currentInterval;
+        if (!ruler.isVisibleOnTimeframe(currentTf)) return;
 
-            const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
-            const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
-            const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
-            const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+        const point1X = chartManager.timeToCoordinate(ruler.point1.time);
+        const point1Y = chartManager.priceToCoordinate(ruler.point1.price);
+        const point2X = chartManager.timeToCoordinate(ruler.point2.time);
+        const point2Y = chartManager.priceToCoordinate(ruler.point2.price);
 
-            this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
-            this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
-            this._hitAreaLine = {
-                x1, y1: y1 + y1Length/2,
-                x2, y2: y2 + y2Length/2,
-                height: y1Length
+        if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
+
+        const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
+        const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+        const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
+        const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+
+        this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
+        this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
+        this._hitAreaLine = {
+            x1, y1: y1 + y1Length/2,
+            x2, y2: y2 + y2Length/2,
+            height: y1Length
+        };
+
+        ctx.save();
+
+        const leftX = Math.min(x1, x2);
+        const rightX = Math.max(x1, x2);
+        const topY = Math.min(y1, y2) - y1Length/2;
+        const bottomY = Math.max(y1, y2) + y1Length/2;
+        const width = rightX - leftX;
+        const height = bottomY - topY;
+
+        if (width > 0 && height > 0) {
+            const fillColor = ruler.fillColor;
+            const opacity = ruler.options.fillOpacity !== undefined ? ruler.options.fillOpacity : 0.25;
+
+            const parseHex = (hex) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : null;
+            };
+            const parseRgb = (rgb) => {
+                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+                return result ? {
+                    r: parseInt(result[1], 10),
+                    g: parseInt(result[2], 10),
+                    b: parseInt(result[3], 10)
+                } : null;
+            };
+            let rgbaFill;
+            let parsed = parseHex(fillColor) || parseRgb(fillColor);
+            if (parsed) {
+                rgbaFill = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+            } else {
+                rgbaFill = fillColor;
+            }
+
+            ctx.fillStyle = rgbaFill;
+            ctx.fillRect(leftX, topY, width, height);
+            ctx.strokeStyle = fillColor;
+            ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+            ctx.setLineDash([]);
+            ctx.strokeRect(leftX, topY, width, height);
+        }
+
+        ctx.strokeStyle = ruler.fillColor;
+        ctx.lineWidth = y1Length;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1 + y1Length/2);
+        ctx.lineTo(x2, y2 + y2Length/2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (ruler.showDragPoint1 || ruler.showDragPoint2) {
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = ruler.fillColor;
+            ctx.beginPath();
+            ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = ruler.fillColor;
+            ctx.beginPath();
+            ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+        }
+
+        // Информационная панель
+        const pixelRatio = window.devicePixelRatio || 1;
+        const scale = Math.min(pixelRatio, 2);
+        const infoY = topY - 5 * scope.verticalPixelRatio * scale;
+        if (infoY > 10) {
+            const priceChange = ruler.point2.price - ruler.point1.price;
+            const percentChange = (priceChange / ruler.point1.price) * 100;
+            const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
+            const timeStr = Utils.formatTime(timeDiffSec);
+            const sign = priceChange >= 0 ? '+' : '';
+            const percentStr = `${sign}${percentChange.toFixed(2)}%`;
+            const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
+
+            const baseFontSize = 12;
+            const fontSize = baseFontSize * scale;
+            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+            const textWidth = ctx.measureText(infoText).width;
+            
+            const paddingX = 10 * scope.horizontalPixelRatio * scale;
+            const paddingY = 6 * scope.verticalPixelRatio * scale;
+            const labelWidth = textWidth + paddingX * 2;
+            const labelHeight = (fontSize + 10 * scale) * scope.verticalPixelRatio;
+            
+            const labelX = leftX + width/2 - labelWidth/2;
+            const labelY = infoY - labelHeight;
+
+            this._hitAreaInfo = {
+                x: labelX, y: labelY,
+                width: labelWidth, height: labelHeight
             };
 
-            ctx.save();
-
-            const leftX = Math.min(x1, x2);
-            const rightX = Math.max(x1, x2);
-            const topY = Math.min(y1, y2) - y1Length/2;
-            const bottomY = Math.max(y1, y2) + y1Length/2;
-            const width = rightX - leftX;
-            const height = bottomY - topY;
-
-            if (width > 0 && height > 0) {
-                const fillColor = ruler.fillColor;
-                const opacity = ruler.options.fillOpacity !== undefined ? ruler.options.fillOpacity : 0.25;
-
-                const parseHex = (hex) => {
-                    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                    return result ? {
-                        r: parseInt(result[1], 16),
-                        g: parseInt(result[2], 16),
-                        b: parseInt(result[3], 16)
-                    } : null;
-                };
-                const parseRgb = (rgb) => {
-                    const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                    return result ? {
-                        r: parseInt(result[1], 10),
-                        g: parseInt(result[2], 10),
-                        b: parseInt(result[3], 10)
-                    } : null;
-                };
-                let rgbaFill;
-                let parsed = parseHex(fillColor) || parseRgb(fillColor);
-                if (parsed) {
-                    rgbaFill = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-                } else {
-                    rgbaFill = fillColor;
-                }
-
-                ctx.fillStyle = rgbaFill;
-                ctx.fillRect(leftX, topY, width, height);
-                ctx.strokeStyle = fillColor;
-                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
-                ctx.setLineDash([]);
-                ctx.strokeRect(leftX, topY, width, height);
-            }
-
-            ctx.strokeStyle = ruler.fillColor;
-            ctx.lineWidth = y1Length;
-            ctx.setLineDash([5, 3]);
+            ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
+            ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
             ctx.beginPath();
-            ctx.moveTo(x1, y1 + y1Length/2);
-            ctx.lineTo(x2, y2 + y2Length/2);
+            this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
+            ctx.fill();
+            
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.lineWidth = 1 * scope.horizontalPixelRatio;
             ctx.stroke();
-            ctx.setLineDash([]);
 
-            if (ruler.showDragPoint1 || ruler.showDragPoint2) {
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
+        }
 
-                ctx.fillStyle = '#FFFFFF';
-                ctx.beginPath();
-                ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                ctx.fillStyle = ruler.fillColor;
-                ctx.beginPath();
-                ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-
-                ctx.fillStyle = '#FFFFFF';
-                ctx.beginPath();
-                ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                ctx.fillStyle = ruler.fillColor;
-                ctx.beginPath();
-                ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-
-                ctx.shadowBlur = 0;
-            }
-
-        // Информационная панель — АДАПТИВНАЯ ПОД RETINA
-const pixelRatio = window.devicePixelRatio || 1;
-const scale = Math.min(pixelRatio, 2); // Не больше 2x
-
-const infoY = topY - 5 * scope.verticalPixelRatio * scale;
-if (infoY > 10) {
-    const priceChange = ruler.point2.price - ruler.point1.price;
-    const percentChange = (priceChange / ruler.point1.price) * 100;
-    const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
-    const timeStr = Utils.formatTime(timeDiffSec);
-    const sign = priceChange >= 0 ? '+' : '';
-    const percentStr = `${sign}${percentChange.toFixed(2)}%`;
-    const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
-
-    // Базовый размер шрифта умножается на scale для Retina
-    const baseFontSize = 12;
-    const fontSize = baseFontSize * scale;
-    ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-    const textWidth = ctx.measureText(infoText).width;
-    
-    const paddingX = 10 * scope.horizontalPixelRatio * scale;
-    const paddingY = 6 * scope.verticalPixelRatio * scale;
-    const labelWidth = textWidth + paddingX * 2;
-    const labelHeight = (fontSize + 10 * scale) * scope.verticalPixelRatio;
-    
-    const labelX = leftX + width/2 - labelWidth/2;
-    const labelY = infoY - labelHeight;
-
-    this._hitAreaInfo = {
-        x: labelX, y: labelY,
-        width: labelWidth, height: labelHeight
-    };
-
-    ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
-    ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-    ctx.beginPath();
-    this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
-    ctx.fill();
-    
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.lineWidth = 1 * scope.horizontalPixelRatio;
-    ctx.stroke();
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
+        ctx.restore();
+    });
 }
-
-            ctx.restore();
-        });
-    }
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -4139,142 +4151,147 @@ class AlertLineRenderer {
         this._pixelRatio = window.devicePixelRatio || 1;
     }
     
-    draw(target) {
-        const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        if (currentKey && this._alert.symbolKey !== currentKey) return;
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const alert = this._alert;
-            const chartManager = this._chartManager;
+  draw(target) {
+    // Сброс hit-областей
+    this._hitArea = null;
+    this._priceLabelHitArea = null;
 
-            const currentTf = chartManager.currentInterval;
-            if (!alert.isVisibleOnTimeframe(currentTf)) return;
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._alert.symbolKey !== currentKey) return;
 
-            let yCoordinate = chartManager.priceToCoordinate(alert.price);
-            let xCoordinate = chartManager.timeToCoordinate(alert.time);
-            if (yCoordinate === null || xCoordinate === null) return;
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const alert = this._alert;
+        const chartManager = this._chartManager;
 
-            const timeScale = chartManager.chart.timeScale();
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            if (!visibleRange) return;
+        const currentTf = chartManager.currentInterval;
+        if (!alert.isVisibleOnTimeframe(currentTf)) return;
 
-            let startX = 0;
-            let endX = scope.mediaSize.width;
-            if (!alert.options.extendLeft) startX = xCoordinate;
-            if (!alert.options.extendRight) endX = xCoordinate;
+        let yCoordinate = chartManager.priceToCoordinate(alert.price);
+        let xCoordinate = chartManager.timeToCoordinate(alert.time);
+        if (yCoordinate === null || xCoordinate === null) return;
 
-            const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
-            const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
-            const { position: yPos, length: yLength } = positionsLine(
-                yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
-            );
+        const timeScale = chartManager.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (!visibleRange) return;
 
-            this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
+        let startX = 0;
+        let endX = scope.mediaSize.width;
+        if (!alert.options.extendLeft) startX = xCoordinate;
+        if (!alert.options.extendRight) endX = xCoordinate;
 
-            ctx.save();
+        const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+        const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+        const { position: yPos, length: yLength } = positionsLine(
+            yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
+        );
 
-            const color = alert.options.color;
-            const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
+        this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
 
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
-            };
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
-            };
+        ctx.save();
 
-            let rgbaColor;
-            let parsed = parseHex(color) || parseRgb(color);
-            if (parsed) {
-                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-            } else {
-                rgbaColor = color;
-            }
+        const color = alert.options.color;
+        const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
 
-            ctx.strokeStyle = rgbaColor;
-            ctx.lineWidth = yLength;
-            
-            if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
-            else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
-            else ctx.setLineDash([]);
-            
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+        };
+
+        let rgbaColor;
+        let parsed = parseHex(color) || parseRgb(color);
+        if (parsed) {
+            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        } else {
+            rgbaColor = color;
+        }
+
+        ctx.strokeStyle = rgbaColor;
+        ctx.lineWidth = yLength;
+        
+        if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+        else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+        else ctx.setLineDash([]);
+        
+        ctx.beginPath();
+        ctx.moveTo(startPos, yPos + yLength / 2);
+        ctx.lineTo(endPos, yPos + yLength / 2);
+        ctx.stroke();
+
+        if (alert.showDragPoint) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
             ctx.beginPath();
-            ctx.moveTo(startPos, yPos + yLength / 2);
-            ctx.lineTo(endPos, yPos + yLength / 2);
-            ctx.stroke();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+        }
 
-            if (alert.showDragPoint) {
-                ctx.fillStyle = '#FFFFFF';
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-
-            if (alert.options.showPrice) {
-                let priceText = Utils.formatPrice(alert.price);
-                
-                let statusIcon = '';
-                if (alert.status === 'active' && alert.active) {
-                    statusIcon = '🟢 ';
-                } else if (alert.status === 'paused') {
-                    statusIcon = '⏸️ ';
-                } else if (alert.status === 'completed' || alert.triggered) {
-                    statusIcon = '✅ ';
-                } else if (alert.options.showBell) {
-                    statusIcon = '🔔 ';
-                }
-                
-                priceText = statusIcon + priceText;
-
-                ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                const textMetrics = ctx.measureText(priceText);
-                const textWidth = textMetrics.width;
-                const padding = 8 * scope.horizontalPixelRatio;
-                const labelWidth = textWidth + padding * 2;
-                const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
-
-                const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
-                const labelYPos = yPos - labelHeight / 2;
-
-                this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
-
-                ctx.fillStyle = rgbaColor;
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = 'rgba(0,0,0,0.3)';
-                ctx.beginPath();
-                this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-                ctx.fill();
-
-                ctx.shadowBlur = 0;
-                
-                ctx.shadowColor = '#000000';
-                ctx.shadowBlur = 3;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
-                
-                ctx.shadowColor = 'transparent';
-                ctx.shadowBlur = 0;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
+        if (alert.options.showPrice) {
+            let priceText = Utils.formatPrice(alert.price);
+            
+            let statusIcon = '';
+            if (alert.status === 'active' && alert.active) {
+                statusIcon = '🟢 ';
+            } else if (alert.status === 'paused') {
+                statusIcon = '⏸️ ';
+            } else if (alert.status === 'completed' || alert.triggered) {
+                statusIcon = '✅ ';
+            } else if (alert.options.showBell) {
+                statusIcon = '🔔 ';
             }
             
-            ctx.restore();
-        });
-    }
+            priceText = statusIcon + priceText;
+
+            ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            const textMetrics = ctx.measureText(priceText);
+            const textWidth = textMetrics.width;
+            const padding = 8 * scope.horizontalPixelRatio;
+            const labelWidth = textWidth + padding * 2;
+            const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
+
+            const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+            const labelYPos = yPos - labelHeight / 2;
+
+            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
+
+            ctx.fillStyle = rgbaColor;
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.beginPath();
+            this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+            
+            ctx.shadowColor = '#000000';
+            ctx.shadowBlur = 3;
+            ctx.shadowOffsetX = 1;
+            ctx.shadowOffsetY = 1;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+            
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        ctx.restore();
+    });
+}
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -5860,9 +5877,14 @@ class TextRenderer {
         this._dragHitArea = null;
     }
 
-   draw(target) {
+  draw(target) {
+    // Сброс hit-областей
+    this._hitArea = null;
+    this._dragHitArea = null;
+
     const currentKey = this._chartManager.getCurrentSymbolKey?.();
     if (currentKey && this._text.symbolKey !== currentKey) return;
+
     target.useBitmapCoordinateSpace(scope => {
         const ctx = scope.context;
         const text = this._text;
@@ -5977,9 +5999,8 @@ class TextRenderer {
         }
 
         ctx.restore();
-});
+    });
 }
-
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
         if (h < 2 * r) r = h / 2;
