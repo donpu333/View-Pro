@@ -4430,71 +4430,95 @@ class AlertLinePrimitive {
 
 class AlertLineManager {
     constructor(chartManager) {
-        this._pixelRatio = window.devicePixelRatio || 1;
-        this._alerts = [];
-        this._chartManager = chartManager;
-        this._selectedAlert = null;
-        this._hoveredAlert = null;
-        this._isDrawingMode = false;
-        this._isDragging = false;
-        this._dragAlert = null;
-        this._dragStartX = 0;
-        this._dragStartY = 0;
-        this._dragStartPrice = 0;
-        this._dragStartTime = 0;
-        this._lastMouseX = 0;
-        this._lastMouseY = 0;
-        this._isLoading = false;
-        this._lastPrices = new Map();
-        this._subscribedSymbols = new Set();
-        this._alertWebSockets = new Map();
-        this._potentialDrag = null;
-        this._dragThreshold = 5;
-        this._dblClickTimer = null;
-        this._potentialDblClickTarget = null;
-        this._dblClickTimeout = 350;
-        this._lastClickTime = 0;
-        
-        this._handleContextMenu = this._handleContextMenu.bind(this);
-        this._setupEventListeners();
-        this._setupHotkeys();
-        this._setupSettingsListeners();
-        this._needsRedraw = false;
-        
-        setInterval(() => { this.checkTimerAlerts(); }, 1000);
-        
-        // ✅ Регистрируем в координаторе
+    this._pixelRatio = window.devicePixelRatio || 1;
+    this._alerts = [];
+    this._chartManager = chartManager;
+    this._selectedAlert = null;
+    this._hoveredAlert = null;
+    this._isDrawingMode = false;
+    this._isDragging = false;
+    this._dragAlert = null;
+    this._dragStartX = 0;
+    this._dragStartY = 0;
+    this._dragStartPrice = 0;
+    this._dragStartTime = 0;
+    this._lastMouseX = 0;
+    this._lastMouseY = 0;
+    this._isLoading = false;
+    this._lastPrices = new Map();
+    this._subscribedSymbols = new Set();
+    this._alertWebSockets = new Map();
+    this._potentialDrag = null;
+    this._dragThreshold = 5;
+    this._dblClickTimer = null;
+    this._potentialDblClickTarget = null;
+    this._dblClickTimeout = 350;
+    this._lastClickTime = 0;
+    
+    this._handleContextMenu = this._handleContextMenu.bind(this);
+    this._setupEventListeners();
+    this._setupHotkeys();
+    this._setupSettingsListeners();
+    this._needsRedraw = false;
+    
+    setInterval(() => { this.checkTimerAlerts(); }, 1000);
+    
+    // Регистрируем в координаторе
+    if (window.drawingLoaderCoordinator) {
         window.drawingLoaderCoordinator.register(this, 'alert');
-        
-        // ✅ Единая задержка 150ms
-        setTimeout(async () => {
-            try {
-                if (this._alerts.length > 0) return;
-                if (!window.dbReady) { await new Promise(r => { const c = () => window.dbReady ? r() : setTimeout(c, 50); c(); }); }
-                await this.loadAlerts();
-            } catch (error) { console.error('❌ Auto-load alerts failed:', error); }
-        }, 150);
     }
+    
+    // Загружаем ВСЕ алерты из БД
+    setTimeout(async () => {
+        try {
+            if (this._alerts.length > 0) return;
+            
+            // Ждём готовности БД
+            if (!window.dbReady) {
+                await new Promise(r => { 
+                    const c = () => window.dbReady ? r() : setTimeout(c, 50); 
+                    c(); 
+                });
+            }
+            
+            await this.loadAllAlertsFromDB();
+        } catch (error) {
+            console.error('❌ Auto-load alerts failed:', error);
+        }
+    }, 150);
+}
 
     // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
-    async loadFromData(symbolKey, alertRecords) {
-        if (this._getCurrentSymbolKey() !== symbolKey) return;
+   async loadFromData(symbolKey, alertRecords) {
+    // ❌ Убираем проверку "только текущий символ"
+    // if (this._getCurrentSymbolKey() !== symbolKey) return;
 
-        try {
-            const series = this._chartManager.currentChartType === 'candle' 
+    try {
+        const currentSymbolKey = this._getCurrentSymbolKey();
+        const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+        // Берём серию только если символ совпадает с текущим
+        const series = isCurrentSymbol
+            ? (this._chartManager.currentChartType === 'candle' 
                 ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
+                : this._chartManager.barSeries)
+            : null;
 
-            if (!series) return;
+        if (isCurrentSymbol && !series) {
+            console.warn('No series available for current symbol');
+            return;
+        }
 
-            const existingIds = new Set(
-                this._alerts
-                    .filter(item => item.alert.symbolKey === symbolKey)
-                    .map(item => item.alert.id)
-            );
-            
-            const newRecordIds = new Set(alertRecords.map(a => a.id));
-            
+        const existingIds = new Set(
+            this._alerts
+                .filter(item => item.alert.symbolKey === symbolKey)
+                .map(item => item.alert.id)
+        );
+        
+        const newRecordIds = new Set(alertRecords.map(a => a.id));
+        
+        // Отключаем примитивы для удалённых алертов (только для текущего символа)
+        if (isCurrentSymbol) {
             const toDetach = this._alerts.filter(item => 
                 item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
             );
@@ -4504,79 +4528,164 @@ class AlertLineManager {
                     if (item.primitive && item.series) {
                         item.series.detachPrimitive(item.primitive); 
                     }
-                } catch(e) {}
+                    item.primitive = null;
+                    item.series = null;
+                } catch(e) {
+                    console.warn('Failed to detach:', e);
+                }
             }
-            
-            this._alerts = this._alerts.filter(item => 
-                item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
-            );
+        }
+        
+        // Фильтруем: оставляем чужие символы + только те алерты symbolKey, что есть в newRecordIds
+        this._alerts = this._alerts.filter(item => 
+            item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
+        );
 
-            const newAlerts = [];
-            for (const rec of alertRecords) {
-                try {
-                    const existing = this._alerts.find(item => item.alert.id === rec.id);
-                    if (existing) {
-                        existing.alert.price = rec.data.price;
-                        existing.alert.time = rec.data.time;
-                        existing.alert.anchorTime = rec.data.anchorTime;
-                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
-                        existing.alert.triggered = rec.data.triggered;
-                        existing.alert.triggerCount = rec.data.triggerCount;
-                        existing.alert.repeatCount = rec.data.repeatCount;
-                        existing.alert.status = rec.data.status;
-                        continue;
+        const newAlerts = [];
+        for (const rec of alertRecords) {
+            try {
+                const existing = this._alerts.find(item => item.alert.id === rec.id);
+                
+                if (existing) {
+                    // Обновляем существующий алерт
+                    existing.alert.price = rec.data.price;
+                    existing.alert.time = rec.data.time;
+                    existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    existing.alert.options = { ...existing.alert.options, ...rec.data.options };
+                    existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    existing.alert.triggered = rec.data.triggered || false;
+                    existing.alert.triggerCount = rec.data.triggerCount || 0;
+                    existing.alert.repeatCount = rec.data.repeatCount || 5;
+                    existing.alert.repeatInterval = rec.data.repeatInterval || 1;
+                    existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    existing.alert.active = rec.data.active || false;
+                    existing.alert.status = rec.data.status || 'active';
+                    existing.alert.anchorCandle = rec.data.anchorCandle || null;
+                    existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
+                    existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
+                    existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
+                    
+                    // Восстанавливаем примитив для текущего символа, если алерт активен
+                    if (isCurrentSymbol && 
+                        !existing.alert.triggered && 
+                        existing.alert.status !== 'completed' &&
+                        (!existing.primitive || !existing.series)) {
+                        
+                        const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                        try {
+                            series.attachPrimitive(primitive);
+                            existing.primitive = primitive;
+                            existing.series = series;
+                        } catch(e) {
+                            console.warn('Failed to re-attach primitive:', e);
+                        }
                     }
+                    continue;
+                }
 
-                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
-                    alert.id = rec.id;
-                    alert.symbolKey = rec.symbolKey;
-                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                    alert.symbol = rec.data.symbol;
-                    alert.exchange = rec.data.exchange;
-                    alert.marketType = rec.data.marketType;
-                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    alert.triggered = rec.data.triggered || false;
-                    alert.triggerCount = rec.data.triggerCount || 0;
-                    alert.repeatCount = rec.data.repeatCount || 5;
-                    alert.repeatInterval = rec.data.repeatInterval || 1;
-                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                    alert.active = rec.data.active || false;
-                    alert.status = rec.data.status || 'active';
-                    alert.anchorCandle = rec.data.anchorCandle || null;
+                // Создаём новый алерт
+                const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                alert.id = rec.id;
+                alert.symbolKey = rec.symbolKey;
+                alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                alert.symbol = rec.data.symbol;
+                alert.exchange = rec.data.exchange;
+                alert.marketType = rec.data.marketType;
+                alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                alert.triggered = rec.data.triggered || false;
+                alert.triggerCount = rec.data.triggerCount || 0;
+                alert.repeatCount = rec.data.repeatCount || 5;
+                alert.repeatInterval = rec.data.repeatInterval || 1;
+                alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                alert.active = rec.data.active || false;
+                alert.status = rec.data.status || 'active';
+                alert.anchorCandle = rec.data.anchorCandle || null;
 
-                    if (!alert.triggered && alert.status !== 'completed') {
-                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                // Примитив создаём только для текущего символа и если алерт активен
+                if (isCurrentSymbol && 
+                    !alert.triggered && 
+                    alert.status !== 'completed') {
+                    
+                    const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                    try {
                         series.attachPrimitive(primitive);
                         newAlerts.push({ alert, primitive, series });
-                    } else {
+                    } catch(e) {
+                        console.warn('Failed to attach primitive:', e);
                         newAlerts.push({ alert, primitive: null, series: null });
                     }
-                } catch (e) {
-                    console.warn('Failed to load alert:', rec.id, e);
+                } else {
+                    newAlerts.push({ alert, primitive: null, series: null });
                 }
+            } catch (e) {
+                console.warn('Failed to load alert:', rec.id, e);
             }
+        }
 
-            this._alerts.push(...newAlerts);
+        this._alerts.push(...newAlerts);
 
-            const activeSymbols = new Set();
-            for (const item of this._alerts) {
-                if (!item.alert.triggered && item.alert.status !== 'completed') {
-                    activeSymbols.add(item.alert.symbol);
-                }
+        // Подписки на WebSocket для всех активных символов
+        const activeSymbols = new Set();
+        for (const item of this._alerts) {
+            if (!item.alert.triggered && item.alert.status !== 'completed') {
+                activeSymbols.add(item.alert.symbol);
             }
-            for (const symbol of activeSymbols) {
-                this._subscribeToSymbol(symbol);
-            }
-            
+        }
+        for (const symbol of activeSymbols) {
+            this._subscribeToSymbol(symbol);
+        }
+        
+        // UI обновляем только если это текущий символ
+        if (isCurrentSymbol) {
             this._updateAlertsListUI();
             this._requestRedraw();
-            console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey}`);
-        } catch (error) {
-            console.error('❌ loadFromData failed:', error);
-            throw error;
         }
+        
+        console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey} (current: ${isCurrentSymbol})`);
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
     }
+}
 
+async loadAllAlertsFromDB() {
+    try {
+        if (!window.db) {
+            console.warn('Database not available');
+            return;
+        }
+
+        const allRecords = await window.db.getAll('drawings');
+        if (!allRecords || allRecords.length === 0) {
+            console.log('ℹ️ No drawings found in database');
+            return;
+        }
+
+        // Группируем алерты по symbolKey
+        const alertsBySymbol = {};
+        for (const record of allRecords) {
+            if (record.type !== 'alert') continue;
+            
+            const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+            if (!alertsBySymbol[key]) {
+                alertsBySymbol[key] = [];
+            }
+            alertsBySymbol[key].push(record);
+        }
+
+        const symbolKeys = Object.keys(alertsBySymbol);
+        console.log(`📦 Loading alerts for ${symbolKeys.length} symbol(s): ${symbolKeys.join(', ')}`);
+
+        // Загружаем каждую группу через loadFromData
+        for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
+            await this.loadFromData(symbolKey, records);
+        }
+
+        console.log(`✅ All alerts loaded successfully (${this._alerts.length} total)`);
+    } catch (error) {
+        console.error('❌ loadAllAlertsFromDB failed:', error);
+    }
+}
     _toBitmapCoords(cssX, cssY) {
         return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
     }
@@ -5170,17 +5279,18 @@ class AlertLineManager {
     }
 
     _detachAllPrimitivesForSymbol(symbolKey) {
-        const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
-        for (const item of itemsForSymbol) {
-            if (item.primitive && item.series) {
-                try { 
-                    item.series.detachPrimitive(item.primitive); 
-                } catch(e) {}
-            }
+    const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+            item.primitive = null;
+            item.series = null;
         }
-        this._alerts = this._alerts.filter(item => item.alert.symbolKey !== symbolKey);
     }
-
+    // ❗️ Никакого filter() – алерты остаются в памяти
+}
     hitTest(x, y) {
         if (this._selectedAlert) {
             const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
