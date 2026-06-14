@@ -1283,43 +1283,48 @@ _updateTickerFromBybit(data, marketType) {
 
 // ============================================
 // ============================================================
-// ПОЛНЫЙ ИСПРАВЛЕННЫЙ МЕТОД handleKeyDelete
+// ============================================================
+// ПОЛНЫЙ МЕТОД handleKeyDelete (замени им старый в TickerPanel)
 // ============================================================
 handleKeyDelete(e) {
+    // Игнорируем все клавиши, кроме Delete и Backspace
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
-    // ✅ 1. НЕ УДАЛЯЕМ ТИКЕР, ЕСЛИ КЛИК БЫЛ ВНУТРИ ГРАФИКА (канваса)
-    // Это самая надёжная проверка: рисунки удаляются именно на канвасе.
+    // 1. Самая важная проверка: если событие произошло внутри графика (канваса),
+    //    значит пользователь удаляет рисунок, а не тикер → выходим.
     if (e.target.closest('canvas')) return;
 
-    // ✅ 2. ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: выделенный рисунок
-    // (если по какой-то причине не канвас, но рисунок всё ещё выделен)
+    // 2. Дополнительная проверка: если в одном из менеджеров рисунков
+    //    есть выделенный объект — тоже удаляется рисунок → выходим.
     if (window.rayManager?.selectedRay ||
         window.trendLineManager?.selectedLine ||
         window.rulerLineManager?.selectedRuler ||
         window.alertLineManager?.selectedAlert ||
         window.textManager?.selectedText) return;
 
+    // 3. Не удаляем тикер, если фокус в поле ввода
     const activeElement = document.activeElement;
     if (activeElement && (activeElement.tagName === 'INPUT' || 
                           activeElement.tagName === 'TEXTAREA' || 
                           activeElement.tagName === 'SELECT')) return;
 
-    // ✅ 3. НА СЛУЧАЙ, ЕСЛИ ФЛАГ БЫЛ ПОДНЯТ (уже не обязательно, но пусть будет)
+    // 4. Флаг экстренной блокировки (устанавливается в фазе захвата)
     if (this._skipNextDelete) {
         this._skipNextDelete = false;
         return;
     }
 
+    // 5. Ищем активный (подсвеченный) тикер в панели
     const activeTicker = document.querySelector('.ticker-item.active');
     if (!activeTicker) return;
 
     e.preventDefault();
-    const symbol = activeTicker.dataset.symbol,
-          exchange = activeTicker.dataset.exchange,
-          marketType = activeTicker.dataset.marketType;
+    const symbol = activeTicker.dataset.symbol;
+    const exchange = activeTicker.dataset.exchange;
+    const marketType = activeTicker.dataset.marketType;
 
     if (symbol && exchange && marketType) {
+        // Показываем уведомление (если нужно)
         const notification = document.getElementById('alertNotification');
         if (notification) { 
             notification.innerHTML = `<div class="alert-title">🗑️ Удален</div><div class="alert-price">${symbol}</div><div class="alert-repeat">${exchange} ${marketType}</div>`; 
@@ -1327,6 +1332,7 @@ handleKeyDelete(e) {
             notification.style.borderLeftColor = '#f23645'; 
             setTimeout(() => notification.style.display = 'none', 2000); 
         }
+        // Удаляем тикер
         this.removeSymbol(symbol, exchange, marketType);
     }
 }
