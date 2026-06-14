@@ -7,7 +7,7 @@ class TickerPanel {
         this.modal = new TickerModal(this);
         this.events = new TickerEvents(this);
         this.priceManager = window.priceManagerInstance;
-        
+        this._skipNextDelete = false;
         if (!this.priceManager) {
             console.error('❌ PriceManager не найден!');
         }
@@ -175,6 +175,20 @@ document.addEventListener('visibilitychange', () => {
         this._restoreWebSockets();
     }
 });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (window.rayManager?.selectedRay ||
+            window.trendLineManager?.selectedLine ||
+            window.rulerLineManager?.selectedRuler ||
+            window.alertLineManager?.selectedAlert ||
+            window.textManager?.selectedText) {
+            // Ставим флаг, что этот Delete был с выделенным рисунком
+            this._skipNextDelete = true;
+            // Сбрасываем флаг в следующем цикле событий
+            setTimeout(() => { this._skipNextDelete = false; }, 0);
+        }
+    }
+}, true); // true = фаза захвата (выполняется до других обработчиков)
 
 window.addEventListener('focus', () => {
     console.log('🔄 Фокус восстановлен, проверяем WebSocket...');
@@ -1269,7 +1283,6 @@ _updateTickerFromBybit(data, marketType) {
 
 // ============================================
 // В handleKeyDelete замени начало на это:
-// ============================================
 handleKeyDelete(e) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
@@ -1278,23 +1291,11 @@ handleKeyDelete(e) {
                           activeElement.tagName === 'TEXTAREA' || 
                           activeElement.tagName === 'SELECT')) return;
 
-    // ✅ 1. Не удаляем тикер, если клик был внутри графика
-    const chartContainer = document.getElementById('chartContainer') || 
-                          document.querySelector('.chart-container');
-    if (chartContainer && chartContainer.contains(e.target)) return;
-
-    // ✅ 2. Не удаляем тикер, если есть выделенный рисунок
-    // (проверяем до того, как он будет удалён)
-    if (window.rayManager?.selectedRay ||
-        window.trendLineManager?.selectedLine ||
-        window.rulerLineManager?.selectedRuler ||
-        window.alertLineManager?.selectedAlert ||
-        window.textManager?.selectedText) {
+    // ✅ НОВАЯ ПРОВЕРКА: не удаляем тикер, если рисунок был выделен
+    if (this._skipNextDelete) {
+        this._skipNextDelete = false;
         return;
     }
-
-    // ✅ 3. Не удаляем, если фокус на канвасе (графике)
-    if (activeElement && activeElement.tagName === 'CANVAS') return;
 
     const activeTicker = document.querySelector('.ticker-item.active');
     if (!activeTicker) return;
@@ -1305,10 +1306,16 @@ handleKeyDelete(e) {
           marketType = activeTicker.dataset.marketType;
 
     if (symbol && exchange && marketType) {
-        // ... твой код удаления тикера ...
+        const notification = document.getElementById('alertNotification');
+        if (notification) { 
+            notification.innerHTML = `<div class="alert-title">🗑️ Удален</div><div class="alert-price">${symbol}</div><div class="alert-repeat">${exchange} ${marketType}</div>`; 
+            notification.style.display = 'block'; 
+            notification.style.borderLeftColor = '#f23645'; 
+            setTimeout(() => notification.style.display = 'none', 2000); 
+        }
+        this.removeSymbol(symbol, exchange, marketType);
     }
 }
-
   handleTickerClick(e) {
     const star = e.target.closest('.star');
     if (star) {
