@@ -1282,16 +1282,30 @@ _updateTickerFromBybit(data, marketType) {
 // ЗАМЕНИ ЕГО НА ЭТО:
 
 // ============================================
-// В handleKeyDelete замени начало на это:
+// ============================================================
+// ПОЛНЫЙ ИСПРАВЛЕННЫЙ МЕТОД handleKeyDelete
+// ============================================================
 handleKeyDelete(e) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+
+    // ✅ 1. НЕ УДАЛЯЕМ ТИКЕР, ЕСЛИ КЛИК БЫЛ ВНУТРИ ГРАФИКА (канваса)
+    // Это самая надёжная проверка: рисунки удаляются именно на канвасе.
+    if (e.target.closest('canvas')) return;
+
+    // ✅ 2. ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: выделенный рисунок
+    // (если по какой-то причине не канвас, но рисунок всё ещё выделен)
+    if (window.rayManager?.selectedRay ||
+        window.trendLineManager?.selectedLine ||
+        window.rulerLineManager?.selectedRuler ||
+        window.alertLineManager?.selectedAlert ||
+        window.textManager?.selectedText) return;
 
     const activeElement = document.activeElement;
     if (activeElement && (activeElement.tagName === 'INPUT' || 
                           activeElement.tagName === 'TEXTAREA' || 
                           activeElement.tagName === 'SELECT')) return;
 
-    // ✅ НОВАЯ ПРОВЕРКА: не удаляем тикер, если рисунок был выделен
+    // ✅ 3. НА СЛУЧАЙ, ЕСЛИ ФЛАГ БЫЛ ПОДНЯТ (уже не обязательно, но пусть будет)
     if (this._skipNextDelete) {
         this._skipNextDelete = false;
         return;
