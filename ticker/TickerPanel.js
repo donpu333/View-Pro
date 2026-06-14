@@ -139,21 +139,37 @@ this.init();
 
     if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
 
+    // =============== БЛОКИРОВКА УДАЛЕНИЯ ТИКЕРА ПРИ УДАЛЕНИИ РИСУНКА ===============
+    // Вешаем обработчик в фазе захвата (true), чтобы он сработал раньше всех остальных.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            // Проверяем, есть ли выделенный объект в любом из менеджеров рисунков
+            const hasDrawing = window.rayManager?.selectedRay ||
+                               window.trendLineManager?.selectedLine ||
+                               window.rulerLineManager?.selectedRuler ||
+                               window.alertLineManager?.selectedAlert ||
+                               window.textManager?.selectedText;
+            if (hasDrawing) {
+                // Ставим флаг, чтобы handleKeyDelete пропустил этот удар
+                this._skipNextDelete = true;
+                // Снимаем флаг асинхронно после завершения обработки синхронного кода
+                Promise.resolve().then(() => { this._skipNextDelete = false; });
+            }
+        }
+    }, true); // true = фаза захвата
+    // ===============================================================================
+
     setTimeout(async () => {
-        // ============================================
-        // ✅✅✅ ЖДЁМ ЗАГРУЗКИ WATCHLIST ИЗ DB! ✅✅✅
-        // ============================================
         console.log('⏳ Ожидание загрузки Watchlist...');
         
         if (this.watchlistManager) {
-            await this.watchlistManager._initPromise; // ← ДОЖДАЁМСЯ!
+            await this.watchlistManager._initPromise;
             console.log('✅ Watchlist загружен, customSymbols:', this.state.customSymbols?.length);
         }
         
         await this.loadUserData();
         
         if (this.watchlistManager) {
-            // ✅ Синхронизируем activeList с панелью
             this.watchlistManager.syncActiveListFromPanel();
         }
         
@@ -163,37 +179,22 @@ this.init();
         
         if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
 
-        // Обновляем кэш раз в 4 часа
         this._cacheRefreshInterval = setInterval(() => {
             this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
         }, 4 * 60 * 60 * 1000);
     }, 100);
-    // В методе init(), после существующего кода:
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-        console.log('👁️ Вкладка активна, восстанавливаем WebSocket...');
-        this._restoreWebSockets();
-    }
-});
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (window.rayManager?.selectedRay ||
-            window.trendLineManager?.selectedLine ||
-            window.rulerLineManager?.selectedRuler ||
-            window.alertLineManager?.selectedAlert ||
-            window.textManager?.selectedText) {
-            // Ставим флаг, что этот Delete был с выделенным рисунком
-            this._skipNextDelete = true;
-            // Сбрасываем флаг в следующем цикле событий
-            setTimeout(() => { this._skipNextDelete = false; }, 0);
-        }
-    }
-}, true); // true = фаза захвата (выполняется до других обработчиков)
 
-window.addEventListener('focus', () => {
-    console.log('🔄 Фокус восстановлен, проверяем WebSocket...');
-    this._restoreWebSockets();
-});
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            console.log('👁️ Вкладка активна, восстанавливаем WebSocket...');
+            this._restoreWebSockets();
+        }
+    });
+
+    window.addEventListener('focus', () => {
+        console.log('🔄 Фокус восстановлен, проверяем WebSocket...');
+        this._restoreWebSockets();
+    });
 }
 
 _restoreWebSockets() {
@@ -1278,43 +1279,19 @@ _updateTickerFromBybit(data, marketType) {
         this.renderTickerList();
     }
     
-   // НАЙДИ МЕТОД handleKeyDelete В TickerPanel
-// ЗАМЕНИ ЕГО НА ЭТО:
-
-// ============================================
-// ============================================================
-// ============================================================
-// ПОЛНЫЙ МЕТОД handleKeyDelete (замени им старый в TickerPanel)
-// ============================================================
-handleKeyDelete(e) {
-    // Игнорируем все клавиши, кроме Delete и Backspace
+ handleKeyDelete(e) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
-    // 1. Самая важная проверка: если событие произошло внутри графика (канваса),
-    //    значит пользователь удаляет рисунок, а не тикер → выходим.
-    if (e.target.closest('canvas')) return;
-
-    // 2. Дополнительная проверка: если в одном из менеджеров рисунков
-    //    есть выделенный объект — тоже удаляется рисунок → выходим.
-    if (window.rayManager?.selectedRay ||
-        window.trendLineManager?.selectedLine ||
-        window.rulerLineManager?.selectedRuler ||
-        window.alertLineManager?.selectedAlert ||
-        window.textManager?.selectedText) return;
-
-    // 3. Не удаляем тикер, если фокус в поле ввода
     const activeElement = document.activeElement;
     if (activeElement && (activeElement.tagName === 'INPUT' || 
                           activeElement.tagName === 'TEXTAREA' || 
                           activeElement.tagName === 'SELECT')) return;
 
-    // 4. Флаг экстренной блокировки (устанавливается в фазе захвата)
-    if (this._skipNextDelete) {
+    if (this._skipNextDelete) {  // <-- ВОТ ГЛАВНАЯ ПРОВЕРКА
         this._skipNextDelete = false;
         return;
     }
 
-    // 5. Ищем активный (подсвеченный) тикер в панели
     const activeTicker = document.querySelector('.ticker-item.active');
     if (!activeTicker) return;
 
@@ -1324,7 +1301,6 @@ handleKeyDelete(e) {
     const marketType = activeTicker.dataset.marketType;
 
     if (symbol && exchange && marketType) {
-        // Показываем уведомление (если нужно)
         const notification = document.getElementById('alertNotification');
         if (notification) { 
             notification.innerHTML = `<div class="alert-title">🗑️ Удален</div><div class="alert-price">${symbol}</div><div class="alert-repeat">${exchange} ${marketType}</div>`; 
@@ -1332,10 +1308,10 @@ handleKeyDelete(e) {
             notification.style.borderLeftColor = '#f23645'; 
             setTimeout(() => notification.style.display = 'none', 2000); 
         }
-        // Удаляем тикер
         this.removeSymbol(symbol, exchange, marketType);
     }
 }
+
   handleTickerClick(e) {
     const star = e.target.closest('.star');
     if (star) {
