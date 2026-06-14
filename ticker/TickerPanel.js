@@ -1267,35 +1267,45 @@ _updateTickerFromBybit(data, marketType) {
    // НАЙДИ МЕТОД handleKeyDelete В TickerPanel
 // ЗАМЕНИ ЕГО НА ЭТО:
 
+// ============================================
+// В handleKeyDelete замени начало на это:
+// ============================================
 handleKeyDelete(e) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-    
+
     const activeElement = document.activeElement;
     if (activeElement && (activeElement.tagName === 'INPUT' || 
                           activeElement.tagName === 'TEXTAREA' || 
                           activeElement.tagName === 'SELECT')) return;
-    
-    // ✅ НЕ УДАЛЯЕМ ТИКЕР, ЕСЛИ КЛИК БЫЛ НА ГРАФИКЕ
-    const chartContainer = document.getElementById('chartContainer');
+
+    // ✅ 1. Не удаляем тикер, если клик был внутри графика
+    const chartContainer = document.getElementById('chartContainer') || 
+                          document.querySelector('.chart-container');
     if (chartContainer && chartContainer.contains(e.target)) return;
-    
+
+    // ✅ 2. Не удаляем тикер, если есть выделенный рисунок
+    // (проверяем до того, как он будет удалён)
+    if (window.rayManager?.selectedRay ||
+        window.trendLineManager?.selectedLine ||
+        window.rulerLineManager?.selectedRuler ||
+        window.alertLineManager?.selectedAlert ||
+        window.textManager?.selectedText) {
+        return;
+    }
+
+    // ✅ 3. Не удаляем, если фокус на канвасе (графике)
+    if (activeElement && activeElement.tagName === 'CANVAS') return;
+
     const activeTicker = document.querySelector('.ticker-item.active');
     if (!activeTicker) return;
-    
+
     e.preventDefault();
     const symbol = activeTicker.dataset.symbol,
           exchange = activeTicker.dataset.exchange,
           marketType = activeTicker.dataset.marketType;
-    
+
     if (symbol && exchange && marketType) {
-        const notification = document.getElementById('alertNotification');
-        if (notification) { 
-            notification.innerHTML = `<div class="alert-title">🗑️ Удален</div><div class="alert-price">${symbol}</div><div class="alert-repeat">${exchange} ${marketType}</div>`; 
-            notification.style.display = 'block'; 
-            notification.style.borderLeftColor = '#f23645'; 
-            setTimeout(() => notification.style.display = 'none', 2000); 
-        }
-        this.removeSymbol(symbol, exchange, marketType);
+        // ... твой код удаления тикера ...
     }
 }
 
