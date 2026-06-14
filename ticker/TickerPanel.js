@@ -139,25 +139,8 @@ this.init();
 
     if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
 
-    // =============== БЛОКИРОВКА УДАЛЕНИЯ ТИКЕРА ПРИ УДАЛЕНИИ РИСУНКА ===============
-    // Вешаем обработчик в фазе захвата (true), чтобы он сработал раньше всех остальных.
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Delete' || e.key === 'Backspace') {
-            // Проверяем, есть ли выделенный объект в любом из менеджеров рисунков
-            const hasDrawing = window.rayManager?.selectedRay ||
-                               window.trendLineManager?.selectedLine ||
-                               window.rulerLineManager?.selectedRuler ||
-                               window.alertLineManager?.selectedAlert ||
-                               window.textManager?.selectedText;
-            if (hasDrawing) {
-                // Ставим флаг, чтобы handleKeyDelete пропустил этот удар
-                this._skipNextDelete = true;
-                // Снимаем флаг асинхронно после завершения обработки синхронного кода
-                Promise.resolve().then(() => { this._skipNextDelete = false; });
-            }
-        }
-    }, true); // true = фаза захвата
-    // ===============================================================================
+    // ⚠️ Никаких дополнительных обработчиков keydown не нужно!
+    // Вся логика теперь внутри handleKeyDelete.
 
     setTimeout(async () => {
         console.log('⏳ Ожидание загрузки Watchlist...');
@@ -196,7 +179,6 @@ this.init();
         this._restoreWebSockets();
     });
 }
-
 _restoreWebSockets() {
     // Проверяем состояние WebSocket соединений
     const wsKeys = ['bn-fut', 'bn-spot', 'by-fut', 'by-spot'];
@@ -1282,14 +1264,20 @@ _updateTickerFromBybit(data, marketType) {
  handleKeyDelete(e) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
-    // ✅ Удаляем тикер ТОЛЬКО если фокус находится внутри строки тикера
-    const activeTicker = document.activeElement?.closest('.ticker-item');
-    if (!activeTicker) return;
+    // 1. Удаляем тикер ТОЛЬКО если нажатие было прямо на строке тикера (или внутри неё)
+    const tickerItem = e.target.closest('.ticker-item');
+    if (!tickerItem) return;
+
+    // 2. Не удаляем, если фокус в поле ввода
+    const activeElement = document.activeElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || 
+                          activeElement.tagName === 'TEXTAREA' || 
+                          activeElement.tagName === 'SELECT')) return;
 
     e.preventDefault();
-    const symbol = activeTicker.dataset.symbol;
-    const exchange = activeTicker.dataset.exchange;
-    const marketType = activeTicker.dataset.marketType;
+    const symbol = tickerItem.dataset.symbol;
+    const exchange = tickerItem.dataset.exchange;
+    const marketType = tickerItem.dataset.marketType;
 
     if (symbol && exchange && marketType) {
         const notification = document.getElementById('alertNotification');
@@ -1302,7 +1290,6 @@ _updateTickerFromBybit(data, marketType) {
         this.removeSymbol(symbol, exchange, marketType);
     }
 }
-
   handleTickerClick(e) {
     const star = e.target.closest('.star');
     if (star) {
