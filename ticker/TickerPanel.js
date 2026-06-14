@@ -7,7 +7,7 @@ class TickerPanel {
         this.modal = new TickerModal(this);
         this.events = new TickerEvents(this);
         this.priceManager = window.priceManagerInstance;
-        this._skipNextDelete = false;
+        
         if (!this.priceManager) {
             console.error('❌ PriceManager не найден!');
         }
@@ -139,20 +139,21 @@ this.init();
 
     if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
 
-    // ⚠️ Никаких дополнительных обработчиков keydown не нужно!
-    // Вся логика теперь внутри handleKeyDelete.
-
     setTimeout(async () => {
+        // ============================================
+        // ✅✅✅ ЖДЁМ ЗАГРУЗКИ WATCHLIST ИЗ DB! ✅✅✅
+        // ============================================
         console.log('⏳ Ожидание загрузки Watchlist...');
         
         if (this.watchlistManager) {
-            await this.watchlistManager._initPromise;
+            await this.watchlistManager._initPromise; // ← ДОЖДАЁМСЯ!
             console.log('✅ Watchlist загружен, customSymbols:', this.state.customSymbols?.length);
         }
         
         await this.loadUserData();
         
         if (this.watchlistManager) {
+            // ✅ Синхронизируем activeList с панелью
             this.watchlistManager.syncActiveListFromPanel();
         }
         
@@ -162,23 +163,25 @@ this.init();
         
         if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
 
+        // Обновляем кэш раз в 4 часа
         this._cacheRefreshInterval = setInterval(() => {
             this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
         }, 4 * 60 * 60 * 1000);
     }, 100);
-
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            console.log('👁️ Вкладка активна, восстанавливаем WebSocket...');
-            this._restoreWebSockets();
-        }
-    });
-
-    window.addEventListener('focus', () => {
-        console.log('🔄 Фокус восстановлен, проверяем WebSocket...');
+    // В методе init(), после существующего кода:
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        console.log('👁️ Вкладка активна, восстанавливаем WebSocket...');
         this._restoreWebSockets();
-    });
+    }
+});
+
+window.addEventListener('focus', () => {
+    console.log('🔄 Фокус восстановлен, проверяем WebSocket...');
+    this._restoreWebSockets();
+});
 }
+
 _restoreWebSockets() {
     // Проверяем состояние WebSocket соединений
     const wsKeys = ['bn-fut', 'bn-spot', 'by-fut', 'by-spot'];
@@ -1261,35 +1264,26 @@ _updateTickerFromBybit(data, marketType) {
         this.renderTickerList();
     }
     
- handleKeyDelete(e) {
-    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-
-    // 1. Удаляем тикер ТОЛЬКО если нажатие было прямо на строке тикера (или внутри неё)
-    const tickerItem = e.target.closest('.ticker-item');
-    if (!tickerItem) return;
-
-    // 2. Не удаляем, если фокус в поле ввода
-    const activeElement = document.activeElement;
-    if (activeElement && (activeElement.tagName === 'INPUT' || 
-                          activeElement.tagName === 'TEXTAREA' || 
-                          activeElement.tagName === 'SELECT')) return;
-
-    e.preventDefault();
-    const symbol = tickerItem.dataset.symbol;
-    const exchange = tickerItem.dataset.exchange;
-    const marketType = tickerItem.dataset.marketType;
-
-    if (symbol && exchange && marketType) {
-        const notification = document.getElementById('alertNotification');
-        if (notification) { 
-            notification.innerHTML = `<div class="alert-title">🗑️ Удален</div><div class="alert-price">${symbol}</div><div class="alert-repeat">${exchange} ${marketType}</div>`; 
-            notification.style.display = 'block'; 
-            notification.style.borderLeftColor = '#f23645'; 
-            setTimeout(() => notification.style.display = 'none', 2000); 
+    handleKeyDelete(e) {
+        if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+        const activeElement = document.activeElement;
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT')) return;
+        const activeTicker = document.querySelector('.ticker-item.active');
+        if (!activeTicker) return;
+        e.preventDefault();
+        const symbol = activeTicker.dataset.symbol, exchange = activeTicker.dataset.exchange, marketType = activeTicker.dataset.marketType;
+        if (symbol && exchange && marketType) {
+            const notification = document.getElementById('alertNotification');
+            if (notification) { 
+                notification.innerHTML = `<div class="alert-title">🗑️ Удален</div><div class="alert-price">${symbol}</div><div class="alert-repeat">${exchange} ${marketType}</div>`; 
+                notification.style.display = 'block'; 
+                notification.style.borderLeftColor = '#f23645'; 
+                setTimeout(() => notification.style.display = 'none', 2000); 
+            }
+            this.removeSymbol(symbol, exchange, marketType);
         }
-        this.removeSymbol(symbol, exchange, marketType);
     }
-}
+
   handleTickerClick(e) {
     const star = e.target.closest('.star');
     if (star) {
