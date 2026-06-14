@@ -644,30 +644,26 @@ class HorizontalRayManager {
         return this._rays.filter(item => item.ray.symbolKey === currentKey);
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            const active = document.activeElement;
-            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-            
-            if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                const newState = !this._isDrawingMode;
-                this.setDrawingMode(newState);
-                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-                if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
-                if (window.textManager && newState) window.textManager.setDrawingMode(false);
-                console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
-            }
-            
-            if (e.key === 'Delete' && this._selectedRay && this._selectedRay.readyToDrag === true) {
-                e.preventDefault();
-                this.deleteRay(this._selectedRay.id);
-                this._selectedRay = null;
-            }
-        });
-    }
+   _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            const newState = !this._isDrawingMode;
+            this.setDrawingMode(newState);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
+        }
+        
+        // Delete удаление рисунков УБРАНО
+    });
+}
 
     _handleContextMenu(e) {
         e.preventDefault();
@@ -2196,19 +2192,14 @@ class TrendLineManager {
         });
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            const active = document.activeElement;
-            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-            
-            if (e.key === 'Delete' && this._selectedLine && this._selectedLine.editMode === true) {
-                e.preventDefault();
-                this.deleteTrendLine(this._selectedLine.id);
-                this._selectedLine = null;
-            }
-        });
-    }
-
+   _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        // Весь блок с Delete удалён
+    });
+}
     _getCurrentSymbolKey() {
         const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
         const exchange = this._chartManager.currentExchange || 'binance';
@@ -3461,14 +3452,9 @@ _setupHotkeys() {
         const active = document.activeElement;
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
         
-        // ... обработка Y ...
+        // ... обработка Y (если есть) ...
         
-        // ✅ Удаляем только если есть активная точка перетаскивания
-        if (e.key === 'Delete' && this._selectedRuler && (this._selectedRuler.showDragPoint1 || this._selectedRuler.showDragPoint2)) {
-            e.preventDefault();
-            this.deleteRuler(this._selectedRuler.id);
-            this._selectedRuler = null;
-        }
+        // Весь блок с Delete удалён
     });
 }
 
@@ -4751,28 +4737,24 @@ async loadAllAlertsFromDB() {
     }
 
     _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            const active = document.activeElement;
-            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-            
-            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                const newState = !this._isDrawingMode;
-                this.setDrawingMode(newState);
-                if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-                if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            }
-            
-            if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
-                e.preventDefault();
-                this.deleteAlert(this._selectedAlert.id);
-                this._selectedAlert = null;
-            }
-        });
-    }
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            const newState = !this._isDrawingMode;
+            this.setDrawingMode(newState);
+            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+            if (window.textManager && newState) window.textManager.setDrawingMode(false);
+        }
+        
+        // Весь блок с Delete удалён
+    });
+}
 
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
@@ -6393,18 +6375,9 @@ class TextManager {
         return `${symbol}:${exchange}:${marketType}`;
     }
 
-   _setupHotkeys() {
-    document.addEventListener('keydown', (e) => {
-        const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-        
-        // Delete — только если есть точка перетаскивания
-        if (e.key === 'Delete' && this._selectedText && this._selectedText.showDragPoint === true) {
-            e.preventDefault();
-            this.deleteText(this._selectedText.id);
-            this._selectedText = null;
-        }
-    });
+ _setupHotkeys() {
+    // Все обработчики Delete удалены
+    // Метод оставлен пустым, чтобы не ломался код вызова
 }
 
     _handleContextMenu(e) {
