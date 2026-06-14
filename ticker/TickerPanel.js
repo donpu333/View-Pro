@@ -1282,17 +1282,8 @@ _updateTickerFromBybit(data, marketType) {
  handleKeyDelete(e) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
-    const activeElement = document.activeElement;
-    if (activeElement && (activeElement.tagName === 'INPUT' || 
-                          activeElement.tagName === 'TEXTAREA' || 
-                          activeElement.tagName === 'SELECT')) return;
-
-    if (this._skipNextDelete) {  // <-- ВОТ ГЛАВНАЯ ПРОВЕРКА
-        this._skipNextDelete = false;
-        return;
-    }
-
-    const activeTicker = document.querySelector('.ticker-item.active');
+    // ✅ Удаляем тикер ТОЛЬКО если фокус находится внутри строки тикера
+    const activeTicker = document.activeElement?.closest('.ticker-item');
     if (!activeTicker) return;
 
     e.preventDefault();
