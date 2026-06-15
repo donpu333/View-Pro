@@ -12,9 +12,6 @@ class WebSocketManager {
         this._destroyed = false;
         this._klineConnecting = false;
         this._tradeConnecting = false;
-        // Уникальный ID для каждого соединения, чтобы отслеживать устаревшие
-        this._klineConnectionId = 0;
-        this._tradeConnectionId = 0;
     }
 
     connectKline(symbol, interval, exchange, marketType) {
@@ -26,7 +23,7 @@ class WebSocketManager {
         marketType = marketType || this.currentMarketType || 'futures';
         interval = interval || this.currentInterval || '1h';
 
-        // Обновляем текущее состояние ДО создания соединения
+        // Обновляем текущее состояние
         this.currentSymbol = symbol;
         this.currentInterval = interval;
         this.currentExchange = exchange;
@@ -41,9 +38,6 @@ class WebSocketManager {
             return;
         }
         this._klineConnecting = true;
-
-        // Генерируем уникальный ID для этого соединения
-        const connectionId = ++this._klineConnectionId;
 
         let wsUrl;
         if (exchange === 'bybit') {
@@ -60,15 +54,7 @@ class WebSocketManager {
         this.wsKline = ws;
 
         ws.onopen = () => {
-            if (this._destroyed) { 
-                this._safeClose(ws); 
-                return; 
-            }
-            // Проверяем, что это актуальное соединение
-            if (this.wsKline !== ws || this._klineConnectionId !== connectionId) {
-                this._safeClose(ws);
-                return;
-            }
+            if (this._destroyed) { ws.close(); return; }
             console.log('✅ Kline WS открыт:', exchange, symbol, interval);
             this._klineConnecting = false;
             if (exchange === 'bybit') {
@@ -79,9 +65,7 @@ class WebSocketManager {
         ws.onmessage = (event) => {
             if (this._destroyed) return;
             try {
-                // Проверяем актуальность соединения по ID
-                if (this.wsKline !== ws || this._klineConnectionId !== connectionId) return;
-                // Проверяем актуальность параметров
+                // ✅ ПРОВЕРЯЕМ АКТУАЛЬНЫЕ ПАРАМЕТРЫ, а не ссылку на ws
                 if (this.currentSymbol !== symbol || this.currentInterval !== interval) return;
 
                 const data = JSON.parse(event.data);
@@ -115,6 +99,7 @@ class WebSocketManager {
                     }
                 }
 
+                // ✅ Проверяем chartManager и символ
                 if (candle && this.chartManager && this.chartManager.currentSymbol === this.currentSymbol) {
                     this.chartManager.updateLastCandle(candle);
                 }
@@ -124,16 +109,14 @@ class WebSocketManager {
         };
 
         ws.onclose = (event) => {
-            // Всегда сбрасываем флаг коннекта для этого соединения
-            if (this.wsKline === ws) {
+            // ✅ ВСЕГДА сбрасываем флаг, если это было наше соединение
+            if (this.wsKline === ws || this.wsKline === null) {
                 this._klineConnecting = false;
             }
             
             if (this._destroyed) return;
             
-            // Проверяем, что это актуальное соединение и параметры не изменились
-            if (this.wsKline !== ws || this._klineConnectionId !== connectionId) return;
-            
+            // ✅ Проверяем АКТУАЛЬНЫЕ параметры для реконнекта
             if (this.currentSymbol === symbol && this.currentInterval === interval && 
                 this.currentExchange === exchange && this.currentMarketType === marketType) {
                 console.log('❌ Kline WS закрыт, переподключение...', event.code);
@@ -145,7 +128,8 @@ class WebSocketManager {
 
         ws.onerror = (err) => {
             console.warn('⚠️ Kline WS ошибка:', err);
-            if (this.wsKline === ws) {
+            // ✅ Сбрасываем флаг, если это наше соединение
+            if (this.wsKline === ws || this.wsKline === null) {
                 this._klineConnecting = false;
             }
         };
@@ -170,8 +154,6 @@ class WebSocketManager {
         }
         this._tradeConnecting = true;
 
-        const connectionId = ++this._tradeConnectionId;
-
         let wsUrl;
         if (exchange === 'bybit') {
             const category = (marketType === 'spot') ? 'spot' : 'linear';
@@ -187,14 +169,7 @@ class WebSocketManager {
         this.wsTrade = ws;
 
         ws.onopen = () => {
-            if (this._destroyed) { 
-                this._safeClose(ws); 
-                return; 
-            }
-            if (this.wsTrade !== ws || this._tradeConnectionId !== connectionId) {
-                this._safeClose(ws);
-                return;
-            }
+            if (this._destroyed) { ws.close(); return; }
             console.log('✅ Trade WS открыт:', exchange, symbol);
             this._tradeConnecting = false;
             if (exchange === 'bybit') {
@@ -205,9 +180,7 @@ class WebSocketManager {
         ws.onmessage = (event) => {
             if (this._destroyed) return;
             try {
-                if (this.wsTrade !== ws || this._tradeConnectionId !== connectionId) return;
                 if (this.currentSymbol !== symbol) return;
-                
                 const data = JSON.parse(event.data);
                 let price = null;
 
@@ -228,13 +201,11 @@ class WebSocketManager {
         };
 
         ws.onclose = (event) => {
-            if (this.wsTrade === ws) {
+            if (this.wsTrade === ws || this.wsTrade === null) {
                 this._tradeConnecting = false;
             }
             
             if (this._destroyed) return;
-            
-            if (this.wsTrade !== ws || this._tradeConnectionId !== connectionId) return;
             
             if (this.currentSymbol === symbol && this.currentExchange === exchange && this.currentMarketType === marketType) {
                 console.log('❌ Trade WS закрыт, переподключение...', event.code);
@@ -246,27 +217,10 @@ class WebSocketManager {
 
         ws.onerror = (err) => {
             console.warn('⚠️ Trade WS ошибка:', err);
-            if (this.wsTrade === ws) {
+            if (this.wsTrade === ws || this.wsTrade === null) {
                 this._tradeConnecting = false;
             }
         };
-    }
-
-    // Безопасное закрытие без вызова onclose
-    _safeClose(ws) {
-        if (!ws) return;
-        const oldOnClose = ws.onclose;
-        ws.onclose = null;
-        ws.onopen = null;
-        ws.onmessage = null;
-        ws.onerror = null;
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-            try { ws.close(); } catch(e) {}
-        }
-        // Восстанавливаем onclose для очистки, но без логики реконнекта
-        if (oldOnClose) {
-            try { oldOnClose({ code: 1000, reason: 'destroyed' }); } catch(e) {}
-        }
     }
 
     _cleanupKline() {
@@ -276,8 +230,14 @@ class WebSocketManager {
         }
         if (this.wsKline) {
             const oldWs = this.wsKline;
-            this.wsKline = null;
-            this._safeClose(oldWs);
+            this.wsKline = null;  // Обнуляем ссылку ДО close
+            oldWs.onopen = null;
+            oldWs.onmessage = null;
+            oldWs.onclose = null;
+            oldWs.onerror = null;
+            if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CONNECTING) {
+                try { oldWs.close(); } catch(e) {}
+            }
         }
         this._klineConnecting = false;
     }
@@ -290,19 +250,23 @@ class WebSocketManager {
         if (this.wsTrade) {
             const oldWs = this.wsTrade;
             this.wsTrade = null;
-            this._safeClose(oldWs);
+            oldWs.onopen = null;
+            oldWs.onmessage = null;
+            oldWs.onclose = null;
+            oldWs.onerror = null;
+            if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CONNECTING) {
+                try { oldWs.close(); } catch(e) {}
+            }
         }
         this._tradeConnecting = false;
     }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
-        // Обновляем все текущие параметры ДО вызова connect
         this.currentSymbol = symbol || this.currentSymbol;
         this.currentInterval = interval || this.currentInterval;
         this.currentExchange = exchange || this.currentExchange;
         this.currentMarketType = marketType || this.currentMarketType;
 
-        // Передаём уже обновленные значения
         this.connectKline(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
         this.connectTrade(this.currentSymbol, this.currentExchange, this.currentMarketType);
     }
