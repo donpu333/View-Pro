@@ -2221,10 +2221,17 @@ function loadSeparatorSettings() {
     document.getElementById('separatorOpacity').value = sepOpacity;
     document.getElementById('separatorOpacityValue').textContent = sepOpacity + '%';
 }
-function fillColorGrid() {
-    const element = document.getElementById('...'); // найди какой элемент
-    if (!element) return; // ← добавь эту проверку
-    element.innerHTML = '...'
+
+// ====== ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ======
+function fillColorGrid(gridId, colors, selectedColor) {
+    const grid = document.getElementById(gridId);
+    if (!grid) {
+        console.warn(`Grid with id "${gridId}" not found.`);
+        return;
+    }
+
+    grid.innerHTML = '';
+
     colors.forEach(color => {
         const square = document.createElement('div');
         square.className = 'color-square';
@@ -2234,33 +2241,66 @@ function fillColorGrid() {
         square.style.borderRadius = '3px';
         square.style.cursor = 'pointer';
         square.style.border = color === selectedColor ? '2px solid #4A90E2' : '1px solid transparent';
-        
+        square.style.position = 'relative';
+
+        // Добавляем крестик для удаления (если хотите)
+        const delBtn = document.createElement('span');
+        delBtn.className = 'delete-color';
+        delBtn.innerHTML = '×';
+        delBtn.style.position = 'absolute';
+        delBtn.style.top = '-6px';
+        delBtn.style.right = '-6px';
+        delBtn.style.width = '16px';
+        delBtn.style.height = '16px';
+        delBtn.style.background = '#ff4444';
+        delBtn.style.borderRadius = '50%';
+        delBtn.style.color = '#fff';
+        delBtn.style.fontSize = '12px';
+        delBtn.style.textAlign = 'center';
+        delBtn.style.lineHeight = '16px';
+        delBtn.style.cursor = 'pointer';
+        delBtn.style.display = 'none';
+        square.appendChild(delBtn);
+
+        // Показываем крестик при наведении
+        square.addEventListener('mouseenter', () => {
+            delBtn.style.display = 'block';
+        });
+        square.addEventListener('mouseleave', () => {
+            delBtn.style.display = 'none';
+        });
+
+        // Обработчик клика по цвету
         square.addEventListener('click', () => {
             document.querySelectorAll(`#${gridId} .color-square`).forEach(s => {
                 s.style.border = '1px solid transparent';
             });
             square.style.border = '2px solid #4A90E2';
-            
+
             // Обновляем соответствующий currentColorBox
-            if (gridId === 'bgColorsGrid') {
-                document.getElementById('bgCurrentColor').style.backgroundColor = color;
-                document.getElementById('bgHexInput').value = color;
-            } else if (gridId === 'bullishColorsGrid') {
-                document.getElementById('bullishCurrentColor').style.backgroundColor = color;
-                document.getElementById('bullishHexInput').value = color;
-            } else if (gridId === 'bearishColorsGrid') {
-                document.getElementById('bearishCurrentColor').style.backgroundColor = color;
-                document.getElementById('bearishHexInput').value = color;
-            } else if (gridId === 'separatorColorsGrid') {
-                document.getElementById('separatorCurrentColor').style.backgroundColor = color;
-                document.getElementById('separatorHexInput').value = color;
-            }
+            const colorBoxId = gridId.replace('ColorsGrid', 'CurrentColor');
+            const hexInputId = gridId.replace('ColorsGrid', 'HexInput');
+            
+            const colorBox = document.getElementById(colorBoxId);
+            const hexInput = document.getElementById(hexInputId);
+            
+            if (colorBox) colorBox.style.backgroundColor = color;
+            if (hexInput) hexInput.value = color;
         });
-        
+
+        // Обработчик удаления цвета
+        delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            square.remove();
+            // Обновляем массив цветов в localStorage
+            const currentColors = JSON.parse(localStorage.getItem(`colorGrid_${gridId}`) || '[]');
+            const updatedColors = currentColors.filter(c => c !== color);
+            localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(updatedColors));
+        });
+
         grid.appendChild(square);
     });
 }
-
 function addColorToGrid(gridId, hexInputId, colorBoxId) {
     const hex = document.getElementById(hexInputId).value;
     if (/^#[0-9A-F]{6}$/i.test(hex)) {
