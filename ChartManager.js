@@ -36,7 +36,7 @@ class ChartManager {
         this._switchingSymbol = false;
         this._currentFetchController = null;
         this._updateTimeout = null;
-
+this.candleTimeMap = new Map();
         this._visibilityHandler = () => {
             if (document.hidden) {
                 // Ничего не делаем при скрытии
@@ -402,83 +402,60 @@ _startNewCandleChecker() {
     };
     check();
 }
-    _setupPanelsSync() {
-        if (!this.chart) return;
-        
-        const mainTimeScale = this.chart.timeScale();
-        const mainChart = this.chart;
-        
-        console.log('🔧 Настраиваю синхронизацию (по официальной документации TV)...');
-        
-        mainTimeScale.subscribeVisibleLogicalRangeChange((timeRange) => {
-            if (!this.indicatorManager?.panelManager || this._isSyncing) return;
-            
-            this._isSyncing = true;
-            
-            const panels = this.indicatorManager.panelManager.panels;
-            panels.forEach((panel) => {
-                if (panel.chart && !panel.isCollapsed) {
-                    try { panel.chart.timeScale().setVisibleLogicalRange(timeRange); } catch(e) {}
-                }
-            });
-            
-            setTimeout(() => { this._isSyncing = false; }, 10);
+  _setupPanelsSync() {
+    if (!this.chart) return;
+
+    const mainTimeScale = this.chart.timeScale();
+    const mainChart = this.chart;
+
+    console.log('🔧 Синхронизация панелей (лёгкий кроссхейр)');
+
+    mainTimeScale.subscribeVisibleLogicalRangeChange((timeRange) => {
+        if (!this.indicatorManager?.panelManager || this._isSyncing) return;
+        this._isSyncing = true;
+        const panels = this.indicatorManager.panelManager.panels;
+        panels.forEach((panel) => {
+            if (panel.chart && !panel.isCollapsed) {
+                try { panel.chart.timeScale().setVisibleLogicalRange(timeRange); } catch(e) {}
+            }
         });
-        
-        function getCrosshairDataPoint(series, param) {
-            if (!param.time) return null;
-            const dataPoint = param.seriesData.get(series);
-            return dataPoint || null;
+        setTimeout(() => { this._isSyncing = false; }, 10);
+    });
+
+    // Лёгкая синхронизация перекрестия без ручного поиска dataPoint
+    function syncCrosshairToPanels(param) {
+        if (!mainChart || !param) return;
+        const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
+        if (!panels) return;
+
+        if (!param.time || !param.point) {
+            panels.forEach(p => p.chart?.clearCrosshairPosition());
+            return;
         }
-        
-        function syncCrosshairToPanels(param) {
-            if (!mainChart || !param) return;
-            
-            const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
-            if (!panels) return;
-            
-            panels.forEach((panel) => {
-                if (!panel.chart || panel.isCollapsed) return;
-                
-                try {
-                    if (!param.time || !param.point) {
-                        panel.chart.clearCrosshairPosition();
-                        return;
-                    }
-                    
-                    let targetSeries = null;
-                    panel.series.forEach((series) => {
-                        targetSeries = series;
-                    });
-                    
-                    if (!targetSeries) {
-                        panel.chart.clearCrosshairPosition();
-                        return;
-                    }
-                    
-                    const dataPoint = getCrosshairDataPoint(targetSeries, param);
-                    
-                    if (dataPoint) {
-                        panel.chart.setCrosshairPosition(
-                            param.time,
-                            dataPoint.value,
-                            param.point.x
-                        );
-                    } else {
-                        panel.chart.clearCrosshairPosition();
-                    }
-                    
-                } catch(e) {}
-            });
-        }
-        
-        mainChart.subscribeCrosshairMove((param) => {
-            syncCrosshairToPanels(param);
+
+        panels.forEach((panel) => {
+            if (!panel.chart || panel.isCollapsed) return;
+            // Библиотека сама подставит цену по координатам мыши
+            try {
+                panel.chart.setCrosshairPosition(param.time, param.point.y, param.point.x);
+            } catch(e) {}
         });
-        
-        console.log('✅ Crosshair синхронизирован (официальный метод TradingView)');
     }
 
+    // Вызываем syncCrosshairToPanels только по requestAnimationFrame
+    let crosshairPending = false;
+    mainChart.subscribeCrosshairMove((param) => {
+        if (!crosshairPending) {
+            crosshairPending = true;
+            requestAnimationFrame(() => {
+                syncCrosshairToPanels(param);
+                crosshairPending = false;
+            });
+        }
+    });
+
+    console.log('✅ Crosshair синхронизирован (быстрый)');
+}
     saveCurrentTimePosition() {
         if (!this.chart || !this.chartData.length) return null;
         
@@ -960,7 +937,7 @@ _startNewCandleChecker() {
             
             if (uniqueOlder.length > 0) {
                 this.chartData = [...uniqueOlder, ...this.chartData];
-                
+                                this._rebuildCandleMap();
                 // Обновляем свечи
                 this.candleSeries.setData(this.chartData);
                 this.barSeries.setData(this.chartData);
@@ -1401,6 +1378,9 @@ updateLastCandle(candle) {
             }));
             this.volumeSeries.setData(volumeData);
         }
+
+        // 🔄 ПЕРЕСТРАИВАЕМ КАРТУ ВРЕМЯ→СВЕЧА ДЛЯ БЫСТРОГО ПОИСКА
+        this._rebuildCandleMap();
         
     } catch (e) {
         console.error('❌ Ошибка в updateLastCandle:', e);
@@ -1464,6 +1444,7 @@ updateLastCandle(candle) {
         
   
         this.chartData = data;
+                this._rebuildCandleMap();
         this.currentInterval = interval;
         this.currentSymbol = symbol;
         this.currentExchange = exchange;
@@ -1546,64 +1527,58 @@ updateLastCandle(candle) {
     }
 
   
-    onCrosshairMove(param) {
-        if (!this.overlay) {
-            this.overlay = safeElement('candleStatsOverlay');
-        }
-        
-        if (!param || !param.time || !this.chartData || this.chartData.length === 0) {
-            if (this.overlay) this.overlay.classList.remove('visible');
-            return;
-        }
+ onCrosshairMove(param) {
+    if (!this.overlay) {
+        this.overlay = safeElement('candleStatsOverlay');
+    }
+    
+    if (!param || !param.time || !this.chartData || this.chartData.length === 0) {
+        if (this.overlay) this.overlay.classList.remove('visible');
+        return;
+    }
 
-        const candle = this.chartData.find(c => c.time === param.time);
+    const candle = this.candleTimeMap.get(param.time);   // ⚡ Мгновенный поиск
+
+    if (candle) {
+        const isBullish = Utils.isBullish(candle.open, candle.close);
+        const bullishClass = isBullish ? 'bullish' : 'bearish';
         
-        if (candle) {
-            const isBullish = Utils.isBullish(candle.open, candle.close);
-            const bullishClass = isBullish ? 'bullish' : 'bearish';
-            
-            if (this.openEl) {
-                this.openEl.textContent = Utils.formatPrice(candle.open);
-                this.openEl.className = `stat-value ${bullishClass}`;
-            }
-            
-            if (this.highEl) {
-                this.highEl.textContent = Utils.formatPrice(candle.high);
-                this.highEl.className = `stat-value ${bullishClass}`;
-            }
-            
-            if (this.lowEl) {
-                this.lowEl.textContent = Utils.formatPrice(candle.low);
-                this.lowEl.className = `stat-value ${bullishClass}`;
-            }
-            
-            if (this.closeEl) {
-                this.closeEl.textContent = Utils.formatPrice(candle.close);
-                this.closeEl.className = `stat-value ${bullishClass}`;
-            }
-            
-            if (this.changeEl) {
-                const change = Utils.calculateChange(candle.open, candle.close);
-                const changeNum = parseFloat(change);
-                this.changeEl.textContent = (changeNum > 0 ? '+' : '') + change + '%';
-                this.changeEl.className = `change-value ${bullishClass}`;
-            }
-            
-            const volumeEl = document.getElementById('volumeValue');
-            if (volumeEl) {
-                volumeEl.textContent = Utils.formatVolume(candle.volume);
-                volumeEl.className = `stat-value ${bullishClass}`;
-            }
-            
-            if (this.overlay) {
-                this.overlay.classList.add('visible');
-            }
-        } else {
-            if (this.overlay) {
-                this.overlay.classList.remove('visible');
-            }
+        if (this.openEl) {
+            this.openEl.textContent = Utils.formatPrice(candle.open);
+            this.openEl.className = `stat-value ${bullishClass}`;
+        }
+        if (this.highEl) {
+            this.highEl.textContent = Utils.formatPrice(candle.high);
+            this.highEl.className = `stat-value ${bullishClass}`;
+        }
+        if (this.lowEl) {
+            this.lowEl.textContent = Utils.formatPrice(candle.low);
+            this.lowEl.className = `stat-value ${bullishClass}`;
+        }
+        if (this.closeEl) {
+            this.closeEl.textContent = Utils.formatPrice(candle.close);
+            this.closeEl.className = `stat-value ${bullishClass}`;
+        }
+        if (this.changeEl) {
+            const change = Utils.calculateChange(candle.open, candle.close);
+            const changeNum = parseFloat(change);
+            this.changeEl.textContent = (changeNum > 0 ? '+' : '') + change + '%';
+            this.changeEl.className = `change-value ${bullishClass}`;
+        }
+        const volumeEl = document.getElementById('volumeValue');
+        if (volumeEl) {
+            volumeEl.textContent = Utils.formatVolume(candle.volume);
+            volumeEl.className = `stat-value ${bullishClass}`;
+        }
+        if (this.overlay) {
+            this.overlay.classList.add('visible');
+        }
+    } else {
+        if (this.overlay) {
+            this.overlay.classList.remove('visible');
         }
     }
+}
 updateRealPrice(price) {
     this._syncPriceLine(price);
 }
@@ -1757,7 +1732,12 @@ _syncPriceLine(price) {
             }
         }
     }
-
+_rebuildCandleMap() {
+    this.candleTimeMap.clear();
+    for (const c of this.chartData) {
+        this.candleTimeMap.set(c.time, c);
+    }
+}
     getLastCandle() {
         return this.lastCandle;
     }
