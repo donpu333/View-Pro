@@ -4495,3 +4495,46 @@ input:checked + .slider:before {
     right: 15px !important;
     bottom: 25px !important;
 }
+
+
+.modal-search-wrapper {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+}
+
+.modal-search-input {
+    width: 100%;
+    padding-right: 42px;  /* чуть больше ширины кнопки + отступ */
+    box-sizing: border-box;
+}
+
+.search-clear-btn {
+    position: absolute;
+    right: 40px;          /* сдвиг левее: было 8px → стало 10px */
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;          /* немного увеличил для удобства клика */
+    height: 22px;
+    border: none;
+    background: #666;
+    color: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+    display: none;
+    font-size: 13px;
+    line-height: 22px;
+    text-align: center;
+    z-index: 5;
+    opacity: 0.8;
+    transition: all 0.15s ease;
+}
+
+.search-clear-btn.visible {
+    display: block;
+}
+
+.search-clear-btn:hover {
+    background: #f23645;
+    opacity: 1;
+}
