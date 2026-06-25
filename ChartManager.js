@@ -84,7 +84,7 @@ this.candleTimeMap = new Map();
                 barSpacing: 12,
                 minBarSpacing: 1,
                 fixLeftEdge: false,
-                fixRightEdge: true,
+                fixRightEdge: false,
                 rightOffset: 3,
                 tickMarkFormatter: (time) => {
                     const mskTime = time + (3 * 3600);
@@ -2104,57 +2104,55 @@ _subscribeToPrice() {
     }
 _createNewCandle(candle) {
     if (!candle || !candle.time) return;
-    
     const exists = this.chartData.some(c => c.time === candle.time);
     if (exists) return;
-    
     const lastCandle = this.chartData[this.chartData.length - 1];
     if (lastCandle && candle.time <= lastCandle.time) return;
-    
+
     this.chartData.push(candle);
-    
+    // ограничение по количеству
     const limit = CONFIG.klineLimits?.[this.currentInterval] || 1000;
     if (this.chartData.length > limit) {
         this.chartData.shift();
     }
-    
     this.lastCandle = candle;
     this.currentRealPrice = candle.close;
 
-    // ✅✅✅ ВОТ ЭТО НУЖНО ДОБАВИТЬ:
     const isBullish = candle.close >= candle.open;
     this._lastAppliedColor = isBullish 
         ? (this.bullishColor || CONFIG.colors.bullish)
         : (this.bearishColor || CONFIG.colors.bearish);
-    
-    // Обновляем график
+
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (series) {
-        series.setData(this.chartData);
-        // ✅ И сразу задаём правильный цвет линии
+        // ✅ ВМЕСТО setData используем update
+        series.update({
+            time: candle.time,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close
+        });
+        // Обновляем цвет линии цены
         series.applyOptions({
             priceLineSource: candle.close,
             priceLineColor: this._lastAppliedColor
         });
     }
-    
-    // Обновляем volume
+
+    // Обновляем объём (если нужен)
     if (this.volumeSeries) {
-        const volumeData = this.chartData.map(c => ({
-            time: c.time,
-            value: c.volume || 0,
-            color: c.close >= c.open ? this.bullishColor : this.bearishColor
-        }));
-        this.volumeSeries.setData(volumeData);
+        this.volumeSeries.update({
+            time: candle.time,
+            value: candle.volume || 0,
+            color: this._lastAppliedColor
+        });
     }
-    
-    // Перезапускаем таймер с новым цветом
+
     if (this.timerManager) {
-        this.timerManager.forceColorUpdate(); // это заставит таймер взять свежий _lastAppliedColor
+        this.timerManager.forceColorUpdate();
         this.timerManager.start(this.currentInterval);
     }
-    
-    console.log('🕯️ Новая свеча создана:', new Date(candle.time * 1000).toISOString());
 }
   async fetchKlines(symbol, exchange, marketType, interval, limit = 1000) {
     // Ждём только предыдущий fetchKlines, но не тикеры
