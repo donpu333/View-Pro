@@ -85,7 +85,7 @@ this.candleTimeMap = new Map();
                 minBarSpacing: 1,
                 fixLeftEdge: false,
                 fixRightEdge: false,
-                rightOffset: 3,
+                rightOffset: 5,
                 tickMarkFormatter: (time) => {
                     const mskTime = time + (3 * 3600);
                     const date = new Date(mskTime * 1000);
@@ -1589,7 +1589,7 @@ updateRealPrice(price) {
             
             if (currentRange) {
                 const visibleBarsCount = currentRange.to - currentRange.from;
-                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 3);
+                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 5);
                 
                 timeScale.setVisibleLogicalRange({
                     from: newFrom,
@@ -1603,8 +1603,8 @@ updateRealPrice(price) {
                     if (newRange) {
                         const visibleBars = newRange.to - newRange.from;
                         timeScale.setVisibleLogicalRange({
-                            from: this.chartData.length - visibleBars + 3,
-                            to: this.chartData.length + 3
+                            from: this.chartData.length - visibleBars + 5,
+                            to: this.chartData.length + 5
                         });
                     }
                 }, 50);
