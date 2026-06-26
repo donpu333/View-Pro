@@ -84,7 +84,7 @@ this.candleTimeMap = new Map();
                 barSpacing: 12,
                 minBarSpacing: 1,
                 fixLeftEdge: false,
-                fixRightEdge:  true,
+                fixRightEdge:  false,
                 rightOffset: 3,
                 tickMarkFormatter: (time) => {
                     const mskTime = time + (3 * 3600);
