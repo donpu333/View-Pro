@@ -4572,7 +4572,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // ОБНОВЛЕНИЕ ЦЕНЫ (ИСПРАВЛЕНО)
+    // ОБНОВЛЕНИЕ ЦЕНЫ (ИСПРАВЛЕНО - ТОЛЬКО ПРИ ПЕРЕСЕЧЕНИИ)
     // ========================================================================
     updatePriceForSymbol(symbol, price, exchange = null, marketType = null) {
         if (!symbol || !price || isNaN(price)) return;
@@ -4581,9 +4581,15 @@ class AlertLineManager {
         const priceKey = `${symbol}:${exchange || 'binance'}:${marketType || 'futures'}`;
         let lastPrice = this._lastPrices.get(priceKey);
 
+        // Если это первое обновление - просто сохраняем цену и выходим
         if (lastPrice === undefined) {
             this._lastPrices.set(priceKey, price);
-            lastPrice = price;
+            return;
+        }
+
+        // Если цена не изменилась - выходим (чтобы не было ложных срабатываний)
+        if (lastPrice === price) {
+            return;
         }
 
         this._lastPrices.set(priceKey, price);
@@ -4605,8 +4611,16 @@ class AlertLineManager {
             if (now - alert.createdAt < 2000) return;
 
             const alertPrice = alert.price;
-            const crossedAbove = (lastPrice < alertPrice && price >= alertPrice);
-            const crossedBelow = (lastPrice > alertPrice && price <= alertPrice);
+            
+            // === ГЛАВНОЕ ИСПРАВЛЕНИЕ: проверяем ТОЛЬКО пересечение ===
+            // Цена должна быть по разные стороны от уровня
+            const wasBelow = lastPrice < alertPrice;
+            const wasAbove = lastPrice > alertPrice;
+            const isNowBelow = price < alertPrice;
+            const isNowAbove = price > alertPrice;
+            
+            const crossedAbove = wasBelow && isNowAbove;  // было ниже, стало выше
+            const crossedBelow = wasAbove && isNowBelow;  // было выше, стало ниже
 
             if (crossedAbove || crossedBelow) {
                 if (!alert.active) {
@@ -4627,13 +4641,15 @@ class AlertLineManager {
                         this._updateAlertsListUI();
                         setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
                     }
+                } else {
+                    // Если уже активен - срабатывание по таймеру (не здесь)
                 }
             }
         });
     }
 
     // ========================================================================
-    // ТАЙМЕР (ИСПРАВЛЕН)
+    // ТАЙМЕР (РАБОТАЕТ ТОЛЬКО ДЛЯ АКТИВНЫХ АЛЕРТОВ)
     // ========================================================================
     checkTimerAlerts() {
         const now = Date.now();
@@ -4643,10 +4659,12 @@ class AlertLineManager {
             if (alert.status === 'paused' || alert.status === 'completed') return;
             if (!alert.canTriggerAgain()) return;
             if (!alert.shouldTriggerByTimer(now)) return;
+            
+            // Таймер срабатывает только если алерт уже был активирован (было пересечение)
+            if (!alert.active) return;
 
             alert.triggerCount++;
             alert.lastTriggerTime = now;
-            if (!alert.active) alert.active = true;
 
             this._saveAlerts();
             this._startInfiniteHighlight(alert.id);
@@ -4677,7 +4695,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // CREATE ALERT (ИСПРАВЛЕН)
+    // CREATE ALERT
     // ========================================================================
     createAlert(price, time, options = {}) {
         const defaultVisibility = {
@@ -4723,7 +4741,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // LOAD FROM DATA (ИСПРАВЛЕН)
+    // LOAD FROM DATA
     // ========================================================================
     async loadFromData(symbolKey, alertRecords) {
         try {
@@ -4872,7 +4890,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // DELETE ALERT (ИСПРАВЛЕН)
+    // DELETE ALERT
     // ========================================================================
     deleteAlert(alertId) {
         const index = this._alerts.findIndex(a => a.alert.id === alertId);
@@ -4912,7 +4930,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // DELETE ALL ALERTS (ИСПРАВЛЕН)
+    // DELETE ALL ALERTS
     // ========================================================================
     deleteAllAlerts() {
         const currentSymbolKey = this._getCurrentSymbolKey();
@@ -4958,7 +4976,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // DELETE COMPLETED ALERTS (ИСПРАВЛЕН)
+    // DELETE COMPLETED ALERTS
     // ========================================================================
     deleteCompletedAlerts() {
         const completedAlerts = this._alerts.filter(item =>
@@ -4968,12 +4986,7 @@ class AlertLineManager {
         if (completedAlerts.length === 0) return;
         if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
 
-        const keysToUnsubscribe = new Set();
-        completedAlerts.forEach(item => {
-            const alert = item.alert;
-            keysToUnsubscribe.add(`${alert.symbol}:${alert.exchange}:${alert.marketType}`);
-            this.deleteAlert(alert.id);
-        });
+        completedAlerts.forEach(item => this.deleteAlert(item.alert.id));
     }
 
     // ========================================================================
