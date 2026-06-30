@@ -1582,36 +1582,11 @@ updateLastCandle(candle) {
 updateRealPrice(price) {
     this._syncPriceLine(price);
 }
-    scrollToLast() {
-        if (this.chart && this.chartData.length > 0) {
-            const timeScale = this.chart.timeScale();
-            const currentRange = timeScale.getVisibleLogicalRange();
-            
-            if (currentRange) {
-                const visibleBarsCount = currentRange.to - currentRange.from;
-                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 5);
-                
-                timeScale.setVisibleLogicalRange({
-                    from: newFrom,
-                    to: newFrom + visibleBarsCount
-                });
-            } else {
-                timeScale.scrollToRealTime();
-                
-                setTimeout(() => {
-                    const newRange = timeScale.getVisibleLogicalRange();
-                    if (newRange) {
-                        const visibleBars = newRange.to - newRange.from;
-                        timeScale.setVisibleLogicalRange({
-                            from: this.chartData.length - visibleBars + 5,
-                            to: this.chartData.length + 5
-                        });
-                    }
-                }, 50);
-            }
-        }
+  scrollToLast() {
+    if (this.chart && this.chartData.length > 0) {
+        this.chart.timeScale().scrollToRealTime();
     }
-
+}
     clearChart() {
         if (this.candleSeries) {
             this.candleSeries.setData([]);
