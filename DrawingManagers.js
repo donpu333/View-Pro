@@ -644,26 +644,30 @@ class HorizontalRayManager {
         return this._rays.filter(item => item.ray.symbolKey === currentKey);
     }
 
-   _setupHotkeys() {
-    document.addEventListener('keydown', (e) => {
-        const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-        
-        if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-            e.preventDefault();
-            e.stopPropagation();
-            const newState = !this._isDrawingMode;
-            this.setDrawingMode(newState);
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
-        }
-        
-        // Delete удаление рисунков УБРАНО
-    });
-}
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            
+            if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                const newState = !this._isDrawingMode;
+                this.setDrawingMode(newState);
+                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+                if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+                if (window.textManager && newState) window.textManager.setDrawingMode(false);
+                console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
+            }
+            
+            if (e.key === 'Delete' && this._selectedRay && this._selectedRay.readyToDrag === true) {
+                e.preventDefault();
+                this.deleteRay(this._selectedRay.id);
+                this._selectedRay = null;
+            }
+        });
+    }
 
     _handleContextMenu(e) {
         e.preventDefault();
@@ -2192,14 +2196,19 @@ class TrendLineManager {
         });
     }
 
-   _setupHotkeys() {
-    document.addEventListener('keydown', (e) => {
-        const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-        
-        // Весь блок с Delete удалён
-    });
-}
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            
+            if (e.key === 'Delete' && this._selectedLine && this._selectedLine.editMode === true) {
+                e.preventDefault();
+                this.deleteTrendLine(this._selectedLine.id);
+                this._selectedLine = null;
+            }
+        });
+    }
+
     _getCurrentSymbolKey() {
         const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
         const exchange = this._chartManager.currentExchange || 'binance';
@@ -3452,9 +3461,14 @@ _setupHotkeys() {
         const active = document.activeElement;
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
         
-        // ... обработка Y (если есть) ...
+        // ... обработка Y ...
         
-        // Весь блок с Delete удалён
+        // ✅ Удаляем только если есть активная точка перетаскивания
+        if (e.key === 'Delete' && this._selectedRuler && (this._selectedRuler.showDragPoint1 || this._selectedRuler.showDragPoint2)) {
+            e.preventDefault();
+            this.deleteRuler(this._selectedRuler.id);
+            this._selectedRuler = null;
+        }
     });
 }
 
@@ -4416,262 +4430,556 @@ class AlertLinePrimitive {
 
 class AlertLineManager {
     constructor(chartManager) {
-    this._pixelRatio = window.devicePixelRatio || 1;
-    this._alerts = [];
-    this._chartManager = chartManager;
-    this._selectedAlert = null;
-    this._hoveredAlert = null;
-    this._isDrawingMode = false;
-    this._isDragging = false;
-    this._dragAlert = null;
-    this._dragStartX = 0;
-    this._dragStartY = 0;
-    this._dragStartPrice = 0;
-    this._dragStartTime = 0;
-    this._lastMouseX = 0;
-    this._lastMouseY = 0;
-    this._isLoading = false;
-    this._lastPrices = new Map();
-    this._subscribedSymbols = new Set();
-    this._alertWebSockets = new Map();
-    this._potentialDrag = null;
-    this._dragThreshold = 5;
-    this._dblClickTimer = null;
-    this._potentialDblClickTarget = null;
-    this._dblClickTimeout = 350;
-    this._lastClickTime = 0;
-    
-    this._handleContextMenu = this._handleContextMenu.bind(this);
-    this._setupEventListeners();
-    this._setupHotkeys();
-    this._setupSettingsListeners();
-    this._needsRedraw = false;
-    
-    setInterval(() => { this.checkTimerAlerts(); }, 1000);
-    
-    // Регистрируем в координаторе
-    if (window.drawingLoaderCoordinator) {
-        window.drawingLoaderCoordinator.register(this, 'alert');
-    }
-    
-    // Загружаем ВСЕ алерты из БД
-    setTimeout(async () => {
-        try {
-            if (this._alerts.length > 0) return;
-            
-            // Ждём готовности БД
-            if (!window.dbReady) {
-                await new Promise(r => { 
-                    const c = () => window.dbReady ? r() : setTimeout(c, 50); 
-                    c(); 
-                });
-            }
-            
-            await this.loadAllAlertsFromDB();
-        } catch (error) {
-            console.error('❌ Auto-load alerts failed:', error);
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._alerts = [];
+        this._chartManager = chartManager;
+        this._selectedAlert = null;
+        this._hoveredAlert = null;
+        this._isDrawingMode = false;
+        this._isDragging = false;
+        this._dragAlert = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragStartTime = 0;
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._isLoading = false;
+        this._lastPrices = new Map();
+        this._subscribedSymbols = new Set();
+        this._alertWebSockets = new Map();
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._dblClickTimer = null;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+
+        this._handleContextMenu = this._handleContextMenu.bind(this);
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._setupSettingsListeners();
+        this._needsRedraw = false;
+
+        setInterval(() => { this.checkTimerAlerts(); }, 1000);
+
+        if (window.drawingLoaderCoordinator) {
+            window.drawingLoaderCoordinator.register(this, 'alert');
         }
-    }, 150);
-}
 
-    // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
-   async loadFromData(symbolKey, alertRecords) {
-    // ❌ Убираем проверку "только текущий символ"
-    // if (this._getCurrentSymbolKey() !== symbolKey) return;
+        setTimeout(async () => {
+            try {
+                if (this._alerts.length > 0) return;
+                if (!window.dbReady) {
+                    await new Promise(r => {
+                        const c = () => window.dbReady ? r() : setTimeout(c, 50);
+                        c();
+                    });
+                }
+                await this.loadAllAlertsFromDB();
+            } catch (error) {
+                console.error('❌ Auto-load alerts failed:', error);
+            }
+        }, 150);
+    }
 
-    try {
-        const currentSymbolKey = this._getCurrentSymbolKey();
-        const isCurrentSymbol = (currentSymbolKey === symbolKey);
+    // ========================================================================
+    // УНИВЕРСАЛЬНАЯ ПОДПИСКА НА BINANCE И BYBIT
+    // ========================================================================
+    _subscribeToSymbol(symbol, exchange = 'binance', marketType = 'futures') {
+        const key = `${symbol}:${exchange}:${marketType}`;
+        if (this._subscribedSymbols.has(key)) return;
 
-        // Берём серию только если символ совпадает с текущим
-        const series = isCurrentSymbol
-            ? (this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries)
-            : null;
-
-        if (isCurrentSymbol && !series) {
-            console.warn('No series available for current symbol');
+        let wsUrl;
+        if (exchange === 'binance') {
+            if (marketType === 'futures') {
+                wsUrl = `wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`;
+            } else {
+                wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`;
+            }
+        } else if (exchange === 'bybit') {
+            if (marketType === 'futures') {
+                wsUrl = `wss://stream.bybit.com/v5/public/linear`;
+            } else {
+                wsUrl = `wss://stream.bybit.com/v5/public/spot`;
+            }
+        } else {
+            console.warn('Unsupported exchange:', exchange);
             return;
         }
 
-        const existingIds = new Set(
-            this._alerts
-                .filter(item => item.alert.symbolKey === symbolKey)
-                .map(item => item.alert.id)
-        );
-        
-        const newRecordIds = new Set(alertRecords.map(a => a.id));
-        
-        // Отключаем примитивы для удалённых алертов (только для текущего символа)
-        if (isCurrentSymbol) {
-            const toDetach = this._alerts.filter(item => 
-                item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
-            );
-            
-            for (const item of toDetach) {
-                try { 
-                    if (item.primitive && item.series) {
-                        item.series.detachPrimitive(item.primitive); 
-                    }
-                    item.primitive = null;
-                    item.series = null;
-                } catch(e) {
-                    console.warn('Failed to detach:', e);
+        const ws = new WebSocket(wsUrl);
+        let isBybit = (exchange === 'bybit');
+
+        ws.onopen = () => {
+            if (isBybit) {
+                const subMsg = JSON.stringify({
+                    op: "subscribe",
+                    args: [`trade.${symbol}`]
+                });
+                ws.send(subMsg);
+            }
+            this._subscribedSymbols.add(key);
+            this._alertWebSockets.set(key, ws);
+        };
+
+        ws.onmessage = (event) => {
+            let data;
+            try { data = JSON.parse(event.data); } catch (e) { return; }
+            let price;
+            if (exchange === 'binance') {
+                if (data.p) price = parseFloat(data.p);
+            } else if (exchange === 'bybit') {
+                if (data.topic && data.topic.startsWith('trade.') && data.data && data.data.length) {
+                    const trade = data.data[0];
+                    if (trade.p) price = parseFloat(trade.p);
                 }
             }
-        }
-        
-        // Фильтруем: оставляем чужие символы + только те алерты symbolKey, что есть в newRecordIds
-        this._alerts = this._alerts.filter(item => 
-            item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
-        );
-
-        const newAlerts = [];
-        for (const rec of alertRecords) {
-            try {
-                const existing = this._alerts.find(item => item.alert.id === rec.id);
-                
-                if (existing) {
-                    // Обновляем существующий алерт
-                    existing.alert.price = rec.data.price;
-                    existing.alert.time = rec.data.time;
-                    existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                    existing.alert.options = { ...existing.alert.options, ...rec.data.options };
-                    existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    existing.alert.triggered = rec.data.triggered || false;
-                    existing.alert.triggerCount = rec.data.triggerCount || 0;
-                    existing.alert.repeatCount = rec.data.repeatCount || 5;
-                    existing.alert.repeatInterval = rec.data.repeatInterval || 1;
-                    existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                    existing.alert.active = rec.data.active || false;
-                    existing.alert.status = rec.data.status || 'active';
-                    existing.alert.anchorCandle = rec.data.anchorCandle || null;
-                    existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
-                    existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
-                    existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
-                    
-                    // Восстанавливаем примитив для текущего символа, если алерт активен
-                    if (isCurrentSymbol && 
-                        !existing.alert.triggered && 
-                        existing.alert.status !== 'completed' &&
-                        (!existing.primitive || !existing.series)) {
-                        
-                        const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
-                        try {
-                            series.attachPrimitive(primitive);
-                            existing.primitive = primitive;
-                            existing.series = series;
-                        } catch(e) {
-                            console.warn('Failed to re-attach primitive:', e);
-                        }
-                    }
-                    continue;
-                }
-
-                // Создаём новый алерт
-                const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
-                alert.id = rec.id;
-                alert.symbolKey = rec.symbolKey;
-                alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                alert.symbol = rec.data.symbol;
-                alert.exchange = rec.data.exchange;
-                alert.marketType = rec.data.marketType;
-                alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                alert.triggered = rec.data.triggered || false;
-                alert.triggerCount = rec.data.triggerCount || 0;
-                alert.repeatCount = rec.data.repeatCount || 5;
-                alert.repeatInterval = rec.data.repeatInterval || 1;
-                alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                alert.active = rec.data.active || false;
-                alert.status = rec.data.status || 'active';
-                alert.anchorCandle = rec.data.anchorCandle || null;
-
-                // Примитив создаём только для текущего символа и если алерт активен
-                if (isCurrentSymbol && 
-                    !alert.triggered && 
-                    alert.status !== 'completed') {
-                    
-                    const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                    try {
-                        series.attachPrimitive(primitive);
-                        newAlerts.push({ alert, primitive, series });
-                    } catch(e) {
-                        console.warn('Failed to attach primitive:', e);
-                        newAlerts.push({ alert, primitive: null, series: null });
-                    }
-                } else {
-                    newAlerts.push({ alert, primitive: null, series: null });
-                }
-            } catch (e) {
-                console.warn('Failed to load alert:', rec.id, e);
+            if (price && !isNaN(price)) {
+                this.updatePriceForSymbol(symbol, price, exchange, marketType);
             }
+        };
+
+        ws.onclose = () => {
+            this._subscribedSymbols.delete(key);
+            this._alertWebSockets.delete(key);
+            setTimeout(() => {
+                const stillNeeded = this._alerts.some(item =>
+                    item.alert.symbol === symbol &&
+                    item.alert.exchange === exchange &&
+                    item.alert.marketType === marketType &&
+                    !item.alert.triggered &&
+                    item.alert.status !== 'completed'
+                );
+                if (stillNeeded) {
+                    this._subscribeToSymbol(symbol, exchange, marketType);
+                }
+            }, 5000);
+        };
+
+        this._alertWebSockets.set(key, ws);
+    }
+
+    _unsubscribeFromSymbol(symbol, exchange, marketType) {
+        const key = `${symbol}:${exchange}:${marketType}`;
+        const ws = this._alertWebSockets.get(key);
+        if (ws) {
+            ws.onclose = null;
+            ws.close();
+            this._alertWebSockets.delete(key);
+        }
+        this._subscribedSymbols.delete(key);
+    }
+
+    // ========================================================================
+    // ОБНОВЛЕНИЕ ЦЕНЫ (ИСПРАВЛЕНО)
+    // ========================================================================
+    updatePriceForSymbol(symbol, price, exchange = null, marketType = null) {
+        if (!symbol || !price || isNaN(price)) return;
+
+        const now = Date.now();
+        const priceKey = `${symbol}:${exchange || 'binance'}:${marketType || 'futures'}`;
+        let lastPrice = this._lastPrices.get(priceKey);
+
+        if (lastPrice === undefined) {
+            this._lastPrices.set(priceKey, price);
+            lastPrice = price;
         }
 
-        this._alerts.push(...newAlerts);
+        this._lastPrices.set(priceKey, price);
 
-        // Подписки на WebSocket для всех активных символов
-        const activeSymbols = new Set();
-        for (const item of this._alerts) {
-            if (!item.alert.triggered && item.alert.status !== 'completed') {
-                activeSymbols.add(item.alert.symbol);
+        const symbolAlerts = this._alerts.filter(item => {
+            const alert = item.alert;
+            if (alert.symbol !== symbol) return false;
+            if (alert.triggered) return false;
+            if (alert.status === 'paused' || alert.status === 'completed') return false;
+            if (exchange && alert.exchange !== exchange) return false;
+            if (marketType && alert.marketType !== marketType) return false;
+            return true;
+        });
+
+        if (symbolAlerts.length === 0) return;
+
+        symbolAlerts.forEach(item => {
+            const alert = item.alert;
+            if (now - alert.createdAt < 2000) return;
+
+            const alertPrice = alert.price;
+            const crossedAbove = (lastPrice < alertPrice && price >= alertPrice);
+            const crossedBelow = (lastPrice > alertPrice && price <= alertPrice);
+
+            if (crossedAbove || crossedBelow) {
+                if (!alert.active) {
+                    alert.active = true;
+                    alert.triggerCount = 1;
+                    alert.lastTriggerTime = now;
+                    this._saveAlerts();
+                    this._startInfiniteHighlight(alert.id);
+                    this._showAlertNotification(alert, price, false);
+                    this._sendTelegramAlert(alert, price, false);
+                    this._updateAlertsListUI();
+                    this._requestRedraw();
+
+                    if (!alert.canTriggerAgain()) {
+                        alert.complete();
+                        this._detachPrimitive(item);
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+                    }
+                }
             }
-        }
-        for (const symbol of activeSymbols) {
-            this._subscribeToSymbol(symbol);
-        }
-        
-        // UI обновляем только если это текущий символ
-        if (isCurrentSymbol) {
+        });
+    }
+
+    // ========================================================================
+    // ТАЙМЕР (ИСПРАВЛЕН)
+    // ========================================================================
+    checkTimerAlerts() {
+        const now = Date.now();
+        this._alerts.forEach(item => {
+            const alert = item.alert;
+            if (alert.triggered) return;
+            if (alert.status === 'paused' || alert.status === 'completed') return;
+            if (!alert.canTriggerAgain()) return;
+            if (!alert.shouldTriggerByTimer(now)) return;
+
+            alert.triggerCount++;
+            alert.lastTriggerTime = now;
+            if (!alert.active) alert.active = true;
+
+            this._saveAlerts();
+            this._startInfiniteHighlight(alert.id);
+            const priceKey = `${alert.symbol}:${alert.exchange}:${alert.marketType}`;
+            const currentPrice = this._lastPrices.get(priceKey) || alert.price;
+            this._showAlertNotification(alert, currentPrice, alert.triggerCount > 1);
+            this._sendTelegramAlert(alert, currentPrice, alert.triggerCount > 1);
             this._updateAlertsListUI();
             this._requestRedraw();
-        }
-        
-        console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey} (current: ${isCurrentSymbol})`);
-    } catch (error) {
-        console.error('❌ loadFromData failed:', error);
-        throw error;
-    }
-}
 
-async loadAllAlertsFromDB() {
-    try {
-        if (!window.db) {
-            console.warn('Database not available');
-            return;
-        }
-
-        const allRecords = await window.db.getAll('drawings');
-        if (!allRecords || allRecords.length === 0) {
-            console.log('ℹ️ No drawings found in database');
-            return;
-        }
-
-        // Группируем алерты по symbolKey
-        const alertsBySymbol = {};
-        for (const record of allRecords) {
-            if (record.type !== 'alert') continue;
-            
-            const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
-            if (!alertsBySymbol[key]) {
-                alertsBySymbol[key] = [];
+            if (!alert.canTriggerAgain()) {
+                this._stopHighlight(alert.id);
+                alert.complete();
+                this._detachPrimitive(item);
+                this._saveAlerts();
+                this._updateAlertsListUI();
+                setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
             }
-            alertsBySymbol[key].push(record);
-        }
-
-        const symbolKeys = Object.keys(alertsBySymbol);
-        console.log(`📦 Loading alerts for ${symbolKeys.length} symbol(s): ${symbolKeys.join(', ')}`);
-
-        // Загружаем каждую группу через loadFromData
-        for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
-            await this.loadFromData(symbolKey, records);
-        }
-
-        console.log(`✅ All alerts loaded successfully (${this._alerts.length} total)`);
-    } catch (error) {
-        console.error('❌ loadAllAlertsFromDB failed:', error);
+        });
     }
-}
+
+    _detachPrimitive(item) {
+        if (item.primitive && item.series) {
+            try { item.series.detachPrimitive(item.primitive); } catch (e) {}
+            item.primitive = null;
+            item.series = null;
+        }
+    }
+
+    // ========================================================================
+    // CREATE ALERT (ИСПРАВЛЕН)
+    // ========================================================================
+    createAlert(price, time, options = {}) {
+        const defaultVisibility = {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+
+        const alert = new AlertLine(price, time, {
+            ...options,
+            symbol: this._chartManager.currentSymbol,
+            exchange: options.exchange || this._chartManager.currentExchange || 'binance',
+            marketType: options.marketType || this._chartManager.currentMarketType || 'futures',
+            timeframeVisibility: options.timeframeVisibility || defaultVisibility,
+            repeatCount: options.repeatCount || 5,
+            repeatInterval: options.repeatInterval || 1,
+            triggerCount: options.triggerCount || 0,
+            lastTriggerTime: options.lastTriggerTime || null,
+            active: options.active || false,
+            status: options.status || 'active'
+        });
+
+        alert.anchorTime = time;
+        alert.triggered = options.triggered || false;
+        alert.symbolKey = this._getCurrentSymbolKey();
+
+        if (!alert.triggered) {
+            const primitive = new AlertLinePrimitive(alert, this._chartManager);
+            const series = this._chartManager.currentChartType === 'candle'
+                ? this._chartManager.candleSeries
+                : this._chartManager.barSeries;
+            series.attachPrimitive(primitive);
+            this._alerts.push({ alert, primitive, series });
+        } else {
+            this._alerts.push({ alert, primitive: null, series: null });
+        }
+
+        this._subscribeToSymbol(alert.symbol, alert.exchange, alert.marketType);
+        this._saveAlerts();
+        this._updateAlertsListUI();
+
+        return alert;
+    }
+
+    // ========================================================================
+    // LOAD FROM DATA (ИСПРАВЛЕН)
+    // ========================================================================
+    async loadFromData(symbolKey, alertRecords) {
+        try {
+            const currentSymbolKey = this._getCurrentSymbolKey();
+            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+            const series = isCurrentSymbol
+                ? (this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries
+                    : this._chartManager.barSeries)
+                : null;
+
+            if (isCurrentSymbol && !series) {
+                console.warn('No series available for current symbol');
+                return;
+            }
+
+            const existingIds = new Set(
+                this._alerts
+                    .filter(item => item.alert.symbolKey === symbolKey)
+                    .map(item => item.alert.id)
+            );
+
+            const newRecordIds = new Set(alertRecords.map(a => a.id));
+
+            if (isCurrentSymbol) {
+                const toDetach = this._alerts.filter(item =>
+                    item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
+                );
+                for (const item of toDetach) {
+                    try {
+                        if (item.primitive && item.series) {
+                            item.series.detachPrimitive(item.primitive);
+                        }
+                        item.primitive = null;
+                        item.series = null;
+                    } catch (e) {
+                        console.warn('Failed to detach:', e);
+                    }
+                }
+            }
+
+            this._alerts = this._alerts.filter(item =>
+                item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
+            );
+
+            const newAlerts = [];
+            for (const rec of alertRecords) {
+                try {
+                    const existing = this._alerts.find(item => item.alert.id === rec.id);
+
+                    if (existing) {
+                        existing.alert.price = rec.data.price;
+                        existing.alert.time = rec.data.time;
+                        existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
+                        existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                        existing.alert.triggered = rec.data.triggered || false;
+                        existing.alert.triggerCount = rec.data.triggerCount || 0;
+                        existing.alert.repeatCount = rec.data.repeatCount || 5;
+                        existing.alert.repeatInterval = rec.data.repeatInterval || 1;
+                        existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                        existing.alert.active = rec.data.active || false;
+                        existing.alert.status = rec.data.status || 'active';
+                        existing.alert.anchorCandle = rec.data.anchorCandle || null;
+                        existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
+                        existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
+                        existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
+
+                        if (isCurrentSymbol &&
+                            !existing.alert.triggered &&
+                            existing.alert.status !== 'completed' &&
+                            (!existing.primitive || !existing.series)) {
+                            const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                            try {
+                                series.attachPrimitive(primitive);
+                                existing.primitive = primitive;
+                                existing.series = series;
+                            } catch (e) {
+                                console.warn('Failed to re-attach primitive:', e);
+                            }
+                        }
+                        continue;
+                    }
+
+                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                    alert.id = rec.id;
+                    alert.symbolKey = rec.symbolKey;
+                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    alert.symbol = rec.data.symbol;
+                    alert.exchange = rec.data.exchange || 'binance';
+                    alert.marketType = rec.data.marketType || 'futures';
+                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    alert.triggered = rec.data.triggered || false;
+                    alert.triggerCount = rec.data.triggerCount || 0;
+                    alert.repeatCount = rec.data.repeatCount || 5;
+                    alert.repeatInterval = rec.data.repeatInterval || 1;
+                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    alert.active = rec.data.active || false;
+                    alert.status = rec.data.status || 'active';
+                    alert.anchorCandle = rec.data.anchorCandle || null;
+
+                    if (isCurrentSymbol &&
+                        !alert.triggered &&
+                        alert.status !== 'completed') {
+                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                        try {
+                            series.attachPrimitive(primitive);
+                            newAlerts.push({ alert, primitive, series });
+                        } catch (e) {
+                            console.warn('Failed to attach primitive:', e);
+                            newAlerts.push({ alert, primitive: null, series: null });
+                        }
+                    } else {
+                        newAlerts.push({ alert, primitive: null, series: null });
+                    }
+                } catch (e) {
+                    console.warn('Failed to load alert:', rec.id, e);
+                }
+            }
+
+            this._alerts.push(...newAlerts);
+
+            const activeKeys = new Set();
+            for (const item of this._alerts) {
+                if (!item.alert.triggered && item.alert.status !== 'completed') {
+                    const key = `${item.alert.symbol}:${item.alert.exchange}:${item.alert.marketType}`;
+                    activeKeys.add(key);
+                }
+            }
+            for (const key of activeKeys) {
+                const [symbol, exchange, marketType] = key.split(':');
+                this._subscribeToSymbol(symbol, exchange, marketType);
+            }
+
+            if (isCurrentSymbol) {
+                this._updateAlertsListUI();
+                this._requestRedraw();
+            }
+
+            console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey} (current: ${isCurrentSymbol})`);
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+            throw error;
+        }
+    }
+
+    // ========================================================================
+    // DELETE ALERT (ИСПРАВЛЕН)
+    // ========================================================================
+    deleteAlert(alertId) {
+        const index = this._alerts.findIndex(a => a.alert.id === alertId);
+        if (index !== -1) {
+            const { alert, primitive, series } = this._alerts[index];
+            const symbol = alert.symbol;
+            const exchange = alert.exchange;
+            const marketType = alert.marketType;
+
+            this._stopHighlight(alertId);
+            window.db.delete('drawings', alertId).catch(e => console.warn(e));
+
+            if (primitive && series) {
+                try { series.detachPrimitive(primitive); } catch (e) {}
+            }
+            this._alerts.splice(index, 1);
+
+            const hasOtherAlerts = this._alerts.some(item =>
+                item.alert.symbol === symbol &&
+                item.alert.exchange === exchange &&
+                item.alert.marketType === marketType &&
+                !item.alert.triggered &&
+                item.alert.status !== 'completed'
+            );
+            if (!hasOtherAlerts) {
+                this._unsubscribeFromSymbol(symbol, exchange, marketType);
+            }
+
+            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
+            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    // ========================================================================
+    // DELETE ALL ALERTS (ИСПРАВЛЕН)
+    // ========================================================================
+    deleteAllAlerts() {
+        const currentSymbolKey = this._getCurrentSymbolKey();
+        const currentSymbol = this._chartManager.currentSymbol;
+
+        const alertsToDelete = this._alerts.filter(item =>
+            item.alert.symbolKey === currentSymbolKey
+        );
+
+        if (alertsToDelete.length === 0) return;
+
+        if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
+
+        const keysToUnsubscribe = new Set();
+        alertsToDelete.forEach(item => {
+            const alert = item.alert;
+            keysToUnsubscribe.add(`${alert.symbol}:${alert.exchange}:${alert.marketType}`);
+            window.db.delete('drawings', alert.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+            const index = this._alerts.indexOf(item);
+            if (index !== -1) this._alerts.splice(index, 1);
+        });
+
+        for (const key of keysToUnsubscribe) {
+            const [symbol, exchange, marketType] = key.split(':');
+            const hasOtherAlerts = this._alerts.some(item =>
+                item.alert.symbol === symbol &&
+                item.alert.exchange === exchange &&
+                item.alert.marketType === marketType &&
+                !item.alert.triggered &&
+                item.alert.status !== 'completed'
+            );
+            if (!hasOtherAlerts) {
+                this._unsubscribeFromSymbol(symbol, exchange, marketType);
+            }
+        }
+
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+    // ========================================================================
+    // DELETE COMPLETED ALERTS (ИСПРАВЛЕН)
+    // ========================================================================
+    deleteCompletedAlerts() {
+        const completedAlerts = this._alerts.filter(item =>
+            item.alert.status === 'completed' || item.alert.triggered
+        );
+
+        if (completedAlerts.length === 0) return;
+        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
+
+        const keysToUnsubscribe = new Set();
+        completedAlerts.forEach(item => {
+            const alert = item.alert;
+            keysToUnsubscribe.add(`${alert.symbol}:${alert.exchange}:${alert.marketType}`);
+            this.deleteAlert(alert.id);
+        });
+    }
+
+    // ========================================================================
+    // ОСТАЛЬНЫЕ МЕТОДЫ (БЕЗ ИЗМЕНЕНИЙ)
+    // ========================================================================
+
     _toBitmapCoords(cssX, cssY) {
         return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
     }
@@ -4708,53 +5016,29 @@ async loadAllAlertsFromDB() {
         return null;
     }
 
-    _subscribeToSymbol(symbol) {
-        if (this._subscribedSymbols.has(symbol)) return;
-        this._subscribedSymbols.add(symbol);
-        const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`);
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.p) {
-                const price = parseFloat(data.p);
-                this.updatePriceForSymbol(symbol, price);
-            }
-        };
-        ws.onclose = () => {
-            this._subscribedSymbols.delete(symbol);
-            this._alertWebSockets.delete(symbol);
-        };
-        this._alertWebSockets.set(symbol, ws);
-    }
-
-    _unsubscribeFromSymbol(symbol) {
-        const ws = this._alertWebSockets.get(symbol);
-        if (ws) {
-            ws.onclose = null;
-            ws.close();
-            this._alertWebSockets.delete(symbol);
-        }
-        this._subscribedSymbols.delete(symbol);
-    }
-
     _setupHotkeys() {
-    document.addEventListener('keydown', (e) => {
-        const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-        
-        if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-            e.preventDefault();
-            e.stopPropagation();
-            const newState = !this._isDrawingMode;
-            this.setDrawingMode(newState);
-            if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-            if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-            if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-            if (window.textManager && newState) window.textManager.setDrawingMode(false);
-        }
-        
-        // Весь блок с Delete удалён
-    });
-}
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+
+            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                const newState = !this._isDrawingMode;
+                this.setDrawingMode(newState);
+                if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+                if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            }
+
+            if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
+                e.preventDefault();
+                this.deleteAlert(this._selectedAlert.id);
+                this._selectedAlert = null;
+            }
+        });
+    }
 
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
@@ -4762,44 +5046,44 @@ async loadAllAlertsFromDB() {
         container.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return;
 
-            if (e.target.closest('#alertSettings') || 
-                e.target.closest('#trendSettings') || 
+            if (e.target.closest('#alertSettings') ||
+                e.target.closest('#trendSettings') ||
                 e.target.closest('#textSettings') ||
                 e.target.closest('#rulerSettingsPanel') ||
                 e.target.closest('#drawingSettings')) {
                 return;
             }
-            
+
             const rect = container.getBoundingClientRect();
             let x = e.clientX - rect.left;
             let y = e.clientY - rect.top;
             const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-            
+
             const hit = this.hitTest(bmX, bmY);
             if (hit) {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 const now = Date.now();
-                
+
                 if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
                     clearTimeout(this._dblClickTimer);
                     this._dblClickTimer = null;
                     this._potentialDblClickTarget = null;
                     this._lastClickTime = 0;
-                    
+
                     hit.alert.showDragPoint = !hit.alert.showDragPoint;
                     this._requestRedraw();
                     return;
                 }
-                
+
                 if (this._selectedAlert && this._selectedAlert !== hit.alert) {
                     this._selectedAlert.selected = false;
                     this._selectedAlert.showDragPoint = false;
                 }
                 hit.alert.selected = true;
                 this._selectedAlert = hit.alert;
-                
+
                 this._potentialDblClickTarget = hit.alert;
                 this._lastClickTime = now;
                 if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
@@ -4807,7 +5091,7 @@ async loadAllAlertsFromDB() {
                     this._dblClickTimer = null;
                     this._potentialDblClickTarget = null;
                 }, this._dblClickTimeout);
-                
+
                 if (hit.alert.showDragPoint) {
                     const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
                     const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
@@ -4819,7 +5103,7 @@ async loadAllAlertsFromDB() {
                 } else {
                     this._potentialDrag = null;
                 }
-                
+
                 this._requestRedraw();
             } else {
                 const alertMenu = document.getElementById('alertContextMenu');
@@ -4842,7 +5126,7 @@ async loadAllAlertsFromDB() {
             const rect = container.getBoundingClientRect();
             const cssX = e.clientX - rect.left;
             const cssY = e.clientY - rect.top;
-            
+
             this._lastMouseX = cssX;
             this._lastMouseY = cssY;
 
@@ -4862,13 +5146,14 @@ async loadAllAlertsFromDB() {
                     container.style.cursor = 'grabbing';
                 }
             }
-            
+
             if (this._isDragging && this._dragAlert) {
-                e.preventDefault(); e.stopPropagation();
-                
+                e.preventDefault();
+                e.stopPropagation();
+
                 const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
                 const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
-                
+
                 const alertX = this._chartManager.timeToCoordinate(this._dragStartTime);
                 const alertY = this._chartManager.priceToCoordinate(this._dragStartPrice);
                 if (alertX !== null && alertY !== null) {
@@ -4877,7 +5162,8 @@ async loadAllAlertsFromDB() {
                     const newPrice = this._chartManager.coordinateToPrice(newY);
                     const newTime = this._chartManager.coordinateToTime(newX);
                     if (newPrice !== null) this._dragAlert.price = newPrice;
-                    if (newTime !== null) { this._dragAlert.time = newTime; this._dragAlert.anchorTime = newTime; }
+                    if (newTime !== null) { this._dragAlert.time = newTime;
+                        this._dragAlert.anchorTime = newTime; }
                     const newAlertX = this._chartManager.timeToCoordinate(this._dragAlert.time);
                     const newAlertY = this._chartManager.priceToCoordinate(this._dragAlert.price);
                     if (newAlertX !== null && newAlertY !== null) {
@@ -4902,7 +5188,8 @@ async loadAllAlertsFromDB() {
         container.addEventListener('mouseup', (e) => {
             this._potentialDrag = null;
             if (this._isDragging) {
-                e.preventDefault(); e.stopPropagation();
+                e.preventDefault();
+                e.stopPropagation();
                 this._isDragging = false;
                 if (this._dragAlert) {
                     this._dragAlert.dragging = false;
@@ -4921,12 +5208,15 @@ async loadAllAlertsFromDB() {
         });
 
         container.addEventListener('mouseleave', () => {
-            if (this._hoveredAlert) { this._hoveredAlert.hovered = false; this._hoveredAlert = null; this._requestRedraw(); }
+            if (this._hoveredAlert) { this._hoveredAlert.hovered = false;
+                this._hoveredAlert = null;
+                this._requestRedraw(); }
             container.style.cursor = 'crosshair';
         });
 
         container.addEventListener('click', (e) => {
-            if (this._isDragging) { e.preventDefault(); e.stopPropagation(); }
+            if (this._isDragging) { e.preventDefault();
+                e.stopPropagation(); }
             if (this._isDrawingMode) this._handleChartClick(e);
         });
 
@@ -4934,12 +5224,13 @@ async loadAllAlertsFromDB() {
     }
 
     _handleContextMenu(e) {
-        e.preventDefault(); e.stopPropagation();
+        e.preventDefault();
+        e.stopPropagation();
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
         let x = e.clientX - rect.left;
         let y = e.clientY - rect.top;
         const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-        
+
         const hit = this.hitTest(bmX, bmY);
         if (hit) {
             if (this._selectedAlert && this._selectedAlert !== hit.alert) {
@@ -4966,37 +5257,42 @@ async loadAllAlertsFromDB() {
                 menu.style.display = 'flex';
                 menu.style.left = e.clientX + 'px';
                 menu.style.top = e.clientY + 'px';
-                
+
                 const copyBtn = document.getElementById('alertContextCopyBtn');
                 const newCopyBtn = copyBtn.cloneNode(true);
                 copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
-                newCopyBtn.onclick = (event) => { event.stopPropagation(); navigator.clipboard?.writeText(Utils.formatPrice(hit.alert.price)); menu.style.display = 'none'; };
-                
+                newCopyBtn.onclick = (event) => { event.stopPropagation();
+                    navigator.clipboard?.writeText(Utils.formatPrice(hit.alert.price));
+                    menu.style.display = 'none'; };
+
                 const settingsBtn = document.getElementById('alertContextSettingsBtn');
                 const newSettingsBtn = settingsBtn.cloneNode(true);
                 settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
-                newSettingsBtn.onclick = (event) => { event.stopPropagation(); this._showSettings(hit.alert); menu.style.display = 'none'; };
-                
+                newSettingsBtn.onclick = (event) => { event.stopPropagation();
+                    this._showSettings(hit.alert);
+                    menu.style.display = 'none'; };
+
                 const pauseBtn = document.getElementById('alertContextPauseBtn');
                 if (pauseBtn) {
                     const newPauseBtn = pauseBtn.cloneNode(true);
                     pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
                     newPauseBtn.textContent = hit.alert.status === 'paused' ? '▶️ Возобновить' : '⏸️ Пауза';
-                    newPauseBtn.onclick = (event) => { 
-                        event.stopPropagation(); 
-                        if (hit.alert.status === 'paused') { hit.alert.resume(); }
-                        else { hit.alert.pause(); }
+                    newPauseBtn.onclick = (event) => {
+                        event.stopPropagation();
+                        if (hit.alert.status === 'paused') { hit.alert.resume(); } else { hit.alert.pause(); }
                         this._saveAlerts();
                         this._updateAlertsListUI();
                         this._requestRedraw();
-                        menu.style.display = 'none'; 
+                        menu.style.display = 'none';
                     };
                 }
-                
+
                 const deleteBtn = document.getElementById('alertContextDeleteBtn');
                 const newDeleteBtn = deleteBtn.cloneNode(true);
                 deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-                newDeleteBtn.onclick = (event) => { event.stopPropagation(); this.deleteAlert(hit.alert.id); menu.style.display = 'none'; };
+                newDeleteBtn.onclick = (event) => { event.stopPropagation();
+                    this.deleteAlert(hit.alert.id);
+                    menu.style.display = 'none'; };
             }
         } else {
             const menu = document.getElementById('alertContextMenu');
@@ -5006,7 +5302,7 @@ async loadAllAlertsFromDB() {
 
     setDrawingMode(enabled) {
         this._isDrawingMode = enabled;
-        
+
         const alertBtn = document.getElementById('toolAlert');
         if (alertBtn) {
             if (enabled) {
@@ -5021,167 +5317,6 @@ async loadAllAlertsFromDB() {
         }
     }
 
-    checkTimerAlerts() {
-        const now = Date.now();
-        
-        this._alerts.forEach(item => {
-            const alert = item.alert;
-            
-            if (alert.triggered) return;
-            if (!alert.active) return;
-            if (alert.status === 'paused') return;
-            if (alert.status === 'completed') return;
-            if (!alert.canTriggerAgain()) return;
-            if (!alert.shouldTriggerByTimer(now)) return;
-            
-            alert.triggerCount++;
-            alert.lastTriggerTime = now;
-            
-            this._saveAlerts();
-            this._startInfiniteHighlight(alert.id);
-            this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            
-            if (!alert.canTriggerAgain()) {
-                this._stopHighlight(alert.id);
-                this.deleteAlert(alert.id);
-            }
-        });
-    }
-
-    updatePriceForSymbol(symbol, price, exchange = null) {
-        if (!symbol || !price || isNaN(price)) return;
-        
-        const now = Date.now();
-        const lastPrice = this._lastPrices.get(symbol);
-        
-        this._lastPrices.set(symbol, price);
-        
-        if (lastPrice === undefined) return;
-        
-        const symbolAlerts = this._alerts.filter(item => 
-            item.alert.symbol === symbol && 
-            !item.alert.triggered &&
-            !item.alert.active &&
-            item.alert.status !== 'paused' &&
-            item.alert.status !== 'completed'
-        );
-        
-        if (symbolAlerts.length === 0) return;
-        
-        symbolAlerts.forEach(item => {
-            const alert = item.alert;
-            
-            if (now - alert.createdAt < 2000) return;
-            
-            const alertPrice = alert.price;
-            const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
-            const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
-            
-            if (crossedAbove || crossedBelow) {
-                alert.active = true;
-                alert.lastTriggerTime = now;
-                alert.triggerCount = 1;
-                
-                this._saveAlerts();
-                this._startInfiniteHighlight(alert.id);
-                this._showAlertNotification(alert, price, false);
-                this._sendTelegramAlert(alert, price, false);
-                this._updateAlertsListUI();
-                this._requestRedraw();
-                
-                if (!alert.canTriggerAgain()) {
-                    this._stopHighlight(alert.id);
-                    alert.complete();
-                    if (item.primitive && item.series) {
-                        try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                        item.primitive = null;
-                        item.series = null;
-                    }
-                    this._saveAlerts();
-                    this._updateAlertsListUI();
-                    setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
-                }
-            }
-        });
-    }
-
-    createAlert(price, time, options = {}) {
-        const defaultVisibility = {
-            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
-            '1h': true, '4h': true, '6h': true, '12h': true,
-            '1d': true, '1w': true, '1M': true
-        };
-        
-        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
-        
-        const alert = new AlertLine(price, time, {
-            ...options,
-            symbol: this._chartManager.currentSymbol,
-            exchange: this._chartManager.currentExchange,
-            marketType: this._chartManager.currentMarketType,
-            timeframeVisibility: timeframeVisibility,
-            repeatCount: options.repeatCount || 5,
-            repeatInterval: options.repeatInterval || 1,
-            triggerCount: options.triggerCount || 0,
-            lastTriggerTime: options.lastTriggerTime || null,
-            active: options.active || false,
-            status: options.status || 'active'
-        });
-        
-        alert.anchorTime = time;
-        alert.triggered = options.triggered || false;
-        alert.symbolKey = this._getCurrentSymbolKey();
-        
-        if (!alert.triggered) {
-            const primitive = new AlertLinePrimitive(alert, this._chartManager);
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
-            series.attachPrimitive(primitive);
-            this._alerts.push({ alert, primitive, series });
-        } else {
-            this._alerts.push({ alert, primitive: null, series: null });
-        }
-        
-        this._subscribeToSymbol(alert.symbol);
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        
-        return alert;
-    }
-
-    deleteAlert(alertId) {
-        const index = this._alerts.findIndex(a => a.alert.id === alertId);
-        if (index !== -1) {
-            const { alert, primitive, series } = this._alerts[index];
-            const symbol = alert.symbol;
-            
-            this._stopHighlight(alertId);
-            window.db.delete('drawings', alertId).catch(e => console.warn(e));
-            
-            if (primitive && series) {
-                try { series.detachPrimitive(primitive); } catch (e) {}
-            }
-            this._alerts.splice(index, 1);
-            
-            const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
-            if (!hasOtherAlerts) {
-                this._unsubscribeFromSymbol(symbol);
-            }
-            
-            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
-            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-
     pauseAlert(alertId) {
         const item = this._alerts.find(a => a.alert.id === alertId);
         if (item && item.alert.status === 'active') {
@@ -5193,15 +5328,15 @@ async loadAllAlertsFromDB() {
         }
         return false;
     }
-    
+
     resumeAlert(alertId) {
         const item = this._alerts.find(a => a.alert.id === alertId);
         if (item && item.alert.status === 'paused' && !item.alert.triggered) {
             item.alert.resume();
             if (!item.primitive && !item.alert.triggered) {
                 const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
-                const series = this._chartManager.currentChartType === 'candle' 
-                    ? this._chartManager.candleSeries 
+                const series = this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries
                     : this._chartManager.barSeries;
                 series.attachPrimitive(primitive);
                 item.primitive = primitive;
@@ -5215,64 +5350,19 @@ async loadAllAlertsFromDB() {
         return false;
     }
 
-    deleteAllAlerts() {
-        const currentSymbolKey = this._getCurrentSymbolKey();
-        const currentSymbol = this._chartManager.currentSymbol;
-        
-        const alertsToDelete = this._alerts.filter(item => 
-            item.alert.symbolKey === currentSymbolKey
-        );
-        
-        if (alertsToDelete.length === 0) return;
-        
-        if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
-        
-        alertsToDelete.forEach(item => {
-            window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
-            if (item.primitive && item.series) {
-                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-            }
-            const index = this._alerts.indexOf(item);
-            if (index !== -1) this._alerts.splice(index, 1);
-        });
-        
-        const hasOtherAlerts = this._alerts.some(item => 
-            item.alert.symbol === currentSymbol && 
-            !item.alert.triggered && 
-            item.alert.status !== 'completed'
-        );
-        
-        if (!hasOtherAlerts) this._unsubscribeFromSymbol(currentSymbol);
-        
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        this._requestRedraw();
-    }
-
-    deleteCompletedAlerts() {
-        const completedAlerts = this._alerts.filter(item => 
-            item.alert.status === 'completed' || item.alert.triggered
-        );
-        
-        if (completedAlerts.length === 0) return;
-        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
-        
-        completedAlerts.forEach(item => this.deleteAlert(item.alert.id));
-    }
-
     _detachAllPrimitivesForSymbol(symbolKey) {
-    const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
-    for (const item of itemsForSymbol) {
-        if (item.primitive && item.series) {
-            try { 
-                item.series.detachPrimitive(item.primitive); 
-            } catch(e) {}
-            item.primitive = null;
-            item.series = null;
+        const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
+        for (const item of itemsForSymbol) {
+            if (item.primitive && item.series) {
+                try {
+                    item.series.detachPrimitive(item.primitive);
+                } catch (e) {}
+                item.primitive = null;
+                item.series = null;
+            }
         }
     }
-    // ❗️ Никакого filter() – алерты остаются в памяти
-}
+
     hitTest(x, y) {
         if (this._selectedAlert) {
             const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
@@ -5283,24 +5373,24 @@ async loadAllAlertsFromDB() {
                 } catch (e) {}
             }
         }
-        
+
         let bestHit = null;
         let bestDistance = Infinity;
-        
+
         for (const item of this._alerts) {
             if (!item.primitive?._paneView?._renderer) continue;
             if (item.alert === this._selectedAlert) continue;
-            
+
             try {
                 const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                
+
                 if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
                     bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
                     bestDistance = hit.distance;
                 }
             } catch (e) {}
         }
-        
+
         return bestHit;
     }
 
@@ -5312,14 +5402,14 @@ async loadAllAlertsFromDB() {
 
     _handleChartClick(event) {
         if (!this._isDrawingMode) return;
-        
+
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
-        
+
         let price = this._chartManager.coordinateToPrice(y);
         let time = this._getTimeFromCoordinate(x);
-        
+
         if (price === null || time === null) {
             const lastCandle = this._chartManager.getLastCandle();
             if (lastCandle) {
@@ -5327,7 +5417,7 @@ async loadAllAlertsFromDB() {
                 time = lastCandle.time;
             } else return;
         }
-        
+
         this.createAlert(price, time, {
             color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
             lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
@@ -5340,59 +5430,59 @@ async loadAllAlertsFromDB() {
             anchorCandle: null,
             status: 'active'
         });
-        
+
         this.setDrawingMode(false);
     }
 
     _showSettings(alert) {
         const settings = document.getElementById('alertSettings');
         if (!settings) return;
-        
+
         document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
         document.getElementById('alertHexInputInline').value = alert.options.color;
         document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
         document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
         document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
         document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
-        
+
         const bellCheckbox = document.getElementById('alertShowBell');
         if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
-        
+
         createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
-        
+
         const priceInput = document.getElementById('alertSettingsPriceInput');
         if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
-        
+
         const repeatCountSelect = document.getElementById('alertRepeatCount');
         if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
-        
+
         const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
         if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
-        
+
         this._renderTimeframeCheckboxes(alert);
-        
+
         settings.style.display = 'block';
         settings.style.left = '50%';
         settings.style.top = '50%';
         settings.style.transform = 'translate(-50%, -50%)';
-        
+
         settings.dataset.alertId = alert.id;
-        
+
         const stylePanel = document.getElementById('alertStylePanel');
         const repeatPanel = document.getElementById('alertRepeatPanel');
         const visibilityPanel = document.getElementById('alertVisibilityPanel');
-        
+
         stylePanel.classList.add('active');
         repeatPanel.classList.remove('active');
         visibilityPanel.classList.remove('active');
-        
+
         document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
             tab.classList.remove('active');
             if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
         });
-        
+
         settings.onmousedown = (e) => e.stopPropagation();
-        
+
         if (!document._alertSettingsCloseHandler) {
             document._alertSettingsCloseHandler = (e) => {
                 if (!settings.contains(e.target) && settings.style.display === 'block') {
@@ -5407,7 +5497,7 @@ async loadAllAlertsFromDB() {
         const settings = document.getElementById('alertSettings');
         if (!settings || settings._listenersSetup) return;
         settings._listenersSetup = true;
-        
+
         settings.querySelectorAll('.settings-tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 const tabName = tab.dataset.alertSettingsTab;
@@ -5418,7 +5508,7 @@ async loadAllAlertsFromDB() {
                 tab.classList.add('active');
             });
         });
-        
+
         document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
             const alertId = settings.dataset.alertId;
             const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
@@ -5430,7 +5520,7 @@ async loadAllAlertsFromDB() {
                 this._saveAlerts();
             }
         });
-        
+
         document.getElementById('alertSaveSettings').addEventListener('click', () => {
             const alertId = settings.dataset.alertId;
             const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
@@ -5450,7 +5540,7 @@ async loadAllAlertsFromDB() {
             this._saveAlerts();
             this._updateAlertsListUI();
         });
-        
+
         document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
             const alertId = settings.dataset.alertId;
             this.deleteAlert(alertId);
@@ -5462,16 +5552,16 @@ async loadAllAlertsFromDB() {
     _renderTimeframeCheckboxes(alert) {
         const container = document.getElementById('alertTimeframeCheckboxList');
         if (!container) return;
-        
+
         const tfLabels = {
             '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
             '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
             '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
         };
-        
+
         let html = '';
         const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
-        
+
         timeframes.forEach(tf => {
             const isChecked = alert.timeframeVisibility[tf] !== false;
             html += `
@@ -5482,19 +5572,19 @@ async loadAllAlertsFromDB() {
                 </div>
             `;
         });
-        
+
         container.innerHTML = html;
-        
+
         container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
             checkbox.addEventListener('change', (e) => {
                 const tf = e.target.dataset.timeframe;
                 alert.timeframeVisibility[tf] = e.target.checked;
             });
         });
-        
+
         const selectAllBtn = document.getElementById('alertSelectAllTimeframes');
         const deselectAllBtn = document.getElementById('alertDeselectAllTimeframes');
-        
+
         if (selectAllBtn) {
             const newSelectAll = selectAllBtn.cloneNode(true);
             selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
@@ -5505,7 +5595,7 @@ async loadAllAlertsFromDB() {
                 });
             });
         }
-        
+
         if (deselectAllBtn) {
             const newDeselectAll = deselectAllBtn.cloneNode(true);
             deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
@@ -5519,7 +5609,7 @@ async loadAllAlertsFromDB() {
     }
 
     _requestRedraw() {
-        this._alerts.forEach(item => { 
+        this._alerts.forEach(item => {
             if (item.primitive?.requestRedraw) {
                 item.primitive.requestRedraw();
             }
@@ -5528,14 +5618,14 @@ async loadAllAlertsFromDB() {
 
     _startInfiniteHighlight(alertId) {
         this._stopHighlight(alertId);
-        
+
         setTimeout(() => {
             const content = document.getElementById('alertHistoryContent');
             if (!content) return;
-            
+
             const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
             if (!item) return;
-            
+
             if (!item._originalStyles) {
                 item._originalStyles = {
                     bg: item.style.backgroundColor,
@@ -5545,9 +5635,9 @@ async loadAllAlertsFromDB() {
                     transition: item.style.transition
                 };
             }
-            
+
             let isHighlighted = false;
-            
+
             const blink = () => {
                 if (!item.isConnected) {
                     if (item._blinkInterval) {
@@ -5556,9 +5646,9 @@ async loadAllAlertsFromDB() {
                     }
                     return;
                 }
-                
+
                 isHighlighted = !isHighlighted;
-                
+
                 if (isHighlighted) {
                     item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
                     item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
@@ -5573,10 +5663,10 @@ async loadAllAlertsFromDB() {
                     item.style.transition = 'all 0.35s ease';
                 }
             };
-            
+
             blink();
             item._blinkInterval = setInterval(blink, 550);
-            
+
             item._stopBlink = () => {
                 if (item._blinkInterval) {
                     clearInterval(item._blinkInterval);
@@ -5589,7 +5679,7 @@ async loadAllAlertsFromDB() {
                 item.style.borderLeftWidth = orig.borderLeftWidth || '';
                 item.style.transition = orig.transition || '';
             };
-            
+
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 100);
     }
@@ -5597,7 +5687,7 @@ async loadAllAlertsFromDB() {
     _stopHighlight(alertId) {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
-        
+
         const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
         if (item && item._stopBlink) {
             item._stopBlink();
@@ -5607,21 +5697,21 @@ async loadAllAlertsFromDB() {
     _highlightTriggeredAlert(alertId) {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
-        
+
         const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
         if (activeTab !== 'triggered') return;
-        
+
         const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
         if (!item) return;
-        
+
         item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
         item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
         item.style.borderLeftColor = '#FFC800';
         item.style.borderLeftWidth = '5px';
         item.style.transition = 'all 0.5s ease';
-        
+
         item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        
+
         setTimeout(() => {
             if (item.isConnected) {
                 item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
@@ -5633,13 +5723,13 @@ async loadAllAlertsFromDB() {
 
     _showAlertNotification(alert, currentPrice, isRepeat = false) {
         const notification = document.getElementById('alertNotification');
-        
+
         const priceFormatted = Utils.formatPrice(currentPrice);
         const alertPriceFormatted = Utils.formatPrice(alert.price);
         const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        
+
         const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-        
+
         if (notification) {
             notification.innerHTML = `
                 <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
@@ -5650,7 +5740,7 @@ async loadAllAlertsFromDB() {
             notification.style.borderLeftColor = alert.options.color;
             setTimeout(() => { notification.style.display = 'none'; }, 5000);
         }
-        
+
         this._playAlertSound();
         this._showSystemNotification(alert, currentPrice, isRepeat);
     }
@@ -5691,10 +5781,10 @@ async loadAllAlertsFromDB() {
 
     _showSystemNotification(alert, currentPrice, isRepeat = false) {
         if (!("Notification" in window)) return;
-        
+
         const priceFormatted = Utils.formatPrice(currentPrice);
         const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-        
+
         const showNotification = () => {
             const notification = new Notification(`🔔 ${alert.symbol} - АЛЕРТ${repeatText}`, {
                 body: `Цена: ${priceFormatted} | Уровень: ${Utils.formatPrice(alert.price)}`,
@@ -5702,10 +5792,11 @@ async loadAllAlertsFromDB() {
                 silent: false,
                 requireInteraction: true
             });
-            notification.onclick = () => { window.focus(); notification.close(); };
+            notification.onclick = () => { window.focus();
+                notification.close(); };
             setTimeout(() => notification.close(), 10000);
         };
-        
+
         if (Notification.permission === "granted") showNotification();
         else if (Notification.permission !== "denied") {
             Notification.requestPermission().then(permission => {
@@ -5717,19 +5808,19 @@ async loadAllAlertsFromDB() {
     _sendTelegramAlert(alert, currentPrice, isRepeat = false) {
         const chatId = localStorage.getItem('telegramChatId');
         if (!chatId) return;
-        
+
         const priceFormatted = Utils.formatPrice(currentPrice);
         const alertPriceFormatted = Utils.formatPrice(alert.price);
-        
+
         const direction = currentPrice > alert.price ? '⬆️ Выше' : '⬇️ Ниже';
         const repeatText = isRepeat ? `\n🔄 Повтор: ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}` : '';
-        
+
         const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${new Date().toLocaleString('ru-RU')}`;
-        
+
         const formData = new URLSearchParams();
         formData.append('chat_id', chatId);
         formData.append('text', message);
-        
+
         fetch(CONFIG.telegramProxyUrl, {
             method: 'POST',
             mode: 'no-cors',
@@ -5740,7 +5831,7 @@ async loadAllAlertsFromDB() {
 
     async _saveAlerts() {
         if (this._alerts.length === 0) return;
-        const promises = this._alerts.map(item => 
+        const promises = this._alerts.map(item =>
             window.db.put('drawings', {
                 id: item.alert.id,
                 type: 'alert',
@@ -5768,24 +5859,59 @@ async loadAllAlertsFromDB() {
         await Promise.all(promises);
     }
 
-    // ✅ Старый метод теперь использует координатор
     async loadAlerts() {
         const currentKey = this._getCurrentSymbolKey();
         await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
     }
 
+    async loadAllAlertsFromDB() {
+        try {
+            if (!window.db) {
+                console.warn('Database not available');
+                return;
+            }
+
+            const allRecords = await window.db.getAll('drawings');
+            if (!allRecords || allRecords.length === 0) {
+                console.log('ℹ️ No drawings found in database');
+                return;
+            }
+
+            const alertsBySymbol = {};
+            for (const record of allRecords) {
+                if (record.type !== 'alert') continue;
+                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+                if (!alertsBySymbol[key]) {
+                    alertsBySymbol[key] = [];
+                }
+                alertsBySymbol[key].push(record);
+            }
+
+            const symbolKeys = Object.keys(alertsBySymbol);
+            console.log(`📦 Loading alerts for ${symbolKeys.length} symbol(s): ${symbolKeys.join(', ')}`);
+
+            for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
+                await this.loadFromData(symbolKey, records);
+            }
+
+            console.log(`✅ All alerts loaded successfully (${this._alerts.length} total)`);
+        } catch (error) {
+            console.error('❌ loadAllAlertsFromDB failed:', error);
+        }
+    }
+
     _updateAlertsListUI() {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
-        
+
         const activeAlerts = this._alerts.map(a => a.alert).filter(alert => !alert.triggered && alert.status !== 'completed');
         const pausedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.status === 'paused');
         const completedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.triggered || alert.status === 'completed').sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
-        
+
         const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
-        
+
         let html = '';
-        
+
         if (activeTab === 'active') {
             const displayAlerts = [...activeAlerts, ...pausedAlerts];
             if (displayAlerts.length === 0) {
@@ -5797,10 +5923,10 @@ async loadAllAlertsFromDB() {
                     const color = alert.options.color;
                     const isActive = alert.active;
                     const isPaused = alert.status === 'paused';
-                    
+
                     const statusIcon = isPaused ? '⏸️' : (isActive ? '🟢' : '🔔');
                     const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
-                    
+
                     html += `
                         <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}" 
                              style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}" 
@@ -5836,7 +5962,7 @@ async loadAllAlertsFromDB() {
                     const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                     const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
                     const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
-                    
+
                     html += `
                         <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
                             <div>
@@ -5856,7 +5982,7 @@ async loadAllAlertsFromDB() {
                     `;
                 });
                 html += '</div>';
-                
+
                 html += `
                     <div style="padding: 10px; text-align: center;">
                         <button class="clear-completed-btn" style="background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
@@ -5866,16 +5992,16 @@ async loadAllAlertsFromDB() {
                 `;
             }
         }
-        
+
         content.innerHTML = html;
-        
+
         content.querySelectorAll('.delete-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deleteAlert(btn.dataset.id);
             });
         });
-        
+
         content.querySelectorAll('.pause-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -5887,7 +6013,7 @@ async loadAllAlertsFromDB() {
                 }
             });
         });
-        
+
         const clearBtn = content.querySelector('.clear-completed-btn');
         if (clearBtn) {
             clearBtn.addEventListener('click', () => this.deleteCompletedAlerts());
@@ -5903,18 +6029,15 @@ async loadAllAlertsFromDB() {
         });
         this._selectedAlert = null;
     }
-    
+
     setMagnetEnabled(enabled) {}
-    
+
     activateObject(alert) {
         alert.selected = true;
         alert.showDragPoint = true;
         this._selectedAlert = alert;
     }
 }
-// ============================================================
-// TEXT DRAWING CLASSES
-// ============================================================
 
 class TextDrawing {
     constructor(text, time, price, options = {}) {
@@ -6375,9 +6498,18 @@ class TextManager {
         return `${symbol}:${exchange}:${marketType}`;
     }
 
- _setupHotkeys() {
-    // Все обработчики Delete удалены
-    // Метод оставлен пустым, чтобы не ломался код вызова
+   _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        // Delete — только если есть точка перетаскивания
+        if (e.key === 'Delete' && this._selectedText && this._selectedText.showDragPoint === true) {
+            e.preventDefault();
+            this.deleteText(this._selectedText.id);
+            this._selectedText = null;
+        }
+    });
 }
 
     _handleContextMenu(e) {
