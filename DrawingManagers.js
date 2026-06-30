@@ -4572,7 +4572,7 @@ class AlertLineManager {
     }
 
     // ========================================================================
-    // ОБНОВЛЕНИЕ ЦЕНЫ (ИСПРАВЛЕНО - ТОЛЬКО ПРИ ПЕРЕСЕЧЕНИИ)
+    // ОБНОВЛЕНИЕ ЦЕНЫ (ТОЛЬКО ПРИ ПЕРЕСЕЧЕНИИ)
     // ========================================================================
     updatePriceForSymbol(symbol, price, exchange = null, marketType = null) {
         if (!symbol || !price || isNaN(price)) return;
@@ -4581,13 +4581,13 @@ class AlertLineManager {
         const priceKey = `${symbol}:${exchange || 'binance'}:${marketType || 'futures'}`;
         let lastPrice = this._lastPrices.get(priceKey);
 
-        // Если это первое обновление - просто сохраняем цену и выходим
+        // Первое обновление - только сохраняем цену
         if (lastPrice === undefined) {
             this._lastPrices.set(priceKey, price);
             return;
         }
 
-        // Если цена не изменилась - выходим (чтобы не было ложных срабатываний)
+        // Цена не изменилась - выходим
         if (lastPrice === price) {
             return;
         }
@@ -4609,24 +4609,27 @@ class AlertLineManager {
         symbolAlerts.forEach(item => {
             const alert = item.alert;
             if (now - alert.createdAt < 2000) return;
+            if (alert.triggered) return;
+            if (alert.status === 'completed') return;
 
             const alertPrice = alert.price;
             
-            // === ГЛАВНОЕ ИСПРАВЛЕНИЕ: проверяем ТОЛЬКО пересечение ===
-            // Цена должна быть по разные стороны от уровня
+            // Проверяем пересечение
             const wasBelow = lastPrice < alertPrice;
             const wasAbove = lastPrice > alertPrice;
             const isNowBelow = price < alertPrice;
             const isNowAbove = price > alertPrice;
             
-            const crossedAbove = wasBelow && isNowAbove;  // было ниже, стало выше
-            const crossedBelow = wasAbove && isNowBelow;  // было выше, стало ниже
+            const crossedAbove = wasBelow && isNowAbove;
+            const crossedBelow = wasAbove && isNowBelow;
 
             if (crossedAbove || crossedBelow) {
+                // Если алерт ещё не активен - активируем
                 if (!alert.active) {
                     alert.active = true;
                     alert.triggerCount = 1;
                     alert.lastTriggerTime = now;
+                    
                     this._saveAlerts();
                     this._startInfiniteHighlight(alert.id);
                     this._showAlertNotification(alert, price, false);
@@ -4641,15 +4644,13 @@ class AlertLineManager {
                         this._updateAlertsListUI();
                         setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
                     }
-                } else {
-                    // Если уже активен - срабатывание по таймеру (не здесь)
                 }
             }
         });
     }
 
     // ========================================================================
-    // ТАЙМЕР (РАБОТАЕТ ТОЛЬКО ДЛЯ АКТИВНЫХ АЛЕРТОВ)
+    // ТАЙМЕР (РАБОТАЕТ ВСЕГДА, НЕЗАВИСИМО ОТ active)
     // ========================================================================
     checkTimerAlerts() {
         const now = Date.now();
@@ -4660,11 +4661,11 @@ class AlertLineManager {
             if (!alert.canTriggerAgain()) return;
             if (!alert.shouldTriggerByTimer(now)) return;
             
-            // Таймер срабатывает только если алерт уже был активирован (было пересечение)
-            if (!alert.active) return;
-
+            // УБИРАЕМ ПРОВЕРКУ alert.active - таймер работает всегда
             alert.triggerCount++;
             alert.lastTriggerTime = now;
+            // Если алерт ещё не активен - активируем его
+            if (!alert.active) alert.active = true;
 
             this._saveAlerts();
             this._startInfiniteHighlight(alert.id);
@@ -6051,7 +6052,6 @@ class AlertLineManager {
         this._selectedAlert = alert;
     }
 }
-
 class TextDrawing {
     constructor(text, time, price, options = {}) {
         this.text = text || 'Текст';
