@@ -4050,13 +4050,21 @@ class AlertLine {
         this.marketType = options.marketType || 'futures';
         
         this.createdAt = Date.now();
+        
         this.active = options.active || false;
+        this.isTimerMode = options.isTimerMode || false;
+        this.priceTriggered = options.priceTriggered || false;
         
         this.triggerCount = options.triggerCount || 0;
         this.repeatCount = options.repeatCount || 5;
+        if (this.repeatCount < 1 && this.repeatCount !== Infinity) {
+            this.repeatCount = 1;
+        }
         this.repeatInterval = options.repeatInterval || 1;
+        if (this.repeatInterval < 1) {
+            this.repeatInterval = 1;
+        }
         this.lastTriggerTime = options.lastTriggerTime || null;
-        this.triggerLimit = options.repeatCount === Infinity ? Infinity : (options.repeatCount || 5);
         
         this.status = options.status || 'active';
         
@@ -4095,10 +4103,15 @@ class AlertLine {
         this.options = { ...this.options, ...newOptions };
         if (newOptions.repeatCount !== undefined) {
             this.repeatCount = newOptions.repeatCount;
-            this.triggerLimit = newOptions.repeatCount === Infinity ? Infinity : newOptions.repeatCount;
+            if (this.repeatCount < 1 && this.repeatCount !== Infinity) {
+                this.repeatCount = 1;
+            }
         }
         if (newOptions.repeatInterval !== undefined) {
             this.repeatInterval = newOptions.repeatInterval;
+            if (this.repeatInterval < 1) {
+                this.repeatInterval = 1;
+            }
         }
     }
     
@@ -4106,14 +4119,21 @@ class AlertLine {
         return this.timeframeVisibility[timeframe] !== false;
     }
     
-    canTriggerAgain() {
+    canTriggerRepeat(now) {
         if (this.status === 'paused') return false;
-        if (this.triggerLimit === Infinity) return true;
-        return this.triggerCount < this.triggerLimit;
-    }
-    
-    shouldTriggerByTimer(now) {
-        if (!this.lastTriggerTime) return true;
+        if (this.status === 'completed') return false;
+        if (this.triggered) return false;
+        if (!this.active) return false;
+        
+        if (this.triggerCount === 0 && !this.lastTriggerTime) {
+            return this.isTimerMode;
+        }
+        
+        if (this.repeatCount !== Infinity && this.triggerCount >= this.repeatCount) {
+            return false;
+        }
+        
+        if (!this.lastTriggerTime) return false;
         const minutesSinceLast = (now - this.lastTriggerTime) / (60 * 1000);
         return minutesSinceLast >= this.repeatInterval;
     }
@@ -4151,147 +4171,146 @@ class AlertLineRenderer {
         this._pixelRatio = window.devicePixelRatio || 1;
     }
     
-  draw(target) {
-    // Сброс hit-областей
-    this._hitArea = null;
-    this._priceLabelHitArea = null;
+    draw(target) {
+        this._hitArea = null;
+        this._priceLabelHitArea = null;
 
-    const currentKey = this._chartManager.getCurrentSymbolKey?.();
-    if (currentKey && this._alert.symbolKey !== currentKey) return;
+        const currentKey = this._chartManager.getCurrentSymbolKey?.();
+        if (currentKey && this._alert.symbolKey !== currentKey) return;
 
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const alert = this._alert;
-        const chartManager = this._chartManager;
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const alert = this._alert;
+            const chartManager = this._chartManager;
 
-        const currentTf = chartManager.currentInterval;
-        if (!alert.isVisibleOnTimeframe(currentTf)) return;
+            const currentTf = chartManager.currentInterval;
+            if (!alert.isVisibleOnTimeframe(currentTf)) return;
 
-        let yCoordinate = chartManager.priceToCoordinate(alert.price);
-        let xCoordinate = chartManager.timeToCoordinate(alert.time);
-        if (yCoordinate === null || xCoordinate === null) return;
+            let yCoordinate = chartManager.priceToCoordinate(alert.price);
+            let xCoordinate = chartManager.timeToCoordinate(alert.time);
+            if (yCoordinate === null || xCoordinate === null) return;
 
-        const timeScale = chartManager.chart.timeScale();
-        const visibleRange = timeScale.getVisibleLogicalRange();
-        if (!visibleRange) return;
+            const timeScale = chartManager.chart.timeScale();
+            const visibleRange = timeScale.getVisibleLogicalRange();
+            if (!visibleRange) return;
 
-        let startX = 0;
-        let endX = scope.mediaSize.width;
-        if (!alert.options.extendLeft) startX = xCoordinate;
-        if (!alert.options.extendRight) endX = xCoordinate;
+            let startX = 0;
+            let endX = scope.mediaSize.width;
+            if (!alert.options.extendLeft) startX = xCoordinate;
+            if (!alert.options.extendRight) endX = xCoordinate;
 
-        const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
-        const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
-        const { position: yPos, length: yLength } = positionsLine(
-            yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
-        );
+            const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+            const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+            const { position: yPos, length: yLength } = positionsLine(
+                yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
+            );
 
-        this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
+            this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
 
-        ctx.save();
+            ctx.save();
 
-        const color = alert.options.color;
-        const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
+            const color = alert.options.color;
+            const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
 
-        const parseHex = (hex) => {
-            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
-        };
-        const parseRgb = (rgb) => {
-            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
-        };
+            const parseHex = (hex) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+            };
+            const parseRgb = (rgb) => {
+                const result = /rgb\(\s*(\d+)\s*,\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+            };
 
-        let rgbaColor;
-        let parsed = parseHex(color) || parseRgb(color);
-        if (parsed) {
-            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-        } else {
-            rgbaColor = color;
-        }
+            let rgbaColor;
+            let parsed = parseHex(color) || parseRgb(color);
+            if (parsed) {
+                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+            } else {
+                rgbaColor = color;
+            }
 
-        ctx.strokeStyle = rgbaColor;
-        ctx.lineWidth = yLength;
-        
-        if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
-        else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
-        else ctx.setLineDash([]);
-        
-        ctx.beginPath();
-        ctx.moveTo(startPos, yPos + yLength / 2);
-        ctx.lineTo(endPos, yPos + yLength / 2);
-        ctx.stroke();
-
-        if (alert.showDragPoint) {
-            ctx.fillStyle = '#FFFFFF';
-            ctx.shadowColor = 'rgba(0,0,0,0.5)';
-            ctx.shadowBlur = 4;
-            ctx.beginPath();
-            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-            ctx.fill();
+            ctx.strokeStyle = rgbaColor;
+            ctx.lineWidth = yLength;
             
-            ctx.fillStyle = rgbaColor;
-            ctx.beginPath();
-            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-            ctx.fill();
-        }
-
-        if (alert.options.showPrice) {
-            let priceText = Utils.formatPrice(alert.price);
+            if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+            else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+            else ctx.setLineDash([]);
             
-            let statusIcon = '';
-            if (alert.status === 'active' && alert.active) {
-                statusIcon = '🟢 ';
-            } else if (alert.status === 'paused') {
-                statusIcon = '⏸️ ';
-            } else if (alert.status === 'completed' || alert.triggered) {
-                statusIcon = '✅ ';
-            } else if (alert.options.showBell) {
-                statusIcon = '🔔 ';
+            ctx.beginPath();
+            ctx.moveTo(startPos, yPos + yLength / 2);
+            ctx.lineTo(endPos, yPos + yLength / 2);
+            ctx.stroke();
+
+            if (alert.showDragPoint) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.fillStyle = rgbaColor;
+                ctx.beginPath();
+                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            if (alert.options.showPrice) {
+                let priceText = Utils.formatPrice(alert.price);
+                
+                let statusIcon = '';
+                if (alert.status === 'active' && alert.active) {
+                    statusIcon = '🟢 ';
+                } else if (alert.status === 'paused') {
+                    statusIcon = '⏸️ ';
+                } else if (alert.status === 'completed' || alert.triggered) {
+                    statusIcon = '✅ ';
+                } else if (alert.options.showBell) {
+                    statusIcon = '🔔 ';
+                }
+                
+                priceText = statusIcon + priceText;
+
+                ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+                const textMetrics = ctx.measureText(priceText);
+                const textWidth = textMetrics.width;
+                const padding = 8 * scope.horizontalPixelRatio;
+                const labelWidth = textWidth + padding * 2;
+                const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
+
+                const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+                const labelYPos = yPos - labelHeight / 2;
+
+                this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
+
+                ctx.fillStyle = rgbaColor;
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+                
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 3;
+                ctx.shadowOffsetX = 1;
+                ctx.shadowOffsetY = 1;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+                
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
             }
             
-            priceText = statusIcon + priceText;
-
-            ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-            const textMetrics = ctx.measureText(priceText);
-            const textWidth = textMetrics.width;
-            const padding = 8 * scope.horizontalPixelRatio;
-            const labelWidth = textWidth + padding * 2;
-            const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
-
-            const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
-            const labelYPos = yPos - labelHeight / 2;
-
-            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
-
-            ctx.fillStyle = rgbaColor;
-            ctx.shadowBlur = 4;
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
-            ctx.beginPath();
-            this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-            ctx.fill();
-
-            ctx.shadowBlur = 0;
-            
-            ctx.shadowColor = '#000000';
-            ctx.shadowBlur = 3;
-            ctx.shadowOffsetX = 1;
-            ctx.shadowOffsetY = 1;
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
-            
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
-        }
-        
-        ctx.restore();
-    });
-}
+            ctx.restore();
+        });
+    }
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -4430,262 +4449,279 @@ class AlertLinePrimitive {
 
 class AlertLineManager {
     constructor(chartManager) {
-    this._pixelRatio = window.devicePixelRatio || 1;
-    this._alerts = [];
-    this._chartManager = chartManager;
-    this._selectedAlert = null;
-    this._hoveredAlert = null;
-    this._isDrawingMode = false;
-    this._isDragging = false;
-    this._dragAlert = null;
-    this._dragStartX = 0;
-    this._dragStartY = 0;
-    this._dragStartPrice = 0;
-    this._dragStartTime = 0;
-    this._lastMouseX = 0;
-    this._lastMouseY = 0;
-    this._isLoading = false;
-    this._lastPrices = new Map();
-    this._subscribedSymbols = new Set();
-    this._alertWebSockets = new Map();
-    this._potentialDrag = null;
-    this._dragThreshold = 5;
-    this._dblClickTimer = null;
-    this._potentialDblClickTarget = null;
-    this._dblClickTimeout = 350;
-    this._lastClickTime = 0;
-    
-    this._handleContextMenu = this._handleContextMenu.bind(this);
-    this._setupEventListeners();
-    this._setupHotkeys();
-    this._setupSettingsListeners();
-    this._needsRedraw = false;
-    
-    setInterval(() => { this.checkTimerAlerts(); }, 1000);
-    
-    // Регистрируем в координаторе
-    if (window.drawingLoaderCoordinator) {
-        window.drawingLoaderCoordinator.register(this, 'alert');
-    }
-    
-    // Загружаем ВСЕ алерты из БД
-    setTimeout(async () => {
-        try {
-            if (this._alerts.length > 0) return;
-            
-            // Ждём готовности БД
-            if (!window.dbReady) {
-                await new Promise(r => { 
-                    const c = () => window.dbReady ? r() : setTimeout(c, 50); 
-                    c(); 
-                });
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._alerts = [];
+        this._chartManager = chartManager;
+        this._selectedAlert = null;
+        this._hoveredAlert = null;
+        this._isDrawingMode = false;
+        this._isDragging = false;
+        this._dragAlert = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragStartTime = 0;
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._isLoading = false;
+        this._lastPrices = new Map();
+        this._subscribedSymbols = new Set();
+        this._alertWebSockets = new Map();
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._dblClickTimer = null;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+        
+        this._handleContextMenu = this._handleContextMenu.bind(this);
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._setupSettingsListeners();
+        this._needsRedraw = false;
+        
+        this._timerInterval = setInterval(() => { 
+            this.checkTimerAlerts(); 
+        }, 1000);
+        
+        if (window.drawingLoaderCoordinator) {
+            window.drawingLoaderCoordinator.register(this, 'alert');
+        }
+        
+        setTimeout(async () => {
+            try {
+                if (this._alerts.length > 0) return;
+                
+                if (!window.dbReady) {
+                    await new Promise(r => { 
+                        const c = () => window.dbReady ? r() : setTimeout(c, 50); 
+                        c(); 
+                    });
+                }
+                
+                await this.loadAllAlertsFromDB();
+            } catch (error) {
+                console.error('❌ Auto-load alerts failed:', error);
             }
-            
-            await this.loadAllAlertsFromDB();
-        } catch (error) {
-            console.error('❌ Auto-load alerts failed:', error);
+        }, 150);
+    }
+
+    destroy() {
+        if (this._timerInterval) {
+            clearInterval(this._timerInterval);
+            this._timerInterval = null;
         }
-    }, 150);
-}
-
-    // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
-   async loadFromData(symbolKey, alertRecords) {
-    // ❌ Убираем проверку "только текущий символ"
-    // if (this._getCurrentSymbolKey() !== symbolKey) return;
-
-    try {
-        const currentSymbolKey = this._getCurrentSymbolKey();
-        const isCurrentSymbol = (currentSymbolKey === symbolKey);
-
-        // Берём серию только если символ совпадает с текущим
-        const series = isCurrentSymbol
-            ? (this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries)
-            : null;
-
-        if (isCurrentSymbol && !series) {
-            console.warn('No series available for current symbol');
-            return;
+        for (const symbol of [...this._subscribedSymbols]) {
+            this._unsubscribeFromSymbol(symbol);
         }
+        this._alerts = [];
+        this._selectedAlert = null;
+        this._hoveredAlert = null;
+        this._dragAlert = null;
+        this._potentialDrag = null;
+        this._lastPrices.clear();
+    }
 
-        const existingIds = new Set(
-            this._alerts
-                .filter(item => item.alert.symbolKey === symbolKey)
-                .map(item => item.alert.id)
-        );
-        
-        const newRecordIds = new Set(alertRecords.map(a => a.id));
-        
-        // Отключаем примитивы для удалённых алертов (только для текущего символа)
-        if (isCurrentSymbol) {
-            const toDetach = this._alerts.filter(item => 
-                item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
+    async loadFromData(symbolKey, alertRecords) {
+        try {
+            const currentSymbolKey = this._getCurrentSymbolKey();
+            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+            const series = isCurrentSymbol
+                ? (this._chartManager.currentChartType === 'candle' 
+                    ? this._chartManager.candleSeries 
+                    : this._chartManager.barSeries)
+                : null;
+
+            if (isCurrentSymbol && !series) {
+                console.warn('No series available for current symbol');
+                return;
+            }
+
+            const existingIds = new Set(
+                this._alerts
+                    .filter(item => item.alert.symbolKey === symbolKey)
+                    .map(item => item.alert.id)
             );
             
-            for (const item of toDetach) {
-                try { 
-                    if (item.primitive && item.series) {
-                        item.series.detachPrimitive(item.primitive); 
+            const newRecordIds = new Set(alertRecords.map(a => a.id));
+            
+            if (isCurrentSymbol) {
+                const toDetach = this._alerts.filter(item => 
+                    item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
+                );
+                
+                for (const item of toDetach) {
+                    try { 
+                        if (item.primitive && item.series) {
+                            item.series.detachPrimitive(item.primitive); 
+                        }
+                        item.primitive = null;
+                        item.series = null;
+                    } catch(e) {
+                        console.warn('Failed to detach:', e);
                     }
-                    item.primitive = null;
-                    item.series = null;
-                } catch(e) {
-                    console.warn('Failed to detach:', e);
                 }
             }
-        }
-        
-        // Фильтруем: оставляем чужие символы + только те алерты symbolKey, что есть в newRecordIds
-        this._alerts = this._alerts.filter(item => 
-            item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
-        );
+            
+            this._alerts = this._alerts.filter(item => 
+                item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
+            );
 
-        const newAlerts = [];
-        for (const rec of alertRecords) {
-            try {
-                const existing = this._alerts.find(item => item.alert.id === rec.id);
-                
-                if (existing) {
-                    // Обновляем существующий алерт
-                    existing.alert.price = rec.data.price;
-                    existing.alert.time = rec.data.time;
-                    existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                    existing.alert.options = { ...existing.alert.options, ...rec.data.options };
-                    existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    existing.alert.triggered = rec.data.triggered || false;
-                    existing.alert.triggerCount = rec.data.triggerCount || 0;
-                    existing.alert.repeatCount = rec.data.repeatCount || 5;
-                    existing.alert.repeatInterval = rec.data.repeatInterval || 1;
-                    existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                    existing.alert.active = rec.data.active || false;
-                    existing.alert.status = rec.data.status || 'active';
-                    existing.alert.anchorCandle = rec.data.anchorCandle || null;
-                    existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
-                    existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
-                    existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
+            const newAlerts = [];
+            for (const rec of alertRecords) {
+                try {
+                    const existing = this._alerts.find(item => item.alert.id === rec.id);
                     
-                    // Восстанавливаем примитив для текущего символа, если алерт активен
-                    if (isCurrentSymbol && 
-                        !existing.alert.triggered && 
-                        existing.alert.status !== 'completed' &&
-                        (!existing.primitive || !existing.series)) {
+                    if (existing) {
+                        existing.alert.price = rec.data.price;
+                        existing.alert.time = rec.data.time;
+                        existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
+                        existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                        existing.alert.triggered = rec.data.triggered || false;
+                        existing.alert.triggerCount = rec.data.triggerCount || 0;
+                        existing.alert.repeatCount = rec.data.repeatCount || 5;
+                        existing.alert.repeatInterval = rec.data.repeatInterval || 1;
+                        existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                        existing.alert.active = rec.data.active || false;
+                        existing.alert.isTimerMode = rec.data.isTimerMode || false;
+                        existing.alert.priceTriggered = rec.data.priceTriggered || false;
+                        existing.alert.status = rec.data.status || 'active';
+                        existing.alert.anchorCandle = rec.data.anchorCandle || null;
+                        existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
+                        existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
+                        existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
+                        existing.alert.createdAt = Date.now();
                         
-                        const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                        if (isCurrentSymbol && 
+                            !existing.alert.triggered && 
+                            existing.alert.status !== 'completed' &&
+                            (!existing.primitive || !existing.series)) {
+                            
+                            const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                            try {
+                                series.attachPrimitive(primitive);
+                                existing.primitive = primitive;
+                                existing.series = series;
+                            } catch(e) {
+                                console.warn('Failed to re-attach primitive:', e);
+                            }
+                        }
+                        continue;
+                    }
+
+                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                    alert.id = rec.id;
+                    alert.symbolKey = rec.symbolKey;
+                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    alert.symbol = rec.data.symbol;
+                    alert.exchange = rec.data.exchange;
+                    alert.marketType = rec.data.marketType;
+                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    alert.triggered = rec.data.triggered || false;
+                    alert.triggerCount = rec.data.triggerCount || 0;
+                    alert.repeatCount = rec.data.repeatCount || 5;
+                    alert.repeatInterval = rec.data.repeatInterval || 1;
+                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    alert.active = rec.data.active || false;
+                    alert.isTimerMode = rec.data.isTimerMode || false;
+                    alert.priceTriggered = rec.data.priceTriggered || false;
+                    alert.status = rec.data.status || 'active';
+                    alert.anchorCandle = rec.data.anchorCandle || null;
+                    alert.createdAt = Date.now();
+
+                    if (isCurrentSymbol && 
+                        !alert.triggered && 
+                        alert.status !== 'completed') {
+                        
+                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
                         try {
                             series.attachPrimitive(primitive);
-                            existing.primitive = primitive;
-                            existing.series = series;
+                            newAlerts.push({ alert, primitive, series });
                         } catch(e) {
-                            console.warn('Failed to re-attach primitive:', e);
+                            console.warn('Failed to attach primitive:', e);
+                            newAlerts.push({ alert, primitive: null, series: null });
                         }
-                    }
-                    continue;
-                }
-
-                // Создаём новый алерт
-                const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
-                alert.id = rec.id;
-                alert.symbolKey = rec.symbolKey;
-                alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                alert.symbol = rec.data.symbol;
-                alert.exchange = rec.data.exchange;
-                alert.marketType = rec.data.marketType;
-                alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                alert.triggered = rec.data.triggered || false;
-                alert.triggerCount = rec.data.triggerCount || 0;
-                alert.repeatCount = rec.data.repeatCount || 5;
-                alert.repeatInterval = rec.data.repeatInterval || 1;
-                alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                alert.active = rec.data.active || false;
-                alert.status = rec.data.status || 'active';
-                alert.anchorCandle = rec.data.anchorCandle || null;
-
-                // Примитив создаём только для текущего символа и если алерт активен
-                if (isCurrentSymbol && 
-                    !alert.triggered && 
-                    alert.status !== 'completed') {
-                    
-                    const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                    try {
-                        series.attachPrimitive(primitive);
-                        newAlerts.push({ alert, primitive, series });
-                    } catch(e) {
-                        console.warn('Failed to attach primitive:', e);
+                    } else {
                         newAlerts.push({ alert, primitive: null, series: null });
                     }
-                } else {
-                    newAlerts.push({ alert, primitive: null, series: null });
+                } catch (e) {
+                    console.warn('Failed to load alert:', rec.id, e);
                 }
-            } catch (e) {
-                console.warn('Failed to load alert:', rec.id, e);
             }
-        }
 
-        this._alerts.push(...newAlerts);
+            this._alerts.push(...newAlerts);
 
-        // Подписки на WebSocket для всех активных символов
-        const activeSymbols = new Set();
-        for (const item of this._alerts) {
-            if (!item.alert.triggered && item.alert.status !== 'completed') {
-                activeSymbols.add(item.alert.symbol);
+            const activeSymbols = new Set();
+            for (const item of this._alerts) {
+                if (!item.alert.triggered && 
+                    item.alert.status !== 'completed' && 
+                    item.alert.status !== 'paused' &&
+                    !item.alert.isTimerMode) {
+                    activeSymbols.add(item.alert.symbol);
+                }
             }
-        }
-        for (const symbol of activeSymbols) {
-            this._subscribeToSymbol(symbol);
-        }
-        
-        // UI обновляем только если это текущий символ
-        if (isCurrentSymbol) {
-            this._updateAlertsListUI();
-            this._requestRedraw();
-        }
-        
-        console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey} (current: ${isCurrentSymbol})`);
-    } catch (error) {
-        console.error('❌ loadFromData failed:', error);
-        throw error;
-    }
-}
-
-async loadAllAlertsFromDB() {
-    try {
-        if (!window.db) {
-            console.warn('Database not available');
-            return;
-        }
-
-        const allRecords = await window.db.getAll('drawings');
-        if (!allRecords || allRecords.length === 0) {
-            console.log('ℹ️ No drawings found in database');
-            return;
-        }
-
-        // Группируем алерты по symbolKey
-        const alertsBySymbol = {};
-        for (const record of allRecords) {
-            if (record.type !== 'alert') continue;
+            for (const symbol of activeSymbols) {
+                this._subscribeToSymbol(symbol);
+            }
             
-            const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
-            if (!alertsBySymbol[key]) {
-                alertsBySymbol[key] = [];
+            if (isCurrentSymbol) {
+                this._updateAlertsListUI();
+                this._requestRedraw();
             }
-            alertsBySymbol[key].push(record);
+            
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+            throw error;
         }
-
-        const symbolKeys = Object.keys(alertsBySymbol);
-        console.log(`📦 Loading alerts for ${symbolKeys.length} symbol(s): ${symbolKeys.join(', ')}`);
-
-        // Загружаем каждую группу через loadFromData
-        for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
-            await this.loadFromData(symbolKey, records);
-        }
-
-        console.log(`✅ All alerts loaded successfully (${this._alerts.length} total)`);
-    } catch (error) {
-        console.error('❌ loadAllAlertsFromDB failed:', error);
     }
-}
+
+    async loadAllAlertsFromDB() {
+        try {
+            if (!window.db) {
+                console.warn('Database not available');
+                return;
+            }
+
+            const allRecords = await window.db.getAll('drawings');
+            if (!allRecords || allRecords.length === 0) {
+                return;
+            }
+
+            const alertsBySymbol = {};
+            for (const record of allRecords) {
+                if (record.type !== 'alert') continue;
+                
+                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+                if (!alertsBySymbol[key]) {
+                    alertsBySymbol[key] = [];
+                }
+                alertsBySymbol[key].push(record);
+            }
+
+            for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
+                await this.loadFromData(symbolKey, records);
+            }
+
+            const allSymbols = new Set(
+                this._alerts
+                    .filter(item => !item.alert.triggered && 
+                                   item.alert.status !== 'completed' && 
+                                   item.alert.status !== 'paused' &&
+                                   !item.alert.isTimerMode)
+                    .map(item => item.alert.symbol)
+            );
+            
+            for (const symbol of allSymbols) {
+                this._subscribeToSymbol(symbol);
+            }
+
+        } catch (error) {
+            console.error('❌ loadAllAlertsFromDB failed:', error);
+        }
+    }
+
     _toBitmapCoords(cssX, cssY) {
         return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
     }
@@ -4725,26 +4761,59 @@ async loadAllAlertsFromDB() {
     _subscribeToSymbol(symbol) {
         if (this._subscribedSymbols.has(symbol)) return;
         this._subscribedSymbols.add(symbol);
-        const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`);
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.p) {
-                const price = parseFloat(data.p);
-                this.updatePriceForSymbol(symbol, price);
+        
+        const connect = () => {
+            if (!this._subscribedSymbols.has(symbol)) return;
+            
+            try {
+                const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`);
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.p) {
+                            const price = parseFloat(data.p);
+                            this.updatePriceForSymbol(symbol, price);
+                        }
+                    } catch (e) {}
+                };
+                
+                ws.onclose = () => {
+                    this._alertWebSockets.delete(symbol);
+                    setTimeout(() => {
+                        if (this._subscribedSymbols.has(symbol)) {
+                            connect();
+                        }
+                    }, 5000);
+                };
+                
+                ws.onerror = () => {
+                    ws.close();
+                };
+                
+                this._alertWebSockets.set(symbol, ws);
+            } catch (e) {
+                this._subscribedSymbols.delete(symbol);
+                setTimeout(() => {
+                    if (this._subscribedSymbols.has(symbol)) {
+                        connect();
+                    }
+                }, 5000);
             }
         };
-        ws.onclose = () => {
-            this._subscribedSymbols.delete(symbol);
-            this._alertWebSockets.delete(symbol);
-        };
-        this._alertWebSockets.set(symbol, ws);
+        
+        connect();
     }
 
     _unsubscribeFromSymbol(symbol) {
         const ws = this._alertWebSockets.get(symbol);
         if (ws) {
             ws.onclose = null;
-            ws.close();
+            ws.onerror = null;
+            ws.onmessage = null;
+            try {
+                ws.close();
+            } catch (e) {}
             this._alertWebSockets.delete(symbol);
         }
         this._subscribedSymbols.delete(symbol);
@@ -5042,31 +5111,23 @@ async loadAllAlertsFromDB() {
     checkTimerAlerts() {
         const now = Date.now();
         
-        this._alerts.forEach(item => {
+        for (const item of this._alerts) {
             const alert = item.alert;
             
-            if (alert.triggered) return;
-            if (!alert.active) return;
-            if (alert.status === 'paused') return;
-            if (alert.status === 'completed') return;
-            if (!alert.canTriggerAgain()) return;
-            if (!alert.shouldTriggerByTimer(now)) return;
+            if (!alert.canTriggerRepeat(now)) continue;
             
             alert.triggerCount++;
             alert.lastTriggerTime = now;
             
-            this._saveAlerts();
-            this._startInfiniteHighlight(alert.id);
-            this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._updateAlertsListUI();
-            this._requestRedraw();
+            const isRepeat = alert.triggerCount > 1;
+            const currentPrice = this._lastPrices.get(alert.symbol) || alert.price;
             
-            if (!alert.canTriggerAgain()) {
-                this._stopHighlight(alert.id);
-                this.deleteAlert(alert.id);
+            this._fireAlert(alert, currentPrice, isRepeat);
+            
+            if (alert.repeatCount !== Infinity && alert.triggerCount >= alert.repeatCount) {
+                this._completeAlert(alert, item);
             }
-        });
+        }
     }
 
     updatePriceForSymbol(symbol, price, exchange = null) {
@@ -5082,17 +5143,18 @@ async loadAllAlertsFromDB() {
         const symbolAlerts = this._alerts.filter(item => 
             item.alert.symbol === symbol && 
             !item.alert.triggered &&
-            !item.alert.active &&
             item.alert.status !== 'paused' &&
-            item.alert.status !== 'completed'
+            item.alert.status !== 'completed' &&
+            !item.alert.isTimerMode &&
+            !item.alert.priceTriggered
         );
         
         if (symbolAlerts.length === 0) return;
         
-        symbolAlerts.forEach(item => {
+        for (const item of symbolAlerts) {
             const alert = item.alert;
             
-            if (now - alert.createdAt < 2000) return;
+            if (now - alert.createdAt < 2000) continue;
             
             const alertPrice = alert.price;
             const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
@@ -5100,30 +5162,43 @@ async loadAllAlertsFromDB() {
             
             if (crossedAbove || crossedBelow) {
                 alert.active = true;
+                alert.priceTriggered = true;
                 alert.lastTriggerTime = now;
                 alert.triggerCount = 1;
                 
-                this._saveAlerts();
-                this._startInfiniteHighlight(alert.id);
-                this._showAlertNotification(alert, price, false);
-                this._sendTelegramAlert(alert, price, false);
-                this._updateAlertsListUI();
-                this._requestRedraw();
+                this._fireAlert(alert, price, false);
                 
-                if (!alert.canTriggerAgain()) {
-                    this._stopHighlight(alert.id);
-                    alert.complete();
-                    if (item.primitive && item.series) {
-                        try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                        item.primitive = null;
-                        item.series = null;
-                    }
-                    this._saveAlerts();
-                    this._updateAlertsListUI();
-                    setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+                if (alert.repeatCount === 1) {
+                    this._completeAlert(alert, item);
                 }
             }
-        });
+        }
+    }
+
+    _fireAlert(alert, currentPrice, isRepeat) {
+        this._saveAlerts();
+        this._startInfiniteHighlight(alert.id);
+        this._showAlertNotification(alert, currentPrice, isRepeat);
+        this._sendTelegramAlert(alert, currentPrice, isRepeat);
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+    _completeAlert(alert, item) {
+        this._stopHighlight(alert.id);
+        alert.complete();
+        
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+        item.primitive = null;
+        item.series = null;
+        
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
     }
 
     createAlert(price, time, options = {}) {
@@ -5145,7 +5220,9 @@ async loadAllAlertsFromDB() {
             repeatInterval: options.repeatInterval || 1,
             triggerCount: options.triggerCount || 0,
             lastTriggerTime: options.lastTriggerTime || null,
-            active: options.active || false,
+            active: options.isTimerMode || false,
+            isTimerMode: options.isTimerMode || false,
+            priceTriggered: options.priceTriggered || false,
             status: options.status || 'active'
         });
         
@@ -5164,7 +5241,10 @@ async loadAllAlertsFromDB() {
             this._alerts.push({ alert, primitive: null, series: null });
         }
         
-        this._subscribeToSymbol(alert.symbol);
+        if (!alert.isTimerMode) {
+            this._subscribeToSymbol(alert.symbol);
+        }
+        
         this._saveAlerts();
         this._updateAlertsListUI();
         
@@ -5185,7 +5265,11 @@ async loadAllAlertsFromDB() {
             }
             this._alerts.splice(index, 1);
             
-            const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
+            const hasOtherAlerts = this._alerts.some(item => 
+                item.alert.symbol === symbol && 
+                !item.alert.triggered &&
+                !item.alert.isTimerMode
+            );
             if (!hasOtherAlerts) {
                 this._unsubscribeFromSymbol(symbol);
             }
@@ -5245,19 +5329,20 @@ async loadAllAlertsFromDB() {
         
         if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
         
-        alertsToDelete.forEach(item => {
+        for (const item of alertsToDelete) {
             window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
             if (item.primitive && item.series) {
                 try { item.series.detachPrimitive(item.primitive); } catch(e) {}
             }
             const index = this._alerts.indexOf(item);
             if (index !== -1) this._alerts.splice(index, 1);
-        });
+        }
         
         const hasOtherAlerts = this._alerts.some(item => 
             item.alert.symbol === currentSymbol && 
             !item.alert.triggered && 
-            item.alert.status !== 'completed'
+            item.alert.status !== 'completed' &&
+            !item.alert.isTimerMode
         );
         
         if (!hasOtherAlerts) this._unsubscribeFromSymbol(currentSymbol);
@@ -5275,22 +5360,24 @@ async loadAllAlertsFromDB() {
         if (completedAlerts.length === 0) return;
         if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
         
-        completedAlerts.forEach(item => this.deleteAlert(item.alert.id));
+        for (const item of completedAlerts) {
+            this.deleteAlert(item.alert.id);
+        }
     }
 
     _detachAllPrimitivesForSymbol(symbolKey) {
-    const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
-    for (const item of itemsForSymbol) {
-        if (item.primitive && item.series) {
-            try { 
-                item.series.detachPrimitive(item.primitive); 
-            } catch(e) {}
-            item.primitive = null;
-            item.series = null;
+        const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
+        for (const item of itemsForSymbol) {
+            if (item.primitive && item.series) {
+                try { 
+                    item.series.detachPrimitive(item.primitive); 
+                } catch(e) {}
+                item.primitive = null;
+                item.series = null;
+            }
         }
     }
-    // ❗️ Никакого filter() – алерты остаются в памяти
-}
+
     hitTest(x, y) {
         if (this._selectedAlert) {
             const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
@@ -5619,6 +5706,9 @@ async loadAllAlertsFromDB() {
         const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
         if (item && item._stopBlink) {
             item._stopBlink();
+            delete item._stopBlink;
+            delete item._blinkInterval;
+            delete item._originalStyles;
         }
     }
 
@@ -5778,6 +5868,8 @@ async loadAllAlertsFromDB() {
                     repeatInterval: item.alert.repeatInterval,
                     lastTriggerTime: item.alert.lastTriggerTime,
                     active: item.alert.active,
+                    isTimerMode: item.alert.isTimerMode,
+                    priceTriggered: item.alert.priceTriggered,
                     status: item.alert.status,
                     anchorCandle: item.alert.anchorCandle
                 }
@@ -5786,7 +5878,6 @@ async loadAllAlertsFromDB() {
         await Promise.all(promises);
     }
 
-    // ✅ Старый метод теперь использует координатор
     async loadAlerts() {
         const currentKey = this._getCurrentSymbolKey();
         await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
