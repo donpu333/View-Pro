@@ -4447,6 +4447,219 @@ class AlertLinePrimitive {
     requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
 }
 
+// ============================================================
+// 1. PriceFeedManager — централизованное получение цен
+// ============================================================
+
+class PriceFeedManager {
+    constructor() {
+        this._subscribers = new Map();          // symbol -> Set(callback)
+        this._lastPrices = new Map();           // symbol -> number
+        this._lastUpdateTime = new Map();       // symbol -> timestamp
+        this._wsConnections = new Map();        // symbol -> WebSocket
+        this._restTimers = new Map();           // symbol -> timerId
+        this._pendingRestRequests = new Map();  // symbol -> Promise
+        this._heartbeatInterval = 30000;        // 30 сек без обновления → REST
+        this._restFallbackEnabled = true;
+        this._logEnabled = true;
+        this._healthCheckInterval = null;
+        this._startHealthCheck();
+    }
+
+    // Подписка на обновления цены символа
+    subscribe(symbol, callback) {
+        if (!symbol || typeof callback !== 'function') return;
+        if (!this._subscribers.has(symbol)) {
+            this._subscribers.set(symbol, new Set());
+        }
+        this._subscribers.get(symbol).add(callback);
+
+        const lastPrice = this._lastPrices.get(symbol);
+        if (lastPrice !== undefined) {
+            try { callback(lastPrice); } catch (e) { /* ignore */ }
+        }
+
+        if (!this._wsConnections.has(symbol)) {
+            this._connectWebSocket(symbol);
+        }
+        this._log(`📡 Подписка на ${symbol}, колбэков: ${this._subscribers.get(symbol).size}`);
+    }
+
+    // Отписка
+    unsubscribe(symbol, callback) {
+        if (!symbol || !this._subscribers.has(symbol)) return;
+        const callbacks = this._subscribers.get(symbol);
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+            this._subscribers.delete(symbol);
+            this._closeWebSocket(symbol);
+            this._clearRestTimer(symbol);
+            this._log(`🔌 Отписка от ${symbol}, соединение закрыто`);
+        }
+    }
+
+    // Получить текущую цену (синхронно, если есть)
+    getPrice(symbol) {
+        return this._lastPrices.get(symbol) ?? null;
+    }
+
+    // Принудительно получить цену через REST (асинхронно)
+    async fetchPrice(symbol) {
+        if (!symbol) return null;
+        if (this._pendingRestRequests.has(symbol)) {
+            return this._pendingRestRequests.get(symbol);
+        }
+        const promise = this._fetchPriceViaRest(symbol);
+        this._pendingRestRequests.set(symbol, promise);
+        try {
+            return await promise;
+        } finally {
+            this._pendingRestRequests.delete(symbol);
+        }
+    }
+
+    // Уничтожение
+    destroy() {
+        if (this._healthCheckInterval) {
+            clearInterval(this._healthCheckInterval);
+            this._healthCheckInterval = null;
+        }
+        for (const symbol of this._wsConnections.keys()) {
+            this._closeWebSocket(symbol);
+        }
+        this._wsConnections.clear();
+        this._subscribers.clear();
+        this._lastPrices.clear();
+        this._lastUpdateTime.clear();
+        this._clearAllRestTimers();
+    }
+
+    // ---------- Внутренние методы ----------
+
+    _connectWebSocket(symbol) {
+        const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`);
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.p) {
+                    const price = parseFloat(data.p);
+                    this._handlePriceUpdate(symbol, price, 'websocket');
+                }
+            } catch (e) { /* ignore */ }
+        };
+        ws.onclose = () => {
+            this._log(`⚠️ WebSocket для ${symbol} закрыт, переподключение через 5с`);
+            this._wsConnections.delete(symbol);
+            if (this._subscribers.has(symbol) && this._subscribers.get(symbol).size > 0) {
+                setTimeout(() => {
+                    if (this._subscribers.has(symbol) && this._subscribers.get(symbol).size > 0) {
+                        this._connectWebSocket(symbol);
+                    }
+                }, 5000);
+            }
+        };
+        ws.onerror = () => ws.close();
+        this._wsConnections.set(symbol, ws);
+        this._lastUpdateTime.set(symbol, Date.now());
+        this._log(`🔗 WebSocket для ${symbol} создан`);
+    }
+
+    _closeWebSocket(symbol) {
+        const ws = this._wsConnections.get(symbol);
+        if (ws) {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.onmessage = null;
+            try { ws.close(); } catch (e) {}
+            this._wsConnections.delete(symbol);
+            this._log(`🔌 WebSocket для ${symbol} закрыт`);
+        }
+    }
+
+    _handlePriceUpdate(symbol, price, source) {
+        const previous = this._lastPrices.get(symbol);
+        this._lastPrices.set(symbol, price);
+        this._lastUpdateTime.set(symbol, Date.now());
+        this._clearRestTimer(symbol);
+
+        const callbacks = this._subscribers.get(symbol);
+        if (callbacks) {
+            for (const cb of callbacks) {
+                try { cb(price, previous); } catch (e) { /* ignore */ }
+            }
+        }
+    }
+
+    async _fetchPriceViaRest(symbol) {
+        try {
+            const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol.toUpperCase()}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            const price = parseFloat(data.price);
+            if (!isNaN(price)) {
+                this._handlePriceUpdate(symbol, price, 'rest');
+                return price;
+            }
+        } catch (e) {
+            this._log(`❌ REST запрос для ${symbol} не удался: ${e.message}`);
+        }
+        return null;
+    }
+
+    _startHealthCheck() {
+        this._healthCheckInterval = setInterval(() => {
+            const now = Date.now();
+            for (const [symbol, lastTime] of this._lastUpdateTime) {
+                if (this._subscribers.has(symbol) && this._subscribers.get(symbol).size > 0) {
+                    if (now - lastTime > this._heartbeatInterval) {
+                        this._log(`⏰ Долго нет обновлений для ${symbol}, запрос REST...`);
+                        this._fetchPriceViaRest(symbol);
+                    }
+                }
+            }
+        }, this._heartbeatInterval / 2);
+    }
+
+    _clearRestTimer(symbol) {
+        const timer = this._restTimers.get(symbol);
+        if (timer) {
+            clearTimeout(timer);
+            this._restTimers.delete(symbol);
+        }
+    }
+
+    _clearAllRestTimers() {
+        for (const timer of this._restTimers.values()) clearTimeout(timer);
+        this._restTimers.clear();
+    }
+
+    _log(message) {
+        if (this._logEnabled) console.log(`[PriceFeedManager] ${message}`);
+    }
+}
+
+// Глобальный экземпляр (если ещё не создан)
+if (!window.priceFeedManager) {
+    window.priceFeedManager = new PriceFeedManager();
+}
+
+// ============================================================
+// 2. Полный AlertLineManager с использованием PriceFeedManager
+// ============================================================
+
+// ============================================================
+// ПОЛНЫЙ ИСПРАВЛЕННЫЙ КЛАСС AlertLineManager
+// ============================================================
+// ИСПРАВЛЕНИЯ:
+// 1. УБРАНА проверка текущей цены в createAlert() - алерт НЕ срабатывает при создании
+// 2. УБРАН метод _initializeAlerts() - алерты НЕ срабатывают при загрузке
+// 3. Добавлено поле direction ('above' или 'below') в AlertLine
+// 4. В updatePriceForSymbol() проверяется только нужное направление
+// 5. В _saveAlerts() и loadFromData() сохранение/загрузка direction
+// 6. В интерфейс добавлен выбор направления (выше/ниже)
+// 7. Алерты срабатывают ТОЛЬКО при пересечении уровня
+// ============================================================
+
 class AlertLineManager {
     constructor(chartManager) {
         this._pixelRatio = window.devicePixelRatio || 1;
@@ -4464,41 +4677,47 @@ class AlertLineManager {
         this._lastMouseX = 0;
         this._lastMouseY = 0;
         this._isLoading = false;
-        this._lastPrices = new Map();
-        this._subscribedSymbols = new Set();
-        this._alertWebSockets = new Map();
         this._potentialDrag = null;
         this._dragThreshold = 5;
         this._dblClickTimer = null;
         this._potentialDblClickTarget = null;
         this._dblClickTimeout = 350;
         this._lastClickTime = 0;
-        
+        this._needsRedraw = false;
+
+        // Храним последние цены для каждого символа
+        this._lastPrices = new Map();
+
+        // WebSocket-подключения
+        this._alertWebSockets = new Map();
+        this._subscribedSymbols = new Set();
+
+        // Таймер для проверки повторяющихся алертов
+        this._timerInterval = setInterval(() => {
+            this.checkTimerAlerts();
+        }, 1000);
+
+        // Настройка обработчиков событий
         this._handleContextMenu = this._handleContextMenu.bind(this);
         this._setupEventListeners();
         this._setupHotkeys();
         this._setupSettingsListeners();
-        this._needsRedraw = false;
-        
-        this._timerInterval = setInterval(() => { 
-            this.checkTimerAlerts(); 
-        }, 1000);
-        
+
+        // Регистрация в координаторе
         if (window.drawingLoaderCoordinator) {
             window.drawingLoaderCoordinator.register(this, 'alert');
         }
-        
+
+        // Автозагрузка
         setTimeout(async () => {
             try {
                 if (this._alerts.length > 0) return;
-                
                 if (!window.dbReady) {
-                    await new Promise(r => { 
-                        const c = () => window.dbReady ? r() : setTimeout(c, 50); 
-                        c(); 
+                    await new Promise(r => {
+                        const c = () => window.dbReady ? r() : setTimeout(c, 50);
+                        c();
                     });
                 }
-                
                 await this.loadAllAlertsFromDB();
             } catch (error) {
                 console.error('❌ Auto-load alerts failed:', error);
@@ -4506,268 +4725,368 @@ class AlertLineManager {
         }, 150);
     }
 
-    destroy() {
-        if (this._timerInterval) {
-            clearInterval(this._timerInterval);
-            this._timerInterval = null;
+    // ============================================================
+    // setDrawingMode
+    // ============================================================
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const btn = document.getElementById('toolAlert');
+        if (btn) {
+            if (enabled) {
+                btn.style.background = '#4A90E2';
+                btn.style.color = '#FFFFFF';
+                btn.classList.add('active');
+            } else {
+                btn.style.background = '';
+                btn.style.color = '';
+                btn.classList.remove('active');
+            }
         }
-        for (const symbol of [...this._subscribedSymbols]) {
-            this._unsubscribeFromSymbol(symbol);
+    }
+
+    // ============================================================
+    // setMagnetEnabled (заглушка)
+    // ============================================================
+    setMagnetEnabled(enabled) {
+        // Не используется для алертов
+    }
+
+    // ============================================================
+    // createAlert - ИСПРАВЛЕН (УБРАНА ПРОВЕРКА ТЕКУЩЕЙ ЦЕНЫ)
+    // ============================================================
+    createAlert(price, time, options = {}) {
+        const defaultVisibility = {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+
+        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        const direction = options.direction || 'above'; // 'above' или 'below'
+
+        const alert = new AlertLine(price, time, {
+            ...options,
+            symbol: this._chartManager.currentSymbol,
+            exchange: this._chartManager.currentExchange,
+            marketType: this._chartManager.currentMarketType,
+            timeframeVisibility: timeframeVisibility,
+            repeatCount: options.repeatCount || 5,
+            repeatInterval: options.repeatInterval || 1,
+            triggerCount: options.triggerCount || 0,
+            lastTriggerTime: options.lastTriggerTime || null,
+            active: options.isTimerMode || false,
+            isTimerMode: options.isTimerMode || false,
+            priceTriggered: options.priceTriggered || false,
+            status: options.status || 'active',
+            direction: direction
+        });
+
+        alert.anchorTime = time;
+        alert.triggered = options.triggered || false;
+        alert.symbolKey = this._getCurrentSymbolKey();
+        alert.direction = direction;
+
+        if (!alert.triggered) {
+            const primitive = new AlertLinePrimitive(alert, this._chartManager);
+            const series = this._chartManager.currentChartType === 'candle'
+                ? this._chartManager.candleSeries
+                : this._chartManager.barSeries;
+            series.attachPrimitive(primitive);
+            this._alerts.push({ alert, primitive, series });
+        } else {
+            this._alerts.push({ alert, primitive: null, series: null });
         }
-        this._alerts = [];
+
+        // ПОДПИСЫВАЕМСЯ НА СИМВОЛ, НО НЕ ПРОВЕРЯЕМ ТЕКУЩУЮ ЦЕНУ
+        if (!alert.isTimerMode) {
+            this._subscribeToSymbol(alert.symbol);
+        }
+
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        return alert;
+    }
+
+    // ============================================================
+    // deleteAlert
+    // ============================================================
+    deleteAlert(alertId) {
+        const index = this._alerts.findIndex(a => a.alert.id === alertId);
+        if (index !== -1) {
+            const { alert, primitive, series } = this._alerts[index];
+            const symbol = alert.symbol;
+
+            this._stopHighlight(alertId);
+            window.db.delete('drawings', alertId).catch(e => console.warn(e));
+
+            if (primitive && series) {
+                try { series.detachPrimitive(primitive); } catch (e) {}
+            }
+            this._alerts.splice(index, 1);
+
+            const hasOtherAlerts = this._alerts.some(item =>
+                item.alert.symbol === symbol &&
+                !item.alert.triggered &&
+                !item.alert.isTimerMode
+            );
+            if (!hasOtherAlerts) {
+                this._unsubscribeFromSymbol(symbol);
+            }
+
+            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
+            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    // ============================================================
+    // pauseAlert
+    // ============================================================
+    pauseAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'active') {
+            item.alert.pause();
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    // ============================================================
+    // resumeAlert
+    // ============================================================
+    resumeAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'paused' && !item.alert.triggered) {
+            item.alert.resume();
+            if (!item.primitive && !item.alert.triggered) {
+                const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
+                const series = this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries
+                    : this._chartManager.barSeries;
+                series.attachPrimitive(primitive);
+                item.primitive = primitive;
+                item.series = series;
+            }
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    // ============================================================
+    // deleteAllAlerts
+    // ============================================================
+    deleteAllAlerts() {
+        const currentSymbolKey = this._getCurrentSymbolKey();
+        const currentSymbol = this._chartManager.currentSymbol;
+
+        const alertsToDelete = this._alerts.filter(item =>
+            item.alert.symbolKey === currentSymbolKey
+        );
+
+        if (alertsToDelete.length === 0) return;
+        if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
+
+        for (const item of alertsToDelete) {
+            window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+            const index = this._alerts.indexOf(item);
+            if (index !== -1) this._alerts.splice(index, 1);
+        }
+
+        const hasOtherAlerts = this._alerts.some(item =>
+            item.alert.symbol === currentSymbol &&
+            !item.alert.triggered &&
+            item.alert.status !== 'completed' &&
+            !item.alert.isTimerMode
+        );
+        if (!hasOtherAlerts) this._unsubscribeFromSymbol(currentSymbol);
+
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+    // ============================================================
+    // deleteCompletedAlerts
+    // ============================================================
+    deleteCompletedAlerts() {
+        const completedAlerts = this._alerts.filter(item =>
+            item.alert.status === 'completed' || item.alert.triggered
+        );
+        if (completedAlerts.length === 0) return;
+        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
+        for (const item of completedAlerts) {
+            this.deleteAlert(item.alert.id);
+        }
+    }
+
+    // ============================================================
+    // loadAlerts
+    // ============================================================
+    async loadAlerts() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator?.loadAllForSymbol(currentKey);
+    }
+
+    // ============================================================
+    // syncWithNewTimeframe
+    // ============================================================
+    syncWithNewTimeframe() {
+        for (const item of this._alerts) {
+            if (item.primitive) item.primitive.updateAllViews();
+        }
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+    // ============================================================
+    // deactivateAll
+    // ============================================================
+    deactivateAll() {
+        this._alerts.forEach(item => {
+            if (item.alert) {
+                item.alert.selected = false;
+                item.alert.showDragPoint = false;
+            }
+        });
         this._selectedAlert = null;
-        this._hoveredAlert = null;
-        this._dragAlert = null;
-        this._potentialDrag = null;
-        this._lastPrices.clear();
     }
 
-    async loadFromData(symbolKey, alertRecords) {
-        try {
-            const currentSymbolKey = this._getCurrentSymbolKey();
-            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+    // ============================================================
+    // activateObject
+    // ============================================================
+    activateObject(alert) {
+        alert.selected = true;
+        alert.showDragPoint = true;
+        this._selectedAlert = alert;
+    }
 
-            const series = isCurrentSymbol
-                ? (this._chartManager.currentChartType === 'candle' 
-                    ? this._chartManager.candleSeries 
-                    : this._chartManager.barSeries)
-                : null;
-
-            if (isCurrentSymbol && !series) {
-                console.warn('No series available for current symbol');
-                return;
-            }
-
-            const existingIds = new Set(
-                this._alerts
-                    .filter(item => item.alert.symbolKey === symbolKey)
-                    .map(item => item.alert.id)
-            );
-            
-            const newRecordIds = new Set(alertRecords.map(a => a.id));
-            
-            if (isCurrentSymbol) {
-                const toDetach = this._alerts.filter(item => 
-                    item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
-                );
-                
-                for (const item of toDetach) {
-                    try { 
-                        if (item.primitive && item.series) {
-                            item.series.detachPrimitive(item.primitive); 
-                        }
-                        item.primitive = null;
-                        item.series = null;
-                    } catch(e) {
-                        console.warn('Failed to detach:', e);
-                    }
-                }
-            }
-            
-            this._alerts = this._alerts.filter(item => 
-                item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
-            );
-
-            const newAlerts = [];
-            for (const rec of alertRecords) {
+    // ============================================================
+    // hitTest
+    // ============================================================
+    hitTest(x, y) {
+        if (this._selectedAlert) {
+            const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
                 try {
-                    const existing = this._alerts.find(item => item.alert.id === rec.id);
-                    
-                    if (existing) {
-                        existing.alert.price = rec.data.price;
-                        existing.alert.time = rec.data.time;
-                        existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
-                        existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                        existing.alert.triggered = rec.data.triggered || false;
-                        existing.alert.triggerCount = rec.data.triggerCount || 0;
-                        existing.alert.repeatCount = rec.data.repeatCount || 5;
-                        existing.alert.repeatInterval = rec.data.repeatInterval || 1;
-                        existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                        existing.alert.active = rec.data.active || false;
-                        existing.alert.isTimerMode = rec.data.isTimerMode || false;
-                        existing.alert.priceTriggered = rec.data.priceTriggered || false;
-                        existing.alert.status = rec.data.status || 'active';
-                        existing.alert.anchorCandle = rec.data.anchorCandle || null;
-                        existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
-                        existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
-                        existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
-                        existing.alert.createdAt = Date.now();
-                        
-                        if (isCurrentSymbol && 
-                            !existing.alert.triggered && 
-                            existing.alert.status !== 'completed' &&
-                            (!existing.primitive || !existing.series)) {
-                            
-                            const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
-                            try {
-                                series.attachPrimitive(primitive);
-                                existing.primitive = primitive;
-                                existing.series = series;
-                            } catch(e) {
-                                console.warn('Failed to re-attach primitive:', e);
-                            }
-                        }
-                        continue;
-                    }
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
+                } catch (e) {}
+            }
+        }
 
-                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
-                    alert.id = rec.id;
-                    alert.symbolKey = rec.symbolKey;
-                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                    alert.symbol = rec.data.symbol;
-                    alert.exchange = rec.data.exchange;
-                    alert.marketType = rec.data.marketType;
-                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    alert.triggered = rec.data.triggered || false;
-                    alert.triggerCount = rec.data.triggerCount || 0;
-                    alert.repeatCount = rec.data.repeatCount || 5;
-                    alert.repeatInterval = rec.data.repeatInterval || 1;
-                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                    alert.active = rec.data.active || false;
-                    alert.isTimerMode = rec.data.isTimerMode || false;
-                    alert.priceTriggered = rec.data.priceTriggered || false;
-                    alert.status = rec.data.status || 'active';
-                    alert.anchorCandle = rec.data.anchorCandle || null;
-                    alert.createdAt = Date.now();
+        let bestHit = null;
+        let bestDistance = Infinity;
+        for (const item of this._alerts) {
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.alert === this._selectedAlert) continue;
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
+                    bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                }
+            } catch (e) {}
+        }
+        return bestHit;
+    }
 
-                    if (isCurrentSymbol && 
-                        !alert.triggered && 
-                        alert.status !== 'completed') {
-                        
-                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                        try {
-                            series.attachPrimitive(primitive);
-                            newAlerts.push({ alert, primitive, series });
-                        } catch(e) {
-                            console.warn('Failed to attach primitive:', e);
-                            newAlerts.push({ alert, primitive: null, series: null });
-                        }
-                    } else {
-                        newAlerts.push({ alert, primitive: null, series: null });
-                    }
-                } catch (e) {
-                    console.warn('Failed to load alert:', rec.id, e);
+    // ============================================================
+    // updatePriceForSymbol - ИСПРАВЛЕН (ТОЛЬКО НУЖНОЕ НАПРАВЛЕНИЕ)
+    // ============================================================
+    updatePriceForSymbol(symbol, price, exchange = null) {
+        if (!symbol || !price || isNaN(price)) return;
+
+        const now = Date.now();
+        const lastPrice = this._lastPrices.get(symbol);
+        this._lastPrices.set(symbol, price);
+
+        if (lastPrice === undefined) return;
+
+        const symbolAlerts = this._alerts.filter(item =>
+            item.alert.symbol === symbol &&
+            !item.alert.triggered &&
+            item.alert.status !== 'paused' &&
+            item.alert.status !== 'completed' &&
+            !item.alert.isTimerMode
+        );
+
+        if (symbolAlerts.length === 0) return;
+
+        for (const item of symbolAlerts) {
+            const alert = item.alert;
+            if (now - alert.createdAt < 2000) continue;
+
+            const alertPrice = alert.price;
+            
+            // Проверяем только нужное направление
+            let crossed = false;
+            if (alert.direction === 'above') {
+                crossed = lastPrice < alertPrice && price >= alertPrice;
+            } else if (alert.direction === 'below') {
+                crossed = lastPrice > alertPrice && price <= alertPrice;
+            }
+
+            if (crossed) {
+                alert.active = true;
+                alert.priceTriggered = true;
+                alert.lastTriggerTime = now;
+                alert.triggerCount = 1;
+                this._fireAlert(alert, price, false);
+                if (alert.repeatCount === 1) {
+                    this._completeAlert(alert, item);
                 }
             }
-
-            this._alerts.push(...newAlerts);
-
-            const activeSymbols = new Set();
-            for (const item of this._alerts) {
-                if (!item.alert.triggered && 
-                    item.alert.status !== 'completed' && 
-                    item.alert.status !== 'paused' &&
-                    !item.alert.isTimerMode) {
-                    activeSymbols.add(item.alert.symbol);
-                }
-            }
-            for (const symbol of activeSymbols) {
-                this._subscribeToSymbol(symbol);
-            }
-            
-            if (isCurrentSymbol) {
-                this._updateAlertsListUI();
-                this._requestRedraw();
-            }
-            
-        } catch (error) {
-            console.error('❌ loadFromData failed:', error);
-            throw error;
         }
     }
 
-    async loadAllAlertsFromDB() {
-        try {
-            if (!window.db) {
-                console.warn('Database not available');
-                return;
-            }
+    // ============================================================
+    // checkTimerAlerts
+    // ============================================================
+    checkTimerAlerts() {
+        const now = Date.now();
 
-            const allRecords = await window.db.getAll('drawings');
-            if (!allRecords || allRecords.length === 0) {
-                return;
-            }
+        for (const item of this._alerts) {
+            const alert = item.alert;
+            if (!alert.canTriggerRepeat(now)) continue;
 
-            const alertsBySymbol = {};
-            for (const record of allRecords) {
-                if (record.type !== 'alert') continue;
-                
-                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
-                if (!alertsBySymbol[key]) {
-                    alertsBySymbol[key] = [];
-                }
-                alertsBySymbol[key].push(record);
-            }
+            alert.triggerCount++;
+            alert.lastTriggerTime = now;
+            const currentPrice = this._lastPrices.get(alert.symbol) || alert.price;
+            this._fireAlert(alert, currentPrice, true);
 
-            for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
-                await this.loadFromData(symbolKey, records);
+            if (alert.repeatCount !== Infinity && alert.triggerCount >= alert.repeatCount) {
+                this._completeAlert(alert, item);
             }
-
-            const allSymbols = new Set(
-                this._alerts
-                    .filter(item => !item.alert.triggered && 
-                                   item.alert.status !== 'completed' && 
-                                   item.alert.status !== 'paused' &&
-                                   !item.alert.isTimerMode)
-                    .map(item => item.alert.symbol)
-            );
-            
-            for (const symbol of allSymbols) {
-                this._subscribeToSymbol(symbol);
-            }
-
-        } catch (error) {
-            console.error('❌ loadAllAlertsFromDB failed:', error);
         }
     }
 
-    _toBitmapCoords(cssX, cssY) {
-        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
-    }
-
-    _getCurrentSymbolKey() {
-        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
-        const exchange = this._chartManager.currentExchange || 'binance';
-        const marketType = this._chartManager.currentMarketType || 'futures';
-        return `${symbol}:${exchange}:${marketType}`;
-    }
-
-    _getTimeFromCoordinate(x) {
-        let time = this._chartManager.coordinateToTime(x);
-        if (time !== null) return time;
-        const data = this._chartManager.chartData;
-        if (!data.length) return null;
-        let intervalMs = 60 * 60 * 1000;
-        if (data.length >= 2) intervalMs = data[1].time - data[0].time;
-        const firstCandle = data[0];
-        const lastCandle = data[data.length - 1];
-        const firstX = this._chartManager.timeToCoordinate(firstCandle.time);
-        const lastX = this._chartManager.timeToCoordinate(lastCandle.time);
-        if (firstX === null || lastX === null) return null;
-        if (x > lastX) {
-            const deltaX = x - lastX;
-            const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
-            return lastCandle.time + deltaX / pixelsPerMs;
-        }
-        if (x < firstX) {
-            const deltaX = firstX - x;
-            const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
-            return firstCandle.time - deltaX / pixelsPerMs;
-        }
-        return null;
-    }
-
+    // ============================================================
+    // _subscribeToSymbol
+    // ============================================================
     _subscribeToSymbol(symbol) {
         if (this._subscribedSymbols.has(symbol)) return;
+
         this._subscribedSymbols.add(symbol);
-        
+
         const connect = () => {
             if (!this._subscribedSymbols.has(symbol)) return;
-            
+
             try {
                 const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`);
-                
+
                 ws.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
@@ -4777,7 +5096,7 @@ class AlertLineManager {
                         }
                     } catch (e) {}
                 };
-                
+
                 ws.onclose = () => {
                     this._alertWebSockets.delete(symbol);
                     setTimeout(() => {
@@ -4786,11 +5105,11 @@ class AlertLineManager {
                         }
                     }, 5000);
                 };
-                
+
                 ws.onerror = () => {
                     ws.close();
                 };
-                
+
                 this._alertWebSockets.set(symbol, ws);
             } catch (e) {
                 this._subscribedSymbols.delete(symbol);
@@ -4801,10 +5120,13 @@ class AlertLineManager {
                 }, 5000);
             }
         };
-        
+
         connect();
     }
 
+    // ============================================================
+    // _unsubscribeFromSymbol
+    // ============================================================
     _unsubscribeFromSymbol(symbol) {
         const ws = this._alertWebSockets.get(symbol);
         if (ws) {
@@ -4819,362 +5141,9 @@ class AlertLineManager {
         this._subscribedSymbols.delete(symbol);
     }
 
-    _setupHotkeys() {
-        document.addEventListener('keydown', (e) => {
-            const active = document.activeElement;
-            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-            
-            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                const newState = !this._isDrawingMode;
-                this.setDrawingMode(newState);
-                if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
-                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
-                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
-                if (window.textManager && newState) window.textManager.setDrawingMode(false);
-            }
-            
-            if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
-                e.preventDefault();
-                this.deleteAlert(this._selectedAlert.id);
-                this._selectedAlert = null;
-            }
-        });
-    }
-
-    _setupEventListeners() {
-        const container = this._chartManager.chartContainer;
-
-        container.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
-
-            if (e.target.closest('#alertSettings') || 
-                e.target.closest('#trendSettings') || 
-                e.target.closest('#textSettings') ||
-                e.target.closest('#rulerSettingsPanel') ||
-                e.target.closest('#drawingSettings')) {
-                return;
-            }
-            
-            const rect = container.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
-            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-            
-            const hit = this.hitTest(bmX, bmY);
-            if (hit) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const now = Date.now();
-                
-                if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
-                    clearTimeout(this._dblClickTimer);
-                    this._dblClickTimer = null;
-                    this._potentialDblClickTarget = null;
-                    this._lastClickTime = 0;
-                    
-                    hit.alert.showDragPoint = !hit.alert.showDragPoint;
-                    this._requestRedraw();
-                    return;
-                }
-                
-                if (this._selectedAlert && this._selectedAlert !== hit.alert) {
-                    this._selectedAlert.selected = false;
-                    this._selectedAlert.showDragPoint = false;
-                }
-                hit.alert.selected = true;
-                this._selectedAlert = hit.alert;
-                
-                this._potentialDblClickTarget = hit.alert;
-                this._lastClickTime = now;
-                if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
-                this._dblClickTimer = setTimeout(() => {
-                    this._dblClickTimer = null;
-                    this._potentialDblClickTarget = null;
-                }, this._dblClickTimeout);
-                
-                if (hit.alert.showDragPoint) {
-                    const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
-                    const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-                    if (alertX !== null && alertY !== null) {
-                        hit.alert.dragPointX = alertX;
-                        hit.alert.dragPointY = alertY;
-                    }
-                    this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
-                } else {
-                    this._potentialDrag = null;
-                }
-                
-                this._requestRedraw();
-            } else {
-                const alertMenu = document.getElementById('alertContextMenu');
-                if (alertMenu && alertMenu.style.display === 'flex') {
-                    const menuRect = alertMenu.getBoundingClientRect();
-                    const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-                    if (isClickInsideMenu) return;
-                }
-                if (this._selectedAlert) {
-                    this._selectedAlert.selected = false;
-                    this._selectedAlert.showDragPoint = false;
-                    this._selectedAlert = null;
-                }
-                if (alertMenu) alertMenu.style.display = 'none';
-                this._requestRedraw();
-            }
-        });
-
-        container.addEventListener('mousemove', (e) => {
-            const rect = container.getBoundingClientRect();
-            const cssX = e.clientX - rect.left;
-            const cssY = e.clientY - rect.top;
-            
-            this._lastMouseX = cssX;
-            this._lastMouseY = cssY;
-
-            const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
-
-            if (this._potentialDrag && !this._isDragging) {
-                const dx = Math.abs(bmX - this._potentialDrag.startX);
-                const dy = Math.abs(bmY - this._potentialDrag.startY);
-                if (dx > this._dragThreshold || dy > this._dragThreshold) {
-                    this._isDragging = true;
-                    this._dragAlert = this._potentialDrag.alert;
-                    this._dragAlert.dragging = true;
-                    this._dragStartX = this._potentialDrag.startX;
-                    this._dragStartY = this._potentialDrag.startY;
-                    this._dragStartPrice = this._potentialDrag.startPrice;
-                    this._dragStartTime = this._potentialDrag.startTime;
-                    container.style.cursor = 'grabbing';
-                }
-            }
-            
-            if (this._isDragging && this._dragAlert) {
-                e.preventDefault(); e.stopPropagation();
-                
-                const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
-                const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
-                
-                const alertX = this._chartManager.timeToCoordinate(this._dragStartTime);
-                const alertY = this._chartManager.priceToCoordinate(this._dragStartPrice);
-                if (alertX !== null && alertY !== null) {
-                    const newX = alertX + deltaX;
-                    const newY = alertY + deltaY;
-                    const newPrice = this._chartManager.coordinateToPrice(newY);
-                    const newTime = this._chartManager.coordinateToTime(newX);
-                    if (newPrice !== null) this._dragAlert.price = newPrice;
-                    if (newTime !== null) { this._dragAlert.time = newTime; this._dragAlert.anchorTime = newTime; }
-                    const newAlertX = this._chartManager.timeToCoordinate(this._dragAlert.time);
-                    const newAlertY = this._chartManager.priceToCoordinate(this._dragAlert.price);
-                    if (newAlertX !== null && newAlertY !== null) {
-                        this._dragAlert.dragPointX = newAlertX;
-                        this._dragAlert.dragPointY = newAlertY;
-                    }
-                    this._requestRedraw();
-                }
-            } else {
-                const hit = this.hitTest(bmX, bmY);
-                const hitAlert = hit ? hit.alert : null;
-                container.style.cursor = hitAlert ? 'grab' : 'crosshair';
-                if (this._hoveredAlert !== hitAlert) {
-                    if (this._hoveredAlert) this._hoveredAlert.hovered = false;
-                    this._hoveredAlert = hitAlert;
-                    if (hitAlert) hitAlert.hovered = true;
-                    this._requestRedraw();
-                }
-            }
-        });
-
-        container.addEventListener('mouseup', (e) => {
-            this._potentialDrag = null;
-            if (this._isDragging) {
-                e.preventDefault(); e.stopPropagation();
-                this._isDragging = false;
-                if (this._dragAlert) {
-                    this._dragAlert.dragging = false;
-                    this._dragAlert.attached = false;
-                    this._dragAlert.anchorTime = this._dragAlert.time;
-                    this._saveAlerts();
-                    this._dragAlert = null;
-                    this._requestRedraw();
-                }
-                container.style.cursor = 'crosshair';
-                setTimeout(() => {
-                    const moveEvent = new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY });
-                    container.dispatchEvent(moveEvent);
-                }, 10);
-            }
-        });
-
-        container.addEventListener('mouseleave', () => {
-            if (this._hoveredAlert) { this._hoveredAlert.hovered = false; this._hoveredAlert = null; this._requestRedraw(); }
-            container.style.cursor = 'crosshair';
-        });
-
-        container.addEventListener('click', (e) => {
-            if (this._isDragging) { e.preventDefault(); e.stopPropagation(); }
-            if (this._isDrawingMode) this._handleChartClick(e);
-        });
-
-        container.addEventListener('contextmenu', this._handleContextMenu);
-    }
-
-    _handleContextMenu(e) {
-        e.preventDefault(); e.stopPropagation();
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-        
-        const hit = this.hitTest(bmX, bmY);
-        if (hit) {
-            if (this._selectedAlert && this._selectedAlert !== hit.alert) {
-                this._selectedAlert.selected = false;
-                this._selectedAlert.showDragPoint = false;
-                this._selectedAlert.attached = false;
-            }
-            hit.alert.selected = true;
-            hit.alert.showDragPoint = true;
-            hit.alert.attached = false;
-            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
-            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-            if (alertX !== null && alertY !== null) {
-                hit.alert.dragPointX = alertX;
-                hit.alert.dragPointY = alertY;
-            }
-            this._selectedAlert = hit.alert;
-            this._requestRedraw();
-
-            const menu = document.getElementById('alertContextMenu');
-            if (menu) {
-                document.getElementById('drawingContextMenu').style.display = 'none';
-                document.getElementById('trendContextMenu').style.display = 'none';
-                menu.style.display = 'flex';
-                menu.style.left = e.clientX + 'px';
-                menu.style.top = e.clientY + 'px';
-                
-                const copyBtn = document.getElementById('alertContextCopyBtn');
-                const newCopyBtn = copyBtn.cloneNode(true);
-                copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
-                newCopyBtn.onclick = (event) => { event.stopPropagation(); navigator.clipboard?.writeText(Utils.formatPrice(hit.alert.price)); menu.style.display = 'none'; };
-                
-                const settingsBtn = document.getElementById('alertContextSettingsBtn');
-                const newSettingsBtn = settingsBtn.cloneNode(true);
-                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
-                newSettingsBtn.onclick = (event) => { event.stopPropagation(); this._showSettings(hit.alert); menu.style.display = 'none'; };
-                
-                const pauseBtn = document.getElementById('alertContextPauseBtn');
-                if (pauseBtn) {
-                    const newPauseBtn = pauseBtn.cloneNode(true);
-                    pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
-                    newPauseBtn.textContent = hit.alert.status === 'paused' ? '▶️ Возобновить' : '⏸️ Пауза';
-                    newPauseBtn.onclick = (event) => { 
-                        event.stopPropagation(); 
-                        if (hit.alert.status === 'paused') { hit.alert.resume(); }
-                        else { hit.alert.pause(); }
-                        this._saveAlerts();
-                        this._updateAlertsListUI();
-                        this._requestRedraw();
-                        menu.style.display = 'none'; 
-                    };
-                }
-                
-                const deleteBtn = document.getElementById('alertContextDeleteBtn');
-                const newDeleteBtn = deleteBtn.cloneNode(true);
-                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-                newDeleteBtn.onclick = (event) => { event.stopPropagation(); this.deleteAlert(hit.alert.id); menu.style.display = 'none'; };
-            }
-        } else {
-            const menu = document.getElementById('alertContextMenu');
-            if (menu) menu.style.display = 'none';
-        }
-    }
-
-    setDrawingMode(enabled) {
-        this._isDrawingMode = enabled;
-        
-        const alertBtn = document.getElementById('toolAlert');
-        if (alertBtn) {
-            if (enabled) {
-                alertBtn.style.background = '#4A90E2';
-                alertBtn.style.color = '#FFFFFF';
-                alertBtn.classList.add('active');
-            } else {
-                alertBtn.style.background = '';
-                alertBtn.style.color = '';
-                alertBtn.classList.remove('active');
-            }
-        }
-    }
-
-    checkTimerAlerts() {
-        const now = Date.now();
-        
-        for (const item of this._alerts) {
-            const alert = item.alert;
-            
-            if (!alert.canTriggerRepeat(now)) continue;
-            
-            alert.triggerCount++;
-            alert.lastTriggerTime = now;
-            
-            const isRepeat = alert.triggerCount > 1;
-            const currentPrice = this._lastPrices.get(alert.symbol) || alert.price;
-            
-            this._fireAlert(alert, currentPrice, isRepeat);
-            
-            if (alert.repeatCount !== Infinity && alert.triggerCount >= alert.repeatCount) {
-                this._completeAlert(alert, item);
-            }
-        }
-    }
-
-    updatePriceForSymbol(symbol, price, exchange = null) {
-        if (!symbol || !price || isNaN(price)) return;
-        
-        const now = Date.now();
-        const lastPrice = this._lastPrices.get(symbol);
-        
-        this._lastPrices.set(symbol, price);
-        
-        if (lastPrice === undefined) return;
-        
-        const symbolAlerts = this._alerts.filter(item => 
-            item.alert.symbol === symbol && 
-            !item.alert.triggered &&
-            item.alert.status !== 'paused' &&
-            item.alert.status !== 'completed' &&
-            !item.alert.isTimerMode &&
-            !item.alert.priceTriggered
-        );
-        
-        if (symbolAlerts.length === 0) return;
-        
-        for (const item of symbolAlerts) {
-            const alert = item.alert;
-            
-            if (now - alert.createdAt < 2000) continue;
-            
-            const alertPrice = alert.price;
-            const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
-            const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
-            
-            if (crossedAbove || crossedBelow) {
-                alert.active = true;
-                alert.priceTriggered = true;
-                alert.lastTriggerTime = now;
-                alert.triggerCount = 1;
-                
-                this._fireAlert(alert, price, false);
-                
-                if (alert.repeatCount === 1) {
-                    this._completeAlert(alert, item);
-                }
-            }
-        }
-    }
-
+    // ============================================================
+    // _fireAlert
+    // ============================================================
     _fireAlert(alert, currentPrice, isRepeat) {
         this._saveAlerts();
         this._startInfiniteHighlight(alert.id);
@@ -5184,570 +5153,31 @@ class AlertLineManager {
         this._requestRedraw();
     }
 
+    // ============================================================
+    // _completeAlert
+    // ============================================================
     _completeAlert(alert, item) {
         this._stopHighlight(alert.id);
         alert.complete();
-        
         if (item.primitive && item.series) {
-            try { 
-                item.series.detachPrimitive(item.primitive); 
-            } catch(e) {}
+            try { item.series.detachPrimitive(item.primitive); } catch(e) {}
         }
         item.primitive = null;
         item.series = null;
-        
         this._saveAlerts();
         this._updateAlertsListUI();
         setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
     }
 
-    createAlert(price, time, options = {}) {
-        const defaultVisibility = {
-            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
-            '1h': true, '4h': true, '6h': true, '12h': true,
-            '1d': true, '1w': true, '1M': true
-        };
-        
-        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
-        
-        const alert = new AlertLine(price, time, {
-            ...options,
-            symbol: this._chartManager.currentSymbol,
-            exchange: this._chartManager.currentExchange,
-            marketType: this._chartManager.currentMarketType,
-            timeframeVisibility: timeframeVisibility,
-            repeatCount: options.repeatCount || 5,
-            repeatInterval: options.repeatInterval || 1,
-            triggerCount: options.triggerCount || 0,
-            lastTriggerTime: options.lastTriggerTime || null,
-            active: options.isTimerMode || false,
-            isTimerMode: options.isTimerMode || false,
-            priceTriggered: options.priceTriggered || false,
-            status: options.status || 'active'
-        });
-        
-        alert.anchorTime = time;
-        alert.triggered = options.triggered || false;
-        alert.symbolKey = this._getCurrentSymbolKey();
-        
-        if (!alert.triggered) {
-            const primitive = new AlertLinePrimitive(alert, this._chartManager);
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
-            series.attachPrimitive(primitive);
-            this._alerts.push({ alert, primitive, series });
-        } else {
-            this._alerts.push({ alert, primitive: null, series: null });
-        }
-        
-        if (!alert.isTimerMode) {
-            this._subscribeToSymbol(alert.symbol);
-        }
-        
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        
-        return alert;
-    }
-
-    deleteAlert(alertId) {
-        const index = this._alerts.findIndex(a => a.alert.id === alertId);
-        if (index !== -1) {
-            const { alert, primitive, series } = this._alerts[index];
-            const symbol = alert.symbol;
-            
-            this._stopHighlight(alertId);
-            window.db.delete('drawings', alertId).catch(e => console.warn(e));
-            
-            if (primitive && series) {
-                try { series.detachPrimitive(primitive); } catch (e) {}
-            }
-            this._alerts.splice(index, 1);
-            
-            const hasOtherAlerts = this._alerts.some(item => 
-                item.alert.symbol === symbol && 
-                !item.alert.triggered &&
-                !item.alert.isTimerMode
-            );
-            if (!hasOtherAlerts) {
-                this._unsubscribeFromSymbol(symbol);
-            }
-            
-            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
-            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-
-    pauseAlert(alertId) {
-        const item = this._alerts.find(a => a.alert.id === alertId);
-        if (item && item.alert.status === 'active') {
-            item.alert.pause();
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-    
-    resumeAlert(alertId) {
-        const item = this._alerts.find(a => a.alert.id === alertId);
-        if (item && item.alert.status === 'paused' && !item.alert.triggered) {
-            item.alert.resume();
-            if (!item.primitive && !item.alert.triggered) {
-                const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
-                const series = this._chartManager.currentChartType === 'candle' 
-                    ? this._chartManager.candleSeries 
-                    : this._chartManager.barSeries;
-                series.attachPrimitive(primitive);
-                item.primitive = primitive;
-                item.series = series;
-            }
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-
-    deleteAllAlerts() {
-        const currentSymbolKey = this._getCurrentSymbolKey();
-        const currentSymbol = this._chartManager.currentSymbol;
-        
-        const alertsToDelete = this._alerts.filter(item => 
-            item.alert.symbolKey === currentSymbolKey
-        );
-        
-        if (alertsToDelete.length === 0) return;
-        
-        if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
-        
-        for (const item of alertsToDelete) {
-            window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
-            if (item.primitive && item.series) {
-                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-            }
-            const index = this._alerts.indexOf(item);
-            if (index !== -1) this._alerts.splice(index, 1);
-        }
-        
-        const hasOtherAlerts = this._alerts.some(item => 
-            item.alert.symbol === currentSymbol && 
-            !item.alert.triggered && 
-            item.alert.status !== 'completed' &&
-            !item.alert.isTimerMode
-        );
-        
-        if (!hasOtherAlerts) this._unsubscribeFromSymbol(currentSymbol);
-        
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        this._requestRedraw();
-    }
-
-    deleteCompletedAlerts() {
-        const completedAlerts = this._alerts.filter(item => 
-            item.alert.status === 'completed' || item.alert.triggered
-        );
-        
-        if (completedAlerts.length === 0) return;
-        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
-        
-        for (const item of completedAlerts) {
-            this.deleteAlert(item.alert.id);
-        }
-    }
-
-    _detachAllPrimitivesForSymbol(symbolKey) {
-        const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
-        for (const item of itemsForSymbol) {
-            if (item.primitive && item.series) {
-                try { 
-                    item.series.detachPrimitive(item.primitive); 
-                } catch(e) {}
-                item.primitive = null;
-                item.series = null;
-            }
-        }
-    }
-
-    hitTest(x, y) {
-        if (this._selectedAlert) {
-            const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
-            if (selItem && selItem.primitive?._paneView?._renderer) {
-                try {
-                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-                    if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
-                } catch (e) {}
-            }
-        }
-        
-        let bestHit = null;
-        let bestDistance = Infinity;
-        
-        for (const item of this._alerts) {
-            if (!item.primitive?._paneView?._renderer) continue;
-            if (item.alert === this._selectedAlert) continue;
-            
-            try {
-                const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                
-                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                    bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
-                    bestDistance = hit.distance;
-                }
-            } catch (e) {}
-        }
-        
-        return bestHit;
-    }
-
-    syncWithNewTimeframe() {
-        for (const item of this._alerts) {
-            if (item.primitive) item.primitive.updateAllViews();
-        }
-    }
-
-    _handleChartClick(event) {
-        if (!this._isDrawingMode) return;
-        
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        let price = this._chartManager.coordinateToPrice(y);
-        let time = this._getTimeFromCoordinate(x);
-        
-        if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
-            if (lastCandle) {
-                price = lastCandle.close;
-                time = lastCandle.time;
-            } else return;
-        }
-        
-        this.createAlert(price, time, {
-            color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
-            lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
-            lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
-            opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
-            showPrice: true,
-            showBell: document.getElementById('alertShowBell')?.checked || true,
-            repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
-            repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
-            anchorCandle: null,
-            status: 'active'
-        });
-        
-        this.setDrawingMode(false);
-    }
-
-    _showSettings(alert) {
-        const settings = document.getElementById('alertSettings');
-        if (!settings) return;
-        
-        document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
-        document.getElementById('alertHexInputInline').value = alert.options.color;
-        document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
-        document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
-        document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
-        document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
-        
-        const bellCheckbox = document.getElementById('alertShowBell');
-        if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
-        
-        createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
-        
-        const priceInput = document.getElementById('alertSettingsPriceInput');
-        if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
-        
-        const repeatCountSelect = document.getElementById('alertRepeatCount');
-        if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
-        
-        const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
-        if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
-        
-        this._renderTimeframeCheckboxes(alert);
-        
-        settings.style.display = 'block';
-        settings.style.left = '50%';
-        settings.style.top = '50%';
-        settings.style.transform = 'translate(-50%, -50%)';
-        
-        settings.dataset.alertId = alert.id;
-        
-        const stylePanel = document.getElementById('alertStylePanel');
-        const repeatPanel = document.getElementById('alertRepeatPanel');
-        const visibilityPanel = document.getElementById('alertVisibilityPanel');
-        
-        stylePanel.classList.add('active');
-        repeatPanel.classList.remove('active');
-        visibilityPanel.classList.remove('active');
-        
-        document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
-            tab.classList.remove('active');
-            if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
-        });
-        
-        settings.onmousedown = (e) => e.stopPropagation();
-        
-        if (!document._alertSettingsCloseHandler) {
-            document._alertSettingsCloseHandler = (e) => {
-                if (!settings.contains(e.target) && settings.style.display === 'block') {
-                    settings.style.display = 'none';
-                }
-            };
-            document.addEventListener('mousedown', document._alertSettingsCloseHandler);
-        }
-    }
-
-    _setupSettingsListeners() {
-        const settings = document.getElementById('alertSettings');
-        if (!settings || settings._listenersSetup) return;
-        settings._listenersSetup = true;
-        
-        settings.querySelectorAll('.settings-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const tabName = tab.dataset.alertSettingsTab;
-                document.getElementById('alertStylePanel').classList.toggle('active', tabName === 'style');
-                document.getElementById('alertRepeatPanel').classList.toggle('active', tabName === 'repeat');
-                document.getElementById('alertVisibilityPanel').classList.toggle('active', tabName === 'visibility');
-                settings.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-            });
-        });
-        
-        document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
-            const alertId = settings.dataset.alertId;
-            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
-            if (!alert) return;
-            const newPrice = parseFloat(document.getElementById('alertSettingsPriceInput').value);
-            if (!isNaN(newPrice)) {
-                alert.price = newPrice;
-                this._requestRedraw();
-                this._saveAlerts();
-            }
-        });
-        
-        document.getElementById('alertSaveSettings').addEventListener('click', () => {
-            const alertId = settings.dataset.alertId;
-            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
-            if (!alert) return;
-            const repeatCountVal = document.getElementById('alertRepeatCount').value;
-            alert.updateOptions({
-                color: document.getElementById('alertCurrentColorBox').style.backgroundColor,
-                lineWidth: parseInt(document.getElementById('alertSettingThickness').value),
-                lineStyle: document.getElementById('alertTemplateSelect').value,
-                opacity: parseInt(document.getElementById('alertColorOpacity').value) / 100,
-                showBell: document.getElementById('alertShowBell').checked,
-                repeatCount: repeatCountVal === 'Infinity' ? Infinity : parseInt(repeatCountVal),
-                repeatInterval: parseInt(document.getElementById('alertRepeatInterval').value)
-            });
-            this._requestRedraw();
-            settings.style.display = 'none';
-            this._saveAlerts();
-            this._updateAlertsListUI();
-        });
-        
-        document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
-            const alertId = settings.dataset.alertId;
-            this.deleteAlert(alertId);
-            settings.style.display = 'none';
-            this._requestRedraw();
-        });
-    }
-
-    _renderTimeframeCheckboxes(alert) {
-        const container = document.getElementById('alertTimeframeCheckboxList');
-        if (!container) return;
-        
-        const tfLabels = {
-            '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
-            '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
-            '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
-        };
-        
-        let html = '';
-        const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
-        
-        timeframes.forEach(tf => {
-            const isChecked = alert.timeframeVisibility[tf] !== false;
-            html += `
-                <div class="timeframe-checkbox-item">
-                    <input type="checkbox" id="alert_tf_${tf}_${alert.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}>
-                    <label for="alert_tf_${tf}_${alert.id}">${tfLabels[tf] || tf}</label>
-                    <span class="tf-badge">${tf}</span>
-                </div>
-            `;
-        });
-        
-        container.innerHTML = html;
-        
-        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => {
-                const tf = e.target.dataset.timeframe;
-                alert.timeframeVisibility[tf] = e.target.checked;
-            });
-        });
-        
-        const selectAllBtn = document.getElementById('alertSelectAllTimeframes');
-        const deselectAllBtn = document.getElementById('alertDeselectAllTimeframes');
-        
-        if (selectAllBtn) {
-            const newSelectAll = selectAllBtn.cloneNode(true);
-            selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
-            newSelectAll.addEventListener('click', () => {
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.checked = true;
-                    alert.timeframeVisibility[cb.dataset.timeframe] = true;
-                });
-            });
-        }
-        
-        if (deselectAllBtn) {
-            const newDeselectAll = deselectAllBtn.cloneNode(true);
-            deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
-            newDeselectAll.addEventListener('click', () => {
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.checked = false;
-                    alert.timeframeVisibility[cb.dataset.timeframe] = false;
-                });
-            });
-        }
-    }
-
-    _requestRedraw() {
-        this._alerts.forEach(item => { 
-            if (item.primitive?.requestRedraw) {
-                item.primitive.requestRedraw();
-            }
-        });
-    }
-
-    _startInfiniteHighlight(alertId) {
-        this._stopHighlight(alertId);
-        
-        setTimeout(() => {
-            const content = document.getElementById('alertHistoryContent');
-            if (!content) return;
-            
-            const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-            if (!item) return;
-            
-            if (!item._originalStyles) {
-                item._originalStyles = {
-                    bg: item.style.backgroundColor,
-                    boxShadow: item.style.boxShadow,
-                    borderLeftColor: item.style.borderLeftColor,
-                    borderLeftWidth: item.style.borderLeftWidth,
-                    transition: item.style.transition
-                };
-            }
-            
-            let isHighlighted = false;
-            
-            const blink = () => {
-                if (!item.isConnected) {
-                    if (item._blinkInterval) {
-                        clearInterval(item._blinkInterval);
-                        item._blinkInterval = null;
-                    }
-                    return;
-                }
-                
-                isHighlighted = !isHighlighted;
-                
-                if (isHighlighted) {
-                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
-                    item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
-                    item.style.borderLeftColor = '#00FF00';
-                    item.style.borderLeftWidth = '6px';
-                    item.style.transition = 'all 0.35s ease';
-                } else {
-                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
-                    item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
-                    item.style.borderLeftColor = '#00DD00';
-                    item.style.borderLeftWidth = '4px';
-                    item.style.transition = 'all 0.35s ease';
-                }
-            };
-            
-            blink();
-            item._blinkInterval = setInterval(blink, 550);
-            
-            item._stopBlink = () => {
-                if (item._blinkInterval) {
-                    clearInterval(item._blinkInterval);
-                    item._blinkInterval = null;
-                }
-                const orig = item._originalStyles || {};
-                item.style.backgroundColor = orig.bg || '';
-                item.style.boxShadow = orig.boxShadow || '';
-                item.style.borderLeftColor = orig.borderLeftColor || '';
-                item.style.borderLeftWidth = orig.borderLeftWidth || '';
-                item.style.transition = orig.transition || '';
-            };
-            
-            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 100);
-    }
-
-    _stopHighlight(alertId) {
-        const content = document.getElementById('alertHistoryContent');
-        if (!content) return;
-        
-        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-        if (item && item._stopBlink) {
-            item._stopBlink();
-            delete item._stopBlink;
-            delete item._blinkInterval;
-            delete item._originalStyles;
-        }
-    }
-
-    _highlightTriggeredAlert(alertId) {
-        const content = document.getElementById('alertHistoryContent');
-        if (!content) return;
-        
-        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
-        if (activeTab !== 'triggered') return;
-        
-        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-        if (!item) return;
-        
-        item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
-        item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
-        item.style.borderLeftColor = '#FFC800';
-        item.style.borderLeftWidth = '5px';
-        item.style.transition = 'all 0.5s ease';
-        
-        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        
-        setTimeout(() => {
-            if (item.isConnected) {
-                item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
-                item.style.boxShadow = 'none';
-                item.style.borderLeftWidth = '3px';
-            }
-        }, 8000);
-    }
-
-    _showAlertNotification(alert, currentPrice, isRepeat = false) {
+    // ============================================================
+    // _showAlertNotification
+    // ============================================================
+    _showAlertNotification(alert, currentPrice, isRepeat) {
         const notification = document.getElementById('alertNotification');
-        
         const priceFormatted = Utils.formatPrice(currentPrice);
         const alertPriceFormatted = Utils.formatPrice(alert.price);
         const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        
         const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-        
         if (notification) {
             notification.innerHTML = `
                 <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
@@ -5758,11 +5188,13 @@ class AlertLineManager {
             notification.style.borderLeftColor = alert.options.color;
             setTimeout(() => { notification.style.display = 'none'; }, 5000);
         }
-        
         this._playAlertSound();
         this._showSystemNotification(alert, currentPrice, isRepeat);
     }
 
+    // ============================================================
+    // _playAlertSound
+    // ============================================================
     _playAlertSound() {
         try {
             const audio = document.getElementById('alertSound');
@@ -5792,17 +5224,16 @@ class AlertLineManager {
                     osc.stop(startTime + 0.2);
                 });
             }
-        } catch (e) {
-            console.warn('Ошибка воспроизведения звука:', e);
-        }
+        } catch (e) { console.warn('Ошибка звука:', e); }
     }
 
-    _showSystemNotification(alert, currentPrice, isRepeat = false) {
+    // ============================================================
+    // _showSystemNotification
+    // ============================================================
+    _showSystemNotification(alert, currentPrice, isRepeat) {
         if (!("Notification" in window)) return;
-        
         const priceFormatted = Utils.formatPrice(currentPrice);
         const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-        
         const showNotification = () => {
             const notification = new Notification(`🔔 ${alert.symbol} - АЛЕРТ${repeatText}`, {
                 body: `Цена: ${priceFormatted} | Уровень: ${Utils.formatPrice(alert.price)}`,
@@ -5813,7 +5244,6 @@ class AlertLineManager {
             notification.onclick = () => { window.focus(); notification.close(); };
             setTimeout(() => notification.close(), 10000);
         };
-        
         if (Notification.permission === "granted") showNotification();
         else if (Notification.permission !== "denied") {
             Notification.requestPermission().then(permission => {
@@ -5822,22 +5252,20 @@ class AlertLineManager {
         }
     }
 
-    _sendTelegramAlert(alert, currentPrice, isRepeat = false) {
+    // ============================================================
+    // _sendTelegramAlert
+    // ============================================================
+    _sendTelegramAlert(alert, currentPrice, isRepeat) {
         const chatId = localStorage.getItem('telegramChatId');
         if (!chatId) return;
-        
         const priceFormatted = Utils.formatPrice(currentPrice);
         const alertPriceFormatted = Utils.formatPrice(alert.price);
-        
         const direction = currentPrice > alert.price ? '⬆️ Выше' : '⬇️ Ниже';
         const repeatText = isRepeat ? `\n🔄 Повтор: ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}` : '';
-        
         const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${new Date().toLocaleString('ru-RU')}`;
-        
         const formData = new URLSearchParams();
         formData.append('chat_id', chatId);
         formData.append('text', message);
-        
         fetch(CONFIG.telegramProxyUrl, {
             method: 'POST',
             mode: 'no-cors',
@@ -5846,55 +5274,113 @@ class AlertLineManager {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-    async _saveAlerts() {
-        if (this._alerts.length === 0) return;
-        const promises = this._alerts.map(item => 
-            window.db.put('drawings', {
-                id: item.alert.id,
-                type: 'alert',
-                symbolKey: item.alert.symbolKey,
-                data: {
-                    price: item.alert.price,
-                    time: item.alert.time,
-                    anchorTime: item.alert.anchorTime,
-                    symbol: item.alert.symbol,
-                    exchange: item.alert.exchange,
-                    marketType: item.alert.marketType,
-                    options: item.alert.options,
-                    timeframeVisibility: item.alert.timeframeVisibility,
-                    triggered: item.alert.triggered,
-                    triggerCount: item.alert.triggerCount,
-                    repeatCount: item.alert.repeatCount,
-                    repeatInterval: item.alert.repeatInterval,
-                    lastTriggerTime: item.alert.lastTriggerTime,
-                    active: item.alert.active,
-                    isTimerMode: item.alert.isTimerMode,
-                    priceTriggered: item.alert.priceTriggered,
-                    status: item.alert.status,
-                    anchorCandle: item.alert.anchorCandle
+    // ============================================================
+    // _startInfiniteHighlight
+    // ============================================================
+    _startInfiniteHighlight(alertId) {
+        this._stopHighlight(alertId);
+        setTimeout(() => {
+            const content = document.getElementById('alertHistoryContent');
+            if (!content) return;
+            const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+            if (!item) return;
+            if (!item._originalStyles) {
+                item._originalStyles = {
+                    bg: item.style.backgroundColor,
+                    boxShadow: item.style.boxShadow,
+                    borderLeftColor: item.style.borderLeftColor,
+                    borderLeftWidth: item.style.borderLeftWidth,
+                    transition: item.style.transition
+                };
+            }
+            let isHighlighted = false;
+            const blink = () => {
+                if (!item.isConnected) {
+                    if (item._blinkInterval) clearInterval(item._blinkInterval);
+                    return;
                 }
-            }).catch(e => console.warn('Save alert error:', e))
-        );
-        await Promise.all(promises);
+                isHighlighted = !isHighlighted;
+                if (isHighlighted) {
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
+                    item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
+                    item.style.borderLeftColor = '#00FF00';
+                    item.style.borderLeftWidth = '6px';
+                    item.style.transition = 'all 0.35s ease';
+                } else {
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
+                    item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
+                    item.style.borderLeftColor = '#00DD00';
+                    item.style.borderLeftWidth = '4px';
+                    item.style.transition = 'all 0.35s ease';
+                }
+            };
+            blink();
+            item._blinkInterval = setInterval(blink, 550);
+            item._stopBlink = () => {
+                if (item._blinkInterval) clearInterval(item._blinkInterval);
+                const orig = item._originalStyles || {};
+                item.style.backgroundColor = orig.bg || '';
+                item.style.boxShadow = orig.boxShadow || '';
+                item.style.borderLeftColor = orig.borderLeftColor || '';
+                item.style.borderLeftWidth = orig.borderLeftWidth || '';
+                item.style.transition = orig.transition || '';
+            };
+            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
     }
 
-    async loadAlerts() {
-        const currentKey = this._getCurrentSymbolKey();
-        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+    // ============================================================
+    // _stopHighlight
+    // ============================================================
+    _stopHighlight(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (item && item._stopBlink) {
+            item._stopBlink();
+            delete item._stopBlink;
+        }
     }
 
+    // ============================================================
+    // _highlightTriggeredAlert
+    // ============================================================
+    _highlightTriggeredAlert(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
+        if (activeTab !== 'triggered') return;
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (!item) return;
+        item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
+        item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
+        item.style.borderLeftColor = '#FFC800';
+        item.style.borderLeftWidth = '5px';
+        item.style.transition = 'all 0.5s ease';
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => {
+            if (item.isConnected) {
+                item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
+                item.style.boxShadow = 'none';
+                item.style.borderLeftWidth = '3px';
+            }
+        }, 8000);
+    }
+
+    // ============================================================
+    // _updateAlertsListUI
+    // ============================================================
     _updateAlertsListUI() {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
-        
+
         const activeAlerts = this._alerts.map(a => a.alert).filter(alert => !alert.triggered && alert.status !== 'completed');
         const pausedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.status === 'paused');
         const completedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.triggered || alert.status === 'completed').sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
-        
+
         const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
-        
         let html = '';
-        
+
         if (activeTab === 'active') {
             const displayAlerts = [...activeAlerts, ...pausedAlerts];
             if (displayAlerts.length === 0) {
@@ -5906,17 +5392,16 @@ class AlertLineManager {
                     const color = alert.options.color;
                     const isActive = alert.active;
                     const isPaused = alert.status === 'paused';
-                    
                     const statusIcon = isPaused ? '⏸️' : (isActive ? '🟢' : '🔔');
                     const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
-                    
+                    const directionText = alert.direction === 'above' ? '⬆ Выше' : '⬇ Ниже';
                     html += `
                         <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}" 
                              style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}" 
                              data-id="${alert.id}">
                             <div class="trigger-bell">${statusIcon}</div>
                             <div>
-                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
+                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted} <span style="color:#888;font-size:10px;">${directionText}</span></div>
                                 <div class="info">
                                     <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
                                     <span>${statusText}</span>
@@ -5945,13 +5430,13 @@ class AlertLineManager {
                     const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                     const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
                     const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
-                    
+                    const directionText = alert.direction === 'above' ? '⬆ Выше' : '⬇ Ниже';
                     html += `
                         <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
                             <div>
                                 <div class="price">
                                     <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
-                                    ${priceFormatted}${repeatInfo}
+                                    ${priceFormatted} ${repeatInfo} <span style="color:#888;font-size:10px;">${directionText}</span>
                                 </div>
                                 <div class="info">
                                     <span>🕐 ${dateStr} ${timeStr}</span>
@@ -5965,7 +5450,6 @@ class AlertLineManager {
                     `;
                 });
                 html += '</div>';
-                
                 html += `
                     <div style="padding: 10px; text-align: center;">
                         <button class="clear-completed-btn" style="background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
@@ -5975,16 +5459,16 @@ class AlertLineManager {
                 `;
             }
         }
-        
+
         content.innerHTML = html;
-        
+
         content.querySelectorAll('.delete-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deleteAlert(btn.dataset.id);
             });
         });
-        
+
         content.querySelectorAll('.pause-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -5996,34 +5480,807 @@ class AlertLineManager {
                 }
             });
         });
-        
+
         const clearBtn = content.querySelector('.clear-completed-btn');
         if (clearBtn) {
             clearBtn.addEventListener('click', () => this.deleteCompletedAlerts());
         }
     }
 
-    deactivateAll() {
-        this._alerts.forEach(item => {
-            if (item.alert) {
-                item.alert.selected = false;
-                item.alert.showDragPoint = false;
+    // ============================================================
+    // _saveAlerts - ИСПРАВЛЕН (сохраняем direction)
+    // ============================================================
+    async _saveAlerts() {
+        if (this._alerts.length === 0) return;
+        const promises = this._alerts.map(item =>
+            window.db.put('drawings', {
+                id: item.alert.id,
+                type: 'alert',
+                symbolKey: item.alert.symbolKey,
+                data: {
+                    price: item.alert.price,
+                    time: item.alert.time,
+                    anchorTime: item.alert.anchorTime,
+                    symbol: item.alert.symbol,
+                    exchange: item.alert.exchange,
+                    marketType: item.alert.marketType,
+                    options: item.alert.options,
+                    timeframeVisibility: item.alert.timeframeVisibility,
+                    triggered: item.alert.triggered,
+                    triggerCount: item.alert.triggerCount,
+                    repeatCount: item.alert.repeatCount,
+                    repeatInterval: item.alert.repeatInterval,
+                    lastTriggerTime: item.alert.lastTriggerTime,
+                    active: item.alert.active,
+                    isTimerMode: item.alert.isTimerMode,
+                    priceTriggered: item.alert.priceTriggered,
+                    status: item.alert.status,
+                    anchorCandle: item.alert.anchorCandle,
+                    direction: item.alert.direction || 'above'
+                }
+            }).catch(e => console.warn('Save alert error:', e))
+        );
+        await Promise.all(promises);
+    }
+
+    // ============================================================
+    // loadFromData - ИСПРАВЛЕН (загружаем direction)
+    // ============================================================
+    async loadFromData(symbolKey, alertRecords) {
+        try {
+            const currentSymbolKey = this._getCurrentSymbolKey();
+            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+            const series = isCurrentSymbol
+                ? (this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries
+                    : this._chartManager.barSeries)
+                : null;
+
+            if (isCurrentSymbol && !series) {
+                console.warn('No series available for current symbol');
+                return;
+            }
+
+            const existingIds = new Set(
+                this._alerts
+                    .filter(item => item.alert.symbolKey === symbolKey)
+                    .map(item => item.alert.id)
+            );
+
+            const newRecordIds = new Set(alertRecords.map(a => a.id));
+
+            if (isCurrentSymbol) {
+                const toDetach = this._alerts.filter(item =>
+                    item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
+                );
+                for (const item of toDetach) {
+                    try {
+                        if (item.primitive && item.series) {
+                            item.series.detachPrimitive(item.primitive);
+                        }
+                        item.primitive = null;
+                        item.series = null;
+                    } catch (e) { /* ignore */ }
+                }
+            }
+
+            this._alerts = this._alerts.filter(item =>
+                item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
+            );
+
+            const newAlerts = [];
+            for (const rec of alertRecords) {
+                try {
+                    const existing = this._alerts.find(item => item.alert.id === rec.id);
+                    if (existing) {
+                        existing.alert.price = rec.data.price;
+                        existing.alert.time = rec.data.time;
+                        existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
+                        existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                        existing.alert.triggered = rec.data.triggered || false;
+                        existing.alert.triggerCount = rec.data.triggerCount || 0;
+                        existing.alert.repeatCount = rec.data.repeatCount || 5;
+                        existing.alert.repeatInterval = rec.data.repeatInterval || 1;
+                        existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                        existing.alert.active = rec.data.active || false;
+                        existing.alert.isTimerMode = rec.data.isTimerMode || false;
+                        existing.alert.priceTriggered = rec.data.priceTriggered || false;
+                        existing.alert.status = rec.data.status || 'active';
+                        existing.alert.anchorCandle = rec.data.anchorCandle || null;
+                        existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
+                        existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
+                        existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
+                        existing.alert.createdAt = Date.now();
+                        existing.alert.direction = rec.data.direction || 'above';
+                        if (isCurrentSymbol &&
+                            !existing.alert.triggered &&
+                            existing.alert.status !== 'completed' &&
+                            (!existing.primitive || !existing.series)) {
+                            const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                            try {
+                                series.attachPrimitive(primitive);
+                                existing.primitive = primitive;
+                                existing.series = series;
+                            } catch (e) { /* ignore */ }
+                        }
+                        continue;
+                    }
+
+                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                    alert.id = rec.id;
+                    alert.symbolKey = rec.symbolKey;
+                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    alert.symbol = rec.data.symbol;
+                    alert.exchange = rec.data.exchange;
+                    alert.marketType = rec.data.marketType;
+                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    alert.triggered = rec.data.triggered || false;
+                    alert.triggerCount = rec.data.triggerCount || 0;
+                    alert.repeatCount = rec.data.repeatCount || 5;
+                    alert.repeatInterval = rec.data.repeatInterval || 1;
+                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    alert.active = rec.data.active || false;
+                    alert.isTimerMode = rec.data.isTimerMode || false;
+                    alert.priceTriggered = rec.data.priceTriggered || false;
+                    alert.status = rec.data.status || 'active';
+                    alert.anchorCandle = rec.data.anchorCandle || null;
+                    alert.createdAt = Date.now();
+                    alert.direction = rec.data.direction || 'above';
+
+                    if (isCurrentSymbol &&
+                        !alert.triggered &&
+                        alert.status !== 'completed') {
+                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                        try {
+                            series.attachPrimitive(primitive);
+                            newAlerts.push({ alert, primitive, series });
+                        } catch (e) {
+                            console.warn('Failed to attach primitive:', e);
+                            newAlerts.push({ alert, primitive: null, series: null });
+                        }
+                    } else {
+                        newAlerts.push({ alert, primitive: null, series: null });
+                    }
+                } catch (e) {
+                    console.warn('Failed to load alert:', rec.id, e);
+                }
+            }
+
+            this._alerts.push(...newAlerts);
+
+            for (const item of this._alerts) {
+                const alert = item.alert;
+                if (!alert.triggered && alert.status !== 'completed' && alert.status !== 'paused' && !alert.isTimerMode) {
+                    this._subscribeToSymbol(alert.symbol);
+                }
+            }
+
+            if (isCurrentSymbol) {
+                this._updateAlertsListUI();
+                this._requestRedraw();
+            }
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+            throw error;
+        }
+    }
+
+    // ============================================================
+    // loadAllAlertsFromDB
+    // ============================================================
+    async loadAllAlertsFromDB() {
+        try {
+            if (!window.db) {
+                console.warn('Database not available');
+                return;
+            }
+            const allRecords = await window.db.getAll('drawings');
+            if (!allRecords || allRecords.length === 0) return;
+
+            const alertsBySymbol = {};
+            for (const record of allRecords) {
+                if (record.type !== 'alert') continue;
+                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+                if (!alertsBySymbol[key]) alertsBySymbol[key] = [];
+                alertsBySymbol[key].push(record);
+            }
+
+            for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
+                await this.loadFromData(symbolKey, records);
+            }
+
+        } catch (error) {
+            console.error('❌ loadAllAlertsFromDB failed:', error);
+        }
+    }
+
+    // ============================================================
+    // _getCurrentSymbolKey
+    // ============================================================
+    _getCurrentSymbolKey() {
+        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const marketType = this._chartManager.currentMarketType || 'futures';
+        return `${symbol}:${exchange}:${marketType}`;
+    }
+
+    // ============================================================
+    // _toBitmapCoords
+    // ============================================================
+    _toBitmapCoords(cssX, cssY) {
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
+    }
+
+    // ============================================================
+    // _setupHotkeys
+    // ============================================================
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+
+            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                const newState = !this._isDrawingMode;
+                this.setDrawingMode(newState);
+                if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
+                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+                if (window.textManager && newState) window.textManager.setDrawingMode(false);
+            }
+
+            if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
+                e.preventDefault();
+                this.deleteAlert(this._selectedAlert.id);
+                this._selectedAlert = null;
             }
         });
-        this._selectedAlert = null;
     }
-    
-    setMagnetEnabled(enabled) {}
-    
-    activateObject(alert) {
-        alert.selected = true;
-        alert.showDragPoint = true;
-        this._selectedAlert = alert;
+
+    // ============================================================
+    // _setupEventListeners
+    // ============================================================
+    _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('#alertSettings') ||
+                e.target.closest('#trendSettings') ||
+                e.target.closest('#textSettings') ||
+                e.target.closest('#rulerSettingsPanel') ||
+                e.target.closest('#drawingSettings')) {
+                return;
+            }
+
+            const rect = container.getBoundingClientRect();
+            const { x: bmX, y: bmY } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+            const hit = this.hitTest(bmX, bmY);
+
+            if (hit) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const now = Date.now();
+                if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
+                    clearTimeout(this._dblClickTimer);
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                    this._lastClickTime = 0;
+                    hit.alert.showDragPoint = !hit.alert.showDragPoint;
+                    this._requestRedraw();
+                    return;
+                }
+
+                if (this._selectedAlert && this._selectedAlert !== hit.alert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                }
+                hit.alert.selected = true;
+                this._selectedAlert = hit.alert;
+
+                this._potentialDblClickTarget = hit.alert;
+                this._lastClickTime = now;
+                if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = setTimeout(() => {
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                }, this._dblClickTimeout);
+
+                if (hit.alert.showDragPoint) {
+                    const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+                    const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+                    if (alertX !== null && alertY !== null) {
+                        hit.alert.dragPointX = alertX;
+                        hit.alert.dragPointY = alertY;
+                    }
+                    this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
+                } else {
+                    this._potentialDrag = null;
+                }
+
+                this._requestRedraw();
+            } else {
+                const alertMenu = document.getElementById('alertContextMenu');
+                if (alertMenu && alertMenu.style.display === 'flex') {
+                    const menuRect = alertMenu.getBoundingClientRect();
+                    const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+                    if (isClickInsideMenu) return;
+                }
+                if (this._selectedAlert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                    this._selectedAlert = null;
+                }
+                if (alertMenu) alertMenu.style.display = 'none';
+                this._requestRedraw();
+            }
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            const { x: bmX, y: bmY } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+
+            if (this._potentialDrag && !this._isDragging) {
+                const dx = Math.abs(bmX - this._potentialDrag.startX);
+                const dy = Math.abs(bmY - this._potentialDrag.startY);
+                if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                    this._isDragging = true;
+                    this._dragAlert = this._potentialDrag.alert;
+                    this._dragAlert.dragging = true;
+                    this._dragStartX = this._potentialDrag.startX;
+                    this._dragStartY = this._potentialDrag.startY;
+                    this._dragStartPrice = this._potentialDrag.startPrice;
+                    this._dragStartTime = this._potentialDrag.startTime;
+                    container.style.cursor = 'grabbing';
+                }
+            }
+
+            if (this._isDragging && this._dragAlert) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+                const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+                const alertX = this._chartManager.timeToCoordinate(this._dragStartTime);
+                const alertY = this._chartManager.priceToCoordinate(this._dragStartPrice);
+                if (alertX !== null && alertY !== null) {
+                    const newX = alertX + deltaX;
+                    const newY = alertY + deltaY;
+                    const newPrice = this._chartManager.coordinateToPrice(newY);
+                    const newTime = this._chartManager.coordinateToTime(newX);
+                    if (newPrice !== null) this._dragAlert.price = newPrice;
+                    if (newTime !== null) {
+                        this._dragAlert.time = newTime;
+                        this._dragAlert.anchorTime = newTime;
+                    }
+                    const newAlertX = this._chartManager.timeToCoordinate(this._dragAlert.time);
+                    const newAlertY = this._chartManager.priceToCoordinate(this._dragAlert.price);
+                    if (newAlertX !== null && newAlertY !== null) {
+                        this._dragAlert.dragPointX = newAlertX;
+                        this._dragAlert.dragPointY = newAlertY;
+                    }
+                    this._requestRedraw();
+                }
+            } else {
+                const hit = this.hitTest(bmX, bmY);
+                const hitAlert = hit ? hit.alert : null;
+                container.style.cursor = hitAlert ? 'grab' : 'crosshair';
+                if (this._hoveredAlert !== hitAlert) {
+                    if (this._hoveredAlert) this._hoveredAlert.hovered = false;
+                    this._hoveredAlert = hitAlert;
+                    if (hitAlert) hitAlert.hovered = true;
+                    this._requestRedraw();
+                }
+            }
+        });
+
+        container.addEventListener('mouseup', (e) => {
+            this._potentialDrag = null;
+            if (this._isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+                this._isDragging = false;
+                if (this._dragAlert) {
+                    this._dragAlert.dragging = false;
+                    this._dragAlert.attached = false;
+                    this._dragAlert.anchorTime = this._dragAlert.time;
+                    this._saveAlerts();
+                    this._dragAlert = null;
+                    this._requestRedraw();
+                }
+                container.style.cursor = 'crosshair';
+                setTimeout(() => {
+                    const moveEvent = new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY });
+                    container.dispatchEvent(moveEvent);
+                }, 10);
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            if (this._hoveredAlert) {
+                this._hoveredAlert.hovered = false;
+                this._hoveredAlert = null;
+                this._requestRedraw();
+            }
+            container.style.cursor = 'crosshair';
+        });
+
+        container.addEventListener('click', (e) => {
+            if (this._isDragging) { e.preventDefault(); e.stopPropagation(); }
+            if (this._isDrawingMode) this._handleChartClick(e);
+        });
+
+        container.addEventListener('contextmenu', this._handleContextMenu);
+    }
+
+    // ============================================================
+    // _handleContextMenu
+    // ============================================================
+    _handleContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const { x: bmX, y: bmY } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+        const hit = this.hitTest(bmX, bmY);
+
+        if (hit) {
+            if (this._selectedAlert && this._selectedAlert !== hit.alert) {
+                this._selectedAlert.selected = false;
+                this._selectedAlert.showDragPoint = false;
+                this._selectedAlert.attached = false;
+            }
+            hit.alert.selected = true;
+            hit.alert.showDragPoint = true;
+            hit.alert.attached = false;
+            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+            if (alertX !== null && alertY !== null) {
+                hit.alert.dragPointX = alertX;
+                hit.alert.dragPointY = alertY;
+            }
+            this._selectedAlert = hit.alert;
+            this._requestRedraw();
+
+            const menu = document.getElementById('alertContextMenu');
+            if (menu) {
+                document.getElementById('drawingContextMenu').style.display = 'none';
+                document.getElementById('trendContextMenu').style.display = 'none';
+                menu.style.display = 'flex';
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
+
+                const copyBtn = document.getElementById('alertContextCopyBtn');
+                const newCopyBtn = copyBtn.cloneNode(true);
+                copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
+                newCopyBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    navigator.clipboard?.writeText(Utils.formatPrice(hit.alert.price));
+                    menu.style.display = 'none';
+                };
+
+                const settingsBtn = document.getElementById('alertContextSettingsBtn');
+                const newSettingsBtn = settingsBtn.cloneNode(true);
+                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
+                newSettingsBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    this._showSettings(hit.alert);
+                    menu.style.display = 'none';
+                };
+
+                const pauseBtn = document.getElementById('alertContextPauseBtn');
+                if (pauseBtn) {
+                    const newPauseBtn = pauseBtn.cloneNode(true);
+                    pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
+                    newPauseBtn.textContent = hit.alert.status === 'paused' ? '▶️ Возобновить' : '⏸️ Пауза';
+                    newPauseBtn.onclick = (event) => {
+                        event.stopPropagation();
+                        if (hit.alert.status === 'paused') { hit.alert.resume(); }
+                        else { hit.alert.pause(); }
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                        this._requestRedraw();
+                        menu.style.display = 'none';
+                    };
+                }
+
+                const deleteBtn = document.getElementById('alertContextDeleteBtn');
+                const newDeleteBtn = deleteBtn.cloneNode(true);
+                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+                newDeleteBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    this.deleteAlert(hit.alert.id);
+                    menu.style.display = 'none';
+                };
+            }
+        } else {
+            const menu = document.getElementById('alertContextMenu');
+            if (menu) menu.style.display = 'none';
+        }
+    }
+
+    // ============================================================
+    // _handleChartClick - ИСПРАВЛЕН (добавлен выбор направления)
+    // ============================================================
+    _handleChartClick(event) {
+        if (!this._isDrawingMode) return;
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._chartManager.coordinateToTime(x);
+
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle();
+            if (lastCandle) {
+                price = lastCandle.close;
+                time = lastCandle.time;
+            } else return;
+        }
+
+        // Получаем направление из интерфейса
+        const directionSelect = document.getElementById('alertDirection');
+        const direction = directionSelect ? directionSelect.value : 'above';
+
+        this.createAlert(price, time, {
+            color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
+            lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
+            lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
+            opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
+            showPrice: true,
+            showBell: document.getElementById('alertShowBell')?.checked || true,
+            repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
+            repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
+            anchorCandle: null,
+            status: 'active',
+            direction: direction
+        });
+
+        this.setDrawingMode(false);
+    }
+
+    // ============================================================
+    // _showSettings - ИСПРАВЛЕН (добавлен выбор направления)
+    // ============================================================
+    _showSettings(alert) {
+        const settings = document.getElementById('alertSettings');
+        if (!settings) return;
+
+        document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
+        document.getElementById('alertHexInputInline').value = alert.options.color;
+        document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
+        document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
+        document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
+        document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
+
+        const bellCheckbox = document.getElementById('alertShowBell');
+        if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
+
+        createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
+
+        const priceInput = document.getElementById('alertSettingsPriceInput');
+        if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
+
+        const repeatCountSelect = document.getElementById('alertRepeatCount');
+        if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
+
+        const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
+        if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
+
+        // Направление
+        const directionSelect = document.getElementById('alertDirectionSettings');
+        if (directionSelect) directionSelect.value = alert.direction || 'above';
+
+        this._renderTimeframeCheckboxes(alert);
+
+        settings.style.display = 'block';
+        settings.style.left = '50%';
+        settings.style.top = '50%';
+        settings.style.transform = 'translate(-50%, -50%)';
+        settings.dataset.alertId = alert.id;
+
+        const stylePanel = document.getElementById('alertStylePanel');
+        const repeatPanel = document.getElementById('alertRepeatPanel');
+        const visibilityPanel = document.getElementById('alertVisibilityPanel');
+
+        stylePanel.classList.add('active');
+        repeatPanel.classList.remove('active');
+        visibilityPanel.classList.remove('active');
+
+        document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
+            tab.classList.remove('active');
+            if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
+        });
+
+        settings.onmousedown = (e) => e.stopPropagation();
+
+        if (!document._alertSettingsCloseHandler) {
+            document._alertSettingsCloseHandler = (e) => {
+                if (!settings.contains(e.target) && settings.style.display === 'block') {
+                    settings.style.display = 'none';
+                }
+            };
+            document.addEventListener('mousedown', document._alertSettingsCloseHandler);
+        }
+    }
+
+    // ============================================================
+    // _setupSettingsListeners - ИСПРАВЛЕН (сохранение direction)
+    // ============================================================
+    _setupSettingsListeners() {
+        const settings = document.getElementById('alertSettings');
+        if (!settings || settings._listenersSetup) return;
+        settings._listenersSetup = true;
+
+        settings.querySelectorAll('.settings-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.alertSettingsTab;
+                document.getElementById('alertStylePanel').classList.toggle('active', tabName === 'style');
+                document.getElementById('alertRepeatPanel').classList.toggle('active', tabName === 'repeat');
+                document.getElementById('alertVisibilityPanel').classList.toggle('active', tabName === 'visibility');
+                settings.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+            });
+        });
+
+        document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
+            if (!alert) return;
+            const newPrice = parseFloat(document.getElementById('alertSettingsPriceInput').value);
+            if (!isNaN(newPrice)) {
+                alert.price = newPrice;
+                this._requestRedraw();
+                this._saveAlerts();
+            }
+        });
+
+        document.getElementById('alertSaveSettings').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
+            if (!alert) return;
+            const repeatCountVal = document.getElementById('alertRepeatCount').value;
+            const direction = document.getElementById('alertDirectionSettings')?.value || 'above';
+            alert.updateOptions({
+                color: document.getElementById('alertCurrentColorBox').style.backgroundColor,
+                lineWidth: parseInt(document.getElementById('alertSettingThickness').value),
+                lineStyle: document.getElementById('alertTemplateSelect').value,
+                opacity: parseInt(document.getElementById('alertColorOpacity').value) / 100,
+                showBell: document.getElementById('alertShowBell').checked,
+                repeatCount: repeatCountVal === 'Infinity' ? Infinity : parseInt(repeatCountVal),
+                repeatInterval: parseInt(document.getElementById('alertRepeatInterval').value)
+            });
+            alert.direction = direction;
+            this._requestRedraw();
+            settings.style.display = 'none';
+            this._saveAlerts();
+            this._updateAlertsListUI();
+        });
+
+        document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            this.deleteAlert(alertId);
+            settings.style.display = 'none';
+            this._requestRedraw();
+        });
+    }
+
+    // ============================================================
+    // _renderTimeframeCheckboxes
+    // ============================================================
+    _renderTimeframeCheckboxes(alert) {
+        const container = document.getElementById('alertTimeframeCheckboxList');
+        if (!container) return;
+
+        const tfLabels = {
+            '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
+            '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
+            '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
+        };
+
+        let html = '';
+        const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+
+        timeframes.forEach(tf => {
+            const isChecked = alert.timeframeVisibility[tf] !== false;
+            html += `
+                <div class="timeframe-checkbox-item">
+                    <input type="checkbox" id="alert_tf_${tf}_${alert.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}>
+                    <label for="alert_tf_${tf}_${alert.id}">${tfLabels[tf] || tf}</label>
+                    <span class="tf-badge">${tf}</span>
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+
+        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const tf = e.target.dataset.timeframe;
+                alert.timeframeVisibility[tf] = e.target.checked;
+            });
+        });
+
+        const selectAllBtn = document.getElementById('alertSelectAllTimeframes');
+        const deselectAllBtn = document.getElementById('alertDeselectAllTimeframes');
+
+        if (selectAllBtn) {
+            const newSelectAll = selectAllBtn.cloneNode(true);
+            selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
+            newSelectAll.addEventListener('click', () => {
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = true;
+                    alert.timeframeVisibility[cb.dataset.timeframe] = true;
+                });
+            });
+        }
+
+        if (deselectAllBtn) {
+            const newDeselectAll = deselectAllBtn.cloneNode(true);
+            deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
+            newDeselectAll.addEventListener('click', () => {
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = false;
+                    alert.timeframeVisibility[cb.dataset.timeframe] = false;
+                });
+            });
+        }
+    }
+
+    // ============================================================
+    // _requestRedraw
+    // ============================================================
+    _requestRedraw() {
+        this._alerts.forEach(item => {
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
+    }
+
+    // ============================================================
+    // _applyRedrawIfNeeded
+    // ============================================================
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._alerts.forEach(item => {
+                if (item.primitive?.requestRedraw) {
+                    item.primitive.requestRedraw();
+                }
+            });
+        }
+    }
+
+    // ============================================================
+    // destroy
+    // ============================================================
+    destroy() {
+        if (this._timerInterval) {
+            clearInterval(this._timerInterval);
+            this._timerInterval = null;
+        }
+        for (const symbol of [...this._subscribedSymbols]) {
+            this._unsubscribeFromSymbol(symbol);
+        }
+        this._alerts = [];
+        this._selectedAlert = null;
+        this._hoveredAlert = null;
+        this._dragAlert = null;
+        this._potentialDrag = null;
+        this._lastPrices.clear();
     }
 }
-// ============================================================
-// TEXT DRAWING CLASSES
-// ============================================================
+
+// Глобальная регистрация
+if (typeof window !== 'undefined') {
+    window.AlertLineManager = AlertLineManager;
+}
 
 class TextDrawing {
     constructor(text, time, price, options = {}) {
