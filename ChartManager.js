@@ -616,7 +616,7 @@ _startNewCandleChecker() {
 
         if (isTimeframeChange) {
             this._savedTimePosition = this.saveCurrentTimePosition();
-            console.log('📍 Сохранена позиция для восстановления:', new Date(this._savedTimePosition * 1000));
+            console.log('📍 Сохранена позиция:', this._savedTimePosition);
         }
         
         console.log(`📊 Загружаю данные для ${symbol} (${exchange} ${marketType})`);
@@ -1509,23 +1509,6 @@ updateLastCandle(candle) {
     
     if (!window._sessionHighlighter) {
         window._sessionHighlighter = new SessionHighlighter(this);
-    }
-    
-    // ============================================================
-    // ✅ ИСПРАВЛЕНИЕ: Восстанавливаем позицию скролла при смене таймфрейма
-    // ============================================================
-    if (this._savedTimePosition) {
-        const savedPos = this._savedTimePosition;
-        this._savedTimePosition = null;
-        setTimeout(() => {
-            console.log('📍 Восстанавливаю позицию:', new Date(savedPos * 1000));
-            this.scrollToTime(savedPos);
-        }, 150);
-    } else if (this.currentSymbol !== symbol || this._lastTimeframe !== interval) {
-        // При первой загрузке или смене символа скроллим к концу
-        setTimeout(() => {
-            this.scrollToLast();
-        }, 150);
     }
 }
     async loadDrawingsForCurrentSymbol() {
