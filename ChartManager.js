@@ -36,7 +36,7 @@ class ChartManager {
         this._switchingSymbol = false;
         this._currentFetchController = null;
         this._updateTimeout = null;
-        this.candleTimeMap = new Map();
+this.candleTimeMap = new Map();
         this._visibilityHandler = () => {
             if (document.hidden) {
                 // Ничего не делаем при скрытии
@@ -1511,7 +1511,9 @@ updateLastCandle(candle) {
         window._sessionHighlighter = new SessionHighlighter(this);
     }
     
-    // ✅ ВОТ ЕДИНСТВЕННОЕ ИСПРАВЛЕНИЕ - скролл к концу после смены таймфрейма
+    // ============================================================
+    // ✅ ЕДИНСТВЕННОЕ ИСПРАВЛЕНИЕ - скролл к концу при смене таймфрейма
+    // ============================================================
     setTimeout(() => {
         this.scrollToLast();
     }, 100);
