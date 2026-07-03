@@ -4539,21 +4539,31 @@ class AlertLineManager {
         }
     }
 
-    _handleWorkerAlertTriggered(alertData, price) {
+       _handleWorkerAlertTriggered(alertData, price) {
         const item = this._alerts.find(a => a.alert.id === alertData.id);
         if (!item) return;
         const alert = item.alert;
         alert.active = true;
-        alert.priceTriggered = true;
         alert.lastTriggerTime = alertData.lastTriggerTime || Date.now();
-        alert.triggerCount = alertData.triggerCount || 1;
+        alert.triggerCount = (alert.triggerCount || 0) + 1; // Увеличиваем счетчик
         this._lastPrices.set(alert.symbol, price);
-        this._fireAlert(alert, price, false);
-        if (alert.repeatCount === 1) {
+        
+        this._fireAlert(alert, price, alert.triggerCount > 1);
+        
+        // Проверяем, достиг ли алерт лимита повторов
+        if (alert.repeatCount !== Infinity && alert.triggerCount >= alert.repeatCount) {
             this._completeAlert(alert, item);
+        } else {
+            // ✅ ИСПРАВЛЕНИЕ: Разрешаем Worker'у сработать еще раз
+            if (this._worker) {
+                this._worker.postMessage({ 
+                    type: 'resetAlert', 
+                    alertId: alert.id,
+                    lastTriggerTime: alert.lastTriggerTime
+                });
+            }
         }
     }
-
     _syncAlertsToWorker() {
         if (!this._worker) return;
         const alertsForWorker = this._alerts.map(item => ({
@@ -4588,14 +4598,43 @@ class AlertLineManager {
 
     setMagnetEnabled(enabled) {}
 
-    createAlert(price, time, options = {}) {
+       createAlert(price, time, options = {}) {
         const defaultVisibility = {
             '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
             '1h': true, '4h': true, '6h': true, '12h': true,
             '1d': true, '1w': true, '1M': true
         };
         const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
-        const direction = options.direction || 'above';
+        
+        // ✅ БРОНЕБОЙНОЕ автоопределение направления
+        let autoDirection = 'above';
+        try {
+            let currentMarketPrice = null;
+            
+            // Пытаемся взять из последней свечи
+            const lastCandle = this._chartManager.getLastCandle?.();
+            if (lastCandle && lastCandle.close > 0) {
+                currentMarketPrice = lastCandle.close;
+            } 
+            // Если getLastCandle не сработал, берем напрямую из массива данных графика
+            else if (this._chartManager.chartData && this._chartManager.chartData.length > 0) {
+                const lastDataItem = this._chartManager.chartData[this._chartManager.chartData.length - 1];
+                if (lastDataItem.close) currentMarketPrice = lastDataItem.close;
+            }
+
+            // Сравниваем цену клика с ценой рынка
+            if (currentMarketPrice !== null) {
+                autoDirection = price < currentMarketPrice ? 'below' : 'above';
+                console.log(`🎯 Определение направления: Клик=${price}, Рынок=${currentMarketPrice} -> ${autoDirection}`);
+            } else {
+                console.warn("⚠️ Не удалось получить текущую цену для автоопределения направления");
+            }
+        } catch (e) {
+            console.error("Ошибка автоопределения направления:", e);
+        }
+        
+        // Жестко используем авторасчет, игнорируем то, что могло прийти в options
+        const direction = autoDirection;
         
         const alert = new AlertLine(price, time, {
             ...options,
@@ -4812,14 +4851,36 @@ class AlertLineManager {
             }
         }
     }
-
     _fireAlert(alert, currentPrice, isRepeat) {
         this._saveAlerts();
-        this._startInfiniteHighlight(alert.id);
+        
+        // ✅ ИСПРАВЛЕНИЕ: СНАЧАЛА обновляем список (чтобы DOM перерисовался)
+        this._updateAlertsListUI(); 
+        
+        // ✅ ПОТОМ вешаем мигание (с маленькой задержкой, чтобы DOM успел появится)
+        setTimeout(() => {
+            this._startInfiniteHighlight(alert.id);
+        }, 50);
+
         this._showAlertNotification(alert, currentPrice, isRepeat);
         this._sendTelegramAlert(alert, currentPrice, isRepeat);
-        this._updateAlertsListUI();
         this._requestRedraw();
+    }
+
+    _completeAlert(alert, item) {
+        this._stopHighlight(alert.id);
+        alert.complete();
+        if (item.primitive && item.series) try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+        item.primitive = null;
+        item.series = null;
+        this._syncAlertsToWorker();
+        this._saveAlerts();
+        
+        // ✅ ИСПРАВЛЕНИЕ: Сначала перерисовываем список
+        this._updateAlertsListUI();
+        
+        // ✅ Потом подсвечиваем желтым на вкладке "Завершенные"
+        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
     }
 
     _completeAlert(alert, item) {
@@ -5127,7 +5188,7 @@ class AlertLineManager {
         await Promise.all(promises);
     }
 
-    async loadFromData(symbolKey, alertRecords) {
+        async loadFromData(symbolKey, alertRecords) {
         try {
             const currentSymbolKey = this._getCurrentSymbolKey();
             const isCurrentSymbol = (currentSymbolKey === symbolKey);
@@ -5135,6 +5196,16 @@ class AlertLineManager {
                 ? (this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries)
                 : null;
             if (isCurrentSymbol && !series) return;
+
+            // ✅ ЗАЩИТА ОТ ПРОПАЖИ: Если БД тормозит и вернула пустоту, игнорируем её, 
+            // чтобы не удалить алерты, которые уже загружены в память!
+            if (alertRecords.length === 0) {
+                const existingInMemory = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
+                if (existingInMemory.length > 0) {
+                    console.warn(`⚠️ [AlertManager] БД вернула 0 алертов, но в памяти их ${existingInMemory.length}. Игнорируем очистку!`);
+                    return;
+                }
+            }
 
             const newRecordIds = new Set(alertRecords.map(a => a.id));
             if (isCurrentSymbol) {
@@ -5152,70 +5223,72 @@ class AlertLineManager {
                 try {
                     const existing = this._alerts.find(item => item.alert.id === rec.id);
                     if (existing) {
+                        // Обновляем существующий
                         existing.alert.price = rec.data.price;
                         existing.alert.time = rec.data.time;
                         existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
                         existing.alert.options = { ...existing.alert.options, ...rec.data.options };
                         existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                        existing.alert.triggered = rec.data.triggered || false;
+                        existing.alert.triggered = rec.data.triggered;
                         existing.alert.triggerCount = rec.data.triggerCount || 0;
                         existing.alert.repeatCount = rec.data.repeatCount || 5;
                         existing.alert.repeatInterval = rec.data.repeatInterval || 1;
                         existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                        existing.alert.active = rec.data.active || false;
-                        existing.alert.isTimerMode = rec.data.isTimerMode || false;
-                        existing.alert.priceTriggered = rec.data.priceTriggered || false;
                         existing.alert.status = rec.data.status || 'active';
-                        existing.alert.anchorCandle = rec.data.anchorCandle || null;
-                        existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
-                        existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
-                        existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
-                        existing.alert.createdAt = Date.now();
                         existing.alert.direction = rec.data.direction || 'above';
-                        if (isCurrentSymbol && !existing.alert.triggered && existing.alert.status !== 'completed' && (!existing.primitive || !existing.series)) {
-                            const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
-                            try { series.attachPrimitive(primitive); existing.primitive = primitive; existing.series = series; } catch (e) {}
-                        }
                         continue;
                     }
-                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+
+                    // Создаем новый
+                    const alert = new AlertLine(rec.data.price, rec.data.time, {
+                        ...rec.data.options,
+                        symbol: rec.data.symbol,
+                        exchange: rec.data.exchange,
+                        marketType: rec.data.marketType,
+                        timeframeVisibility: rec.data.timeframeVisibility,
+                        triggered: rec.data.triggered,
+                        triggerCount: rec.data.triggerCount,
+                        repeatCount: rec.data.repeatCount,
+                        repeatInterval: rec.data.repeatInterval,
+                        lastTriggerTime: rec.data.lastTriggerTime,
+                        status: rec.data.status,
+                        direction: rec.data.direction,
+                        isTimerMode: rec.data.isTimerMode,
+                        priceTriggered: rec.data.priceTriggered
+                    });
+                    
                     alert.id = rec.id;
-                    alert.symbolKey = rec.symbolKey;
                     alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                    alert.symbol = rec.data.symbol;
-                    alert.exchange = rec.data.exchange;
-                    alert.marketType = rec.data.marketType;
-                    alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    alert.triggered = rec.data.triggered || false;
-                    alert.triggerCount = rec.data.triggerCount || 0;
-                    alert.repeatCount = rec.data.repeatCount || 5;
-                    alert.repeatInterval = rec.data.repeatInterval || 1;
-                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                    alert.active = rec.data.active || false;
-                    alert.isTimerMode = rec.data.isTimerMode || false;
-                    alert.priceTriggered = rec.data.priceTriggered || false;
-                    alert.status = rec.data.status || 'active';
-                    alert.anchorCandle = rec.data.anchorCandle || null;
-                    alert.createdAt = Date.now();
-                    alert.direction = rec.data.direction || 'above';
-                    if (isCurrentSymbol && !alert.triggered && alert.status !== 'completed') {
-                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                        try { series.attachPrimitive(primitive); newAlerts.push({ alert, primitive, series }); }
-                        catch (e) { newAlerts.push({ alert, primitive: null, series: null }); }
-                    } else {
-                        newAlerts.push({ alert, primitive: null, series: null });
+                    alert.symbolKey = rec.symbolKey;
+
+                    let primitive = null;
+                    let series = null;
+
+                    if (!alert.triggered && alert.status !== 'completed' && isCurrentSymbol) {
+                        primitive = new AlertLinePrimitive(alert, this._chartManager);
+                        series = this._chartManager.currentChartType === 'candle' 
+                            ? this._chartManager.candleSeries 
+                            : this._chartManager.barSeries;
+                        series.attachPrimitive(primitive);
                     }
-                } catch (e) { console.warn('Failed to load alert:', rec.id, e); }
+
+                    newAlerts.push({ alert, primitive, series });
+                } catch (e) {
+                    console.warn('Failed to load alert:', rec.id, e);
+                }
             }
+
             this._alerts.push(...newAlerts);
-            this._syncAlertsToWorker();
-            if (isCurrentSymbol) { this._updateAlertsListUI(); this._requestRedraw(); }
+            this._syncAlertsToWorker(); // Сразу пушим в воркер
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey}`);
+            
         } catch (error) {
-            console.error('❌ loadFromData failed:', error);
+            console.error('❌ loadFromData (alerts) failed:', error);
             throw error;
         }
     }
-
     async loadAllAlertsFromDB() {
         try {
             if (!window.db) return;
