@@ -4255,27 +4255,17 @@ class AlertLineRenderer {
                 ctx.fill();
             }
 
-            if (alert.options.showPrice) {
+                       if (alert.options.showPrice) {
                 let priceText = Utils.formatPrice(alert.price);
                 
-                let statusIcon = '';
-                if (alert.status === 'active' && alert.active) {
-                    statusIcon = '🟢 ';
-                } else if (alert.status === 'paused') {
-                    statusIcon = '⏸️ ';
-                } else if (alert.status === 'completed' || alert.triggered) {
-                    statusIcon = '✅ ';
-                } else if (alert.options.showBell) {
-                    statusIcon = '🔔 ';
-                }
-                
-                priceText = statusIcon + priceText;
-
                 ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
                 const textMetrics = ctx.measureText(priceText);
                 const textWidth = textMetrics.width;
                 const padding = 8 * scope.horizontalPixelRatio;
-                const labelWidth = textWidth + padding * 2;
+                
+                // Добавляем отступ слева для кружка-индикатора (вместо эмодзи)
+                const dotSpace = 12 * scope.horizontalPixelRatio; 
+                const labelWidth = textWidth + padding * 2 + dotSpace;
                 const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
 
                 const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
@@ -4283,6 +4273,7 @@ class AlertLineRenderer {
 
                 this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
 
+                // Рисуем подложку (фон)
                 ctx.fillStyle = rgbaColor;
                 ctx.shadowBlur = 4;
                 ctx.shadowColor = 'rgba(0,0,0,0.3)';
@@ -4292,16 +4283,36 @@ class AlertLineRenderer {
 
                 ctx.shadowBlur = 0;
                 
+                // РИСУЕМ КРУЖОК СТАТУСА (вместо 🟢 ⏸️ ✅ 🔔)
+                let dotColor = '#FFD700'; // Желтый (ожидание)
+                if (alert.status === 'active' && alert.active) dotColor = '#00FF00'; // Зеленый (активен)
+                else if (alert.status === 'paused') dotColor = '#FFA500'; // Оранжевый (пауза)
+                else if (alert.status === 'completed' || alert.triggered) dotColor = '#4CAF50'; // Темно-зеленый (сработал)
+                
+                ctx.shadowColor = 'transparent'; // Убираем тень для кружка
+                ctx.fillStyle = dotColor;
+                ctx.beginPath();
+                ctx.arc(
+                    labelXPos + padding + (dotSpace / 2), 
+                    labelYPos + labelHeight / 2, 
+                    3.5 * scope.horizontalPixelRatio, 
+                    0, Math.PI * 2
+                );
+                ctx.fill();
+
+                // ПИШЕМ ТЕКСТ ЦЕНЫ
                 ctx.shadowColor = '#000000';
                 ctx.shadowBlur = 3;
                 ctx.shadowOffsetX = 1;
                 ctx.shadowOffsetY = 1;
                 ctx.fillStyle = '#FFFFFF';
                 ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                ctx.textAlign = 'center';
+                ctx.textAlign = 'left'; // Меняем выравнивание на левое
                 ctx.textBaseline = 'middle';
-                ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+                // Сдвигаем текст вправо, чтобы он не налезал на кружок
+                ctx.fillText(priceText, labelXPos + padding + dotSpace, labelYPos + labelHeight / 2);
                 
+                // Сброс теней
                 ctx.shadowColor = 'transparent';
                 ctx.shadowBlur = 0;
                 ctx.shadowOffsetX = 0;
@@ -4915,36 +4926,56 @@ class AlertLineManager {
         this._showSystemNotification(alert, currentPrice, isRepeat);
     }
 
-    _playAlertSound() {
+       _playAlertSound() {
         try {
+            // Проверяем, есть ли кастомный звук от пользователя
             const audio = document.getElementById('alertSound');
             if (audio && audio.src && audio.src !== '') {
                 audio.currentTime = 0;
                 audio.play().catch(e => console.log('Звук не воспроизвёлся:', e));
                 return;
             }
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (AudioContext) {
-                const ctx = new AudioContext();
-                if (ctx.state === 'suspended') ctx.resume();
-                const now = ctx.currentTime;
-                const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
-                melody.forEach((freq, i) => {
-                    const startTime = now + i * 0.15;
-                    const osc = ctx.createOscillator();
-                    const gain = ctx.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.value = freq;
-                    gain.gain.setValueAtTime(0, startTime);
-                    gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
-                    gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
-                    osc.connect(gain);
-                    gain.connect(ctx.destination);
-                    osc.start(startTime);
-                    osc.stop(startTime + 0.2);
-                });
+            
+            // ✅ ИСПРАВЛЕНИЕ: Создаем ОДИН глобальный AudioContext на всю вкладку
+            if (!window._globalAlertAudioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (AudioContext) {
+                    window._globalAlertAudioCtx = new AudioContext();
+                }
             }
-        } catch (e) { console.warn('Ошибка звука:', e); }
+            
+            const ctx = window._globalAlertAudioCtx;
+            if (!ctx) return;
+            
+            // Браузеры блокируют звук без взаимодействия юзера. resume() снимает блокировку
+            if (ctx.state === 'suspended') ctx.resume();
+
+            const now = ctx.currentTime;
+            
+            // ✅ ИСПРАВЛЕНИЕ: Укороченная мелодия (3 ноты).
+            // Если сработают 5 алертов одновременно, 16 нот вызовут треск в динамиках. 3 ноты звучат чисто.
+            const melody = [523, 659, 784]; 
+            
+            melody.forEach((freq, i) => {
+                const startTime = now + i * 0.12;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                
+                // Плавная огибающая звука (чтобы не было неприятного "щелчка")
+                gain.gain.setValueAtTime(0, startTime);
+                gain.gain.linearRampToValueAtTime(0.3, startTime + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.15);
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(startTime);
+                osc.stop(startTime + 0.15);
+            });
+        } catch (e) { 
+            console.warn('Ошибка звука:', e); 
+        }
     }
 
     _showSystemNotification(alert, currentPrice, isRepeat) {
