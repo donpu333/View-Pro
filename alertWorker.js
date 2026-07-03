@@ -1,9 +1,10 @@
-// alertWorker.js - Web Worker для алертов (Binance + Bybit)
+// alertWorker.js - Web Worker для алертов (Binance + Bybit) - ИСПРАВЛЕННАЯ ВЕРСИЯ
 let wsConnections = new Map();
 let lastPrices = new Map();
 let activeAlerts = [];
 let restInterval = null;
 let pingIntervals = new Map();
+let isRestPollingActive = false; // ✅ Флаг защиты от race condition
 
 const EXCHANGE_WS = {
     binance: {
@@ -102,10 +103,24 @@ self.onmessage = function(e) {
                 self.postMessage({ type: 'alertAdded', id: data.alert.id });
             }
             break;
+            
+        // ✅ ИСПРАВЛЕНО: Безопасное удаление (ищет символ самостоятельно)
         case 'removeAlert':
+            const alertToRemove = activeAlerts.find(a => a.id === data.alertId);
             activeAlerts = activeAlerts.filter(a => a.id !== data.alertId);
-            checkAndUnsubscribe(data.symbol);
+            const symbolToRemove = alertToRemove ? alertToRemove.symbol : data.symbol;
+            if (symbolToRemove) checkAndUnsubscribe(symbolToRemove);
             break;
+            
+        // ✅ НОВОЕ: Сброс состояния для повторяющихся алертов
+        case 'resetAlert':
+            const alertToReset = activeAlerts.find(a => a.id === data.alertId);
+            if (alertToReset) {
+                alertToReset.priceTriggered = false;
+                alertToReset.lastTriggerTime = data.lastTriggerTime || Date.now();
+            }
+            break;
+
         case 'getStatus':
             self.postMessage({
                 type: 'status',
@@ -224,9 +239,15 @@ function checkAlerts(symbol, price, lastPrice, alerts) {
     }
 }
 
+// ✅ ИСПРАВЛЕНО: Защита от накопления pendind fetch-запросов (Race Condition)
 function startRestPolling() {
     if (restInterval) return;
-    restInterval = setInterval(() => {
+    
+    restInterval = setInterval(async () => {
+        // Если предыдущий цикл опроса еще не завершился, пропускаем этот такт
+        if (isRestPollingActive) return; 
+        isRestPollingActive = true;
+
         const symbolMap = new Map();
         activeAlerts.forEach(alert => {
             if (!alert.triggered && alert.status !== 'completed' && alert.status !== 'paused' && !alert.isTimerMode) {
@@ -237,7 +258,8 @@ function startRestPolling() {
             }
         });
         
-        symbolMap.forEach(async (info, symbol) => {
+        // ✅ ИСПРАВЛЕНО: Используем for...of вместо forEach для корректной работы await
+        for (const [symbol, info] of symbolMap.entries()) {
             try {
                 const config = getRestConfig(info.exchange, info.marketType);
                 const response = await fetch(config(symbol));
@@ -255,8 +277,12 @@ function startRestPolling() {
                         checkAlerts(symbol, price, lastPrice, alerts);
                     }
                 }
-            } catch (e) {}
-        });
+            } catch (e) {
+                // console.warn(`REST poll error for ${symbol}:`, e);
+            }
+        }
+        
+        isRestPollingActive = false; // Снимаем блокировку
     }, 3000);
 }
 
