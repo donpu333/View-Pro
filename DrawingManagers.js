@@ -4171,146 +4171,150 @@ class AlertLineRenderer {
         this._pixelRatio = window.devicePixelRatio || 1;
     }
     
-    draw(target) {
-        this._hitArea = null;
-        this._priceLabelHitArea = null;
+   draw(target) {
+    this._hitArea = null;
+    this._priceLabelHitArea = null;
 
-        const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        if (currentKey && this._alert.symbolKey !== currentKey) return;
+    // ✅ УБРАНА проверка currentKey - она блокировала рисование
+    // const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    // if (currentKey && this._alert.symbolKey !== currentKey) return;
 
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const alert = this._alert;
-            const chartManager = this._chartManager;
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const alert = this._alert;
+        const chartManager = this._chartManager;
 
-            const currentTf = chartManager.currentInterval;
-            if (!alert.isVisibleOnTimeframe(currentTf)) return;
+        const currentTf = chartManager.currentInterval;
+        if (!alert.isVisibleOnTimeframe(currentTf)) return;
 
-            let yCoordinate = chartManager.priceToCoordinate(alert.price);
-            let xCoordinate = chartManager.timeToCoordinate(alert.time);
-            if (yCoordinate === null || xCoordinate === null) return;
+        let yCoordinate = chartManager.priceToCoordinate(alert.price);
+        let xCoordinate = chartManager.timeToCoordinate(alert.time);
+        
+        // ✅ ИСПРАВЛЕНО: для ГОРИЗОНТАЛЬНОЙ линии X не важен
+        if (yCoordinate === null) return;
+        if (xCoordinate === null) xCoordinate = 0;  // ← было: return
 
-            const timeScale = chartManager.chart.timeScale();
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            if (!visibleRange) return;
+        const timeScale = chartManager.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (!visibleRange) return;
 
-            let startX = 0;
-            let endX = scope.mediaSize.width;
-            if (!alert.options.extendLeft) startX = xCoordinate;
-            if (!alert.options.extendRight) endX = xCoordinate;
+        let startX = 0;
+        let endX = scope.mediaSize.width;
+        if (!alert.options.extendLeft) startX = xCoordinate;
+        if (!alert.options.extendRight) endX = xCoordinate;
 
-            const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
-            const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
-            const { position: yPos, length: yLength } = positionsLine(
-                yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
-            );
+        const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+        const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+        const { position: yPos, length: yLength } = positionsLine(
+            yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
+        );
 
-            this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
+        this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
 
-            ctx.save();
+        ctx.save();
 
-            const color = alert.options.color;
-            const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
+        const color = alert.options.color;
+        const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
 
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
-            };
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
-            };
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+        };
 
-            let rgbaColor;
-            let parsed = parseHex(color) || parseRgb(color);
-            if (parsed) {
-                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-            } else {
-                rgbaColor = color;
-            }
+        let rgbaColor;
+        let parsed = parseHex(color) || parseRgb(color);
+        if (parsed) {
+            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        } else {
+            rgbaColor = color;
+        }
 
-            ctx.strokeStyle = rgbaColor;
-            ctx.lineWidth = yLength;
-            
-            if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
-            else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
-            else ctx.setLineDash([]);
-            
+        ctx.strokeStyle = rgbaColor;
+        ctx.lineWidth = yLength;
+        
+        if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+        else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+        else ctx.setLineDash([]);
+        
+        ctx.beginPath();
+        ctx.moveTo(startPos, yPos + yLength / 2);
+        ctx.lineTo(endPos, yPos + yLength / 2);
+        ctx.stroke();
+
+        if (alert.showDragPoint) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
             ctx.beginPath();
-            ctx.moveTo(startPos, yPos + yLength / 2);
-            ctx.lineTo(endPos, yPos + yLength / 2);
-            ctx.stroke();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+        }
 
-            if (alert.showDragPoint) {
-                ctx.fillStyle = '#FFFFFF';
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-
-            if (alert.options.showPrice) {
-                let priceText = Utils.formatPrice(alert.price);
-                
-                let statusIcon = '';
-                if (alert.status === 'active' && alert.active) {
-                    statusIcon = '🟢 ';
-                } else if (alert.status === 'paused') {
-                    statusIcon = '⏸️ ';
-                } else if (alert.status === 'completed' || alert.triggered) {
-                    statusIcon = '✅ ';
-                } else if (alert.options.showBell) {
-                    statusIcon = '🔔 ';
-                }
-                
-                priceText = statusIcon + priceText;
-
-                ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                const textMetrics = ctx.measureText(priceText);
-                const textWidth = textMetrics.width;
-                const padding = 8 * scope.horizontalPixelRatio;
-                const labelWidth = textWidth + padding * 2;
-                const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
-
-                const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
-                const labelYPos = yPos - labelHeight / 2;
-
-                this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
-
-                ctx.fillStyle = rgbaColor;
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = 'rgba(0,0,0,0.3)';
-                ctx.beginPath();
-                this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-                ctx.fill();
-
-                ctx.shadowBlur = 0;
-                
-                ctx.shadowColor = '#000000';
-                ctx.shadowBlur = 3;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
-                
-                ctx.shadowColor = 'transparent';
-                ctx.shadowBlur = 0;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
+        if (alert.options.showPrice) {
+            let priceText = Utils.formatPrice(alert.price);
+            
+            let statusIcon = '';
+            if (alert.status === 'active' && alert.active) {
+                statusIcon = '🟢 ';
+            } else if (alert.status === 'paused') {
+                statusIcon = '⏸️ ';
+            } else if (alert.status === 'completed' || alert.triggered) {
+                statusIcon = '✅ ';
+            } else if (alert.options.showBell) {
+                statusIcon = '🔔 ';
             }
             
-            ctx.restore();
-        });
-    }
+            priceText = statusIcon + priceText;
+
+            ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            const textMetrics = ctx.measureText(priceText);
+            const textWidth = textMetrics.width;
+            const padding = 8 * scope.horizontalPixelRatio;
+            const labelWidth = textWidth + padding * 2;
+            const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
+
+            const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+            const labelYPos = yPos - labelHeight / 2;
+
+            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
+
+            ctx.fillStyle = rgbaColor;
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.beginPath();
+            this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+            
+            ctx.shadowColor = '#000000';
+            ctx.shadowBlur = 3;
+            ctx.shadowOffsetX = 1;
+            ctx.shadowOffsetY = 1;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+            
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        ctx.restore();
+    });
+}
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
