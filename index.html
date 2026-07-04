@@ -2651,92 +2651,102 @@ function createColorGrid(gridId, colorBoxId, hexInputId, selectedColor, addBtnId
 </script>
 <!-- СКРИПТ ДЛЯ СКРИНШОТА (ТОЛЬКО ОДИН!) -->
 <script>
- function takeChartScreenshot() {
-        // Находим ВЕСЬ документ (всю страницу целиком)
-        const element = document.documentElement;
-        
-        // Получаем текущий тикер и таймфрейм
-        let symbol = 'UNKNOWN';
-        let timeframe = 'UNKNOWN';
-        
-        const pairDisplay = document.getElementById('pairDisplay');
-        const currentTfBadge = document.getElementById('currentTfBadge');
-        
-        if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
-        if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
-        
-        if (window.chartManagerInstance) {
-            if (window.chartManagerInstance.currentSymbol) {
-                symbol = window.chartManagerInstance.currentSymbol;
-            }
-            if (window.chartManagerInstance.currentInterval) {
-                const interval = window.chartManagerInstance.currentInterval;
-                const tfMap = {
-                    '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-                    '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
-                    '1d': '1D', '1w': '1W', '1M': '1M'
-                };
-                timeframe = tfMap[interval] || interval;
-            }
+function takeChartScreenshot() {
+    // Находим ВЕСЬ документ (всю страницу целиком)
+    const element = document.documentElement;
+    
+    // Получаем текущий тикер и таймфрейм
+    let symbol = 'UNKNOWN';
+    let timeframe = 'UNKNOWN';
+    
+    const pairDisplay = document.getElementById('pairDisplay');
+    const currentTfBadge = document.getElementById('currentTfBadge');
+    
+    if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
+    if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
+    
+    if (window.chartManagerInstance) {
+        if (window.chartManagerInstance.currentSymbol) {
+            symbol = window.chartManagerInstance.currentSymbol;
         }
+        if (window.chartManagerInstance.currentInterval) {
+            const interval = window.chartManagerInstance.currentInterval;
+            const tfMap = {
+                '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
+                '1d': '1D', '1w': '1W', '1M': '1M'
+            };
+            timeframe = tfMap[interval] || interval;
+        }
+    }
+    
+    const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${cleanSymbol}_${timeframe}.png`;
+
+    // Временно убираем скролл
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // === УЛУЧШЕНИЕ: Динамический scale под устройство ===
+    const pixelRatio = window.devicePixelRatio || 1;
+    const scale = Math.min(pixelRatio * 2, 4);  // До 4x на Retina, минимум 2x
+
+    // Делаем скриншот всей страницы
+    html2canvas(element, {
+        scale: scale,                    // Было 2, стало адаптивно
+        logging: false,
+        allowTaint: false,
+        useCORS: true,
+        backgroundColor: '#000000',
+        windowWidth: window.innerWidth,
+        windowHeight: window.innerHeight
+    }).then((canvas) => {
+        // Возвращаем скролл
+        document.body.style.overflow = originalOverflow;
         
-        const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-        const filename = `${cleanSymbol}_${timeframe}.png`;
-
-        // Временно убираем скролл
-        const originalOverflow = document.body.style.overflow;
-        document.body.style.overflow = 'hidden';
-
-        // Делаем скриншот всей страницы
-        html2canvas(element, {
-            scale: 2,
-            logging: false,
-            allowTaint: false,
-            useCORS: true,
-            backgroundColor: '#000000',
-            windowWidth: window.innerWidth,
-            windowHeight: window.innerHeight
-        }).then((canvas) => {
-            // Возвращаем скролл
-            document.body.style.overflow = originalOverflow;
-            
-            // Создаём ссылку для скачивания
+        // === УЛУЧШЕНИЕ: Сохраняем через Blob для максимального качества ===
+        canvas.toBlob((blob) => {
             const link = document.createElement('a');
             link.download = filename;
-            link.href = canvas.toDataURL('image/png');
+            link.href = URL.createObjectURL(blob);
             link.click();
             
-            console.log(`✅ Скриншот сохранён: ${filename}`);
+            // Освобождаем память
+            URL.revokeObjectURL(link.href);
             
-        }).catch((error) => {
-            document.body.style.overflow = originalOverflow;
-            console.error('❌ Ошибка html2canvas:', error);
+            console.log(`✅ Скриншот сохранён: ${filename} (${Math.round(blob.size / 1024)} КБ, scale: ${scale}x)`);
+        }, 'image/png', 1.0);  // Максимальное качество PNG
+        
+    }).catch((error) => {
+        document.body.style.overflow = originalOverflow;
+        console.error('❌ Ошибка html2canvas:', error);
+    });
+}
+
+// Обработчик клика по кнопке скриншота
+document.addEventListener('DOMContentLoaded', function() {
+    const screenshotBtn = document.getElementById('toolScreenshot');
+    if (screenshotBtn) {
+        screenshotBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            takeChartScreenshot();
         });
     }
 
-    // Обработчик клика по кнопке скриншота
-    document.addEventListener('DOMContentLoaded', function() {
-        const screenshotBtn = document.getElementById('toolScreenshot');
-        if (screenshotBtn) {
-            screenshotBtn.addEventListener('click', function(e) {
+    // Горячая клавиша S
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 's' || e.key === 'S') {
+            if (document.activeElement.tagName !== 'INPUT' && 
+                document.activeElement.tagName !== 'TEXTAREA' &&
+                document.activeElement.tagName !== 'SELECT') {
                 e.preventDefault();
-                e.stopPropagation();
                 takeChartScreenshot();
-            });
-        }
-
-        // Горячая клавиша S
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 's' || e.key === 'S') {
-                if (document.activeElement.tagName !== 'INPUT' && 
-                    document.activeElement.tagName !== 'TEXTAREA' &&
-                    document.activeElement.tagName !== 'SELECT') {
-                    e.preventDefault();
-                    takeChartScreenshot();
-                }
             }
-        });
+        }
     });
+});
+
 // Переключение ориентации панели рисовалок
 const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
 if (toolbarOrientationBtn && drawingToolbar) {
@@ -2759,7 +2769,7 @@ if (toolbarOrientationBtn && drawingToolbar) {
             localStorage.setItem('drawingToolbarOrientation', 'horizontal');
         }
     });
-} 
+}
     
 </script>
 
