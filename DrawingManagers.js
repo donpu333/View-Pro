@@ -4166,163 +4166,154 @@ class AlertLineRenderer {
         this._priceLabelHitArea = null;
         this._pixelRatio = window.devicePixelRatio || 1;
     }
-    
-    draw(target) {
-        this._hitArea = null;
-        this._priceLabelHitArea = null;
+   draw(target) {
+    this._hitArea = null;
+    this._priceLabelHitArea = null;
 
-        // ✅ ИСПРАВЛЕНИЕ №1: УБРАНА проверка currentKey
-        // const currentKey = this._chartManager.getCurrentSymbolKey?.();
-        // if (currentKey && this._alert.symbolKey !== currentKey) return;
+    // ✅ РАСКОММЕНТИРОВАТЬ ЭТИ 2 СТРОЧКИ!
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._alert.symbolKey !== currentKey) return;
 
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const alert = this._alert;
-            const chartManager = this._chartManager;
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const alert = this._alert;
+        const chartManager = this._chartManager;
 
-            const currentTf = chartManager.currentInterval;
-            if (!alert.isVisibleOnTimeframe(currentTf)) return;
+        const currentTf = chartManager.currentInterval;
+        if (!alert.isVisibleOnTimeframe(currentTf)) return;
 
-            let yCoordinate = chartManager.priceToCoordinate(alert.price);
-            let xCoordinate = chartManager.timeToCoordinate(alert.time);
-            
-            // ✅ ИСПРАВЛЕНИЕ №2: Для ГОРИЗОНТАЛЬНОЙ линии X не важен
-            if (yCoordinate === null) return;
-            if (xCoordinate === null) xCoordinate = 0;
+        let yCoordinate = chartManager.priceToCoordinate(alert.price);
+        let xCoordinate = chartManager.timeToCoordinate(alert.time);
+        
+        if (yCoordinate === null) return;
+        if (xCoordinate === null) xCoordinate = 0;
 
-            const timeScale = chartManager.chart.timeScale();
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            if (!visibleRange) return;
+        const timeScale = chartManager.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (!visibleRange) return;
 
-            let startX = 0;
-            let endX = scope.mediaSize.width;
-            if (!alert.options.extendLeft) startX = xCoordinate;
-            if (!alert.options.extendRight) endX = xCoordinate;
+        let startX = 0;
+        let endX = scope.mediaSize.width;
+        if (!alert.options.extendLeft) startX = xCoordinate;
+        if (!alert.options.extendRight) endX = xCoordinate;
 
-            const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
-            const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
-            const { position: yPos, length: yLength } = positionsLine(
-                yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
-            );
+        const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+        const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+        const { position: yPos, length: yLength } = positionsLine(
+            yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
+        );
 
-            this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
+        this._hitArea = { y: yPos, height: yLength, x1: Math.min(startPos, endPos), x2: Math.max(startPos, endPos) };
 
-            ctx.save();
+        ctx.save();
 
-            const color = alert.options.color;
-            const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
+        const color = alert.options.color;
+        const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
 
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
-            };
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
-            };
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+        };
 
-            let rgbaColor;
-            let parsed = parseHex(color) || parseRgb(color);
-            if (parsed) {
-                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-            } else {
-                rgbaColor = color;
-            }
+        let rgbaColor;
+        let parsed = parseHex(color) || parseRgb(color);
+        if (parsed) {
+            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        } else {
+            rgbaColor = color;
+        }
 
-            ctx.strokeStyle = rgbaColor;
-            ctx.lineWidth = yLength;
-            
-            if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
-            else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
-            else ctx.setLineDash([]);
-            
+        ctx.strokeStyle = rgbaColor;
+        ctx.lineWidth = yLength;
+        
+        if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+        else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+        else ctx.setLineDash([]);
+        
+        ctx.beginPath();
+        ctx.moveTo(startPos, yPos + yLength / 2);
+        ctx.lineTo(endPos, yPos + yLength / 2);
+        ctx.stroke();
+
+        if (alert.showDragPoint) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
             ctx.beginPath();
-            ctx.moveTo(startPos, yPos + yLength / 2);
-            ctx.lineTo(endPos, yPos + yLength / 2);
-            ctx.stroke();
-
-            if (alert.showDragPoint) {
-                ctx.fillStyle = '#FFFFFF';
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-                
-                ctx.fillStyle = rgbaColor;
-                ctx.beginPath();
-                ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-
-                       if (alert.options.showPrice) {
-                let priceText = Utils.formatPrice(alert.price);
-                
-                ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                const textMetrics = ctx.measureText(priceText);
-                const textWidth = textMetrics.width;
-                const padding = 8 * scope.horizontalPixelRatio;
-                
-                // Добавляем отступ слева для кружка-индикатора (вместо эмодзи)
-                const dotSpace = 12 * scope.horizontalPixelRatio; 
-                const labelWidth = textWidth + padding * 2 + dotSpace;
-                const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
-
-                const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
-                const labelYPos = yPos - labelHeight / 2;
-
-                this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
-
-                // Рисуем подложку (фон)
-                ctx.fillStyle = rgbaColor;
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = 'rgba(0,0,0,0.3)';
-                ctx.beginPath();
-                this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-                ctx.fill();
-
-                ctx.shadowBlur = 0;
-                
-                // РИСУЕМ КРУЖОК СТАТУСА (вместо 🟢 ⏸️ ✅ 🔔)
-                let dotColor = '#FFD700'; // Желтый (ожидание)
-                if (alert.status === 'active' && alert.active) dotColor = '#00FF00'; // Зеленый (активен)
-                else if (alert.status === 'paused') dotColor = '#FFA500'; // Оранжевый (пауза)
-                else if (alert.status === 'completed' || alert.triggered) dotColor = '#4CAF50'; // Темно-зеленый (сработал)
-                
-                ctx.shadowColor = 'transparent'; // Убираем тень для кружка
-                ctx.fillStyle = dotColor;
-                ctx.beginPath();
-                ctx.arc(
-                    labelXPos + padding + (dotSpace / 2), 
-                    labelYPos + labelHeight / 2, 
-                    3.5 * scope.horizontalPixelRatio, 
-                    0, Math.PI * 2
-                );
-                ctx.fill();
-
-                // ПИШЕМ ТЕКСТ ЦЕНЫ
-                ctx.shadowColor = '#000000';
-                ctx.shadowBlur = 3;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-                ctx.textAlign = 'left'; // Меняем выравнивание на левое
-                ctx.textBaseline = 'middle';
-                // Сдвигаем текст вправо, чтобы он не налезал на кружок
-                ctx.fillText(priceText, labelXPos + padding + dotSpace, labelYPos + labelHeight / 2);
-                
-                // Сброс теней
-                ctx.shadowColor = 'transparent';
-                ctx.shadowBlur = 0;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
-            }
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
             
-            ctx.restore();
-        });
-    }
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+        }
 
+        if (alert.options.showPrice) {
+            let priceText = Utils.formatPrice(alert.price);
+            
+            ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            const textMetrics = ctx.measureText(priceText);
+            const textWidth = textMetrics.width;
+            const padding = 8 * scope.horizontalPixelRatio;
+            
+            const dotSpace = 12 * scope.horizontalPixelRatio; 
+            const labelWidth = textWidth + padding * 2 + dotSpace;
+            const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
+
+            const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+            const labelYPos = yPos - labelHeight / 2;
+
+            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
+
+            ctx.fillStyle = rgbaColor;
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.beginPath();
+            this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+            
+            let dotColor = '#FFD700';
+            if (alert.status === 'active' && alert.active) dotColor = '#00FF00';
+            else if (alert.status === 'paused') dotColor = '#FFA500';
+            else if (alert.status === 'completed' || alert.triggered) dotColor = '#4CAF50';
+            
+            ctx.shadowColor = 'transparent';
+            ctx.fillStyle = dotColor;
+            ctx.beginPath();
+            ctx.arc(
+                labelXPos + padding + (dotSpace / 2), 
+                labelYPos + labelHeight / 2, 
+                3.5 * scope.horizontalPixelRatio, 
+                0, Math.PI * 2
+            );
+            ctx.fill();
+
+            ctx.shadowColor = '#000000';
+            ctx.shadowBlur = 3;
+            ctx.shadowOffsetX = 1;
+            ctx.shadowOffsetY = 1;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(priceText, labelXPos + padding + dotSpace, labelYPos + labelHeight / 2);
+            
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        ctx.restore();
+    });
+}
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
         if (h < 2 * r) r = h / 2;
