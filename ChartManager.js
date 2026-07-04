@@ -199,21 +199,22 @@ class ChartManager {
             this.barSeries.applyOptions({ priceLineColor: lineColor });
         }
 
-       if (typeof LightweightCharts !== 'undefined') {
+      if (typeof LightweightCharts !== 'undefined') {
     try {
         this.volumeSeries = this.chart.addSeries(LightweightCharts.HistogramSeries, {
             priceScaleId: 'volume',
             priceFormat: { type: 'volume' },
             color: '#26a69a',
             lineWidth: 1,
-            lastValueVisible: false,
+            lastValueVisible: false,     // 🔥 Нет метки на шкале
+            priceLineVisible: false,     // 🔥 Нет горизонтальной линии
             title: ''
         });
         
         const volumeScale = this.chart.priceScale('volume');
         if (volumeScale) {
             volumeScale.applyOptions({
-                scaleMargins: { top: 0.85, bottom: 0 },  // 🔥 Уменьшили высоту
+                scaleMargins: { top: 0.85, bottom: 0 },
                 visible: true,
                 borderVisible: true,
                 autoScale: true
