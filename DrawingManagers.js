@@ -4592,44 +4592,77 @@ class AlertLineManager {
 
     // ✅ НОВЫЙ МЕТОД — ПЕРЕПРИКРЕПЛЕНИЕ
     reattachPrimitives() {
-        const currentSymbolKey = this._getCurrentSymbolKey();
-        const series = this._chartManager.currentChartType === 'candle' 
-            ? this._chartManager.candleSeries 
-            : this._chartManager.barSeries;
-        
-        if (!series) {
-            console.warn('⚠️ [AlertManager] Серия не найдена');
-            return 0;
-        }
-        
-        let count = 0;
-        for (const item of this._alerts) {
-            const alert = item.alert;
-            if (alert.status === 'completed' || alert.triggered) continue;
-            if (alert.symbolKey !== currentSymbolKey) continue;
-            
-            if (item.primitive && item.series !== series) {
-                try { if (item.series) item.series.detachPrimitive(item.primitive); } catch(e) {}
-                item.primitive = null;
-                item.series = null;
-            }
-            
-            if (!item.primitive) {
-                try {
-                    const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    item.primitive = primitive;
-                    item.series = series;
-                    count++;
-                } catch(e) { console.warn('Reattach error:', e); }
-            }
-        }
-        if (count > 0) {
-            console.log(`✅ [AlertManager] Переприкреплено ${count} алертов`);
-            this._requestRedraw();
-        }
-        return count;
+    const currentSymbolKey = this._getCurrentSymbolKey();
+    const series = this._chartManager.currentChartType === 'candle' 
+        ? this._chartManager.candleSeries 
+        : this._chartManager.barSeries;
+    
+    if (!series) {
+        console.warn('⚠️ [AlertManager] Серия не найдена');
+        return 0;
     }
+    
+    console.log(`🔍 [AlertManager] Переприкрепление для ${currentSymbolKey}`);
+    console.log(`📊 Всего алертов: ${this._alerts.length}`);
+    
+    let count = 0;
+    for (const item of this._alerts) {
+        const alert = item.alert;
+        
+        console.log(`   Проверка алерта ${alert.id}:`, {
+            symbolKey: alert.symbolKey,
+            currentSymbolKey: currentSymbolKey,
+            status: alert.status,
+            triggered: alert.triggered,
+            match: alert.symbolKey === currentSymbolKey
+        });
+        
+        // ✅ Пропускаем завершенные
+        if (alert.status === 'completed' || alert.triggered) {
+            console.log(`   ⏭️ Пропускаем (завершен): ${alert.id}`);
+            continue;
+        }
+        
+        // ✅ Пропускаем не текущий символ
+        if (alert.symbolKey !== currentSymbolKey) {
+            console.log(`   ⏭️ Пропускаем (другой символ): ${alert.id}`);
+            continue;
+        }
+        
+        // ✅ Если примитив есть, но серия старая — открепляем
+        if (item.primitive && item.series !== series) {
+            try {
+                if (item.series) {
+                    item.series.detachPrimitive(item.primitive);
+                }
+            } catch(e) {}
+            item.primitive = null;
+            item.series = null;
+            console.log(`   🔄 Откреплен старый примитив: ${alert.id}`);
+        }
+        
+        // ✅ Если примитива нет — создаем
+        if (!item.primitive) {
+            try {
+                console.log(`   🆕 Создаем примитив для: ${alert.id}`);
+                const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                series.attachPrimitive(primitive);
+                item.primitive = primitive;
+                item.series = series;
+                count++;
+                console.log(`   ✅ Создан примитив: ${alert.id}`);
+            } catch(e) {
+                console.warn(`   ❌ Ошибка создания примитива ${alert.id}:`, e);
+            }
+        } else {
+            console.log(`   ✅ Примитив уже есть: ${alert.id}`);
+        }
+    }
+    
+    console.log(`✅ [AlertManager] Переприкреплено ${count} алертов`);
+    if (count > 0) this._requestRedraw();
+    return count;
+}
 
     setDrawingMode(enabled) {
         this._isDrawingMode = enabled;
