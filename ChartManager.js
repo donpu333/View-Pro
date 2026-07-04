@@ -199,39 +199,36 @@ class ChartManager {
             this.barSeries.applyOptions({ priceLineColor: lineColor });
         }
 
-        if (typeof LightweightCharts !== 'undefined') {
-            try {
-                this.volumeSeries = this.chart.addSeries(LightweightCharts.HistogramSeries, {
-                    priceScaleId: 'volume',
-                    priceFormat: { type: 'volume' },
-                    color: '#26a69a',
-                    lineWidth: 1,
-                    lastValueVisible: false,
-                    title: ''
-                });
-                
-                const volumeScale = this.chart.priceScale('volume');
-                if (volumeScale) {
-                    volumeScale.applyOptions({
-                        scaleMargins: { top: 0.7, bottom: 0 },
-                        visible: true,
-                        borderVisible: true,
-                        autoScale: true
-                    });
-                }
-                
-                this.bullishColor = CONFIG.colors.bullish;
-                this.bearishColor = CONFIG.colors.bearish;
-                
-                console.log('✅ Volume series создан');
-            } catch (e) {
-                console.warn('⚠️ Не удалось создать Volume:', e);
-                this.volumeSeries = null;
-            }
-        } else {
-            console.warn('⚠️ LightweightCharts не загружен');
-            this.volumeSeries = null;
+       if (typeof LightweightCharts !== 'undefined') {
+    try {
+        this.volumeSeries = this.chart.addSeries(LightweightCharts.HistogramSeries, {
+            priceScaleId: 'volume',
+            priceFormat: { type: 'volume' },
+            color: '#26a69a',
+            lineWidth: 1,
+            lastValueVisible: false,
+            title: ''
+        });
+        
+        const volumeScale = this.chart.priceScale('volume');
+        if (volumeScale) {
+            volumeScale.applyOptions({
+                scaleMargins: { top: 0.85, bottom: 0 },  // 🔥 Уменьшили высоту
+                visible: true,
+                borderVisible: true,
+                autoScale: true
+            });
         }
+        
+        this.bullishColor = CONFIG.colors.bullish;
+        this.bearishColor = CONFIG.colors.bearish;
+        
+        console.log('✅ Volume series создан');
+    } catch (e) {
+        console.warn('⚠️ Не удалось создать Volume:', e);
+        this.volumeSeries = null;
+    }
+}
 
         console.log('✅ Volume series создан с отдельной шкалой');
 
@@ -1207,39 +1204,39 @@ class ChartManager {
         this.currentInterval = interval;
     }
 
-    _updateMainChartHeight() {
-        if (!this.chart) return;
-        
-        const chartContainer = document.getElementById('chart-container');
-        const panelsContainer = document.getElementById('indicator-panels-container');
-        
-        if (!chartContainer) return;
+   _updateMainChartHeight() {
+    if (!this.chart) return;
+    
+    const chartContainer = document.getElementById('chart-container');
+    const panelsContainer = document.getElementById('indicator-panels-container');
+    
+    if (!chartContainer) return;
 
-        const availableHeight = window.innerHeight - 48;
-        const panelsHeight = panelsContainer ? panelsContainer.offsetHeight : 0;
-        let newChartHeight = availableHeight - panelsHeight;
-        
-        if (newChartHeight < 200) newChartHeight = 200;
-        
-        chartContainer.style.height = newChartHeight + 'px';
-        chartContainer.style.maxHeight = newChartHeight + 'px';
-        
-        if (panelsContainer) {
-            panelsContainer.style.position = 'absolute';
-            panelsContainer.style.top = newChartHeight + 'px';
-            panelsContainer.style.bottom = 'auto';
-        }
-        
-        const width = chartContainer.clientWidth;
-        this.chart.resize(width, newChartHeight);
-        
-        const volumeScale = this.chart.priceScale('volume');
-        if (volumeScale) {
-            volumeScale.applyOptions({
-                scaleMargins: { top: 0.7, bottom: 0 }
-            });
-        }
+    const availableHeight = window.innerHeight - 48;
+    const panelsHeight = panelsContainer ? panelsContainer.offsetHeight : 0;
+    let newChartHeight = availableHeight - panelsHeight;
+    
+    if (newChartHeight < 200) newChartHeight = 200;
+    
+    chartContainer.style.height = newChartHeight + 'px';
+    chartContainer.style.maxHeight = newChartHeight + 'px';
+    
+    if (panelsContainer) {
+        panelsContainer.style.position = 'absolute';
+        panelsContainer.style.top = newChartHeight + 'px';
+        panelsContainer.style.bottom = 'auto';
     }
+    
+    const width = chartContainer.clientWidth;
+    this.chart.resize(width, newChartHeight);
+    
+    const volumeScale = this.chart.priceScale('volume');
+    if (volumeScale) {
+        volumeScale.applyOptions({
+            scaleMargins: { top: 0.85, bottom: 0 }  // 🔥 Было 0.7 → стало 0.85
+        });
+    }
+}
 
     _resizeIndicatorPanels() {
         const chartContainer = document.getElementById('chart-container');
