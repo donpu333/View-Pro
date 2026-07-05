@@ -1820,7 +1820,9 @@ svg, svg * { font-family: none !important; }
 #tickerListContainer { visibility: hidden; opacity: 0; transition: opacity 0.1s ease; }
 #tickerListContainer.ready { visibility: visible; opacity: 1; }
 
+
 .ticker-panel .ticker-item {
+
     position: absolute !important;
     left: 0 !important;
     right: 0 !important;
@@ -1835,12 +1837,13 @@ svg, svg * { font-family: none !important; }
     min-height: 36px !important;
     background: transparent !important;
     border-bottom: 1px solid var(--border-light) !important;
-    cursor: grab;
+    cursor: default;                    /* ✅ БЫЛО: cursor: grab */
     transition: all 0.1s ease;
     font-size: 0.75rem;
 }
 
-.ticker-item:active { cursor: grabbing; }
+.ticker-item:active { cursor: default; } /* ✅ БЫЛО: cursor: grabbing */
+.ticker-item:active { cursor: default; }
 .ticker-item.dragging { opacity: 0.5; background: rgba(255,255,255,0.05); z-index: 1000; position: relative; }
 .ticker-item.drag-over { border-top: 2px solid var(--accent-green); }
 
