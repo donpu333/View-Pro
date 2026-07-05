@@ -12,7 +12,8 @@ class PriceManager {
             'bybit:spot': null
         };
         this.reconnectTimers = new Map();
-        
+        this._pendingUpdates = new Map();
+this._flushRafId = null;
         this._init();
     }
     
@@ -117,16 +118,34 @@ class PriceManager {
         this.reconnectTimers.set(key, setTimeout(() => initFn(), 3000));
     }
     
-    // Установка цены с составным ключом
-    _setPrice(symbol, price, exchange, marketType) {
-        const compositeKey = `${symbol}:${exchange}:${marketType}`;
-        const old = this.prices.get(compositeKey);
-        // Фильтр: если изменение меньше 0.01% - можно пропустить (опционально)
-        if (old && Math.abs(price - old.price) / old.price < 0.0001) return;
+   _setPrice(symbol, price, exchange, marketType) {
+    const compositeKey = `${symbol}:${exchange}:${marketType}`;
+    const old = this.prices.get(compositeKey);
+    if (old && Math.abs(price - old.price) / old.price < 0.0001) return;
+    
+    this.prices.set(compositeKey, { price, time: Date.now(), exchange, marketType });
+    
+    // ✅ Кладем в буфер вместо немедленной рассылки
+    this._pendingUpdates.set(compositeKey, { price, symbol, exchange, marketType });
+    this._scheduleFlush();
+}
+  _scheduleFlush() {
+    if (this._flushRafId !== null) return;
+    this._flushRafId = requestAnimationFrame(() => {
+        this._flushRafId = null;
+        this._flushUpdates();
+    });
+}  
+   _flushUpdates() {
+    // Забираем накопленные цены и сразу очищаем корзину
+    const updates = new Map(this._pendingUpdates);
+    this._pendingUpdates.clear();
+    
+    // Раздаем цены подписчикам
+    for (const [compositeKey, data] of updates.entries()) {
+        const { price, symbol, exchange, marketType } = data;
         
-        this.prices.set(compositeKey, { price, time: Date.now(), exchange, marketType });
-        
-        // Оповещение подписчиков на этот точный ключ
+        // Оповещаем по составному ключу
         if (this.subscribers.has(compositeKey)) {
             const cbs = this.subscribers.get(compositeKey);
             for (let cb of cbs) {
@@ -134,7 +153,7 @@ class PriceManager {
             }
         }
         
-        // Для обратной совместимости – оповещаем подписчиков по старому ключу (только символ)
+        // Оповещаем по старому ключу (только символ) для обратной совместимости
         if (this.subscribers.has(symbol)) {
             const cbs = this.subscribers.get(symbol);
             for (let cb of cbs) {
@@ -142,8 +161,7 @@ class PriceManager {
             }
         }
     }
-    
-    // ========== ПУБЛИЧНЫЕ МЕТОДЫ ==========
+}
     
     // Подписка на конкретный тикер (с биржей и типом рынка)
     subscribe(compositeKeyOrSymbol, callback, exchange = 'binance', marketType = 'futures') {
