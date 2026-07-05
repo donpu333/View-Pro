@@ -70,12 +70,14 @@ class IndicatorPanelManager {
         wrapper.appendChild(content);
         this.container.appendChild(wrapper);
         
-        // Создаем график
+             // ✅ ЗАЩИТА ОТ 0: Если браузер еще не посчитал ширину, ставим дефолтную
+        const safeWidth = content.clientWidth || 400;
+        const safeHeight = Math.max(50, defaultHeight - 28);
+        
         const chart = LightweightCharts.createChart(content, {
-            // ИСПРАВЛЕНО: Берем ширину content, а не всего container!
-            width: content.clientWidth,
-            height: defaultHeight - 28,
-              autoSize: false, 
+            width: safeWidth,
+            height: safeHeight,
+            autoSize: false, 
             layout: { background: { color: '#000000' }, textColor: '#808080' },
             grid: { vertLines: { visible: false }, horzLines: { visible: false } },
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
@@ -90,10 +92,7 @@ class IndicatorPanelManager {
         header.querySelector('.collapse-btn').addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(id); });
         header.querySelector('.close-btn').addEventListener('click', (e) => { e.stopPropagation(); this.closePanel(id); });
         resizer.addEventListener('mousedown', (e) => { this._startResize(id, e); });
-            this._syncPanelWithMainChart(chart);
-        setTimeout(() => { if (this.chartManager?._updateMainChartHeight) this.chartManager._updateMainChartHeight(); }, 50);
-        console.log(`🔗 Вызываю _syncPanelWithMainChart для: ${id}`);
-   
+         
         return panel;
     }
     
