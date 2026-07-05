@@ -2244,7 +2244,7 @@ svg, svg * { font-family: none !important; }
 
 .context-menu-item {
     padding: 8px 16px;
-    cursor: pointer;
+    cursor: default;     
     display: flex;
     align-items: center;
     gap: 10px;
@@ -2302,7 +2302,7 @@ svg, svg * { font-family: none !important; }
 
 #tickerContextMenu .context-menu-item {
     padding: 8px 12px;
-    cursor: pointer;
+    cursor: default;   
     color: #ccc;
     font-size: 13px;
     display: flex;
@@ -2420,7 +2420,7 @@ svg, svg * { font-family: none !important; }
     align-items: center !important;
     gap: 10px !important;
     padding: 10px 14px !important;
-    cursor: pointer !important;
+    cursor: default !important;   /* ✅ БЫЛО: cursor: pointer !important */
     transition: background 0.15s !important;
     position: relative !important;
     z-index: 100002 !important;
@@ -2803,3 +2803,21 @@ input:checked + .slider:before { transform: translateX(22px); }
     from { opacity: 0; transform: translateY(-8px); }
     to { opacity: 1; transform: translateY(0); }
 }
+/* Курсор-стрелка во всей панели тикеров */
+.ticker-panel,
+.ticker-panel * {
+    cursor: default !important;
+}
+
+/* Исключения: где курсор всё-таки нужен */
+.ticker-panel input,
+.ticker-panel textarea,
+.ticker-panel select {
+    cursor: text !important;
+}
+
+.ticker-panel .wl-dropdown-menu,
+.ticker-panel .modal-results {
+    cursor: default !important;
+}
+
