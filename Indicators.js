@@ -25,21 +25,18 @@ class ADXIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    _createEmptySeries() {
+        createSeries() {
+        this._removeAllSeries();
         const panelManager = this.manager.panelManager;
         const panelId = this.data.panel;
-        
-        // ИСПРАВЛЕНО: Убран null при удалении серий
-        this.series.forEach(s => {
-            if (s) panelManager.removeSeries(panelId, s);
-        });
-        this.series = [];
         
         this.series = [
             panelManager.addSeries(panelId, `${this.type}-line`, 'line', { color: this.settings.color, lineWidth: this.settings.lineWidth }),
             panelManager.addSeries(panelId, `${this.type}-plus`, 'line', { color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed }),
             panelManager.addSeries(panelId, `${this.type}-minus`, 'line', { color: '#FF5252', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed })
         ];
+        
+        return this.series;
     }
     
     updateSeriesData(data) {
@@ -77,18 +74,16 @@ class ATRIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    _createEmptySeries() {
+       createSeries() {
+        this._removeAllSeries();
         const panelManager = this.manager.panelManager;
         const panelId = this.data.panel;
-        
-        this.series.forEach(s => {
-            if (s) panelManager.removeSeries(panelId, s);
-        });
-        this.series = [];
         
         this.series = [
             panelManager.addSeries(panelId, `${this.type}-line`, 'line', { color: this.settings.color, lineWidth: this.settings.lineWidth })
         ];
+        
+        return this.series;
     }
     
     updateSeriesData(data) {
@@ -165,51 +160,50 @@ class MACDIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-       _createEmptySeries() {
-    const pm = this.manager.panelManager;
-    const pid = this.data.panel;
-    
-    this.series.forEach(s => { if (s) pm.removeSeries(pid, s); });
-    this.series = [];
-    
-    // 1. Гистограмма — ТОЖЕ НА ПРАВОЙ ШКАЛЕ
-    const histSeries = pm.addSeries(pid, `${this.type}-histogram`, 'histogram', {
-        priceLineVisible: false,
-        lastValueVisible: false,
-        priceScaleId: 'right',     // ← МЕНЯЕМ НА 'right'
-        scaleMargins: { top: 0.2, bottom: 0.05 }
-    });
-    
-    // Нулевая линия на ПРАВОЙ шкале
-    histSeries.createPriceLine({
-        price: 0,
-        color: '#787b86',
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.SparseDotted,
-        axisLabelVisible: true,
-        title: 'Zero'
-    });
-    
-    // 2. Линия MACD — ПРАВАЯ ШКАЛА
-    const macdSeries = pm.addSeries(pid, `${this.type}-line`, 'line', {
-        color: '#2196F3',
-        lineWidth: this.settings.lineWidth,
-        priceScaleId: 'right',
-        lastValueVisible: true,
-        title: 'MACD'
-    });
-    
-    // 3. Сигнальная линия — ПРАВАЯ ШКАЛА
-    const signalSeries = pm.addSeries(pid, `${this.type}-signal`, 'line', {
-        color: '#ff6d00',
-        lineWidth: 2,
-        priceScaleId: 'right',
-        lastValueVisible: true,
-        title: 'Signal'
-    });
-    
-    this.series = [histSeries, macdSeries, signalSeries];
-}
+        createSeries() {
+        this._removeAllSeries(); // ✅ ДОБАВЛЕНО
+        const pm = this.manager.panelManager;
+        const pid = this.data.panel;
+        
+        // 1. Гистограмма — ТОЖЕ НА ПРАВОЙ ШКАЛЕ
+        const histSeries = pm.addSeries(pid, `${this.type}-histogram`, 'histogram', {
+            priceLineVisible: false,
+            lastValueVisible: false,
+            priceScaleId: 'right',     
+            scaleMargins: { top: 0.2, bottom: 0.05 }
+        });
+        
+        // Нулевая линия на ПРАВОЙ шкале
+        histSeries.createPriceLine({
+            price: 0,
+            color: '#787b86',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.SparseDotted,
+            axisLabelVisible: true,
+            title: 'Zero'
+        });
+        
+        // 2. Линия MACD — ПРАВАЯ ШКАЛА
+        const macdSeries = pm.addSeries(pid, `${this.type}-line`, 'line', {
+            color: '#2196F3',
+            lineWidth: this.settings.lineWidth,
+            priceScaleId: 'right',
+            lastValueVisible: true,
+            title: 'MACD'
+        });
+        
+        // 3. Сигнальная линия — ПРАВАЯ ШКАЛА
+        const signalSeries = pm.addSeries(pid, `${this.type}-signal`, 'line', {
+            color: '#ff6d00',
+            lineWidth: 2,
+            priceScaleId: 'right',
+            lastValueVisible: true,
+            title: 'Signal'
+        });
+        
+        this.series = [histSeries, macdSeries, signalSeries];
+        return this.series; // ✅ ДОБАВЛЕНО
+    }
     updateSeriesData(data) {
         if (!data || !data.length) return;
         const chartData = this.manager.chartManager.chartData;
@@ -420,7 +414,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }).catch(() => {});
     }
 
-    _setupDrag(handle, element) {
+        _setupDrag(handle, element) {
         let isDragging = false;
         let startX, startY, initialLeft, initialTop;
 
@@ -437,21 +431,25 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             element.style.bottom = 'auto';
         });
 
-        document.addEventListener('mousemove', (e) => {
+        // ✅ Сохраняем ссылки на функции
+        this._dragMoveHandler = (e) => {
             if (!isDragging) return;
             e.preventDefault();
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
             element.style.left = `${initialLeft + dx}px`;
             element.style.top = `${initialTop + dy}px`;
-        });
+        };
 
-        document.addEventListener('mouseup', () => {
+        this._dragUpHandler = () => {
             if (isDragging) {
                 isDragging = false;
                 element.style.transition = '';
             }
-        });
+        };
+
+        document.addEventListener('mousemove', this._dragMoveHandler);
+        document.addEventListener('mouseup', this._dragUpHandler);
     }
 
     calculateTrueRange(high, low, prevClose, mode) {
@@ -745,7 +743,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }, 5000);
     }
 
-    destroy() {
+      destroy() {
         if (this._fallbackTimer) {
             clearInterval(this._fallbackTimer);
             this._fallbackTimer = null;
@@ -754,6 +752,10 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             clearTimeout(this._updateTimeout);
             this._updateTimeout = null;
         }
+        
+        // ✅ Удаляем глобальные слушатели перетаскивания
+        if (this._dragMoveHandler) document.removeEventListener('mousemove', this._dragMoveHandler);
+        if (this._dragUpHandler) document.removeEventListener('mouseup', this._dragUpHandler);
         
         const table = document.getElementById('multiatr-full-table');
         if (table) table.remove();
@@ -1039,98 +1041,252 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 }
 class Volume24HIndicator extends BaseIndicator {
-    static meta = { name: '24H Объем', category: 'volume', panel: 'volume24h', color: '#2962FF' };
+    static meta = { name: 'Vol 24H', category: 'info', panel: 'vol24h', color: '#2962FF' };
 
     constructor(manager) {
-        super(manager, 'volume24h', '24H Vol', '#2962FF', 'volume24h');
-        
-        this.settings = {
-            priceSource: 'close'
-        };
-        
+        super(manager, 'volume24h', 'Vol 24H', '#2962FF', 'vol24h');
+        this.settings.color = '#2962FF';
+        this._baseVolumes = [];
+        this._updateInterval = null;
+        this._dataLoaded = false;
+        this._pendingTimer = null;
+
+        // Тултип
         this._volumeData = [];
+        this._volumeMap = new Map();
         this._tooltipEl = null;
-        
+        this._crosshairTimer = null;
         this._initTooltip();
         setTimeout(() => this._bindCrosshair(), 300);
+
+        this._setupListeners();
     }
 
-    getWorkerType() { return 'volume24h'; }
-    
-    getWorkerParams() { 
-        return { priceSource: this.settings.priceSource }; 
+    getWorkerType() { return null; }
+    calculateAsync() {}
+
+    createSeries() {
+        this._removeAllSeries();
+        const pm = this.manager.panelManager;
+        const pid = this.data.panel;
+        this.series = [
+            pm.addSeries(pid, `${this.type}-hist`, 'histogram', {
+                color: this.settings.color,
+                priceFormat: { type: 'volume' },
+                priceLineVisible: false,
+                lastValueVisible: true,
+                priceScaleId: 'right',
+                crosshairMarkerVisible: true,
+                crosshairMarkerRadius: 5,
+                crosshairMarkerBorderColor: '#ffffff',
+                crosshairMarkerBackgroundColor: this.settings.color,
+            })
+        ];
+        return this.series;
     }
 
-    // -------------------------------------------------------
-    // ТУЛТИП (ПЛАШКА)
-    // -------------------------------------------------------
+    _setupListeners() {
+        const cm = this.manager?.chartManager;
+        if (!cm) return;
+
+        if (cm._subscribeToSymbolChange) {
+            cm._subscribeToSymbolChange(() => {
+                this._baseVolumes = [];
+                this._dataLoaded = false;
+                if (this._pendingTimer) clearTimeout(this._pendingTimer);
+                this._waitForChartData(cm);
+            });
+        }
+
+        this._updateInterval = setInterval(() => {
+            if (this._dataLoaded) this.fetchAndCalculate();
+        }, 60000);
+
+        this._waitForChartData(cm);
+    }
+
+    _waitForChartData(cm) {
+        if (cm.chartData && cm.chartData.length > 1) {
+            this._dataLoaded = true;
+            this.fetchAndCalculate();
+            return;
+        }
+        this._pendingTimer = setTimeout(() => {
+            this._waitForChartData(cm);
+        }, 200);
+    }
+
+    async fetchAndCalculate() {
+        const cm = this.manager?.chartManager;
+        if (!cm?.currentSymbol || !this._dataLoaded) return;
+
+        try {
+            const currentTF = cm.currentInterval;
+            const chartData = cm.chartData;
+            if (!chartData || chartData.length === 0) return;
+
+            if (currentTF === '1d' && chartData.length > 1) {
+                const daysNeeded = chartData.length + 50;
+                const dailyBars = await this._fetchKlines(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                    '1d', daysNeeded
+                );
+                if (!dailyBars || dailyBars.length === 0) return;
+
+                const dailyMap = new Map(dailyBars.map(b => [b.time, b.volume]));
+                const historyData = chartData.map(candle => ({
+                    time: candle.time,
+                    value: dailyMap.get(candle.time) || 0
+                }));
+
+                const live5m = await this._fetchKlines(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                    '5m', 300
+                );
+                if (live5m && live5m.length > 0) {
+                    const msIn24h = 24 * 60 * 60 * 1000;
+                    const lastTime = live5m[live5m.length - 1].time * 1000;
+                    let sum = 0;
+                    for (let i = live5m.length - 1; i >= 0; i--) {
+                        if (lastTime - live5m[i].time * 1000 > msIn24h) break;
+                        sum += live5m[i].volume || 0;
+                    }
+                    if (historyData.length > 0) {
+                        historyData[historyData.length - 1].value = sum;
+                    }
+                }
+
+                this.series[0].setData(historyData);
+                this._volumeData = historyData.filter(d => d.value > 0);
+                this._volumeMap = new Map(historyData.map(d => [d.time, d.value]));
+
+            } else {
+                const data = await this._fetchKlines(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                    '5m', 388
+                );
+                if (!data || data.length === 0) return;
+
+                const msIn24h = 24 * 60 * 60 * 1000;
+                const calculated = [];
+                for (let i = 0; i < data.length; i++) {
+                    let sum = 0;
+                    for (let j = i; j >= 0; j--) {
+                        if (data[i].time * 1000 - data[j].time * 1000 <= msIn24h) {
+                            sum += data[j].volume || 0;
+                        } else break;
+                    }
+                    calculated.push({ time: data[i].time, value: sum });
+                }
+                this._baseVolumes = calculated;
+                this._alignToMainChart();
+            }
+        } catch (e) {
+            console.warn('Vol 24H: Ошибка', e);
+        }
+    }
+
+    _alignToMainChart() {
+        if (!this.series[0] || !this._baseVolumes.length) return;
+        const chartData = this.manager.chartManager.chartData;
+        if (!chartData || chartData.length === 0) return;
+
+        const aligned = [];
+        let vIdx = 0;
+        const lastIdx = this._baseVolumes.length - 1;
+
+        for (let i = 0; i < chartData.length; i++) {
+            const mainTime = chartData[i].time;
+            if (i === chartData.length - 1) {
+                aligned.push({ time: mainTime, value: this._baseVolumes[lastIdx].value });
+                continue;
+            }
+            while (vIdx < lastIdx && this._baseVolumes[vIdx + 1].time <= mainTime) {
+                vIdx++;
+            }
+            aligned.push({ time: mainTime, value: this._baseVolumes[vIdx].value });
+        }
+        this.series[0].setData(aligned);
+        this._volumeData = aligned.filter(d => d.value > 0);
+        this._volumeMap = new Map(aligned.map(d => [d.time, d.value]));
+    }
+
+    async _fetchKlines(symbol, exchange, marketType, tf, limit) {
+        const bybitMap = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '1d': 'D', '1w': 'W' };
+        let url;
+        if (exchange === 'binance') {
+            const base = marketType === 'futures' ? 'https://fapi.binance.com/fapi/v1/klines' : 'https://api.binance.com/api/v3/klines';
+            url = `${base}?symbol=${symbol}&interval=${tf}&limit=${limit}`;
+        } else {
+            const category = marketType === 'futures' ? 'linear' : 'spot';
+            url = `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${symbol}&interval=${bybitMap[tf] || tf}&limit=${limit}`;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        try {
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!response.ok) return [];
+            const data = await response.json();
+
+            if (exchange === 'binance') {
+                return Array.isArray(data) ? data.map(k => ({ time: Math.floor(k[0] / 1000), volume: parseFloat(k[7]) || 0 })) : [];
+            } else {
+                if (data.retCode !== 0 || !data.result?.list) return [];
+                return data.result.list.reverse().map(k => ({ time: Math.floor(parseInt(k[0]) / 1000), volume: parseFloat(k[6]) || 0 }));
+            }
+        } catch (err) {
+            clearTimeout(timeoutId);
+            return [];
+        }
+    }
+
+    // ---------- ТУЛТИП ----------
     _initTooltip() {
         if (document.getElementById('vol24h-tooltip')) return;
-        
         const el = document.createElement('div');
         el.id = 'vol24h-tooltip';
         el.style.cssText = `
-            position: fixed;
-            top: 10px; left: 10px;
-            background: rgba(10, 10, 26, 0.95);
-            border: 1px solid #2962FF;
-            border-radius: 6px;
-            padding: 8px 12px;
-            color: #fff;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-            font-weight: bold;
-            z-index: 9999;
-            display: none;
-            pointer-events: none;
-            box-shadow: 0 4px 15px rgba(41, 98, 255, 0.3);
+            position: fixed; top: 10px; left: 10px;
+            background: rgba(10,10,26,0.95); border: 1px solid #2962FF;
+            border-radius: 6px; padding: 8px 12px; color: #fff;
+            font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: bold;
+            z-index: 9999; display: none; pointer-events: none;
+            box-shadow: 0 4px 15px rgba(41,98,255,0.3);
         `;
         el.innerHTML = `<span style="color:#2962FF;">📦 24H Vol:</span> <span id="vol24h-val">—</span>`;
         document.body.appendChild(el);
         this._tooltipEl = el;
     }
 
-   _bindCrosshair(attempts = 0) {
-    const MAX_ATTEMPTS = 20;
-    
-    if (attempts >= MAX_ATTEMPTS) {
-        console.warn('❌ Volume24H: не удалось привязать кроссхейр после 20 попыток');
-        return;
-    }
-    
-    try {
-        const pm = this.manager.panelManager;
-        const panel = pm.panels.get(this.data.panel);
-        
-        if (!panel || !panel.chart) {
-            this._crosshairTimer = setTimeout(() => this._bindCrosshair(attempts + 1), 500);
-            return;
+    _bindCrosshair(attempts = 0) {
+        const MAX_ATTEMPTS = 20;
+        if (attempts >= MAX_ATTEMPTS) return;
+        try {
+            const pm = this.manager.panelManager;
+            const panel = pm.panels.get(this.data.panel);
+            if (!panel || !panel.chart) {
+                this._crosshairTimer = setTimeout(() => this._bindCrosshair(attempts + 1), 500);
+                return;
+            }
+            panel.chart.subscribeCrosshairMove((param) => this._handleCrosshairMove(param));
+        } catch (e) {
+            console.error('Volume24H crosshair error:', e);
         }
-        
-        panel.chart.subscribeCrosshairMove((param) => {
-            this._handleCrosshairMove(param);
-        });
-        
-    } catch (e) {
-        console.error('volume24h crosshair error:', e);
     }
-}
-    
+
     _handleCrosshairMove(param) {
-        if (!param?.time || !this._tooltipEl) {
+        if (!param?.time || !this._tooltipEl || !this._volumeMap) {
             if (this._tooltipEl) this._tooltipEl.style.display = 'none';
             return;
         }
-
-        const point = this._volumeData.find(d => d.time === param.time);
-        
-        if (point?.value != null && point.value > 0) {
-            document.getElementById('vol24h-val').textContent = this._fmt(point.value);
+        const vol = this._volumeMap.get(param.time);
+        if (vol != null && vol > 0) {
+            document.getElementById('vol24h-val').textContent = this._fmt(vol);
             this._tooltipEl.style.display = 'block';
-            
             const pm = this.manager.panelManager;
             const panel = pm.panels.get(this.data.panel);
-            
             if (panel?.wrapper) {
                 const rect = panel.wrapper.getBoundingClientRect();
                 this._tooltipEl.style.top = (rect.top + 35) + 'px';
@@ -1142,122 +1298,26 @@ class Volume24HIndicator extends BaseIndicator {
     }
 
     _fmt(v) {
-    if (!v) return '0 $';
-    if (v >= 1e9) return (v/1e9).toFixed(2)+'B $';
-    if (v >= 1e6) return (v/1e6).toFixed(2)+'M $';
-    if (v >= 1e3) return (v/1e3).toFixed(2)+'K $';
-    return v.toFixed(2)+' $';
-}
-
-    // -------------------------------------------------------
-    // СЕРИЯ
-    // -------------------------------------------------------
-    _createEmptySeries() {
-        const pm = this.manager.panelManager;
-        const pid = this.data.panel;
-
-        this.series.forEach(s => { if (s) pm.removeSeries(pid, s); });
-        this.series = [];
-
-        this.series = [
-            pm.addSeries(pid, `${this.type}-hist`, 'histogram', {
-                color: '#2962FF',
-                priceFormat: { type: 'volume' },
-                priceScaleId: 'right',
-                scaleMargins: { top: 0.05, bottom: 0.15 }
-            })
-        ];
+        if (!v) return '0 $';
+        if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B $';
+        if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M $';
+        if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K $';
+        return v.toFixed(2) + ' $';
     }
 
-    // -------------------------------------------------------
-    // СИНХРОНИЗАЦИЯ С chartData
-    // -------------------------------------------------------
-    updateSeriesData(data) {
-        if (!data?.length || !this.series[0]) return;
-
-        const chartData = this.manager.chartManager.chartData;
-        if (!chartData?.length) return;
-
-        const volMap = new Map();
-        data.forEach(item => {
-            if (item.time !== undefined && item.value !== undefined) {
-                volMap.set(item.time, item.value);
-            }
-        });
-
-        const syncedData = [];
-        this._volumeData = [];
-
-        for (let i = 0; i < chartData.length; i++) {
-            const candleTime = chartData[i].time;
-            const volValue = volMap.get(candleTime);
-
-            if (volValue != null && volValue > 0) {
-                const point = {
-                    time: candleTime,
-                    value: volValue,
-                    color: this._getColor(volValue)
-                };
-                syncedData.push(point);
-                this._volumeData.push(point);
-            } else {
-                syncedData.push({ time: candleTime, value: null });
-            }
+    destroy() {
+        if (this._updateInterval) clearInterval(this._updateInterval);
+        if (this._pendingTimer) clearTimeout(this._pendingTimer);
+        if (this._crosshairTimer) clearTimeout(this._crosshairTimer);
+        if (this._tooltipEl) {
+            this._tooltipEl.remove();
+            this._tooltipEl = null;
         }
-
-        this.series[0].setData(syncedData);
+        super.destroy();
     }
-
-    _getColor(v) {
-        if (!v || v <= 0) return '#2962FF';
-        if (v > 1e9) return '#FF1744';
-        if (v > 1e8) return '#FF6E40';
-        if (v > 1e7) return '#FFAB00';
-        return '#2962FF';
-    }
-
-    // -------------------------------------------------------
-    // НАСТРОЙКИ
-    // -------------------------------------------------------
-    getSettingsHTML() {
-        return `
-            ${super.getSettingsHTML()}
-            <div class="settings-row">
-                <label>Источник цены:</label>
-                <select id="volPriceSrc" style="width:90px;background:#1E1E1E;border:1px solid #404040;color:#fff;">
-                    <option value="close" ${this.settings.priceSource==='close'?'selected':''}>Закрытие</option>
-                    <option value="open" ${this.settings.priceSource==='open'?'selected':''}>Открытие</option>
-                    <option value="high" ${this.settings.priceSource==='high'?'selected':''}>Максимум</option>
-                    <option value="low" ${this.settings.priceSource==='low'?'selected':''}>Минимум</option>
-                    <option value="hl2" ${this.settings.priceSource==='hl2'?'selected':''}>HL2</option>
-                    <option value="hlc3" ${this.settings.priceSource==='hlc3'?'selected':''}>HLC3</option>
-                </select>
-            </div>
-        `;
-    }
-
-    applySettingsFromForm() {
-        const s = document.getElementById('volPriceSrc');
-        if (s) this.settings.priceSource = s.value;
-        super.applySettingsFromForm();
-    }
-
-   destroy() {
-    if (this._crosshairTimer) {
-        clearTimeout(this._crosshairTimer);
-        this._crosshairTimer = null;
-    }
-    if (this._tooltipEl) {
-        this._tooltipEl.remove();
-        this._tooltipEl = null;
-    }
-    super.destroy();
-}
 }
 
-window.Volume24HIndicator = Volume24HIndicator;
-
-
+window.IndicatorRegistry.set('volume24h', Volume24HIndicator);
 class RSI14Indicator extends BaseIndicator {
     static meta = { name: 'RSI 14', category: 'oscillator', panel: 'rsi', color: '#FFA500' };
 
@@ -1284,16 +1344,16 @@ class RSI14Indicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    _createEmptySeries() {
+      createSeries() {
+        this._removeAllSeries();
         const pm = this.manager.panelManager, pid = this.data.panel;
-        this.series.forEach(s => { if (s) pm.removeSeries(pid, s); });
         this.series = [
             pm.addSeries(pid, `${this.type}-line`, 'line', { color: this.settings.color, lineWidth: this.settings.lineWidth }),
             pm.addSeries(pid, `${this.type}-level30`, 'line', { color: '#808080', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed }),
             pm.addSeries(pid, `${this.type}-level70`, 'line', { color: '#808080', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed })
         ];
+        return this.series;
     }
-    
     updateSeriesData(data) {
         if (!data || !data.length) return;
         const chartData = this.manager.chartManager.chartData;
