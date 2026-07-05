@@ -114,11 +114,10 @@ class BaseIndicator {
                 this.series = [series];
             }
         }
-    } catch(e) {
+        } catch(e) {
         console.error('Ошибка создания серии:', e);
     }
     
-    this.calculateAsync();
     return this.series;
 }
        _removeAllSeries() {
