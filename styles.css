@@ -4538,3 +4538,7 @@ input:checked + .slider:before {
     background: #f23645;
     opacity: 1;
 }
+#chart-container {
+    contain: layout style paint;
+    will-change: transform;
+}
