@@ -75,17 +75,14 @@ class TickerRenderer {
         priceEl.className = classes.join(' ');
         
         // Если была анимация - сбрасываем и перезапускаем
-        if (flashClass) {
-            // Удаляем анимацию
+              if (flashClass) {
             priceEl.classList.remove('flash-up', 'flash-down');
             
-            // Форсируем reflow
-            void priceEl.offsetWidth;
+            // ✅ ЗАМЕНА: убираем блокировку потока, откладываем на 1 кадр
+            requestAnimationFrame(() => {
+                priceEl.classList.add(flashClass);
+            });
             
-            // Запускаем анимацию заново
-            priceEl.classList.add(flashClass);
-            
-            // Обновляем prevPrice после анимации
             ticker.prevPrice = ticker.price;
         }
         
@@ -113,10 +110,11 @@ class TickerRenderer {
             const ticker = this.parent.tickersMap.get(key);
             if (!ticker) continue;
             
-            const priceEl = el.querySelector('.ticker-price');
-            const changeEl = el.querySelector('.ticker-change');
-            const volumeEl = el.querySelector('.ticker-volume');
-            const tradesEl = el.querySelector('.ticker-trades');
+                        const els = el._cachedEls || {};
+            const priceEl = els.price;
+            const changeEl = els.change;
+            const volumeEl = els.volume;
+            const tradesEl = els.trades;
             
             // ✅ Используем универсальный метод с анимацией
             if (priceEl) {
@@ -375,7 +373,9 @@ sortTickers(tickers) {
         if (itemsContainer) itemsContainer.remove();
         
         this.tickerElements.clear();
-
+if (window.tickerPanelInstance?._rowDomCache) {
+    window.tickerPanelInstance._rowDomCache.clear();
+}
         container.style.position = 'relative';
         container.style.overflowY = 'auto';
         
@@ -547,7 +547,16 @@ sortTickers(tickers) {
             <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatVolume(ticker.volume)}</div>
             <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatTrades(ticker)}</div>
         `;
-
+const cacheKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
+if (window.tickerPanelInstance?._rowDomCache) {
+    window.tickerPanelInstance._rowDomCache.set(cacheKey, div);
+}
+div._cachedEls = {
+    price: div.querySelector('.ticker-price'),
+    change: div.querySelector('.ticker-change'),
+    volume: div.querySelector('.ticker-volume'),
+    trades: div.querySelector('.ticker-trades')
+};
         return div;
     }
     
