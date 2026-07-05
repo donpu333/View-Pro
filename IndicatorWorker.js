@@ -3,7 +3,6 @@ self.addEventListener('message', function(e) {
     const { task, calculations, indicatorType, indicatorId, data, params } = e.data;
     
     if (task === 'calculate') {
-        // МАГИЯ: Вызываем функцию по имени строки (indicatorType) напрямую
         const func = self[indicatorType];
         const result = (typeof func === 'function') ? func(data, params) : null;
         self.postMessage({ task: 'result', indicatorId, result, success: result !== null });
@@ -23,81 +22,75 @@ self.addEventListener('message', function(e) {
     }
 });
 
-// === МАТЕМАТИКА (Без изменений, берем из прошлого исправленного кода) ===
+// ==========================================
+// 🧮 ЧИСТАЯ МАТЕМАТИКА (Оптимизированная)
+// ==========================================
 
 function calculateSMA(data, period) {
-    const times = data.map(d => d.time);
-    const values = data.map(d => d.close);
     const result = [];
-    for (let i = period - 1; i < values.length; i++) {
+    for (let i = period - 1; i < data.length; i++) {
         let sum = 0;
-        for (let j = 0; j < period; j++) sum += values[i - j];
-        result.push({ time: times[i], value: sum / period });
+        for (let j = 0; j < period; j++) sum += data[i - j].close;
+        result.push({ time: data[i].time, value: sum / period });
     }
     return result;
 }
 
 function calculateEMA(data, period) {
-    const times = data.map(d => d.time);
-    const values = data.map(d => d.close);
     const k = 2 / (period + 1);
-    const result = [];
-    for (let i = 0; i < values.length; i++) {
-        if (i === 0) result.push({ time: times[i], value: values[0] });
-        else result.push({ time: times[i], value: values[i] * k + result[i - 1].value * (1 - k) });
+    const result = [{ time: data[0].time, value: data[0].close }];
+    for (let i = 1; i < data.length; i++) {
+        result.push({ time: data[i].time, value: data[i].close * k + result[i - 1].value * (1 - k) });
     }
     return result;
 }
 
 function calculateRSI(data, period = 14) {
-    const times = data.map(d => d.time);
-    const closes = data.map(d => d.close);
     const rsiData = [];
-    if (closes.length <= period) return rsiData;
+    if (data.length <= period) return rsiData;
     let gains = [], losses = [];
-    for (let i = 1; i < closes.length; i++) {
-        let diff = closes[i] - closes[i-1];
+    for (let i = 1; i < data.length; i++) {
+        const diff = data[i].close - data[i-1].close;
         gains.push(diff > 0 ? diff : 0);
         losses.push(diff < 0 ? -diff : 0);
     }
     let avgGain = 0, avgLoss = 0;
     for (let i = 0; i < period; i++) { avgGain += gains[i]; avgLoss += losses[i]; }
     avgGain /= period; avgLoss /= period;
+    
     for (let i = period; i < gains.length; i++) {
         avgGain = (avgGain * (period - 1) + gains[i]) / period;
         avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
-        let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-        rsiData.push({ time: times[i + 1], value: 100 - 100 / (1 + rs) });
+        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        rsiData.push({ time: data[i + 1].time, value: 100 - 100 / (1 + rs) });
     }
     return rsiData;
 }
 
-function calculateEMAArray(data, period) {
+function calculateEMAArray(arr, period) {
     const k = 2 / (period + 1);
-    const ema = [data[0]];
-    for (let i = 1; i < data.length; i++) ema.push(data[i] * k + ema[i-1] * (1 - k));
+    const ema = [arr[0]];
+    for (let i = 1; i < arr.length; i++) ema.push(arr[i] * k + ema[i-1] * (1 - k));
     return ema;
 }
 
 function calculateMACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-    const times = data.map(d => d.time);
     const closes = data.map(d => d.close);
     const emaFast = calculateEMAArray(closes, fastPeriod);
     const emaSlow = calculateEMAArray(closes, slowPeriod);
     const macdLine = emaFast.map((v, i) => v - emaSlow[i]);
     const signalLine = calculateEMAArray(macdLine, signalPeriod);
     const histogram = macdLine.map((v, i) => v - signalLine[i]);
-    return macdLine.map((v, i) => ({ time: times[i], macd: v, signal: signalLine[i], histogram: histogram[i] }));
+    return macdLine.map((v, i) => ({ time: data[i].time, macd: v, signal: signalLine[i], histogram: histogram[i] }));
 }
 
 function calculateStochRSI(data, period = 14, kSmooth = 3, dSmooth = 3) {
-    const times = data.map(d => d.time);
     const closes = data.map(d => d.close);
     let rsi = [];
     if (closes.length < period + 1) return { k: [], d: [], times: [] };
     let gains = [], losses = [];
     for (let i = 1; i < closes.length; i++) {
-        let diff = closes[i] - closes[i-1];
+        const diff = closes[i] - closes[i-1].close;
         gains.push(diff > 0 ? diff : 0);
         losses.push(diff < 0 ? -diff : 0);
     }
@@ -125,17 +118,15 @@ function calculateStochRSI(data, period = 14, kSmooth = 3, dSmooth = 3) {
     }
     const offset = stochK.length - stochD.length;
     const timeOffset = (period * 2) + offset;
-    return { k: stochK.slice(offset), d: stochD, times: times.slice(timeOffset) };
+    return { k: stochK.slice(offset), d: stochD, times: data.map(d=>d.time).slice(timeOffset) };
 }
 
 function calculateADX(data, period = 14) {
-    const times = data.map(d => d.time);
-    const highs = data.map(d => d.high), lows = data.map(d => d.low), closes = data.map(d => d.close);
-    if (closes.length < period + 1) return [];
+    if (data.length < period + 1) return [];
     const tr = [], plusDM = [], minusDM = [];
-    for (let i = 1; i < closes.length; i++) {
-        tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i-1]), Math.abs(lows[i] - closes[i-1])));
-        const upMove = highs[i] - highs[i-1], downMove = lows[i-1] - lows[i];
+    for (let i = 1; i < data.length; i++) {
+        tr.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - data[i-1].close), Math.abs(data[i].low - data[i-1].close)));
+        const upMove = data[i].high - data[i-1].high, downMove = data[i-1].low - data[i].low;
         plusDM.push((upMove > downMove && upMove > 0) ? upMove : 0);
         minusDM.push((downMove > upMove && downMove > 0) ? downMove : 0);
     }
@@ -153,50 +144,42 @@ function calculateADX(data, period = 14) {
     const startIndex = (period - 1) + (period - 1) + 1;
     for (let i = 0; i < adx.length; i++) {
         const timeIndex = startIndex + i;
-        if (timeIndex < times.length) result.push({ time: times[timeIndex], value: adx[i], plusDI: plusDI[i + period - 1], minusDI: minusDI[i + period - 1] });
+        if (timeIndex < data.length) result.push({ time: data[timeIndex].time, value: adx[i], plusDI: plusDI[i + period - 1], minusDI: minusDI[i + period - 1] });
     }
     return result;
 }
 
 function calculateATR(data, period = 14) {
-    const times = data.map(d => d.time);
     const tr = [];
     for (let i = 1; i < data.length; i++) {
         tr.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - data[i-1].close), Math.abs(data[i].low - data[i-1].close)));
     }
     const smoothedATR = smoothArray(tr, period);
-    return smoothedATR.map((val, i) => ({ time: times[i + period], value: val }));
+    return smoothedATR.map((val, i) => ({ time: data[i + period].time, value: val }));
 }
 
 function calculateVolume24H(data, params) {
     if (!data || data.length === 0) return [];
     
-    const msIn24h = 24 * 60 * 60 * 1000;
+    // Окно берем строго из параметров (например, 288 для 5m)
+    const windowSize = params.windowSize || 288; 
+    if (windowSize <= 0) return [];
+    
     const result = [];
-    
-    let left = 0;
-    let volumeSum = 0;
-    
     for (let i = 0; i < data.length; i++) {
-        const currentTime = data[i].time * 1000;
-        const startTime = currentTime - msIn24h;
-        
-        while (left < i && data[left].time * 1000 < startTime) {
-            volumeSum -= (data[left].volume || 0) * data[left].close;
-            left++;
+        let volSum = 0;
+        const startIdx = Math.max(0, i - windowSize + 1);
+        for (let j = startIdx; j <= i; j++) {
+            volSum += (data[j].volume || 0);
         }
-        
-        volumeSum += (data[i].volume || 0) * data[i].close;
-        
         result.push({
             time: data[i].time,
-            value: volumeSum
+            value: volSum
         });
     }
     
     return result;
 }
-
 
 function smoothArray(arr, period) {
     if (arr.length < period) return [];
@@ -208,13 +191,14 @@ function smoothArray(arr, period) {
     return smoothed;
 }
 
-// === МАРШРУТИЗАТОРЫ (Мостики между ID и Функциями) ===
-// Если добавите новый индикатор, просто добавьте сюда строчку: function id(data, p) { return calculateFunc(data, p.param); }
+// ==========================================
+// 🔗 МАРШРУТИЗАТОРЫ (Прямые мостики)
+// ==========================================
+// Универсально: sma, ema подойдут для ЛЮБОГО периода, period берется из params!
 
-function sma20(data, p) { return calculateSMA(data, p.period); }
-function sma50(data, p) { return calculateSMA(data, p.period); }
-function ema20(data, p) { return calculateEMA(data, p.period); }
-function rsi14(data, p) { return calculateRSI(data, p.period); }
+function sma(data, p) { return calculateSMA(data, p.period); }
+function ema(data, p) { return calculateEMA(data, p.period); }
+function rsi(data, p) { return calculateRSI(data, p.period); }
 function stochrsi(data, p) { return calculateStochRSI(data, p.period, p.k, p.d); }
 function macd(data, p) { return calculateMACD(data, p.fastPeriod, p.slowPeriod, p.signalPeriod); }
 function adx(data, p) { return calculateADX(data, p.period); }
