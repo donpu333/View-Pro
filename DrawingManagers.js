@@ -1268,156 +1268,176 @@ class HorizontalRayManager {
         
         return closestCandle.time;
     }
-
-    _showSettings(ray) {
-        const settings = document.getElementById('drawingSettings');
-        
-        document.getElementById('currentColorBox').style.backgroundColor = ray.options.color;
-        document.getElementById('hexInputInline').value = ray.options.color;
-        document.getElementById('settingThickness').value = ray.options.lineWidth;
-        document.getElementById('templateSelect').value = ray.options.lineStyle;
-        document.getElementById('colorOpacity').value = Math.round(ray.options.opacity * 100);
-        document.getElementById('colorOpacityValue').textContent = document.getElementById('colorOpacity').value + '%';
-        
-        const priceInput = document.getElementById('settingsPriceInput');
-        if (priceInput) {
-            priceInput.value = Utils.formatPrice(ray.price);
-            priceInput.addEventListener('contextmenu', (e) => {
-                e.stopPropagation();
-            });
-        }
-        
-        createColorGrid('inlineColorsGrid', 'currentColorBox', 'hexInputInline', ray.options.color, 'addColorInline');
-        const hexInput = document.getElementById('hexInputInline');
-        if (hexInput) {
-            hexInput.addEventListener('contextmenu', (e) => {
-                e.stopPropagation();
-            });
-        }
-
-        this._renderTimeframeCheckboxes(ray);
-        
-        settings.style.display = 'block';
-        settings.style.left = '50%';
-        settings.style.top = '50%';
-        settings.style.transform = 'translate(-50%, -50%)';
-        
-        settings.addEventListener('mousedown', (e) => e.stopPropagation());
-        settings.addEventListener('mousemove', (e) => e.stopPropagation());
-        settings.addEventListener('mouseup', (e) => e.stopPropagation());
-        settings.addEventListener('click', (e) => e.stopPropagation());
-        
-        let header = settings.querySelector('.settings-header');
-        if (!header) {
-            header = document.createElement('div');
-            header.className = 'settings-header';
-            header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #404040;';
-            
-            const title = document.createElement('span');
-            title.textContent = 'Настройки луча';
-            title.style.color = '#c5c3c3';
-            title.style.fontSize = '14px';
-            title.style.fontWeight = 'bold';
-            
-            const closeBtn = document.createElement('button');
-            closeBtn.innerHTML = '✕';
-            closeBtn.style.cssText = 'background: transparent; border: none; color: #B0B0B0; font-size: 18px; cursor: pointer; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px;';
-            closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
-            closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
-            closeBtn.onclick = (e) => {
-                e.stopPropagation();
-                settings.style.display = 'none';
-            };
-            
-            header.appendChild(title);
-            header.appendChild(closeBtn);
-            settings.insertBefore(header, settings.firstChild);
-        }
-        
-        const closeOnOutsideClick = (e) => {
-            if (!settings.contains(e.target) && settings.style.display === 'block') {
-                settings.style.display = 'none';
-                document.removeEventListener('mousedown', closeOnOutsideClick);
-            }
-        };
-        
-        document.removeEventListener('mousedown', closeOnOutsideClick);
-        setTimeout(() => {
-            document.addEventListener('mousedown', closeOnOutsideClick);
-        }, 100);
-        
-        const stylePanel = document.getElementById('stylePanel');
-        const visibilityPanel = document.getElementById('visibilityPanel');
-        const tabs = document.querySelectorAll('#drawingSettings .settings-tab');
-        
-        tabs.forEach(tab => {
-            tab.classList.remove('active');
-            if (tab.dataset.settingsTab === 'style') {
-                tab.classList.add('active');
-            }
-        });
-        stylePanel.classList.add('active');
-        visibilityPanel.classList.remove('active');
-        
-        tabs.forEach(tab => {
-            const newTab = tab.cloneNode(true);
-            tab.parentNode.replaceChild(newTab, tab);
-        });
-        
-        document.querySelectorAll('#drawingSettings .settings-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                document.querySelectorAll('#drawingSettings .settings-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                
-                if (tab.dataset.settingsTab === 'style') {
-                    stylePanel.classList.add('active');
-                    visibilityPanel.classList.remove('active');
-                } else {
-                    stylePanel.classList.remove('active');
-                    visibilityPanel.classList.add('active');
-                }
-            });
-        });
-        
-        const applyBtn = document.getElementById('applyPriceBtn');
-        const newApplyBtn = applyBtn.cloneNode(true);
-        applyBtn.parentNode.replaceChild(newApplyBtn, applyBtn);
-        
-        newApplyBtn.addEventListener('click', () => {
-            const newPrice = parseFloat(document.getElementById('settingsPriceInput').value);
-            if (!isNaN(newPrice)) {
-                ray.price = newPrice;
-                this._requestRedraw();
-                this._saveRays();
-            }
-        });
-        
-        const saveBtn = document.getElementById('saveSettings');
-        const newSaveBtn = saveBtn.cloneNode(true);
-        saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-        
-        newSaveBtn.addEventListener('click', () => {
-            ray.updateOptions({
-                color: document.getElementById('currentColorBox').style.backgroundColor,
-                lineWidth: parseInt(document.getElementById('settingThickness').value),
-                lineStyle: document.getElementById('templateSelect').value,
-                opacity: parseInt(document.getElementById('colorOpacity').value) / 100
-            });
-            this._requestRedraw();
-            settings.style.display = 'none';
-            this._saveRays();
-        });
-        
-        const deleteBtn = document.getElementById('deleteDrawing');
-        const newDeleteBtn = deleteBtn.cloneNode(true);
-        deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-        
-        newDeleteBtn.addEventListener('click', () => {
-            this.deleteRay(ray.id);
-            settings.style.display = 'none';
-            this._requestRedraw();
+_showSettings(ray) {
+    const settings = document.getElementById('drawingSettings');
+    
+    document.getElementById('currentColorBox').style.backgroundColor = ray.options.color;
+    document.getElementById('hexInputInline').value = ray.options.color;
+    document.getElementById('settingThickness').value = ray.options.lineWidth;
+    document.getElementById('templateSelect').value = ray.options.lineStyle;
+    document.getElementById('colorOpacity').value = Math.round(ray.options.opacity * 100);
+    document.getElementById('colorOpacityValue').textContent = document.getElementById('colorOpacity').value + '%';
+    
+    const priceInput = document.getElementById('settingsPriceInput');
+    if (priceInput) {
+        priceInput.value = Utils.formatPrice(ray.price);
+        priceInput.addEventListener('contextmenu', (e) => {
+            e.stopPropagation();
         });
     }
+    
+    createColorGrid('inlineColorsGrid', 'currentColorBox', 'colorPickerInline', 'hexInputInline', ray.options.color, 'addColorInline');
+    const hexInput = document.getElementById('hexInputInline');
+    if (hexInput) {
+        hexInput.addEventListener('contextmenu', (e) => {
+            e.stopPropagation();
+        });
+    }
+
+    this._renderTimeframeCheckboxes(ray);
+    
+    settings.style.display = 'block';
+    settings.style.left = '50%';
+    settings.style.top = '50%';
+    settings.style.transform = 'translate(-50%, -50%)';
+    
+    settings.addEventListener('mousedown', (e) => e.stopPropagation());
+    settings.addEventListener('mousemove', (e) => e.stopPropagation());
+    settings.addEventListener('mouseup', (e) => e.stopPropagation());
+    settings.addEventListener('click', (e) => e.stopPropagation());
+    
+    let header = settings.querySelector('.settings-header');
+    if (!header) {
+        header = document.createElement('div');
+        header.className = 'settings-header';
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #404040;';
+        
+        const title = document.createElement('span');
+        title.textContent = 'Настройки луча';
+        title.style.color = '#c5c3c3';
+        title.style.fontSize = '14px';
+        title.style.fontWeight = 'bold';
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background: transparent; border: none; color: #B0B0B0; font-size: 18px; cursor: pointer; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px;';
+        closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
+        closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+        closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            settings.style.display = 'none';
+        };
+        
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        settings.insertBefore(header, settings.firstChild);
+    }
+    
+    const closeOnOutsideClick = (e) => {
+        if (!settings.contains(e.target) && settings.style.display === 'block') {
+            settings.style.display = 'none';
+            document.removeEventListener('mousedown', closeOnOutsideClick);
+        }
+    };
+    
+    document.removeEventListener('mousedown', closeOnOutsideClick);
+    setTimeout(() => {
+        document.addEventListener('mousedown', closeOnOutsideClick);
+    }, 100);
+    
+    const stylePanel = document.getElementById('stylePanel');
+    const visibilityPanel = document.getElementById('visibilityPanel');
+    const tabs = document.querySelectorAll('#drawingSettings .settings-tab');
+    
+    tabs.forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.dataset.settingsTab === 'style') {
+            tab.classList.add('active');
+        }
+    });
+    stylePanel.classList.add('active');
+    visibilityPanel.classList.remove('active');
+    
+    tabs.forEach(tab => {
+        const newTab = tab.cloneNode(true);
+        tab.parentNode.replaceChild(newTab, tab);
+    });
+    
+    document.querySelectorAll('#drawingSettings .settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('#drawingSettings .settings-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            
+            if (tab.dataset.settingsTab === 'style') {
+                stylePanel.classList.add('active');
+                visibilityPanel.classList.remove('active');
+            } else {
+                stylePanel.classList.remove('active');
+                visibilityPanel.classList.add('active');
+            }
+        });
+    });
+    
+    const applyBtn = document.getElementById('applyPriceBtn');
+    const newApplyBtn = applyBtn.cloneNode(true);
+    applyBtn.parentNode.replaceChild(newApplyBtn, applyBtn);
+    
+    newApplyBtn.addEventListener('click', () => {
+        const newPrice = parseFloat(document.getElementById('settingsPriceInput').value);
+        if (!isNaN(newPrice)) {
+            ray.price = newPrice;
+            this._requestRedraw();
+            this._saveRays();
+        }
+    });
+    
+    const saveBtn = document.getElementById('saveSettings');
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+    
+    newSaveBtn.addEventListener('click', () => {
+        ray.updateOptions({
+            color: document.getElementById('currentColorBox').style.backgroundColor,
+            lineWidth: parseInt(document.getElementById('settingThickness').value),
+            lineStyle: document.getElementById('templateSelect').value,
+            opacity: parseInt(document.getElementById('colorOpacity').value) / 100
+        });
+        this._requestRedraw();
+        settings.style.display = 'none';
+        this._saveRays();
+    });
+    
+    const deleteBtn = document.getElementById('deleteDrawing');
+    const newDeleteBtn = deleteBtn.cloneNode(true);
+    deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+    
+    newDeleteBtn.addEventListener('click', () => {
+        this.deleteRay(ray.id);
+        settings.style.display = 'none';
+        this._requestRedraw();
+    });
+
+    // ========== КНОПКА "МИНУТКИ" (добавляется один раз) ==========
+    if (!settings.dataset.minutesBound) {
+        settings.dataset.minutesBound = 'true';
+        const minutesBtn = document.getElementById('selectMinutesTimeframes');
+        if (minutesBtn) {
+            minutesBtn.addEventListener('click', () => {
+                const container = document.getElementById('timeframeCheckboxList');
+                if (!container) return;
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m']);
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    const isMinute = minutesSet.has(cb.dataset.timeframe);
+                    cb.checked = isMinute;
+                    ray.timeframeVisibility[cb.dataset.timeframe] = isMinute;
+                });
+            });
+        }
+    }
+    
+    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+    window.makePanelDraggable(settings);
+}
 
     _renderTimeframeCheckboxes(ray) {
         const container = document.getElementById('timeframeCheckboxList');
@@ -2711,66 +2731,187 @@ class TrendLineManager {
         return { price: snappedPrice, time: closestCandle.time, anchorCandle: { time: closestCandle.time, type: anchorType, price: snappedPrice } };
     }
 
-    _showSettings(trendLine) {
-        const settings = document.getElementById('trendSettings'); if (!settings) return;
-        document.getElementById('trendCurrentColorBox').style.backgroundColor = trendLine.options.color;
-        document.getElementById('trendHexInputInline').value = trendLine.options.color;
-        document.getElementById('trendSettingThickness').value = trendLine.options.lineWidth;
-        document.getElementById('trendTemplateSelect').value = trendLine.options.lineStyle;
-        document.getElementById('trendColorOpacity').value = Math.round(trendLine.options.opacity * 100);
-        document.getElementById('trendColorOpacityValue').textContent = document.getElementById('trendColorOpacity').value + '%';
-        const extendRightCheckbox = document.getElementById('trendExtendRight');
-        if (extendRightCheckbox) extendRightCheckbox.checked = trendLine.options.extendRight || false;
-        const hexInput = document.getElementById('trendHexInputInline');
-        if (hexInput) hexInput.addEventListener('contextmenu', (e) => e.stopPropagation());
-        createColorGrid('trendInlineColorsGrid', 'trendCurrentColorBox', 'trendHexInputInline', trendLine.options.color, 'trendAddColorInline');
-        this._renderTimeframeCheckboxes(trendLine);
-        settings.style.display = 'block'; settings.style.left = '50%'; settings.style.top = '50%'; settings.style.transform = 'translate(-50%, -50%)';
-        let header = settings.querySelector('.settings-header');
-        if (!header) {
-            header = document.createElement('div'); header.className = 'settings-header';
-            header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #404040;';
-            const title = document.createElement('span'); title.textContent = 'Настройки линии'; title.style.color = '#FFFFFF'; title.style.fontSize = '14px'; title.style.fontWeight = 'bold';
-            const closeBtn = document.createElement('button'); closeBtn.innerHTML = '✕';
-            closeBtn.style.cssText = 'background:transparent;border:none;color:#B0B0B0;font-size:18px;cursor:pointer;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;';
-            closeBtn.onmouseover = () => closeBtn.style.background = '#404040'; closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
-            closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
-            header.appendChild(title); header.appendChild(closeBtn); settings.insertBefore(header, settings.firstChild);
-        }
-       const closeOnOutsideClick = (e) => {
-    if (!settings.style.display || settings.style.display === 'none') {
-        document.removeEventListener('mousedown', closeOnOutsideClick);
-        return;
-    }
-    if (settings.contains(e.target)) return;
-    if (e.target.closest('.drawing-context-menu')) return;
-    if (e.target.closest('.drawing-settings-panel')) return;
-    settings.style.display = 'none';
-    document.removeEventListener('mousedown', closeOnOutsideClick);
-};
-document.removeEventListener('mousedown', closeOnOutsideClick);
-document.addEventListener('mousedown', closeOnOutsideClick);
-        const stylePanel = document.getElementById('trendStylePanel'), visibilityPanel = document.getElementById('trendVisibilityPanel');
-        const tabs = document.querySelectorAll('#trendSettings .settings-tab');
-        tabs.forEach(tab => { const nt = tab.cloneNode(true); tab.parentNode.replaceChild(nt, tab); });
-        document.querySelectorAll('#trendSettings .settings-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                document.querySelectorAll('#trendSettings .settings-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                if (tab.dataset.settingsTab === 'style') { stylePanel.classList.add('active'); visibilityPanel.classList.remove('active'); }
-                else { stylePanel.classList.remove('active'); visibilityPanel.classList.add('active'); }
-            });
-        });
-        const saveBtn = document.getElementById('trendSaveSettings'), deleteBtn = document.getElementById('trendDeleteDrawing');
-        const nsb = saveBtn.cloneNode(true); saveBtn.parentNode.replaceChild(nsb, saveBtn);
-        const ndb = deleteBtn.cloneNode(true); deleteBtn.parentNode.replaceChild(ndb, deleteBtn);
-        nsb.addEventListener('click', () => {
-            trendLine.updateOptions({ color: document.getElementById('trendCurrentColorBox').style.backgroundColor, lineWidth: parseInt(document.getElementById('trendSettingThickness').value), lineStyle: document.getElementById('trendTemplateSelect').value, opacity: parseInt(document.getElementById('trendColorOpacity').value) / 100, extendRight: document.getElementById('trendExtendRight')?.checked || false });
-            this._requestRedraw(); settings.style.display = 'none'; this._saveTrendLines();
-        });
-        ndb.addEventListener('click', () => { this.deleteTrendLine(trendLine.id); settings.style.display = 'none'; this._requestRedraw(); });
+  _showSettings(trendLine) {
+    const settings = document.getElementById('trendSettings');
+    if (!settings) return;
+
+    // ✅ Устанавливаем выбранную линию – это решает проблему!
+    this._selectedLine = trendLine;
+
+    // Заполняем поля текущими значениями
+    document.getElementById('trendCurrentColorBox').style.backgroundColor = trendLine.options.color;
+    document.getElementById('trendHexInputInline').value = trendLine.options.color;
+    document.getElementById('trendSettingThickness').value = trendLine.options.lineWidth;
+    document.getElementById('trendTemplateSelect').value = trendLine.options.lineStyle;
+    document.getElementById('trendColorOpacity').value = Math.round(trendLine.options.opacity * 100);
+    document.getElementById('trendColorOpacityValue').textContent = Math.round(trendLine.options.opacity * 100) + '%';
+
+    const extendRightCheckbox = document.getElementById('trendExtendRight');
+    if (extendRightCheckbox) extendRightCheckbox.checked = trendLine.options.extendRight || false;
+
+    // Цветовая сетка
+    createColorGrid('trendInlineColorsGrid', 'trendCurrentColorBox', 'trendColorPickerInline', 'trendHexInputInline', trendLine.options.color, 'trendAddColorInline');
+
+    // Чекбоксы таймфреймов
+    this._renderTimeframeCheckboxes(trendLine);
+
+    // Показываем панель
+    settings.style.display = 'block';
+    settings.style.left = '50%';
+    settings.style.top = '50%';
+    settings.style.transform = 'translate(-50%, -50%)';
+
+    // Заголовок (создаём один раз)
+    let header = settings.querySelector('.settings-header');
+    if (!header) {
+        header = document.createElement('div');
+        header.className = 'settings-header';
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #404040;';
+        const title = document.createElement('span');
+        title.textContent = 'Настройки линии';
+        title.style.cssText = 'color:#FFFFFF;font-size:14px;font-weight:bold;';
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background:transparent;border:none;color:#B0B0B0;font-size:18px;cursor:pointer;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;';
+        closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
+        closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+        closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        settings.insertBefore(header, settings.firstChild);
     }
 
+    // Закрытие при клике вне панели
+    const closeOnOutsideClick = (e) => {
+        if (!settings.style.display || settings.style.display === 'none') {
+            document.removeEventListener('mousedown', closeOnOutsideClick);
+            return;
+        }
+        if (settings.contains(e.target)) return;
+        if (e.target.closest('.drawing-context-menu')) return;
+        if (e.target.closest('.drawing-settings-panel')) return;
+        settings.style.display = 'none';
+        document.removeEventListener('mousedown', closeOnOutsideClick);
+    };
+    document.removeEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('mousedown', closeOnOutsideClick);
+
+    // === Вкладки (без cloneNode!) ===
+    const stylePanel = document.getElementById('trendStylePanel');
+    const visibilityPanel = document.getElementById('trendVisibilityPanel');
+    const tabs = document.querySelectorAll('#trendSettings .settings-tab');
+    tabs.forEach(tab => {
+        tab.onclick = null;
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('#trendSettings .settings-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            if (this.dataset.settingsTab === 'style') {
+                stylePanel.classList.add('active');
+                visibilityPanel.classList.remove('active');
+            } else {
+                stylePanel.classList.remove('active');
+                visibilityPanel.classList.add('active');
+            }
+        });
+    });
+
+    // === Кнопки Сохранить и Удалить (без cloneNode!) ===
+    const saveBtn = document.getElementById('trendSaveSettings');
+    const deleteBtn = document.getElementById('trendDeleteDrawing');
+
+    if (saveBtn) {
+        saveBtn.onclick = null;
+        saveBtn.addEventListener('click', () => {
+            trendLine.options.color = document.getElementById('trendHexInputInline').value;
+            trendLine.options.lineWidth = parseInt(document.getElementById('trendSettingThickness').value) || 1;
+            trendLine.options.lineStyle = document.getElementById('trendTemplateSelect').value;
+            trendLine.options.opacity = parseInt(document.getElementById('trendColorOpacity').value) / 100;
+            trendLine.options.extendRight = document.getElementById('trendExtendRight')?.checked || false;
+
+            if (trendLine.primitive) {
+                const styleMap = { solid: 0, dotted: 1, dashed: 2 };
+                trendLine.primitive.applyOptions({
+                    color: trendLine.options.color,
+                    lineWidth: trendLine.options.lineWidth,
+                    lineStyle: styleMap[trendLine.options.lineStyle] || 0
+                });
+            }
+
+            this._requestRedraw();
+            settings.style.display = 'none';
+            this._saveTrendLines();
+        });
+    }
+
+    if (deleteBtn) {
+        deleteBtn.onclick = null;
+        deleteBtn.addEventListener('click', () => {
+            this.deleteTrendLine(trendLine.id);
+            settings.style.display = 'none';
+            this._requestRedraw();
+        });
+    }
+
+    // ========== ДОБАВЛЯЕМ ОБРАБОТЧИКИ МГНОВЕННОГО ИЗМЕНЕНИЯ (однократно) ==========
+    if (!settings.dataset.instantBound) {
+        settings.dataset.instantBound = 'true';
+
+        // Толщина
+        document.getElementById('trendSettingThickness').addEventListener('input', function() {
+            const mgr = window.trendLineManager;
+            if (!mgr || !mgr._selectedLine) return;
+            const val = parseInt(this.value) || 1;
+            mgr._selectedLine.options.lineWidth = val;
+            if (mgr._selectedLine.primitive) mgr._selectedLine.primitive.applyOptions({ lineWidth: val });
+            mgr._requestRedraw();
+            mgr._saveTrendLines();
+        });
+
+        // Прозрачность
+        document.getElementById('trendColorOpacity').addEventListener('input', function() {
+            const mgr = window.trendLineManager;
+            if (!mgr || !mgr._selectedLine) return;
+            document.getElementById('trendColorOpacityValue').textContent = this.value + '%';
+            mgr._selectedLine.options.opacity = parseInt(this.value) / 100;
+            mgr._requestRedraw();
+            mgr._saveTrendLines();
+        });
+
+        // Стиль линии
+        document.getElementById('trendTemplateSelect').addEventListener('change', function() {
+            const mgr = window.trendLineManager;
+            if (!mgr || !mgr._selectedLine) return;
+            const styleMap = { solid: 0, dotted: 1, dashed: 2 };
+            mgr._selectedLine.options.lineStyle = this.value;
+            if (mgr._selectedLine.primitive) mgr._selectedLine.primitive.applyOptions({ lineStyle: styleMap[this.value] || 0 });
+            mgr._requestRedraw();
+            mgr._saveTrendLines();
+        });
+    }
+
+    // ========== КНОПКА "МИНУТКИ" (добавляется один раз) ==========
+    if (!settings.dataset.minutesBound) {
+        settings.dataset.minutesBound = 'true';
+        const minutesBtn = document.getElementById('trendSelectMinutesTimeframes');
+        if (minutesBtn) {
+            minutesBtn.addEventListener('click', () => {
+                const container = document.getElementById('trendTimeframeCheckboxList');
+                if (!container) return;
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m']);
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    const isMinute = minutesSet.has(cb.dataset.timeframe);
+                    cb.checked = isMinute;
+                    trendLine.timeframeVisibility[cb.dataset.timeframe] = isMinute;
+                });
+            });
+        }
+    }
+
+    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+    if (typeof window.makePanelDraggable === 'function') {
+        window.makePanelDraggable(settings);
+    }
+}
     _renderTimeframeCheckboxes(trendLine) {
         const container = document.getElementById('trendTimeframeCheckboxList'); if (!container) return;
         const tfLabels = { '1m':'1 минута','3m':'3 минуты','5m':'5 минут','15m':'15 минут','30m':'30 минут','1h':'1 час','4h':'4 часа','6h':'6 часов','12h':'12 часов','1d':'1 день','1w':'1 неделя','1M':'1 месяц' };
@@ -3928,25 +4069,83 @@ _setupHotkeys() {
         this.setDrawingMode(false);
     }
 
-    _showSettings(ruler) {
-        const panel = document.getElementById('rulerSettingsPanel'); if (!panel) return;
-        const opacitySlider = panel.querySelector('#rulerFillOpacity'), opacityValue = panel.querySelector('#rulerFillOpacityValue');
-        if (opacitySlider && opacityValue) {
-            opacitySlider.value = Math.round((ruler.options.fillOpacity || 0.25) * 100);
-            opacityValue.textContent = opacitySlider.value + '%';
-            const newSlider = opacitySlider.cloneNode(true); opacitySlider.parentNode.replaceChild(newSlider, opacitySlider);
-            newSlider.oninput = () => { const v = newSlider.value; const vd = panel.querySelector('#rulerFillOpacityValue'); if (vd) vd.textContent = v + '%'; };
-        }
-        const closeBtn = panel.querySelector('.close-settings');
-        if (closeBtn) { const nb = closeBtn.cloneNode(true); closeBtn.parentNode.replaceChild(nb, closeBtn); nb.onclick = () => { panel.style.display = 'none'; }; }
-        const saveBtn = panel.querySelector('#rulerSaveSettings');
-        if (saveBtn) { const nb = saveBtn.cloneNode(true); saveBtn.parentNode.replaceChild(nb, saveBtn); nb.onclick = () => { const s = panel.querySelector('#rulerFillOpacity'); if (s) { ruler.updateOptions({ fillOpacity: parseInt(s.value) / 100 }); this._requestRedraw(); this._saveRulers(); } panel.style.display = 'none'; }; }
-        const deleteBtn = panel.querySelector('#rulerDeleteFromSettings');
-        if (deleteBtn) { const nb = deleteBtn.cloneNode(true); deleteBtn.parentNode.replaceChild(nb, deleteBtn); nb.onclick = () => { this.deleteRuler(ruler.id); panel.style.display = 'none'; }; }
-        panel.style.display = 'block'; panel.style.left = '50%'; panel.style.top = '50%'; panel.style.transform = 'translate(-50%, -50%)';
-        const closeOnOutsideClick = (e) => { if (!panel.contains(e.target) && panel.style.display === 'block') { panel.style.display = 'none'; document.removeEventListener('mousedown', closeOnOutsideClick); } };
-        setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
+   _showSettings(ruler) {
+    const panel = document.getElementById('rulerSettingsPanel');
+    if (!panel) return;
+
+    // ✅ Устанавливаем выбранную линейку
+    this._selectedRuler = ruler;
+
+    const opacitySlider = document.getElementById('rulerFillOpacity');
+    const opacityValue = document.getElementById('rulerFillOpacityValue');
+
+    if (opacitySlider && opacityValue) {
+        opacitySlider.value = Math.round((ruler.options.fillOpacity || 0.25) * 100);
+        opacityValue.textContent = opacitySlider.value + '%';
     }
+
+    // === Кнопки закрытия, сохранения и удаления (без cloneNode!) ===
+    const closeBtn = panel.querySelector('.close-settings');
+    if (closeBtn) {
+        closeBtn.onclick = null;
+        closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
+    }
+
+    const saveBtn = document.getElementById('rulerSaveSettings');
+    if (saveBtn) {
+        saveBtn.onclick = null;
+        saveBtn.addEventListener('click', () => {
+            if (opacitySlider) {
+                ruler.updateOptions({ fillOpacity: parseInt(opacitySlider.value) / 100 });
+                this._requestRedraw();
+                this._saveRulers();
+            }
+            panel.style.display = 'none';
+        });
+    }
+
+    const deleteBtn = document.getElementById('rulerDeleteFromSettings');
+    if (deleteBtn) {
+        deleteBtn.onclick = null;
+        deleteBtn.addEventListener('click', () => {
+            this.deleteRuler(ruler.id);
+            panel.style.display = 'none';
+        });
+    }
+
+    // Показываем панель
+    panel.style.display = 'block';
+    panel.style.left = '50%';
+    panel.style.top = '50%';
+    panel.style.transform = 'translate(-50%, -50%)';
+
+    // Закрытие по клику вне панели
+    const closeOnOutsideClick = (e) => {
+        if (!panel.contains(e.target) && panel.style.display === 'block') {
+            panel.style.display = 'none';
+            document.removeEventListener('mousedown', closeOnOutsideClick);
+        }
+    };
+    setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
+
+    // ========== МГНОВЕННОЕ ИЗМЕНЕНИЕ ПРОЗРАЧНОСТИ (однократно) ==========
+    if (!panel.dataset.instantBound) {
+        panel.dataset.instantBound = 'true';
+
+        opacitySlider.addEventListener('input', () => {
+            const val = parseInt(opacitySlider.value) / 100;
+            opacityValue.textContent = opacitySlider.value + '%';
+            if (this._selectedRuler) {
+                this._selectedRuler.options.fillOpacity = val;
+                if (this._selectedRuler.primitive?.requestRedraw) {
+                    this._selectedRuler.primitive.requestRedraw();
+                }
+                this._requestRedraw();
+                this._saveRulers();
+            }
+        });
+    }
+}
 
     _requestRedraw() {
         this._rulers.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); });
@@ -4051,19 +4250,13 @@ class AlertLine {
         
         this.createdAt = Date.now();
         this.active = options.active || false;
-        this.isTimerMode = options.isTimerMode || false;
-        this.priceTriggered = options.priceTriggered || false;
         
         this.triggerCount = options.triggerCount || 0;
         this.repeatCount = options.repeatCount || 5;
-        if (this.repeatCount < 1 && this.repeatCount !== Infinity) {
-            this.repeatCount = 1;
-        }
         this.repeatInterval = options.repeatInterval || 1;
-        if (this.repeatInterval < 1) {
-            this.repeatInterval = 1;
-        }
         this.lastTriggerTime = options.lastTriggerTime || null;
+        this.triggerLimit = options.repeatCount === Infinity ? Infinity : (options.repeatCount || 5);
+        
         this.status = options.status || 'active';
         
         this.options = {
@@ -4095,22 +4288,16 @@ class AlertLine {
         this.dragPointX = 0;
         this.dragPointY = 0;
         this.symbolKey = options.symbolKey || null;
-        this.direction = options.direction || 'above';
     }
 
     updateOptions(newOptions) {
         this.options = { ...this.options, ...newOptions };
         if (newOptions.repeatCount !== undefined) {
             this.repeatCount = newOptions.repeatCount;
-            if (this.repeatCount < 1 && this.repeatCount !== Infinity) {
-                this.repeatCount = 1;
-            }
+            this.triggerLimit = newOptions.repeatCount === Infinity ? Infinity : newOptions.repeatCount;
         }
         if (newOptions.repeatInterval !== undefined) {
             this.repeatInterval = newOptions.repeatInterval;
-            if (this.repeatInterval < 1) {
-                this.repeatInterval = 1;
-            }
         }
     }
     
@@ -4118,18 +4305,14 @@ class AlertLine {
         return this.timeframeVisibility[timeframe] !== false;
     }
     
-    canTriggerRepeat(now) {
+    canTriggerAgain() {
         if (this.status === 'paused') return false;
-        if (this.status === 'completed') return false;
-        if (this.triggered) return false;
-        if (!this.active) return false;
-        if (this.triggerCount === 0 && !this.lastTriggerTime) {
-            return this.isTimerMode;
-        }
-        if (this.repeatCount !== Infinity && this.triggerCount >= this.repeatCount) {
-            return false;
-        }
-        if (!this.lastTriggerTime) return false;
+        if (this.triggerLimit === Infinity) return true;
+        return this.triggerCount < this.triggerLimit;
+    }
+    
+    shouldTriggerByTimer(now) {
+        if (!this.lastTriggerTime) return true;
         const minutesSinceLast = (now - this.lastTriggerTime) / (60 * 1000);
         return minutesSinceLast >= this.repeatInterval;
     }
@@ -4166,11 +4349,12 @@ class AlertLineRenderer {
         this._priceLabelHitArea = null;
         this._pixelRatio = window.devicePixelRatio || 1;
     }
-   draw(target) {
+    
+  draw(target) {
+    // Сброс hit-областей
     this._hitArea = null;
     this._priceLabelHitArea = null;
 
-    // ✅ РАСКОММЕНТИРОВАТЬ ЭТИ 2 СТРОЧКИ!
     const currentKey = this._chartManager.getCurrentSymbolKey?.();
     if (currentKey && this._alert.symbolKey !== currentKey) return;
 
@@ -4184,9 +4368,7 @@ class AlertLineRenderer {
 
         let yCoordinate = chartManager.priceToCoordinate(alert.price);
         let xCoordinate = chartManager.timeToCoordinate(alert.time);
-        
-        if (yCoordinate === null) return;
-        if (xCoordinate === null) xCoordinate = 0;
+        if (yCoordinate === null || xCoordinate === null) return;
 
         const timeScale = chartManager.chart.timeScale();
         const visibleRange = timeScale.getVisibleLogicalRange();
@@ -4256,13 +4438,24 @@ class AlertLineRenderer {
         if (alert.options.showPrice) {
             let priceText = Utils.formatPrice(alert.price);
             
+            let statusIcon = '';
+            if (alert.status === 'active' && alert.active) {
+                statusIcon = '🟢 ';
+            } else if (alert.status === 'paused') {
+                statusIcon = '⏸️ ';
+            } else if (alert.status === 'completed' || alert.triggered) {
+                statusIcon = '✅ ';
+            } else if (alert.options.showBell) {
+                statusIcon = '🔔 ';
+            }
+            
+            priceText = statusIcon + priceText;
+
             ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
             const textMetrics = ctx.measureText(priceText);
             const textWidth = textMetrics.width;
             const padding = 8 * scope.horizontalPixelRatio;
-            
-            const dotSpace = 12 * scope.horizontalPixelRatio; 
-            const labelWidth = textWidth + padding * 2 + dotSpace;
+            const labelWidth = textWidth + padding * 2;
             const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
 
             const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
@@ -4279,31 +4472,15 @@ class AlertLineRenderer {
 
             ctx.shadowBlur = 0;
             
-            let dotColor = '#FFD700';
-            if (alert.status === 'active' && alert.active) dotColor = '#00FF00';
-            else if (alert.status === 'paused') dotColor = '#FFA500';
-            else if (alert.status === 'completed' || alert.triggered) dotColor = '#4CAF50';
-            
-            ctx.shadowColor = 'transparent';
-            ctx.fillStyle = dotColor;
-            ctx.beginPath();
-            ctx.arc(
-                labelXPos + padding + (dotSpace / 2), 
-                labelYPos + labelHeight / 2, 
-                3.5 * scope.horizontalPixelRatio, 
-                0, Math.PI * 2
-            );
-            ctx.fill();
-
             ctx.shadowColor = '#000000';
             ctx.shadowBlur = 3;
             ctx.shadowOffsetX = 1;
             ctx.shadowOffsetY = 1;
             ctx.fillStyle = '#FFFFFF';
             ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
-            ctx.textAlign = 'left';
+            ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(priceText, labelXPos + padding + dotSpace, labelYPos + labelHeight / 2);
+            ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
             
             ctx.shadowColor = 'transparent';
             ctx.shadowBlur = 0;
@@ -4314,6 +4491,7 @@ class AlertLineRenderer {
         ctx.restore();
     });
 }
+
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
         if (h < 2 * r) r = h / 2;
@@ -4451,899 +4629,264 @@ class AlertLinePrimitive {
 
 class AlertLineManager {
     constructor(chartManager) {
-        this._pixelRatio = window.devicePixelRatio || 1;
-        this._alerts = [];
-        this._chartManager = chartManager;
-        this._selectedAlert = null;
-        this._hoveredAlert = null;
-        this._isDrawingMode = false;
-        this._isDragging = false;
-        this._dragAlert = null;
-        this._dragStartX = 0;
-        this._dragStartY = 0;
-        this._dragStartPrice = 0;
-        this._dragStartTime = 0;
-        this._lastMouseX = 0;
-        this._lastMouseY = 0;
-        this._isLoading = false;
-        this._potentialDrag = null;
-        this._dragThreshold = 5;
-        this._dblClickTimer = null;
-        this._potentialDblClickTarget = null;
-        this._dblClickTimeout = 350;
-        this._lastClickTime = 0;
-        this._needsRedraw = false;
-        this._lastPrices = new Map();
-        
-        this._worker = null;
-        this._initWorker();
-        this._timerInterval = setInterval(() => this.checkTimerAlerts(), 1000);
-        this._handleContextMenu = this._handleContextMenu.bind(this);
-        this._setupEventListeners();
-        this._setupHotkeys();
-        this._setupSettingsListeners();
-        
-        if (window.drawingLoaderCoordinator) {
-            window.drawingLoaderCoordinator.register(this, 'alert');
-        }
-        
-        setTimeout(async () => {
-            try {
-                if (this._alerts.length > 0) return;
-                if (!window.dbReady) {
-                    await new Promise(r => {
-                        const c = () => window.dbReady ? r() : setTimeout(c, 50);
-                        c();
-                    });
-                }
-                await this.loadAllAlertsFromDB();
-            } catch (error) {
-                console.error('❌ Auto-load alerts failed:', error);
-            }
-        }, 150);
+    this._pixelRatio = window.devicePixelRatio || 1;
+    this._alerts = [];
+    this._chartManager = chartManager;
+    this._selectedAlert = null;
+    this._hoveredAlert = null;
+    this._isDrawingMode = false;
+    this._isDragging = false;
+    this._dragAlert = null;
+    this._dragStartX = 0;
+    this._dragStartY = 0;
+    this._dragStartPrice = 0;
+    this._dragStartTime = 0;
+    this._lastMouseX = 0;
+    this._lastMouseY = 0;
+    this._isLoading = false;
+    this._lastPrices = new Map();
+    this._subscribedSymbols = new Set();
+    this._alertWebSockets = new Map();
+    this._potentialDrag = null;
+    this._dragThreshold = 5;
+    this._dblClickTimer = null;
+    this._potentialDblClickTarget = null;
+    this._dblClickTimeout = 350;
+    this._lastClickTime = 0;
+    
+    this._handleContextMenu = this._handleContextMenu.bind(this);
+    this._setupEventListeners();
+    this._setupHotkeys();
+    this._setupSettingsListeners();
+    this._needsRedraw = false;
+    
+    setInterval(() => { this.checkTimerAlerts(); }, 1000);
+    
+    // Регистрируем в координаторе
+    if (window.drawingLoaderCoordinator) {
+        window.drawingLoaderCoordinator.register(this, 'alert');
     }
-
-    _initWorker() {
+    
+    // Загружаем ВСЕ алерты из БД
+    setTimeout(async () => {
         try {
-            this._worker = new Worker('alertWorker.js');
-            this._worker.onmessage = (e) => {
-                const msg = e.data;
-                switch(msg.type) {
-                    case 'ready':
-                        console.log(`✅ Worker готов, алертов: ${msg.count}`);
-                        break;
-                    case 'subscribed':
-                        console.log(`📡 Worker подписался на ${msg.symbol} (${msg.exchange})`);
-                        break;
-                    case 'alertAdded':
-                        console.log(`➕ Алерт добавлен в Worker: ${msg.id}`);
-                        break;
-                    case 'alert_triggered':
-                        this._handleWorkerAlertTriggered(msg.alert, msg.price);
-                        break;
-                    case 'status':
-                        console.log('📊 Worker статус:', msg.data);
-                        break;
-                    case 'error':
-                        console.warn('⚠️ Worker ошибка:', msg.message);
-                        break;
-                }
-            };
-            this._worker.onerror = (e) => console.error('❌ Worker error:', e);
-            console.log('✅ Alert Worker запущен');
-        } catch (e) {
-            console.error('❌ Worker не запустился:', e);
-        }
-    }
-
-    _handleWorkerAlertTriggered(alertData, price) {
-        const item = this._alerts.find(a => a.alert.id === alertData.id);
-        if (!item) return;
-        const alert = item.alert;
-        alert.active = true;
-        alert.lastTriggerTime = alertData.lastTriggerTime || Date.now();
-        alert.triggerCount = (alert.triggerCount || 0) + 1;
-        this._lastPrices.set(alert.symbol, price);
-        this._fireAlert(alert, price, alert.triggerCount > 1);
-        if (alert.repeatCount !== Infinity && alert.triggerCount >= alert.repeatCount) {
-            this._completeAlert(alert, item);
-        } else {
-            if (this._worker) {
-                this._worker.postMessage({ 
-                    type: 'resetAlert', 
-                    alertId: alert.id,
-                    lastTriggerTime: alert.lastTriggerTime
+            if (this._alerts.length > 0) return;
+            
+            // Ждём готовности БД
+            if (!window.dbReady) {
+                await new Promise(r => { 
+                    const c = () => window.dbReady ? r() : setTimeout(c, 50); 
+                    c(); 
                 });
             }
+            
+            await this.loadAllAlertsFromDB();
+        } catch (error) {
+            console.error('❌ Auto-load alerts failed:', error);
         }
-    }
-
-    _syncAlertsToWorker() {
-        if (!this._worker) return;
-        const alertsForWorker = this._alerts.map(item => ({
-            id: item.alert.id,
-            symbol: item.alert.symbol,
-            price: item.alert.price,
-            direction: item.alert.direction || 'above',
-            triggered: item.alert.triggered,
-            status: item.alert.status,
-            active: item.alert.active,
-            isTimerMode: item.alert.isTimerMode,
-            priceTriggered: item.alert.priceTriggered,
-            createdAt: item.alert.createdAt,
-            repeatCount: item.alert.repeatCount,
-            repeatInterval: item.alert.repeatInterval,
-            lastTriggerTime: item.alert.lastTriggerTime,
-            triggerCount: item.alert.triggerCount,
-            exchange: item.alert.exchange || 'binance',
-            marketType: item.alert.marketType || 'futures'
-        }));
-        this._worker.postMessage({ type: 'init', alerts: alertsForWorker });
-    }
-
-    // ✅ НОВЫЙ МЕТОД — ПЕРЕПРИКРЕПЛЕНИЕ
-    reattachPrimitives() {
-    const currentSymbolKey = this._getCurrentSymbolKey();
-    const series = this._chartManager.currentChartType === 'candle' 
-        ? this._chartManager.candleSeries 
-        : this._chartManager.barSeries;
-    
-    if (!series) {
-        console.warn('⚠️ [AlertManager] Серия не найдена');
-        return 0;
-    }
-    
-    console.log(`🔍 [AlertManager] Переприкрепление для ${currentSymbolKey}`);
-    console.log(`📊 Всего алертов: ${this._alerts.length}`);
-    
-    let count = 0;
-    for (const item of this._alerts) {
-        const alert = item.alert;
-        
-        console.log(`   Проверка алерта ${alert.id}:`, {
-            symbolKey: alert.symbolKey,
-            currentSymbolKey: currentSymbolKey,
-            status: alert.status,
-            triggered: alert.triggered,
-            match: alert.symbolKey === currentSymbolKey
-        });
-        
-        // ✅ Пропускаем завершенные
-        if (alert.status === 'completed' || alert.triggered) {
-            console.log(`   ⏭️ Пропускаем (завершен): ${alert.id}`);
-            continue;
-        }
-        
-        // ✅ Пропускаем не текущий символ
-        if (alert.symbolKey !== currentSymbolKey) {
-            console.log(`   ⏭️ Пропускаем (другой символ): ${alert.id}`);
-            continue;
-        }
-        
-        // ✅ Если примитив есть, но серия старая — открепляем
-        if (item.primitive && item.series !== series) {
-            try {
-                if (item.series) {
-                    item.series.detachPrimitive(item.primitive);
-                }
-            } catch(e) {}
-            item.primitive = null;
-            item.series = null;
-            console.log(`   🔄 Откреплен старый примитив: ${alert.id}`);
-        }
-        
-        // ✅ Если примитива нет — создаем
-        if (!item.primitive) {
-            try {
-                console.log(`   🆕 Создаем примитив для: ${alert.id}`);
-                const primitive = new AlertLinePrimitive(alert, this._chartManager);
-                series.attachPrimitive(primitive);
-                item.primitive = primitive;
-                item.series = series;
-                count++;
-                console.log(`   ✅ Создан примитив: ${alert.id}`);
-            } catch(e) {
-                console.warn(`   ❌ Ошибка создания примитива ${alert.id}:`, e);
-            }
-        } else {
-            console.log(`   ✅ Примитив уже есть: ${alert.id}`);
-        }
-    }
-    
-    console.log(`✅ [AlertManager] Переприкреплено ${count} алертов`);
-    if (count > 0) this._requestRedraw();
-    return count;
+    }, 150);
 }
 
-    setDrawingMode(enabled) {
-        this._isDrawingMode = enabled;
-        const btn = document.getElementById('toolAlert');
-        if (btn) {
-            if (enabled) { btn.style.background = '#4A90E2'; btn.style.color = '#FFFFFF'; btn.classList.add('active'); }
-            else { btn.style.background = ''; btn.style.color = ''; btn.classList.remove('active'); }
-        }
-    }
+    // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
+   async loadFromData(symbolKey, alertRecords) {
+    // ❌ Убираем проверку "только текущий символ"
+    // if (this._getCurrentSymbolKey() !== symbolKey) return;
 
-    setMagnetEnabled(enabled) {}
-
-    createAlert(price, time, options = {}) {
-        const defaultVisibility = {
-            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
-            '1h': true, '4h': true, '6h': true, '12h': true,
-            '1d': true, '1w': true, '1M': true
-        };
-        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
-        
-        let autoDirection = 'above';
-        try {
-            let currentMarketPrice = null;
-            const lastCandle = this._chartManager.getLastCandle?.();
-            if (lastCandle && lastCandle.close > 0) {
-                currentMarketPrice = lastCandle.close;
-            } 
-            else if (this._chartManager.chartData && this._chartManager.chartData.length > 0) {
-                const lastDataItem = this._chartManager.chartData[this._chartManager.chartData.length - 1];
-                if (lastDataItem.close) currentMarketPrice = lastDataItem.close;
-            }
-            if (currentMarketPrice !== null) {
-                autoDirection = price < currentMarketPrice ? 'below' : 'above';
-            }
-        } catch (e) {}
-        
-        const direction = autoDirection;
-        
-        const alert = new AlertLine(price, time, {
-            ...options,
-            symbol: this._chartManager.currentSymbol,
-            exchange: this._chartManager.currentExchange,
-            marketType: this._chartManager.currentMarketType,
-            timeframeVisibility,
-            repeatCount: options.repeatCount || 5,
-            repeatInterval: options.repeatInterval || 1,
-            triggerCount: options.triggerCount || 0,
-            lastTriggerTime: options.lastTriggerTime || null,
-            active: options.isTimerMode || false,
-            isTimerMode: options.isTimerMode || false,
-            priceTriggered: options.priceTriggered || false,
-            status: options.status || 'active',
-            direction
-        });
-        
-        alert.anchorTime = time;
-        alert.triggered = options.triggered || false;
-        alert.symbolKey = this._getCurrentSymbolKey();
-        alert.direction = direction;
-        
-        if (!alert.triggered) {
-            const primitive = new AlertLinePrimitive(alert, this._chartManager);
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
-            series.attachPrimitive(primitive);
-            this._alerts.push({ alert, primitive, series });
-        } else {
-            this._alerts.push({ alert, primitive: null, series: null });
-        }
-        
-        if (this._worker && !alert.isTimerMode) {
-            this._worker.postMessage({
-                type: 'addAlert',
-                alert: {
-                    id: alert.id,
-                    symbol: alert.symbol,
-                    price: alert.price,
-                    direction: alert.direction,
-                    triggered: alert.triggered,
-                    status: alert.status,
-                    active: alert.active,
-                    isTimerMode: alert.isTimerMode,
-                    priceTriggered: alert.priceTriggered,
-                    createdAt: alert.createdAt,
-                    repeatCount: alert.repeatCount,
-                    repeatInterval: alert.repeatInterval,
-                    lastTriggerTime: alert.lastTriggerTime,
-                    triggerCount: alert.triggerCount,
-                    exchange: alert.exchange || 'binance',
-                    marketType: alert.marketType || 'futures'
-                }
-            });
-        }
-        
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        return alert;
-    }
-
-    deleteAlert(alertId) {
-        const index = this._alerts.findIndex(a => a.alert.id === alertId);
-        if (index !== -1) {
-            const { alert, primitive, series } = this._alerts[index];
-            const symbol = alert.symbol;
-            this._stopHighlight(alertId);
-            window.db.delete('drawings', alertId).catch(e => console.warn(e));
-            if (primitive && series) try { series.detachPrimitive(primitive); } catch (e) {}
-            this._alerts.splice(index, 1);
-            if (this._worker) {
-                this._worker.postMessage({ type: 'removeAlert', alertId, symbol });
-            }
-            if (this._selectedAlert?.id === alertId) this._selectedAlert = null;
-            if (this._dragAlert?.id === alertId) this._dragAlert = null;
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-
-    pauseAlert(alertId) {
-        const item = this._alerts.find(a => a.alert.id === alertId);
-        if (item && item.alert.status === 'active') {
-            item.alert.pause();
-            this._syncAlertsToWorker();
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-
-    resumeAlert(alertId) {
-        const item = this._alerts.find(a => a.alert.id === alertId);
-        if (item && item.alert.status === 'paused' && !item.alert.triggered) {
-            item.alert.resume();
-            if (!item.primitive && !item.alert.triggered) {
-                const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
-                const series = this._chartManager.currentChartType === 'candle' 
-                    ? this._chartManager.candleSeries 
-                    : this._chartManager.barSeries;
-                series.attachPrimitive(primitive);
-                item.primitive = primitive;
-                item.series = series;
-            }
-            this._syncAlertsToWorker();
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._requestRedraw();
-            return true;
-        }
-        return false;
-    }
-
-    deleteAllAlerts() {
+    try {
         const currentSymbolKey = this._getCurrentSymbolKey();
-        const currentSymbol = this._chartManager.currentSymbol;
-        const alertsToDelete = this._alerts.filter(item => item.alert.symbolKey === currentSymbolKey);
-        if (alertsToDelete.length === 0) return;
-        if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
-        for (const item of alertsToDelete) {
-            window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
-            if (item.primitive && item.series) try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-            const index = this._alerts.indexOf(item);
-            if (index !== -1) this._alerts.splice(index, 1);
+        const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+        // Берём серию только если символ совпадает с текущим
+        const series = isCurrentSymbol
+            ? (this._chartManager.currentChartType === 'candle' 
+                ? this._chartManager.candleSeries 
+                : this._chartManager.barSeries)
+            : null;
+
+        if (isCurrentSymbol && !series) {
+            console.warn('No series available for current symbol');
+            return;
         }
-        this._syncAlertsToWorker();
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        this._requestRedraw();
-    }
 
-    deleteCompletedAlerts() {
-        const completedAlerts = this._alerts.filter(item => item.alert.status === 'completed' || item.alert.triggered);
-        if (completedAlerts.length === 0) return;
-        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
-        for (const item of completedAlerts) this.deleteAlert(item.alert.id);
-    }
-
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД
-    async loadAlerts() {
-        const currentKey = this._getCurrentSymbolKey();
-        await window.drawingLoaderCoordinator?.loadAllForSymbol(currentKey);
-        this.reattachPrimitives();
-        this._requestRedraw();
-    }
-
-    syncWithNewTimeframe() {
-        for (const item of this._alerts) if (item.primitive) item.primitive.updateAllViews();
-        this._updateAlertsListUI();
-        this._requestRedraw();
-    }
-
-    deactivateAll() {
-        this._alerts.forEach(item => {
-            if (item.alert) { item.alert.selected = false; item.alert.showDragPoint = false; }
-        });
-        this._selectedAlert = null;
-    }
-
-    activateObject(alert) {
-        alert.selected = true;
-        alert.showDragPoint = true;
-        this._selectedAlert = alert;
-    }
-
-    hitTest(x, y) {
-        if (this._selectedAlert) {
-            const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
-            if (selItem?.primitive?._paneView?._renderer) {
-                try {
-                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-                    if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
-                } catch (e) {}
-            }
-        }
-        let bestHit = null;
-        let bestDistance = Infinity;
-        for (const item of this._alerts) {
-            if (!item.primitive?._paneView?._renderer) continue;
-            if (item.alert === this._selectedAlert) continue;
-            try {
-                const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                    bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
-                    bestDistance = hit.distance;
-                }
-            } catch (e) {}
-        }
-        return bestHit;
-    }
-
-    updatePriceForSymbol(symbol, price, exchange = null) {
-        if (!symbol || !price || isNaN(price)) return;
-        this._lastPrices.set(symbol, price);
-    }
-
-    checkTimerAlerts() {
-        const now = Date.now();
-        for (const item of this._alerts) {
-            const alert = item.alert;
-            if (!alert.canTriggerRepeat(now)) continue;
-            alert.triggerCount++;
-            alert.lastTriggerTime = now;
-            const currentPrice = this._lastPrices.get(alert.symbol) || alert.price;
-            this._fireAlert(alert, currentPrice, true);
-            if (alert.repeatCount !== Infinity && alert.triggerCount >= alert.repeatCount) {
-                this._completeAlert(alert, item);
-            }
-        }
-    }
-
-    _fireAlert(alert, currentPrice, isRepeat) {
-        this._saveAlerts();
-        this._updateAlertsListUI(); 
-        setTimeout(() => { this._startInfiniteHighlight(alert.id); }, 50);
-        this._showAlertNotification(alert, currentPrice, isRepeat);
-        this._sendTelegramAlert(alert, currentPrice, isRepeat);
-        this._requestRedraw();
-    }
-
-    _completeAlert(alert, item) {
-        this._stopHighlight(alert.id);
-        alert.complete();
-        if (item.primitive && item.series) try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-        item.primitive = null;
-        item.series = null;
-        this._syncAlertsToWorker();
-        this._saveAlerts();
-        this._updateAlertsListUI();
-        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
-    }
-
-    _showAlertNotification(alert, currentPrice, isRepeat) {
-        const notification = document.getElementById('alertNotification');
-        const priceFormatted = Utils.formatPrice(currentPrice);
-        const alertPriceFormatted = Utils.formatPrice(alert.price);
-        const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-        if (notification) {
-            notification.innerHTML = `
-                <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
-                <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
-                <div class="alert-repeat">${timeStr}</div>
-            `;
-            notification.style.display = 'block';
-            notification.style.borderLeftColor = alert.options.color;
-            setTimeout(() => { notification.style.display = 'none'; }, 5000);
-        }
-        this._playAlertSound();
-        this._showSystemNotification(alert, currentPrice, isRepeat);
-    }
-
-    _playAlertSound() {
-        try {
-            const audio = document.getElementById('alertSound');
-            if (audio && audio.src && audio.src !== '') {
-                audio.currentTime = 0;
-                audio.play().catch(e => console.log('Звук не воспроизвёлся:', e));
-                return;
-            }
-            
-            if (!window._globalAlertAudioCtx) {
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                if (AudioContext) { window._globalAlertAudioCtx = new AudioContext(); }
-            }
-            
-            const ctx = window._globalAlertAudioCtx;
-            if (!ctx) return;
-            
-            if (ctx.state === 'suspended') ctx.resume();
-            const now = ctx.currentTime;
-            const melody = [523, 659, 784]; 
-            
-            melody.forEach((freq, i) => {
-                const startTime = now + i * 0.12;
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'sine';
-                osc.frequency.value = freq;
-                gain.gain.setValueAtTime(0, startTime);
-                gain.gain.linearRampToValueAtTime(0.3, startTime + 0.01);
-                gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.15);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(startTime);
-                osc.stop(startTime + 0.15);
-            });
-        } catch (e) { console.warn('Ошибка звука:', e); }
-    }
-
-    _showSystemNotification(alert, currentPrice, isRepeat) {
-        if (!("Notification" in window)) return;
-        const priceFormatted = Utils.formatPrice(currentPrice);
-        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
-        const showNotification = () => {
-            const notification = new Notification(`🔔 ${alert.symbol} - АЛЕРТ${repeatText}`, {
-                body: `Цена: ${priceFormatted} | Уровень: ${Utils.formatPrice(alert.price)}`,
-                icon: 'https://tradingview.com/favicon.ico',
-                silent: false,
-                requireInteraction: true
-            });
-            notification.onclick = () => { window.focus(); notification.close(); };
-            setTimeout(() => notification.close(), 10000);
-        };
-        if (Notification.permission === "granted") showNotification();
-        else if (Notification.permission !== "denied") {
-            Notification.requestPermission().then(permission => {
-                if (permission === "granted") showNotification();
-            });
-        }
-    }
-
-    _sendTelegramAlert(alert, currentPrice, isRepeat) {
-        const chatId = localStorage.getItem('telegramChatId');
-        if (!chatId) return;
-        const priceFormatted = Utils.formatPrice(currentPrice);
-        const alertPriceFormatted = Utils.formatPrice(alert.price);
-        const direction = currentPrice > alert.price ? '⬆️ Выше' : '⬇️ Ниже';
-        const repeatText = isRepeat ? `\n🔄 Повтор: ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}` : '';
-        const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${new Date().toLocaleString('ru-RU')}`;
-        const formData = new URLSearchParams();
-        formData.append('chat_id', chatId);
-        formData.append('text', message);
-        fetch(CONFIG.telegramProxyUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: formData
-        }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
-    }
-
-    _startInfiniteHighlight(alertId) {
-        this._stopHighlight(alertId);
-        setTimeout(() => {
-            const content = document.getElementById('alertHistoryContent');
-            if (!content) return;
-            const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-            if (!item) return;
-            if (!item._originalStyles) {
-                item._originalStyles = {
-                    bg: item.style.backgroundColor, boxShadow: item.style.boxShadow,
-                    borderLeftColor: item.style.borderLeftColor, borderLeftWidth: item.style.borderLeftWidth,
-                    transition: item.style.transition
-                };
-            }
-            let isHighlighted = false;
-            const blink = () => {
-                if (!item.isConnected) { if (item._blinkInterval) clearInterval(item._blinkInterval); return; }
-                isHighlighted = !isHighlighted;
-                if (isHighlighted) {
-                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
-                    item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
-                    item.style.borderLeftColor = '#00FF00';
-                    item.style.borderLeftWidth = '6px';
-                    item.style.transition = 'all 0.35s ease';
-                } else {
-                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
-                    item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
-                    item.style.borderLeftColor = '#00DD00';
-                    item.style.borderLeftWidth = '4px';
-                    item.style.transition = 'all 0.35s ease';
-                }
-            };
-            blink();
-            item._blinkInterval = setInterval(blink, 550);
-            item._stopBlink = () => {
-                if (item._blinkInterval) clearInterval(item._blinkInterval);
-                const orig = item._originalStyles || {};
-                item.style.backgroundColor = orig.bg || '';
-                item.style.boxShadow = orig.boxShadow || '';
-                item.style.borderLeftColor = orig.borderLeftColor || '';
-                item.style.borderLeftWidth = orig.borderLeftWidth || '';
-                item.style.transition = orig.transition || '';
-            };
-            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 100);
-    }
-
-    _stopHighlight(alertId) {
-        const content = document.getElementById('alertHistoryContent');
-        if (!content) return;
-        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-        if (item && item._stopBlink) { item._stopBlink(); delete item._stopBlink; }
-    }
-
-    _highlightTriggeredAlert(alertId) {
-        const content = document.getElementById('alertHistoryContent');
-        if (!content) return;
-        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
-        if (activeTab !== 'triggered') return;
-        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
-        if (!item) return;
-        item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
-        item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
-        item.style.borderLeftColor = '#FFC800';
-        item.style.borderLeftWidth = '5px';
-        item.style.transition = 'all 0.5s ease';
-        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setTimeout(() => {
-            if (item.isConnected) {
-                item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
-                item.style.boxShadow = 'none';
-                item.style.borderLeftWidth = '3px';
-            }
-        }, 8000);
-    }
-
-    _updateAlertsListUI() {
-        const content = document.getElementById('alertHistoryContent');
-        if (!content) return;
-        const activeAlerts = this._alerts.map(a => a.alert).filter(alert => !alert.triggered && alert.status !== 'completed');
-        const pausedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.status === 'paused');
-        const completedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.triggered || alert.status === 'completed').sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
-        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
-        let html = '';
-        if (activeTab === 'active') {
-            const displayAlerts = [...activeAlerts, ...pausedAlerts];
-            if (displayAlerts.length === 0) {
-                html = '<div class="empty-alerts">Нет активных алертов</div>';
-            } else {
-                html = '<div class="alert-list">';
-                displayAlerts.forEach(alert => {
-                    const priceFormatted = Utils.formatPrice(alert.price);
-                    const color = alert.options.color;
-                    const isActive = alert.active;
-                    const isPaused = alert.status === 'paused';
-                    const statusIcon = isPaused ? '⏸️' : (isActive ? '🟢' : '🔔');
-                    const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
-                    const directionText = alert.direction === 'above' ? '⬆ Выше' : '⬇ Ниже';
-                    html += `
-                        <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}" 
-                             style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}" 
-                             data-id="${alert.id}">
-                            <div class="trigger-bell">${statusIcon}</div>
-                            <div>
-                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted} <span style="color:#888;font-size:10px;">${directionText}</span></div>
-                                <div class="info">
-                                    <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
-                                    <span>${statusText}</span>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="pause-alert" data-id="${alert.id}" title="${isPaused ? 'Возобновить' : 'Пауза'}">${isPaused ? '▶️' : '⏸️'}</button>
-                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">❌</button>
-                            </div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-            }
-        } else {
-            if (completedAlerts.length === 0) {
-                html = '<div class="empty-alerts">Нет завершенных алертов</div>';
-            } else {
-                html = '<div class="alert-list">';
-                completedAlerts.forEach(alert => {
-                    const priceFormatted = Utils.formatPrice(alert.price);
-                    const color = alert.options.color;
-                    const triggerTime = alert.lastTriggerTime || alert.createdAt;
-                    const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                    const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
-                    const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
-                    const directionText = alert.direction === 'above' ? '⬆ Выше' : '⬇ Ниже';
-                    html += `
-                        <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
-                            <div>
-                                <div class="price">
-                                    <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
-                                    ${priceFormatted} ${repeatInfo} <span style="color:#888;font-size:10px;">${directionText}</span>
-                                </div>
-                                <div class="info">
-                                    <span>🕐 ${dateStr} ${timeStr}</span>
-                                    <span>✅ Завершен</span>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">❌</button>
-                            </div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-                html += `
-                    <div style="padding: 10px; text-align: center;">
-                        <button class="clear-completed-btn" style="background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
-                            🗑️ Удалить все завершенные (${completedAlerts.length})
-                        </button>
-                    </div>
-                `;
-            }
-        }
-        content.innerHTML = html;
-        content.querySelectorAll('.delete-alert').forEach(btn => {
-            btn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteAlert(btn.dataset.id); });
-        });
-        content.querySelectorAll('.pause-alert').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const id = btn.dataset.id;
-                const alert = this._alerts.find(a => a.alert.id === id)?.alert;
-                if (alert) {
-                    if (alert.status === 'paused') this.resumeAlert(id);
-                    else this.pauseAlert(id);
-                }
-            });
-        });
-        const clearBtn = content.querySelector('.clear-completed-btn');
-        if (clearBtn) clearBtn.addEventListener('click', () => this.deleteCompletedAlerts());
-    }
-
-    async _saveAlerts() {
-        if (this._alerts.length === 0) return;
-        const promises = this._alerts.map(item => 
-            window.db.put('drawings', {
-                id: item.alert.id, type: 'alert', symbolKey: item.alert.symbolKey,
-                data: {
-                    price: item.alert.price, time: item.alert.time, anchorTime: item.alert.anchorTime,
-                    symbol: item.alert.symbol, exchange: item.alert.exchange, marketType: item.alert.marketType,
-                    options: item.alert.options, timeframeVisibility: item.alert.timeframeVisibility,
-                    triggered: item.alert.triggered, triggerCount: item.alert.triggerCount,
-                    repeatCount: item.alert.repeatCount, repeatInterval: item.alert.repeatInterval,
-                    lastTriggerTime: item.alert.lastTriggerTime, active: item.alert.active,
-                    isTimerMode: item.alert.isTimerMode, priceTriggered: item.alert.priceTriggered,
-                    status: item.alert.status, anchorCandle: item.alert.anchorCandle,
-                    direction: item.alert.direction || 'above'
-                }
-            }).catch(e => console.warn('Save alert error:', e))
+        const existingIds = new Set(
+            this._alerts
+                .filter(item => item.alert.symbolKey === symbolKey)
+                .map(item => item.alert.id)
         );
-        await Promise.all(promises);
-    }
-
-    async loadFromData(symbolKey, alertRecords) {
-        try {
-            const currentSymbolKey = this._getCurrentSymbolKey();
-            const isCurrentSymbol = (currentSymbolKey === symbolKey);
-            const series = isCurrentSymbol
-                ? (this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries)
-                : null;
-            if (isCurrentSymbol && !series) return;
-
-            if (alertRecords.length === 0) {
-                const existingInMemory = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
-                if (existingInMemory.length > 0) {
-                    console.warn(`⚠️ [AlertManager] БД вернула 0 алертов, но в памяти их ${existingInMemory.length}. Игнорируем очистку!`);
-                    return;
-                }
-            }
-
-            const newRecordIds = new Set(alertRecords.map(a => a.id));
-            if (isCurrentSymbol) {
-                const toDetach = this._alerts.filter(item => item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id));
-                for (const item of toDetach) {
-                    try { if (item.primitive && item.series) item.series.detachPrimitive(item.primitive); } catch (e) {}
+        
+        const newRecordIds = new Set(alertRecords.map(a => a.id));
+        
+        // Отключаем примитивы для удалённых алертов (только для текущего символа)
+        if (isCurrentSymbol) {
+            const toDetach = this._alerts.filter(item => 
+                item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
+            );
+            
+            for (const item of toDetach) {
+                try { 
+                    if (item.primitive && item.series) {
+                        item.series.detachPrimitive(item.primitive); 
+                    }
                     item.primitive = null;
                     item.series = null;
+                } catch(e) {
+                    console.warn('Failed to detach:', e);
                 }
             }
-            this._alerts = this._alerts.filter(item => item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id));
+        }
+        
+        // Фильтруем: оставляем чужие символы + только те алерты symbolKey, что есть в newRecordIds
+        this._alerts = this._alerts.filter(item => 
+            item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
+        );
 
-            const newAlerts = [];
-            for (const rec of alertRecords) {
-                try {
-                    const existing = this._alerts.find(item => item.alert.id === rec.id);
-                    if (existing) {
-                        existing.alert.price = rec.data.price;
-                        existing.alert.time = rec.data.time;
-                        existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
-                        existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
-                        existing.alert.triggered = rec.data.triggered;
-                        existing.alert.triggerCount = rec.data.triggerCount || 0;
-                        existing.alert.repeatCount = rec.data.repeatCount || 5;
-                        existing.alert.repeatInterval = rec.data.repeatInterval || 1;
-                        existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
-                        existing.alert.status = rec.data.status || 'active';
-                        existing.alert.direction = rec.data.direction || 'above';
-                        continue;
-                    }
-
-                    const alert = new AlertLine(rec.data.price, rec.data.time, {
-                        ...rec.data.options,
-                        symbol: rec.data.symbol,
-                        exchange: rec.data.exchange,
-                        marketType: rec.data.marketType,
-                        timeframeVisibility: rec.data.timeframeVisibility,
-                        triggered: rec.data.triggered,
-                        triggerCount: rec.data.triggerCount,
-                        repeatCount: rec.data.repeatCount,
-                        repeatInterval: rec.data.repeatInterval,
-                        lastTriggerTime: rec.data.lastTriggerTime,
-                        status: rec.data.status,
-                        direction: rec.data.direction,
-                        isTimerMode: rec.data.isTimerMode,
-                        priceTriggered: rec.data.priceTriggered
-                    });
+        const newAlerts = [];
+        for (const rec of alertRecords) {
+            try {
+                const existing = this._alerts.find(item => item.alert.id === rec.id);
+                
+                if (existing) {
+                    // Обновляем существующий алерт
+                    existing.alert.price = rec.data.price;
+                    existing.alert.time = rec.data.time;
+                    existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    existing.alert.options = { ...existing.alert.options, ...rec.data.options };
+                    existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    existing.alert.triggered = rec.data.triggered || false;
+                    existing.alert.triggerCount = rec.data.triggerCount || 0;
+                    existing.alert.repeatCount = rec.data.repeatCount || 5;
+                    existing.alert.repeatInterval = rec.data.repeatInterval || 1;
+                    existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    existing.alert.active = rec.data.active || false;
+                    existing.alert.status = rec.data.status || 'active';
+                    existing.alert.anchorCandle = rec.data.anchorCandle || null;
+                    existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
+                    existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
+                    existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
                     
-                    alert.id = rec.id;
-                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
-                    alert.symbolKey = rec.symbolKey;
-
-                    let primitive = null;
-                    let alertSeries = null;
-
-                    if (!alert.triggered && alert.status !== 'completed' && isCurrentSymbol) {
-                        primitive = new AlertLinePrimitive(alert, this._chartManager);
-                        alertSeries = series;
-                        alertSeries.attachPrimitive(primitive);
+                    // Восстанавливаем примитив для текущего символа, если алерт активен
+                    if (isCurrentSymbol && 
+                        !existing.alert.triggered && 
+                        existing.alert.status !== 'completed' &&
+                        (!existing.primitive || !existing.series)) {
+                        
+                        const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                        try {
+                            series.attachPrimitive(primitive);
+                            existing.primitive = primitive;
+                            existing.series = series;
+                        } catch(e) {
+                            console.warn('Failed to re-attach primitive:', e);
+                        }
                     }
-
-                    newAlerts.push({ alert, primitive, series: alertSeries });
-                } catch (e) {
-                    console.warn('Failed to load alert:', rec.id, e);
+                    continue;
                 }
-            }
 
-            this._alerts.push(...newAlerts);
-            this.reattachPrimitives();
-            this._syncAlertsToWorker();
+                // Создаём новый алерт
+                const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                alert.id = rec.id;
+                alert.symbolKey = rec.symbolKey;
+                alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                alert.symbol = rec.data.symbol;
+                alert.exchange = rec.data.exchange;
+                alert.marketType = rec.data.marketType;
+                alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                alert.triggered = rec.data.triggered || false;
+                alert.triggerCount = rec.data.triggerCount || 0;
+                alert.repeatCount = rec.data.repeatCount || 5;
+                alert.repeatInterval = rec.data.repeatInterval || 1;
+                alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                alert.active = rec.data.active || false;
+                alert.status = rec.data.status || 'active';
+                alert.anchorCandle = rec.data.anchorCandle || null;
+
+                // Примитив создаём только для текущего символа и если алерт активен
+                if (isCurrentSymbol && 
+                    !alert.triggered && 
+                    alert.status !== 'completed') {
+                    
+                    const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                    try {
+                        series.attachPrimitive(primitive);
+                        newAlerts.push({ alert, primitive, series });
+                    } catch(e) {
+                        console.warn('Failed to attach primitive:', e);
+                        newAlerts.push({ alert, primitive: null, series: null });
+                    }
+                } else {
+                    newAlerts.push({ alert, primitive: null, series: null });
+                }
+            } catch (e) {
+                console.warn('Failed to load alert:', rec.id, e);
+            }
+        }
+
+        this._alerts.push(...newAlerts);
+
+        // Подписки на WebSocket для всех активных символов
+        const activeSymbols = new Set();
+        for (const item of this._alerts) {
+            if (!item.alert.triggered && item.alert.status !== 'completed') {
+                activeSymbols.add(item.alert.symbol);
+            }
+        }
+        for (const symbol of activeSymbols) {
+            this._subscribeToSymbol(symbol);
+        }
+        
+        // UI обновляем только если это текущий символ
+        if (isCurrentSymbol) {
             this._updateAlertsListUI();
             this._requestRedraw();
-            console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey}`);
-            
-        } catch (error) {
-            console.error('❌ loadFromData (alerts) failed:', error);
-            throw error;
         }
+        
+        console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey} (current: ${isCurrentSymbol})`);
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
     }
+}
 
-    async loadAllAlertsFromDB() {
-        try {
-            if (!window.db) return;
-            const allRecords = await window.db.getAll('drawings');
-            if (!allRecords || allRecords.length === 0) return;
-            const alertsBySymbol = {};
-            for (const record of allRecords) {
-                if (record.type !== 'alert') continue;
-                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
-                if (!alertsBySymbol[key]) alertsBySymbol[key] = [];
-                alertsBySymbol[key].push(record);
-            }
-            for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
-                await this.loadFromData(symbolKey, records);
-            }
-        } catch (error) {
-            console.error('❌ loadAllAlertsFromDB failed:', error);
+async loadAllAlertsFromDB() {
+    try {
+        if (!window.db) {
+            console.warn('Database not available');
+            return;
         }
+
+        const allRecords = await window.db.getAll('drawings');
+        if (!allRecords || allRecords.length === 0) {
+            console.log('ℹ️ No drawings found in database');
+            return;
+        }
+
+        // Группируем алерты по symbolKey
+        const alertsBySymbol = {};
+        for (const record of allRecords) {
+            if (record.type !== 'alert') continue;
+            
+            const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+            if (!alertsBySymbol[key]) {
+                alertsBySymbol[key] = [];
+            }
+            alertsBySymbol[key].push(record);
+        }
+
+        const symbolKeys = Object.keys(alertsBySymbol);
+        console.log(`📦 Loading alerts for ${symbolKeys.length} symbol(s): ${symbolKeys.join(', ')}`);
+
+        // Загружаем каждую группу через loadFromData
+        for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
+            await this.loadFromData(symbolKey, records);
+        }
+
+        console.log(`✅ All alerts loaded successfully (${this._alerts.length} total)`);
+    } catch (error) {
+        console.error('❌ loadAllAlertsFromDB failed:', error);
+    }
+}
+    _toBitmapCoords(cssX, cssY) {
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
     }
 
     _getCurrentSymbolKey() {
@@ -5353,16 +4896,67 @@ class AlertLineManager {
         return `${symbol}:${exchange}:${marketType}`;
     }
 
-    _toBitmapCoords(cssX, cssY) {
-        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
+    _getTimeFromCoordinate(x) {
+        let time = this._chartManager.coordinateToTime(x);
+        if (time !== null) return time;
+        const data = this._chartManager.chartData;
+        if (!data.length) return null;
+        let intervalMs = 60 * 60 * 1000;
+        if (data.length >= 2) intervalMs = data[1].time - data[0].time;
+        const firstCandle = data[0];
+        const lastCandle = data[data.length - 1];
+        const firstX = this._chartManager.timeToCoordinate(firstCandle.time);
+        const lastX = this._chartManager.timeToCoordinate(lastCandle.time);
+        if (firstX === null || lastX === null) return null;
+        if (x > lastX) {
+            const deltaX = x - lastX;
+            const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
+            return lastCandle.time + deltaX / pixelsPerMs;
+        }
+        if (x < firstX) {
+            const deltaX = firstX - x;
+            const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
+            return firstCandle.time - deltaX / pixelsPerMs;
+        }
+        return null;
+    }
+
+    _subscribeToSymbol(symbol) {
+        if (this._subscribedSymbols.has(symbol)) return;
+        this._subscribedSymbols.add(symbol);
+        const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`);
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.p) {
+                const price = parseFloat(data.p);
+                this.updatePriceForSymbol(symbol, price);
+            }
+        };
+        ws.onclose = () => {
+            this._subscribedSymbols.delete(symbol);
+            this._alertWebSockets.delete(symbol);
+        };
+        this._alertWebSockets.set(symbol, ws);
+    }
+
+    _unsubscribeFromSymbol(symbol) {
+        const ws = this._alertWebSockets.get(symbol);
+        if (ws) {
+            ws.onclose = null;
+            ws.close();
+            this._alertWebSockets.delete(symbol);
+        }
+        this._subscribedSymbols.delete(symbol);
     }
 
     _setupHotkeys() {
         document.addEventListener('keydown', (e) => {
             const active = document.activeElement;
             if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            
             if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                e.preventDefault(); e.stopPropagation();
+                e.preventDefault();
+                e.stopPropagation();
                 const newState = !this._isDrawingMode;
                 this.setDrawingMode(newState);
                 if (window.rayManager && newState) window.rayManager.setDrawingMode(false);
@@ -5370,6 +4964,7 @@ class AlertLineManager {
                 if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
                 if (window.textManager && newState) window.textManager.setDrawingMode(false);
             }
+            
             if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
                 e.preventDefault();
                 this.deleteAlert(this._selectedAlert.id);
@@ -5380,42 +4975,68 @@ class AlertLineManager {
 
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
+
         container.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return;
-            if (e.target.closest('#alertSettings') || e.target.closest('#trendSettings') || e.target.closest('#textSettings') || e.target.closest('#rulerSettingsPanel') || e.target.closest('#drawingSettings')) return;
+
+            if (e.target.closest('#alertSettings') || 
+                e.target.closest('#trendSettings') || 
+                e.target.closest('#textSettings') ||
+                e.target.closest('#rulerSettingsPanel') ||
+                e.target.closest('#drawingSettings')) {
+                return;
+            }
+            
             const rect = container.getBoundingClientRect();
-            const { x: bmX, y: bmY } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+            
             const hit = this.hitTest(bmX, bmY);
             if (hit) {
-                e.preventDefault(); e.stopPropagation();
+                e.preventDefault();
+                e.stopPropagation();
+                
                 const now = Date.now();
+                
                 if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
                     clearTimeout(this._dblClickTimer);
                     this._dblClickTimer = null;
                     this._potentialDblClickTarget = null;
                     this._lastClickTime = 0;
+                    
                     hit.alert.showDragPoint = !hit.alert.showDragPoint;
                     this._requestRedraw();
                     return;
                 }
+                
                 if (this._selectedAlert && this._selectedAlert !== hit.alert) {
                     this._selectedAlert.selected = false;
                     this._selectedAlert.showDragPoint = false;
                 }
                 hit.alert.selected = true;
                 this._selectedAlert = hit.alert;
+                
                 this._potentialDblClickTarget = hit.alert;
                 this._lastClickTime = now;
                 if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
-                this._dblClickTimer = setTimeout(() => { this._dblClickTimer = null; this._potentialDblClickTarget = null; }, this._dblClickTimeout);
+                this._dblClickTimer = setTimeout(() => {
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                }, this._dblClickTimeout);
+                
                 if (hit.alert.showDragPoint) {
                     const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
                     const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-                    if (alertX !== null && alertY !== null) { hit.alert.dragPointX = alertX; hit.alert.dragPointY = alertY; }
+                    if (alertX !== null && alertY !== null) {
+                        hit.alert.dragPointX = alertX;
+                        hit.alert.dragPointY = alertY;
+                    }
                     this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
                 } else {
                     this._potentialDrag = null;
                 }
+                
                 this._requestRedraw();
             } else {
                 const alertMenu = document.getElementById('alertContextMenu');
@@ -5424,7 +5045,11 @@ class AlertLineManager {
                     const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
                     if (isClickInsideMenu) return;
                 }
-                if (this._selectedAlert) { this._selectedAlert.selected = false; this._selectedAlert.showDragPoint = false; this._selectedAlert = null; }
+                if (this._selectedAlert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                    this._selectedAlert = null;
+                }
                 if (alertMenu) alertMenu.style.display = 'none';
                 this._requestRedraw();
             }
@@ -5432,7 +5057,14 @@ class AlertLineManager {
 
         container.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
-            const { x: bmX, y: bmY } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+            const cssX = e.clientX - rect.left;
+            const cssY = e.clientY - rect.top;
+            
+            this._lastMouseX = cssX;
+            this._lastMouseY = cssY;
+
+            const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
             if (this._potentialDrag && !this._isDragging) {
                 const dx = Math.abs(bmX - this._potentialDrag.startX);
                 const dy = Math.abs(bmY - this._potentialDrag.startY);
@@ -5447,10 +5079,13 @@ class AlertLineManager {
                     container.style.cursor = 'grabbing';
                 }
             }
+            
             if (this._isDragging && this._dragAlert) {
                 e.preventDefault(); e.stopPropagation();
+                
                 const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
                 const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+                
                 const alertX = this._chartManager.timeToCoordinate(this._dragStartTime);
                 const alertY = this._chartManager.priceToCoordinate(this._dragStartPrice);
                 if (alertX !== null && alertY !== null) {
@@ -5462,7 +5097,10 @@ class AlertLineManager {
                     if (newTime !== null) { this._dragAlert.time = newTime; this._dragAlert.anchorTime = newTime; }
                     const newAlertX = this._chartManager.timeToCoordinate(this._dragAlert.time);
                     const newAlertY = this._chartManager.priceToCoordinate(this._dragAlert.price);
-                    if (newAlertX !== null && newAlertY !== null) { this._dragAlert.dragPointX = newAlertX; this._dragAlert.dragPointY = newAlertY; }
+                    if (newAlertX !== null && newAlertY !== null) {
+                        this._dragAlert.dragPointX = newAlertX;
+                        this._dragAlert.dragPointY = newAlertY;
+                    }
                     this._requestRedraw();
                 }
             } else {
@@ -5492,7 +5130,10 @@ class AlertLineManager {
                     this._requestRedraw();
                 }
                 container.style.cursor = 'crosshair';
-                setTimeout(() => { container.dispatchEvent(new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY })); }, 10);
+                setTimeout(() => {
+                    const moveEvent = new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY });
+                    container.dispatchEvent(moveEvent);
+                }, 10);
             }
         });
 
@@ -5512,7 +5153,10 @@ class AlertLineManager {
     _handleContextMenu(e) {
         e.preventDefault(); e.stopPropagation();
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        const { x: bmX, y: bmY } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+        
         const hit = this.hitTest(bmX, bmY);
         if (hit) {
             if (this._selectedAlert && this._selectedAlert !== hit.alert) {
@@ -5525,9 +5169,13 @@ class AlertLineManager {
             hit.alert.attached = false;
             const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
             const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-            if (alertX !== null && alertY !== null) { hit.alert.dragPointX = alertX; hit.alert.dragPointY = alertY; }
+            if (alertX !== null && alertY !== null) {
+                hit.alert.dragPointX = alertX;
+                hit.alert.dragPointY = alertY;
+            }
             this._selectedAlert = hit.alert;
             this._requestRedraw();
+
             const menu = document.getElementById('alertContextMenu');
             if (menu) {
                 document.getElementById('drawingContextMenu').style.display = 'none';
@@ -5535,27 +5183,33 @@ class AlertLineManager {
                 menu.style.display = 'flex';
                 menu.style.left = e.clientX + 'px';
                 menu.style.top = e.clientY + 'px';
+                
                 const copyBtn = document.getElementById('alertContextCopyBtn');
                 const newCopyBtn = copyBtn.cloneNode(true);
                 copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
                 newCopyBtn.onclick = (event) => { event.stopPropagation(); navigator.clipboard?.writeText(Utils.formatPrice(hit.alert.price)); menu.style.display = 'none'; };
+                
                 const settingsBtn = document.getElementById('alertContextSettingsBtn');
                 const newSettingsBtn = settingsBtn.cloneNode(true);
                 settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
                 newSettingsBtn.onclick = (event) => { event.stopPropagation(); this._showSettings(hit.alert); menu.style.display = 'none'; };
+                
                 const pauseBtn = document.getElementById('alertContextPauseBtn');
                 if (pauseBtn) {
                     const newPauseBtn = pauseBtn.cloneNode(true);
                     pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
                     newPauseBtn.textContent = hit.alert.status === 'paused' ? '▶️ Возобновить' : '⏸️ Пауза';
-                    newPauseBtn.onclick = (event) => {
-                        event.stopPropagation();
-                        if (hit.alert.status === 'paused') hit.alert.resume();
-                        else hit.alert.pause();
-                        this._saveAlerts(); this._updateAlertsListUI(); this._requestRedraw();
-                        menu.style.display = 'none';
+                    newPauseBtn.onclick = (event) => { 
+                        event.stopPropagation(); 
+                        if (hit.alert.status === 'paused') { hit.alert.resume(); }
+                        else { hit.alert.pause(); }
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                        this._requestRedraw();
+                        menu.style.display = 'none'; 
                     };
                 }
+                
                 const deleteBtn = document.getElementById('alertContextDeleteBtn');
                 const newDeleteBtn = deleteBtn.cloneNode(true);
                 deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
@@ -5567,20 +5221,330 @@ class AlertLineManager {
         }
     }
 
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        
+        const alertBtn = document.getElementById('toolAlert');
+        if (alertBtn) {
+            if (enabled) {
+                alertBtn.style.background = '#4A90E2';
+                alertBtn.style.color = '#FFFFFF';
+                alertBtn.classList.add('active');
+            } else {
+                alertBtn.style.background = '';
+                alertBtn.style.color = '';
+                alertBtn.classList.remove('active');
+            }
+        }
+    }
+
+    checkTimerAlerts() {
+        const now = Date.now();
+        
+        this._alerts.forEach(item => {
+            const alert = item.alert;
+            
+            if (alert.triggered) return;
+            if (!alert.active) return;
+            if (alert.status === 'paused') return;
+            if (alert.status === 'completed') return;
+            if (!alert.canTriggerAgain()) return;
+            if (!alert.shouldTriggerByTimer(now)) return;
+            
+            alert.triggerCount++;
+            alert.lastTriggerTime = now;
+            
+            this._saveAlerts();
+            this._startInfiniteHighlight(alert.id);
+            this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
+            this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            
+            if (!alert.canTriggerAgain()) {
+                this._stopHighlight(alert.id);
+                this.deleteAlert(alert.id);
+            }
+        });
+    }
+
+    updatePriceForSymbol(symbol, price, exchange = null) {
+        if (!symbol || !price || isNaN(price)) return;
+        
+        const now = Date.now();
+        const lastPrice = this._lastPrices.get(symbol);
+        
+        this._lastPrices.set(symbol, price);
+        
+        if (lastPrice === undefined) return;
+        
+        const symbolAlerts = this._alerts.filter(item => 
+            item.alert.symbol === symbol && 
+            !item.alert.triggered &&
+            !item.alert.active &&
+            item.alert.status !== 'paused' &&
+            item.alert.status !== 'completed'
+        );
+        
+        if (symbolAlerts.length === 0) return;
+        
+        symbolAlerts.forEach(item => {
+            const alert = item.alert;
+            
+            if (now - alert.createdAt < 2000) return;
+            
+            const alertPrice = alert.price;
+            const crossedAbove = lastPrice < alertPrice && price >= alertPrice;
+            const crossedBelow = lastPrice > alertPrice && price <= alertPrice;
+            
+            if (crossedAbove || crossedBelow) {
+                alert.active = true;
+                alert.lastTriggerTime = now;
+                alert.triggerCount = 1;
+                
+                this._saveAlerts();
+                this._startInfiniteHighlight(alert.id);
+                this._showAlertNotification(alert, price, false);
+                this._sendTelegramAlert(alert, price, false);
+                this._updateAlertsListUI();
+                this._requestRedraw();
+                
+                if (!alert.canTriggerAgain()) {
+                    this._stopHighlight(alert.id);
+                    alert.complete();
+                    if (item.primitive && item.series) {
+                        try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+                        item.primitive = null;
+                        item.series = null;
+                    }
+                    this._saveAlerts();
+                    this._updateAlertsListUI();
+                    setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+                }
+            }
+        });
+    }
+
+    createAlert(price, time, options = {}) {
+        const defaultVisibility = {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+        
+        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        
+        const alert = new AlertLine(price, time, {
+            ...options,
+            symbol: this._chartManager.currentSymbol,
+            exchange: this._chartManager.currentExchange,
+            marketType: this._chartManager.currentMarketType,
+            timeframeVisibility: timeframeVisibility,
+            repeatCount: options.repeatCount || 5,
+            repeatInterval: options.repeatInterval || 1,
+            triggerCount: options.triggerCount || 0,
+            lastTriggerTime: options.lastTriggerTime || null,
+            active: options.active || false,
+            status: options.status || 'active'
+        });
+        
+        alert.anchorTime = time;
+        alert.triggered = options.triggered || false;
+        alert.symbolKey = this._getCurrentSymbolKey();
+        
+        if (!alert.triggered) {
+            const primitive = new AlertLinePrimitive(alert, this._chartManager);
+            const series = this._chartManager.currentChartType === 'candle' 
+                ? this._chartManager.candleSeries 
+                : this._chartManager.barSeries;
+            series.attachPrimitive(primitive);
+            this._alerts.push({ alert, primitive, series });
+        } else {
+            this._alerts.push({ alert, primitive: null, series: null });
+        }
+        
+        this._subscribeToSymbol(alert.symbol);
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        
+        return alert;
+    }
+
+    deleteAlert(alertId) {
+        const index = this._alerts.findIndex(a => a.alert.id === alertId);
+        if (index !== -1) {
+            const { alert, primitive, series } = this._alerts[index];
+            const symbol = alert.symbol;
+            
+            this._stopHighlight(alertId);
+            window.db.delete('drawings', alertId).catch(e => console.warn(e));
+            
+            if (primitive && series) {
+                try { series.detachPrimitive(primitive); } catch (e) {}
+            }
+            this._alerts.splice(index, 1);
+            
+            const hasOtherAlerts = this._alerts.some(item => item.alert.symbol === symbol && !item.alert.triggered);
+            if (!hasOtherAlerts) {
+                this._unsubscribeFromSymbol(symbol);
+            }
+            
+            if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
+            if (this._dragAlert && this._dragAlert.id === alertId) this._dragAlert = null;
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    pauseAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'active') {
+            item.alert.pause();
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+    
+    resumeAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'paused' && !item.alert.triggered) {
+            item.alert.resume();
+            if (!item.primitive && !item.alert.triggered) {
+                const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
+                const series = this._chartManager.currentChartType === 'candle' 
+                    ? this._chartManager.candleSeries 
+                    : this._chartManager.barSeries;
+                series.attachPrimitive(primitive);
+                item.primitive = primitive;
+                item.series = series;
+            }
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    deleteAllAlerts() {
+        const currentSymbolKey = this._getCurrentSymbolKey();
+        const currentSymbol = this._chartManager.currentSymbol;
+        
+        const alertsToDelete = this._alerts.filter(item => 
+            item.alert.symbolKey === currentSymbolKey
+        );
+        
+        if (alertsToDelete.length === 0) return;
+        
+        if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
+        
+        alertsToDelete.forEach(item => {
+            window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+            const index = this._alerts.indexOf(item);
+            if (index !== -1) this._alerts.splice(index, 1);
+        });
+        
+        const hasOtherAlerts = this._alerts.some(item => 
+            item.alert.symbol === currentSymbol && 
+            !item.alert.triggered && 
+            item.alert.status !== 'completed'
+        );
+        
+        if (!hasOtherAlerts) this._unsubscribeFromSymbol(currentSymbol);
+        
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+    deleteCompletedAlerts() {
+        const completedAlerts = this._alerts.filter(item => 
+            item.alert.status === 'completed' || item.alert.triggered
+        );
+        
+        if (completedAlerts.length === 0) return;
+        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
+        
+        completedAlerts.forEach(item => this.deleteAlert(item.alert.id));
+    }
+
+    _detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._alerts.filter(item => item.alert.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+            item.primitive = null;
+            item.series = null;
+        }
+    }
+    // ❗️ Никакого filter() – алерты остаются в памяти
+}
+    hitTest(x, y) {
+        if (this._selectedAlert) {
+            const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
+                } catch (e) {}
+            }
+        }
+        
+        let bestHit = null;
+        let bestDistance = Infinity;
+        
+        for (const item of this._alerts) {
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.alert === this._selectedAlert) continue;
+            
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                
+                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
+                    bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                }
+            } catch (e) {}
+        }
+        
+        return bestHit;
+    }
+
+    syncWithNewTimeframe() {
+        for (const item of this._alerts) {
+            if (item.primitive) item.primitive.updateAllViews();
+        }
+    }
+
     _handleChartClick(event) {
         if (!this._isDrawingMode) return;
+        
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
+        
         let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
+        let time = this._getTimeFromCoordinate(x);
+        
         if (price === null || time === null) {
             const lastCandle = this._chartManager.getLastCandle();
-            if (lastCandle) { price = lastCandle.close; time = lastCandle.time; }
-            else return;
+            if (lastCandle) {
+                price = lastCandle.close;
+                time = lastCandle.time;
+            } else return;
         }
-        const directionSelect = document.getElementById('alertDirection');
-        const direction = directionSelect ? directionSelect.value : 'above';
+        
         this.createAlert(price, time, {
             color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
             lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
@@ -5591,52 +5555,66 @@ class AlertLineManager {
             repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
             repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
             anchorCandle: null,
-            status: 'active',
-            direction
+            status: 'active'
         });
+        
         this.setDrawingMode(false);
     }
 
     _showSettings(alert) {
         const settings = document.getElementById('alertSettings');
         if (!settings) return;
+        
         document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
         document.getElementById('alertHexInputInline').value = alert.options.color;
         document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
         document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
         document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
         document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
+        
         const bellCheckbox = document.getElementById('alertShowBell');
         if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
+        
         createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
+        
         const priceInput = document.getElementById('alertSettingsPriceInput');
         if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
+        
         const repeatCountSelect = document.getElementById('alertRepeatCount');
         if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
+        
         const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
         if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
-        const directionSelect = document.getElementById('alertDirectionSettings');
-        if (directionSelect) directionSelect.value = alert.direction || 'above';
+        
         this._renderTimeframeCheckboxes(alert);
+        
         settings.style.display = 'block';
         settings.style.left = '50%';
         settings.style.top = '50%';
         settings.style.transform = 'translate(-50%, -50%)';
+        
         settings.dataset.alertId = alert.id;
+        
         const stylePanel = document.getElementById('alertStylePanel');
         const repeatPanel = document.getElementById('alertRepeatPanel');
         const visibilityPanel = document.getElementById('alertVisibilityPanel');
+        
         stylePanel.classList.add('active');
         repeatPanel.classList.remove('active');
         visibilityPanel.classList.remove('active');
+        
         document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
             tab.classList.remove('active');
             if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
         });
+        
         settings.onmousedown = (e) => e.stopPropagation();
+        
         if (!document._alertSettingsCloseHandler) {
             document._alertSettingsCloseHandler = (e) => {
-                if (!settings.contains(e.target) && settings.style.display === 'block') settings.style.display = 'none';
+                if (!settings.contains(e.target) && settings.style.display === 'block') {
+                    settings.style.display = 'none';
+                }
             };
             document.addEventListener('mousedown', document._alertSettingsCloseHandler);
         }
@@ -5646,6 +5624,7 @@ class AlertLineManager {
         const settings = document.getElementById('alertSettings');
         if (!settings || settings._listenersSetup) return;
         settings._listenersSetup = true;
+        
         settings.querySelectorAll('.settings-tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 const tabName = tab.dataset.alertSettingsTab;
@@ -5656,6 +5635,7 @@ class AlertLineManager {
                 tab.classList.add('active');
             });
         });
+        
         document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
             const alertId = settings.dataset.alertId;
             const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
@@ -5663,17 +5643,16 @@ class AlertLineManager {
             const newPrice = parseFloat(document.getElementById('alertSettingsPriceInput').value);
             if (!isNaN(newPrice)) {
                 alert.price = newPrice;
-                this._syncAlertsToWorker();
                 this._requestRedraw();
                 this._saveAlerts();
             }
         });
+        
         document.getElementById('alertSaveSettings').addEventListener('click', () => {
             const alertId = settings.dataset.alertId;
             const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
             if (!alert) return;
             const repeatCountVal = document.getElementById('alertRepeatCount').value;
-            const direction = document.getElementById('alertDirectionSettings')?.value || 'above';
             alert.updateOptions({
                 color: document.getElementById('alertCurrentColorBox').style.backgroundColor,
                 lineWidth: parseInt(document.getElementById('alertSettingThickness').value),
@@ -5683,13 +5662,12 @@ class AlertLineManager {
                 repeatCount: repeatCountVal === 'Infinity' ? Infinity : parseInt(repeatCountVal),
                 repeatInterval: parseInt(document.getElementById('alertRepeatInterval').value)
             });
-            alert.direction = direction;
-            this._syncAlertsToWorker();
             this._requestRedraw();
             settings.style.display = 'none';
             this._saveAlerts();
             this._updateAlertsListUI();
         });
+        
         document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
             const alertId = settings.dataset.alertId;
             this.deleteAlert(alertId);
@@ -5701,46 +5679,460 @@ class AlertLineManager {
     _renderTimeframeCheckboxes(alert) {
         const container = document.getElementById('alertTimeframeCheckboxList');
         if (!container) return;
-        const tfLabels = { '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
+        
+        const tfLabels = {
+            '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
+            '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
+            '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
+        };
+        
         let html = '';
         const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        
         timeframes.forEach(tf => {
             const isChecked = alert.timeframeVisibility[tf] !== false;
-            html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="alert_tf_${tf}_${alert.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="alert_tf_${tf}_${alert.id}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
+            html += `
+                <div class="timeframe-checkbox-item">
+                    <input type="checkbox" id="alert_tf_${tf}_${alert.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}>
+                    <label for="alert_tf_${tf}_${alert.id}">${tfLabels[tf] || tf}</label>
+                    <span class="tf-badge">${tf}</span>
+                </div>
+            `;
         });
+        
         container.innerHTML = html;
+        
         container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => { alert.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked; });
+            checkbox.addEventListener('change', (e) => {
+                const tf = e.target.dataset.timeframe;
+                alert.timeframeVisibility[tf] = e.target.checked;
+            });
         });
+        
         const selectAllBtn = document.getElementById('alertSelectAllTimeframes');
         const deselectAllBtn = document.getElementById('alertDeselectAllTimeframes');
+        
         if (selectAllBtn) {
             const newSelectAll = selectAllBtn.cloneNode(true);
             selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
-            newSelectAll.addEventListener('click', () => { container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; alert.timeframeVisibility[cb.dataset.timeframe] = true; }); });
+            newSelectAll.addEventListener('click', () => {
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = true;
+                    alert.timeframeVisibility[cb.dataset.timeframe] = true;
+                });
+            });
         }
+        
         if (deselectAllBtn) {
             const newDeselectAll = deselectAllBtn.cloneNode(true);
             deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
-            newDeselectAll.addEventListener('click', () => { container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; alert.timeframeVisibility[cb.dataset.timeframe] = false; }); });
+            newDeselectAll.addEventListener('click', () => {
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = false;
+                    alert.timeframeVisibility[cb.dataset.timeframe] = false;
+                });
+            });
         }
     }
 
     _requestRedraw() {
-        this._alerts.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); });
+        this._alerts.forEach(item => { 
+            if (item.primitive?.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
     }
 
-    destroy() {
-        if (this._worker) { this._worker.postMessage({ type: 'destroy' }); this._worker.terminate(); this._worker = null; }
-        if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; }
-        this._alerts = [];
+    _startInfiniteHighlight(alertId) {
+        this._stopHighlight(alertId);
+        
+        setTimeout(() => {
+            const content = document.getElementById('alertHistoryContent');
+            if (!content) return;
+            
+            const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+            if (!item) return;
+            
+            if (!item._originalStyles) {
+                item._originalStyles = {
+                    bg: item.style.backgroundColor,
+                    boxShadow: item.style.boxShadow,
+                    borderLeftColor: item.style.borderLeftColor,
+                    borderLeftWidth: item.style.borderLeftWidth,
+                    transition: item.style.transition
+                };
+            }
+            
+            let isHighlighted = false;
+            
+            const blink = () => {
+                if (!item.isConnected) {
+                    if (item._blinkInterval) {
+                        clearInterval(item._blinkInterval);
+                        item._blinkInterval = null;
+                    }
+                    return;
+                }
+                
+                isHighlighted = !isHighlighted;
+                
+                if (isHighlighted) {
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
+                    item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
+                    item.style.borderLeftColor = '#00FF00';
+                    item.style.borderLeftWidth = '6px';
+                    item.style.transition = 'all 0.35s ease';
+                } else {
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
+                    item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
+                    item.style.borderLeftColor = '#00DD00';
+                    item.style.borderLeftWidth = '4px';
+                    item.style.transition = 'all 0.35s ease';
+                }
+            };
+            
+            blink();
+            item._blinkInterval = setInterval(blink, 550);
+            
+            item._stopBlink = () => {
+                if (item._blinkInterval) {
+                    clearInterval(item._blinkInterval);
+                    item._blinkInterval = null;
+                }
+                const orig = item._originalStyles || {};
+                item.style.backgroundColor = orig.bg || '';
+                item.style.boxShadow = orig.boxShadow || '';
+                item.style.borderLeftColor = orig.borderLeftColor || '';
+                item.style.borderLeftWidth = orig.borderLeftWidth || '';
+                item.style.transition = orig.transition || '';
+            };
+            
+            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+    }
+
+    _stopHighlight(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+        
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (item && item._stopBlink) {
+            item._stopBlink();
+        }
+    }
+
+    _highlightTriggeredAlert(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+        
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
+        if (activeTab !== 'triggered') return;
+        
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (!item) return;
+        
+        item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
+        item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
+        item.style.borderLeftColor = '#FFC800';
+        item.style.borderLeftWidth = '5px';
+        item.style.transition = 'all 0.5s ease';
+        
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        setTimeout(() => {
+            if (item.isConnected) {
+                item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
+                item.style.boxShadow = 'none';
+                item.style.borderLeftWidth = '3px';
+            }
+        }, 8000);
+    }
+
+    _showAlertNotification(alert, currentPrice, isRepeat = false) {
+        const notification = document.getElementById('alertNotification');
+        
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const alertPriceFormatted = Utils.formatPrice(alert.price);
+        const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
+        
+        if (notification) {
+            notification.innerHTML = `
+                <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
+                <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
+                <div class="alert-repeat">${timeStr}</div>
+            `;
+            notification.style.display = 'block';
+            notification.style.borderLeftColor = alert.options.color;
+            setTimeout(() => { notification.style.display = 'none'; }, 5000);
+        }
+        
+        this._playAlertSound();
+        this._showSystemNotification(alert, currentPrice, isRepeat);
+    }
+
+    _playAlertSound() {
+        try {
+            const audio = document.getElementById('alertSound');
+            if (audio && audio.src && audio.src !== '') {
+                audio.currentTime = 0;
+                audio.play().catch(e => console.log('Звук не воспроизвёлся:', e));
+                return;
+            }
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {
+                const ctx = new AudioContext();
+                if (ctx.state === 'suspended') ctx.resume();
+                const now = ctx.currentTime;
+                const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
+                melody.forEach((freq, i) => {
+                    const startTime = now + i * 0.15;
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.value = freq;
+                    gain.gain.setValueAtTime(0, startTime);
+                    gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
+                    gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(startTime);
+                    osc.stop(startTime + 0.2);
+                });
+            }
+        } catch (e) {
+            console.warn('Ошибка воспроизведения звука:', e);
+        }
+    }
+
+    _showSystemNotification(alert, currentPrice, isRepeat = false) {
+        if (!("Notification" in window)) return;
+        
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
+        
+        const showNotification = () => {
+            const notification = new Notification(`🔔 ${alert.symbol} - АЛЕРТ${repeatText}`, {
+                body: `Цена: ${priceFormatted} | Уровень: ${Utils.formatPrice(alert.price)}`,
+                icon: 'https://tradingview.com/favicon.ico',
+                silent: false,
+                requireInteraction: true
+            });
+            notification.onclick = () => { window.focus(); notification.close(); };
+            setTimeout(() => notification.close(), 10000);
+        };
+        
+        if (Notification.permission === "granted") showNotification();
+        else if (Notification.permission !== "denied") {
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") showNotification();
+            });
+        }
+    }
+
+    _sendTelegramAlert(alert, currentPrice, isRepeat = false) {
+        const chatId = localStorage.getItem('telegramChatId');
+        if (!chatId) return;
+        
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const alertPriceFormatted = Utils.formatPrice(alert.price);
+        
+        const direction = currentPrice > alert.price ? '⬆️ Выше' : '⬇️ Ниже';
+        const repeatText = isRepeat ? `\n🔄 Повтор: ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}` : '';
+        
+        const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${new Date().toLocaleString('ru-RU')}`;
+        
+        const formData = new URLSearchParams();
+        formData.append('chat_id', chatId);
+        formData.append('text', message);
+        
+        fetch(CONFIG.telegramProxyUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formData
+        }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
+    }
+
+    async _saveAlerts() {
+        if (this._alerts.length === 0) return;
+        const promises = this._alerts.map(item => 
+            window.db.put('drawings', {
+                id: item.alert.id,
+                type: 'alert',
+                symbolKey: item.alert.symbolKey,
+                data: {
+                    price: item.alert.price,
+                    time: item.alert.time,
+                    anchorTime: item.alert.anchorTime,
+                    symbol: item.alert.symbol,
+                    exchange: item.alert.exchange,
+                    marketType: item.alert.marketType,
+                    options: item.alert.options,
+                    timeframeVisibility: item.alert.timeframeVisibility,
+                    triggered: item.alert.triggered,
+                    triggerCount: item.alert.triggerCount,
+                    repeatCount: item.alert.repeatCount,
+                    repeatInterval: item.alert.repeatInterval,
+                    lastTriggerTime: item.alert.lastTriggerTime,
+                    active: item.alert.active,
+                    status: item.alert.status,
+                    anchorCandle: item.alert.anchorCandle
+                }
+            }).catch(e => console.warn('Save alert error:', e))
+        );
+        await Promise.all(promises);
+    }
+
+    // ✅ Старый метод теперь использует координатор
+    async loadAlerts() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+    }
+
+    _updateAlertsListUI() {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+        
+        const activeAlerts = this._alerts.map(a => a.alert).filter(alert => !alert.triggered && alert.status !== 'completed');
+        const pausedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.status === 'paused');
+        const completedAlerts = this._alerts.map(a => a.alert).filter(alert => alert.triggered || alert.status === 'completed').sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
+        
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
+        
+        let html = '';
+        
+        if (activeTab === 'active') {
+            const displayAlerts = [...activeAlerts, ...pausedAlerts];
+            if (displayAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет активных алертов</div>';
+            } else {
+                html = '<div class="alert-list">';
+                displayAlerts.forEach(alert => {
+                    const priceFormatted = Utils.formatPrice(alert.price);
+                    const color = alert.options.color;
+                    const isActive = alert.active;
+                    const isPaused = alert.status === 'paused';
+                    
+                    const statusIcon = isPaused ? '⏸️' : (isActive ? '🟢' : '🔔');
+                    const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
+                    
+                    html += `
+                        <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}" 
+                             style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}" 
+                             data-id="${alert.id}">
+                            <div class="trigger-bell">${statusIcon}</div>
+                            <div>
+                                <div class="price"><span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> ${priceFormatted}</div>
+                                <div class="info">
+                                    <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
+                                    <span>${statusText}</span>
+                                </div>
+                            </div>
+                            <div class="actions">
+                                <button class="pause-alert" data-id="${alert.id}" title="${isPaused ? 'Возобновить' : 'Пауза'}">
+                                    ${isPaused ? '▶️' : '⏸️'}
+                                </button>
+                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">❌</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+        } else {
+            if (completedAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет завершенных алертов</div>';
+            } else {
+                html = '<div class="alert-list">';
+                completedAlerts.forEach(alert => {
+                    const priceFormatted = Utils.formatPrice(alert.price);
+                    const color = alert.options.color;
+                    const triggerTime = alert.lastTriggerTime || alert.createdAt;
+                    const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                    const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
+                    
+                    html += `
+                        <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
+                            <div>
+                                <div class="price">
+                                    <span style="color:#FFD700; font-weight:bold;">${alert.symbol}</span> 
+                                    ${priceFormatted}${repeatInfo}
+                                </div>
+                                <div class="info">
+                                    <span>🕐 ${dateStr} ${timeStr}</span>
+                                    <span>✅ Завершен</span>
+                                </div>
+                            </div>
+                            <div class="actions">
+                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">❌</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                
+                html += `
+                    <div style="padding: 10px; text-align: center;">
+                        <button class="clear-completed-btn" style="background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                            🗑️ Удалить все завершенные (${completedAlerts.length})
+                        </button>
+                    </div>
+                `;
+            }
+        }
+        
+        content.innerHTML = html;
+        
+        content.querySelectorAll('.delete-alert').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteAlert(btn.dataset.id);
+            });
+        });
+        
+        content.querySelectorAll('.pause-alert').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const alert = this._alerts.find(a => a.alert.id === id)?.alert;
+                if (alert) {
+                    if (alert.status === 'paused') this.resumeAlert(id);
+                    else this.pauseAlert(id);
+                }
+            });
+        });
+        
+        const clearBtn = content.querySelector('.clear-completed-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => this.deleteCompletedAlerts());
+        }
+    }
+
+    deactivateAll() {
+        this._alerts.forEach(item => {
+            if (item.alert) {
+                item.alert.selected = false;
+                item.alert.showDragPoint = false;
+            }
+        });
         this._selectedAlert = null;
-        this._hoveredAlert = null;
-        this._dragAlert = null;
-        this._potentialDrag = null;
-        this._lastPrices.clear();
+    }
+    
+    setMagnetEnabled(enabled) {}
+    
+    activateObject(alert) {
+        alert.selected = true;
+        alert.showDragPoint = true;
+        this._selectedAlert = alert;
     }
 }
+// ============================================================
+// TEXT DRAWING CLASSES
+// ============================================================
+
 class TextDrawing {
     constructor(text, time, price, options = {}) {
         this.text = text || 'Текст';
@@ -6754,135 +7146,206 @@ hitTest(x, y) {
         return closestCandle.time;
     }
 
-    _showSettings(text) {
-        const settings = document.getElementById('textSettings');
-        if (!settings) return;
-        
-        document.getElementById('textCurrentColorBox').style.backgroundColor = text.options.color;
-        document.getElementById('textHexInputInline').value = text.options.color;
-        document.getElementById('textBgColorBox').style.backgroundColor = text.options.bgColor;
-        document.getElementById('textBgHexInput').value = text.options.bgColor;
-        document.getElementById('textFontSize').value = text.options.fontSize;
-        document.getElementById('textBold').checked = text.options.bold || false;
-        document.getElementById('textOpacity').value = Math.round(text.options.opacity * 100);
-        document.getElementById('textOpacityValue').textContent = document.getElementById('textOpacity').value + '%';
-        document.getElementById('textBgOpacity').value = Math.round(text.options.bgOpacity * 100);
-        document.getElementById('textBgOpacityValue').textContent = document.getElementById('textBgOpacity').value + '%';
-        document.getElementById('textContentInput').value = text.text;
-        
-        setTimeout(() => {
-            const textarea = document.getElementById('textContentInput');
-            if (textarea) { textarea.focus(); textarea.select(); }
-        }, 200);
-        
-       createColorGrid('textInlineColorsGrid', 'textCurrentColorBox', 'textHexInputInline', text.options.color, 'textAddColorInline');
-createColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor, 'textBgAddColor');
-        this._renderColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor);
-        this._renderTimeframeCheckboxes(text);
-        
-        settings.style.display = 'block';
-        settings.style.left = '50%';
-        settings.style.top = '50%';
-        settings.style.transform = 'translate(-50%, -50%)';
-        
-        settings.addEventListener('mousedown', (e) => e.stopPropagation());
-        settings.addEventListener('mousemove', (e) => e.stopPropagation());
-        settings.addEventListener('mouseup', (e) => e.stopPropagation());
-        settings.addEventListener('click', (e) => e.stopPropagation());
-        
-        let header = settings.querySelector('.settings-header');
-        if (!header) {
-            header = document.createElement('div');
-            header.className = 'settings-header';
-            header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #404040;';
-            const title = document.createElement('span');
-            title.textContent = 'Настройки текста';
-            title.style.color = '#FFFFFF';
-            title.style.fontSize = '14px';
-            title.style.fontWeight = 'bold';
-            const closeBtn = document.createElement('button');
-            closeBtn.innerHTML = '✕';
-            closeBtn.style.cssText = 'background: transparent; border: none; color: #B0B0B0; font-size: 18px; cursor: pointer; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px;';
-            closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
-            closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
-            closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
-            header.appendChild(title);
-            header.appendChild(closeBtn);
-            settings.insertBefore(header, settings.firstChild);
+  _showSettings(text) {
+    const settings = document.getElementById('textSettings');
+    if (!settings) return;
+
+    // ✅ Устанавливаем выбранный текст
+    this._selectedText = text;
+
+    // Заполняем поля текущими значениями
+    document.getElementById('textCurrentColorBox').style.backgroundColor = text.options.color;
+    document.getElementById('textHexInputInline').value = text.options.color;
+    document.getElementById('textBgColorBox').style.backgroundColor = text.options.bgColor;
+    document.getElementById('textBgHexInput').value = text.options.bgColor;
+    document.getElementById('textFontSize').value = text.options.fontSize;
+    document.getElementById('textBold').checked = text.options.bold || false;
+    document.getElementById('textOpacity').value = Math.round(text.options.opacity * 100);
+    document.getElementById('textOpacityValue').textContent = document.getElementById('textOpacity').value + '%';
+    document.getElementById('textBgOpacity').value = Math.round(text.options.bgOpacity * 100);
+    document.getElementById('textBgOpacityValue').textContent = document.getElementById('textBgOpacity').value + '%';
+    document.getElementById('textContentInput').value = text.text;
+
+    // Цветовые сетки
+    createColorGrid('textInlineColorsGrid', 'textCurrentColorBox', 'textColorPickerInline', 'textHexInputInline', text.options.color, 'textAddColorInline');
+    createColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgColorPicker', 'textBgHexInput', text.options.bgColor, 'textBgAddColor');
+    this._renderColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor);
+    this._renderTimeframeCheckboxes(text);
+
+    // Показываем панель
+    settings.style.display = 'block';
+    settings.style.left = '50%';
+    settings.style.top = '50%';
+    settings.style.transform = 'translate(-50%, -50%)';
+
+    // Блокируем всплытие событий внутри панели
+    settings.addEventListener('mousedown', (e) => e.stopPropagation());
+    settings.addEventListener('mousemove', (e) => e.stopPropagation());
+    settings.addEventListener('mouseup', (e) => e.stopPropagation());
+    settings.addEventListener('click', (e) => e.stopPropagation());
+
+    // Заголовок (создаётся один раз)
+    let header = settings.querySelector('.settings-header');
+    if (!header) {
+        header = document.createElement('div');
+        header.className = 'settings-header';
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #404040;';
+        const title = document.createElement('span');
+        title.textContent = 'Настройки текста';
+        title.style.color = '#FFFFFF';
+        title.style.fontSize = '14px';
+        title.style.fontWeight = 'bold';
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background: transparent; border: none; color: #B0B0B0; font-size: 18px; cursor: pointer; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px;';
+        closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
+        closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+        closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        settings.insertBefore(header, settings.firstChild);
+    }
+
+    // Закрытие по клику вне панели
+    const closeOnOutsideClick = (e) => {
+        if (!settings.contains(e.target) && settings.style.display === 'block') {
+            settings.style.display = 'none';
+            document.removeEventListener('mousedown', closeOnOutsideClick);
         }
-        
-        const closeOnOutsideClick = (e) => {
-            if (!settings.contains(e.target) && settings.style.display === 'block') {
-                settings.style.display = 'none';
-                document.removeEventListener('mousedown', closeOnOutsideClick);
-            }
-        };
-        setTimeout(() => { document.addEventListener('mousedown', closeOnOutsideClick); }, 100);
-        
-        const textPanel = document.getElementById('textEditPanel');
-        const stylePanel = document.getElementById('textStylePanel');
-        const visibilityPanel = document.getElementById('textVisibilityPanel');
-        const tabs = document.querySelectorAll('#textSettings .settings-tab');
-        
-        tabs.forEach(tab => {
-            tab.classList.remove('active');
-            if (tab.dataset.textSettingsTab === 'text') tab.classList.add('active');
+    };
+    setTimeout(() => { document.addEventListener('mousedown', closeOnOutsideClick); }, 100);
+
+    // === Вкладки (без cloneNode!) ===
+    const textPanel = document.getElementById('textEditPanel');
+    const stylePanel = document.getElementById('textStylePanel');
+    const visibilityPanel = document.getElementById('textVisibilityPanel');
+    const tabs = document.querySelectorAll('#textSettings .settings-tab');
+
+    tabs.forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.dataset.textSettingsTab === 'text') tab.classList.add('active');
+    });
+
+    if (textPanel) textPanel.classList.add('active');
+    if (stylePanel) stylePanel.classList.remove('active');
+    if (visibilityPanel) visibilityPanel.classList.remove('active');
+
+    tabs.forEach(tab => {
+        tab.onclick = null;
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('#textSettings .settings-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            if (textPanel) textPanel.classList.remove('active');
+            if (stylePanel) stylePanel.classList.remove('active');
+            if (visibilityPanel) visibilityPanel.classList.remove('active');
+            if (this.dataset.textSettingsTab === 'text' && textPanel) textPanel.classList.add('active');
+            else if (this.dataset.textSettingsTab === 'style' && stylePanel) stylePanel.classList.add('active');
+            else if (this.dataset.textSettingsTab === 'visibility' && visibilityPanel) visibilityPanel.classList.add('active');
         });
-        
-        if (textPanel) textPanel.classList.add('active');
-        if (stylePanel) stylePanel.classList.remove('active');
-        if (visibilityPanel) visibilityPanel.classList.remove('active');
-        
-        tabs.forEach(tab => {
-            const newTab = tab.cloneNode(true);
-            tab.parentNode.replaceChild(newTab, tab);
-        });
-        
-        document.querySelectorAll('#textSettings .settings-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                document.querySelectorAll('#textSettings .settings-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                if (textPanel) textPanel.classList.remove('active');
-                if (stylePanel) stylePanel.classList.remove('active');
-                if (visibilityPanel) visibilityPanel.classList.remove('active');
-                if (tab.dataset.textSettingsTab === 'text' && textPanel) textPanel.classList.add('active');
-                else if (tab.dataset.textSettingsTab === 'style' && stylePanel) stylePanel.classList.add('active');
-                else if (tab.dataset.textSettingsTab === 'visibility' && visibilityPanel) visibilityPanel.classList.add('active');
+    });
+
+    // === Кнопки сохранить/удалить (без cloneNode!) ===
+    const saveBtn = document.getElementById('textSaveSettings');
+    const deleteBtn = document.getElementById('textDeleteDrawing');
+
+    if (saveBtn) {
+        saveBtn.onclick = null;
+        saveBtn.addEventListener('click', () => {
+            text.updateOptions({
+                color: document.getElementById('textCurrentColorBox').style.backgroundColor,
+                bgColor: document.getElementById('textBgColorBox').style.backgroundColor,
+                fontSize: parseInt(document.getElementById('textFontSize').value),
+                bold: document.getElementById('textBold').checked,
+                opacity: parseInt(document.getElementById('textOpacity').value) / 100,
+                bgOpacity: parseInt(document.getElementById('textBgOpacity').value) / 100,
+                text: document.getElementById('textContentInput').value
             });
+            this._requestRedraw();
+            settings.style.display = 'none';
+            this._saveTexts();
         });
-        
-        const saveBtn = document.getElementById('textSaveSettings');
-        if (saveBtn) {
-            const newSaveBtn = saveBtn.cloneNode(true);
-            saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-            newSaveBtn.addEventListener('click', () => {
-                text.updateOptions({
-                    color: document.getElementById('textCurrentColorBox').style.backgroundColor,
-                    bgColor: document.getElementById('textBgColorBox').style.backgroundColor,
-                    fontSize: parseInt(document.getElementById('textFontSize').value),
-                    bold: document.getElementById('textBold').checked,
-                    opacity: parseInt(document.getElementById('textOpacity').value) / 100,
-                    bgOpacity: parseInt(document.getElementById('textBgOpacity').value) / 100,
-                    text: document.getElementById('textContentInput').value
+    }
+
+    if (deleteBtn) {
+        deleteBtn.onclick = null;
+        deleteBtn.addEventListener('click', () => {
+            this.deleteText(text.id);
+            settings.style.display = 'none';
+            this._requestRedraw();
+        });
+    }
+
+    // ========== МГНОВЕННОЕ ПРИМЕНЕНИЕ (однократно) ==========
+    if (!settings.dataset.instantBound) {
+        settings.dataset.instantBound = 'true';
+
+        // Размер шрифта
+        document.getElementById('textFontSize').addEventListener('input', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            const val = parseInt(this.value) || 12;
+            mgr._selectedText.options.fontSize = val;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+
+        // Жирный
+        document.getElementById('textBold').addEventListener('change', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            mgr._selectedText.options.bold = this.checked;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+
+        // Прозрачность текста
+        document.getElementById('textOpacity').addEventListener('input', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            document.getElementById('textOpacityValue').textContent = this.value + '%';
+            mgr._selectedText.options.opacity = parseInt(this.value) / 100;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+
+        // Прозрачность фона
+        document.getElementById('textBgOpacity').addEventListener('input', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            document.getElementById('textBgOpacityValue').textContent = this.value + '%';
+            mgr._selectedText.options.bgOpacity = parseInt(this.value) / 100;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+    }
+
+    // ========== КНОПКА "МИНУТКИ" (добавляется один раз) ==========
+    if (!settings.dataset.minutesBound) {
+        settings.dataset.minutesBound = 'true';
+        const minutesBtn = document.getElementById('textSelectMinutesTimeframes');
+        if (minutesBtn) {
+            minutesBtn.addEventListener('click', () => {
+                const container = document.getElementById('textTimeframeCheckboxList');
+                if (!container) return;
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m']);
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    const isMinute = minutesSet.has(cb.dataset.timeframe);
+                    cb.checked = isMinute;
+                    text.timeframeVisibility[cb.dataset.timeframe] = isMinute;
                 });
-                this._requestRedraw();
-                settings.style.display = 'none';
-                this._saveTexts();
-            });
-        }
-        
-        const deleteBtn = document.getElementById('textDeleteDrawing');
-        if (deleteBtn) {
-            const newDeleteBtn = deleteBtn.cloneNode(true);
-            deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-            newDeleteBtn.addEventListener('click', () => {
-                this.deleteText(text.id);
-                settings.style.display = 'none';
-                this._requestRedraw();
             });
         }
     }
 
+    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+    if (typeof window.makePanelDraggable === 'function') {
+        window.makePanelDraggable(settings);
+    }
+}
     _renderColorGrid(gridId, colorBoxId, hexInputId, selectedColor) {
         const grid = document.getElementById(gridId);
         if (!grid) return;
@@ -6927,33 +7390,35 @@ createColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.opt
         }
     }
 
-    _renderTimeframeCheckboxes(text) {
-        const container = document.getElementById('textTimeframeCheckboxList');
-        if (!container) return;
-        const tfLabels = { '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
-        let html = '';
-        const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
-        timeframes.forEach(tf => {
-            const isChecked = text.timeframeVisibility[tf] !== false;
-            html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="text_tf_${tf}_${text.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="text_tf_${tf}_${text.id}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
+   _renderTimeframeCheckboxes(text) {
+    const container = document.getElementById('textTimeframeCheckboxList');
+    if (!container) return;
+    const tfLabels = { '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
+    let html = '';
+    const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+    timeframes.forEach(tf => {
+        const isChecked = text.timeframeVisibility[tf] !== false;
+        html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="text_tf_${tf}_${text.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="text_tf_${tf}_${text.id}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
+    });
+    container.innerHTML = html;
+    container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => { text.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked; });
+    });
+    const selectAllBtn = document.getElementById('textSelectAllTimeframes');
+    const deselectAllBtn = document.getElementById('textDeselectAllTimeframes');
+    if (selectAllBtn) {
+        selectAllBtn.onclick = null; // очищаем предыдущий обработчик
+        selectAllBtn.addEventListener('click', () => { 
+            container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; text.timeframeVisibility[cb.dataset.timeframe] = true; }); 
         });
-        container.innerHTML = html;
-        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => { text.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked; });
-        });
-        const selectAllBtn = document.getElementById('textSelectAllTimeframes');
-        const deselectAllBtn = document.getElementById('textDeselectAllTimeframes');
-        if (selectAllBtn) {
-            const newSelectAll = selectAllBtn.cloneNode(true);
-            selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
-            newSelectAll.addEventListener('click', () => { container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; text.timeframeVisibility[cb.dataset.timeframe] = true; }); });
-        }
-        if (deselectAllBtn) {
-            const newDeselectAll = deselectAllBtn.cloneNode(true);
-            deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
-            newDeselectAll.addEventListener('click', () => { container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; text.timeframeVisibility[cb.dataset.timeframe] = false; }); });
-        }
     }
+    if (deselectAllBtn) {
+        deselectAllBtn.onclick = null;
+        deselectAllBtn.addEventListener('click', () => { 
+            container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; text.timeframeVisibility[cb.dataset.timeframe] = false; }); 
+        });
+    }
+}
 
     _requestRedraw() {
         this._texts.forEach(item => {
