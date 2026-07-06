@@ -370,6 +370,9 @@
 <path d="M85 80L426.5 80L427 80.5L427 155L85.5 155L85 154.5L85 80Z"/>
 </svg>
 </button>
+<button class="alert-history-btn" id="economicCalendarBtn" title="Экономический календарь">
+<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M200-80q-33 0-56.5-23.5T120-160v-560q0-33 23.5-56.5T200-800h40v-80h80v80h320v-80h80v80h40q33 0 56.5 23.5T840-720v560q0 33-23.5 56.5T760-80H200Zm0-80h560v-400H200v400Zm0-480h560v-80H200v80Zm0 0v-80 80Zm280 240q-17 0-28.5-11.5T440-440q0-17 11.5-28.5T480-480q17 0 28.5 11.5T520-440q0 17-11.5 28.5T480-400Zm-188.5-11.5Q280-423 280-440t11.5-28.5Q303-480 320-480t28.5 11.5Q360-457 360-440t-11.5 28.5Q337-400 320-400t-28.5-11.5ZM640-400q-17 0-28.5-11.5T600-440q0-17 11.5-28.5T640-480q17 0 28.5 11.5T680-440q0 17-11.5 28.5T640-400ZM480-240q-17 0-28.5-11.5T440-280q0-17 11.5-28.5T480-320q17 0 28.5 11.5T520-280q0 17-11.5 28.5T480-240Zm-188.5-11.5Q280-263 280-280t11.5-28.5Q303-320 320-320t28.5 11.5Q360-297 360-280t-11.5 28.5Q337-240 320-240t-28.5-11.5ZM640-240q-17 0-28.5-11.5T600-280q0-17 11.5-28.5T640-320q17 0 28.5 11.5T680-280q0 17-11.5 28.5T640-240Z"/></svg>
+</button>
 <button class="alert-history-btn" id="screenerBtn" title="Скринер" onclick="window.open('https://donpu333.github.io/screener/', '_blank')">
 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
 <path d="m17.5,11c-3.584,0-6.5,2.916-6.5,6.5s2.916,6.5,6.5,6.5,6.5-2.916,6.5-6.5-2.916-6.5-6.5-6.5Zm0,12c-3.032,0-5.5-2.468-5.5-5.5s2.468-5.5,5.5-5.5,5.5,2.468,5.5,5.5-2.468,5.5-5.5,5.5Zm2.939-7.451l.701.713-3.456,3.399c-.217.218-.51.339-.822.339s-.604-.121-.825-.343l-1.85-1.793.695-.719,1.856,1.8c.099.099.157.089.24.007l3.46-3.403Zm-8.416-4.549H4v-1h9.497c-.527.282-1.021.618-1.474,1Zm0,13H0V2.5C0,1.121,1.121,0,2.5,0h13c1.379,0,2.5,1.121,2.5,2.5v6.515c-.166-.01-.332-.015-.5-.015s-.334.005-.5.015V2.5c0-.827-.673-1.5-1.5-1.5H2.5c-.827,0-1.5.673-1.5,1.5v20.5h10.02c.306.36.642.695,1.004,1Zm1.977-18H4v-1h10v1ZM4,15h5v1h-5v-1Z"/>
@@ -2536,6 +2539,111 @@ document.addEventListener('mousedown', function(e) {
     }
 }, true);
 </script>
-
+<script>
+// ========== СОЗДАНИЕ ОКНА КАЛЕНДАРЯ ==========
+(function() {
+    // Создаём плавающее окно
+    var floatingWindow = document.createElement('div');
+    floatingWindow.id = 'floatingCalendar';
+    floatingWindow.style.cssText = 'display:none;position:fixed;width:420px;height:550px;background:#1E1E1E;border:1px solid #404040;border-radius:8px;z-index:10001;box-shadow:0 8px 32px rgba(0,0,0,0.6);flex-direction:column;left:50%;top:50%;transform:translate(-50%,-50%);';
+    
+    floatingWindow.innerHTML = '<div id="calendarHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#2D2D2D;border-bottom:1px solid #404040;border-radius:8px 8px 0 0;cursor:move;color:#FFFFFF;font-size:13px;font-weight:bold;">' +
+        '<span>📅 Экономический календарь</span>' +
+        '<div style="display:flex;gap:5px;">' +
+        '<button id="minimizeCalendarBtn" style="background:transparent;border:none;color:#B0B0B0;font-size:16px;cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;" title="Свернуть">─</button>' +
+        '<button id="closeCalendarBtn" style="background:transparent;border:none;color:#B0B0B0;font-size:16px;cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;" title="Закрыть">✕</button>' +
+        '</div></div>' +
+        '<div id="calendarBody" style="flex:1;overflow:hidden;border-radius:0 0 8px 8px;">' +
+        '<div id="economicCalendarWidget" style="width:100%;height:100%;"></div>' +
+        '</div>';
+    
+    document.body.appendChild(floatingWindow);
+    console.log('✅ Окно календаря создано');
+    
+    // Загрузка виджета
+    var calendarLoaded = false;
+    
+    function loadCalendar() {
+        if (calendarLoaded) return;
+        calendarLoaded = true;
+        console.log('📅 Загружаю виджет календаря...');
+        
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.async = true;
+        script.setAttribute('data-type', 'calendar-widget');
+        script.src = 'https://www.tradays.com/c/js/widgets/calendar/widget.js?v=15';
+        script.textContent = JSON.stringify({
+            width: '100%',
+            height: '100%',
+            mode: '1',
+            fw: 'html',
+            lang: 'ru',
+            theme: 1
+        });
+        
+        var container = document.getElementById('economicCalendarWidget');
+        if (container) {
+            container.appendChild(script);
+        }
+    }
+    
+    // Перетаскивание
+    var isDragging = false, startX, startY, startLeft, startTop;
+    
+    document.getElementById('calendarHeader').addEventListener('mousedown', function(e) {
+        if (e.target.tagName === 'BUTTON') return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        var rect = floatingWindow.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+        floatingWindow.style.transform = 'none';
+        floatingWindow.style.left = startLeft + 'px';
+        floatingWindow.style.top = startTop + 'px';
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        floatingWindow.style.left = (startLeft + e.clientX - startX) + 'px';
+        floatingWindow.style.top = (startTop + e.clientY - startY) + 'px';
+    });
+    
+    document.addEventListener('mouseup', function() { isDragging = false; });
+    
+    // Кнопки
+    var minimized = false;
+    document.getElementById('minimizeCalendarBtn').addEventListener('click', function() {
+        var body = document.getElementById('calendarBody');
+        minimized = !minimized;
+        body.style.display = minimized ? 'none' : 'block';
+        this.innerHTML = minimized ? '□' : '─';
+    });
+    
+    document.getElementById('closeCalendarBtn').addEventListener('click', function() {
+        floatingWindow.style.display = 'none';
+    });
+    
+    // Обработчик кнопки в тулбаре
+    var btn = document.getElementById('economicCalendarBtn');
+    if (btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (floatingWindow.style.display === 'none') {
+                floatingWindow.style.display = 'flex';
+                loadCalendar();
+            } else {
+                floatingWindow.style.display = 'none';
+            }
+        });
+        console.log('✅ Обработчик кнопки календаря добавлен');
+    } else {
+        console.log('❌ Кнопка economicCalendarBtn не найдена');
+    }
+})();
+</script>
 </body>
 </html>
