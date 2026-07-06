@@ -13,10 +13,8 @@
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 </head>
 <body>
-<!-- ПАНЕЛЬ КОТИРОВОК (СПРАВА) -->
+<!-- ПАНЕЛЬ КОТИРОВОК -->
 <div class="ticker-panel" id="tickerPanel">
-<!-- Менеджер вотчлистов сам создаст dropdown -->
-<!-- Верхняя панель с вкладками -->
 <div class="tabs-container">
 <div class="tabs">
 <button class="tab active" data-tab="all">Все</button>
@@ -42,7 +40,6 @@
 </svg>
 </button>
 </div>
-<!-- Фильтры -->
 <div class="filter-section">
 <div class="filter-row">
 <div class="filter-group">
@@ -54,22 +51,11 @@
 <div class="filter-row">
 <div class="filter-group">
 <button class="filter-btn active" data-filter="exchange" data-value="all">Все биржи</button>
-<svg xmlns="http://www.w3.org/2000/svg"
-class="filter-btn binance"
-data-filter="exchange"
-data-value="binance"
-height="29"
-viewBox="0 0 700 120"
-style="cursor: pointer; width: auto; display: block; padding: 4px 10px;"
-role="button"
-tabindex="0">
+<svg xmlns="http://www.w3.org/2000/svg" class="filter-btn binance" data-filter="exchange" data-value="binance" height="29" viewBox="0 0 700 120" style="cursor: pointer; width: auto; display: block; padding: 4px 10px;" role="button" tabindex="0">
 <g transform="translate(-39.87 -49.56) scale(1.025)">
 <path d="M63 101.74L51.43 113.3l-11.56-11.56 11.56-11.56zm28.05-28.07l19.81 19.82 11.56-11.56-31.37-31.37-31.37 31.37 11.56 11.56zm39.63 16.51l-11.56 11.56 11.56 11.56 11.55-11.56zm-39.63 39.63L71.24 110l-11.56 11.55 31.37 31.37 31.37-31.37L110.86 110zm0-16.51l11.56-11.56-11.56-11.56-11.56 11.56z" fill="#f0b90b"/>
 <g transform="translate(85, 0)">
-<path d="M122 111.22v-.16c0-7.54-4-11.31-10.51-13.79 4-2.25 7.38-5.78 7.38-12.11v-.16c0-8.82-7.06-14.52-18.53-14.52h-26.04v56.14h26.7c12.67 0 21.02-5.13 21.02-15.4zm-15.4-24c0 4.17-3.45 5.94-8.9 5.94h-11.37V84.5h12.19c5.21 0 8.1 2.08 8.1 5.77v.95zm3.13 22.46c0 4.17-3.29 6.09-8.75 6.09h-14.65v-12.33h14.27c6.34 0 9.15 2.33 9.15 6.1v.14z"
-fill="#FFFFFF"
-stroke="none"
-shape-rendering="geometricPrecision"/>
+<path d="M122 111.22v-.16c0-7.54-4-11.31-10.51-13.79 4-2.25 7.38-5.78 7.38-12.11v-.16c0-8.82-7.06-14.52-18.53-14.52h-26.04v56.14h26.7c12.67 0 21.02-5.13 21.02-15.4zm-15.4-24c0 4.17-3.45 5.94-8.9 5.94h-11.37V84.5h12.19c5.21 0 8.1 2.08 8.1 5.77v.95zm3.13 22.46c0 4.17-3.29 6.09-8.75 6.09h-14.65v-12.33h14.27c6.34 0 9.15 2.33 9.15 6.1v.14z" fill="#FFFFFF" stroke="none" shape-rendering="geometricPrecision"/>
 </g>
 <path d="M239 129.81V73.67h-12.39v56.14z" fill="#FFFFFF"/>
 <path d="M305.4 129.8V73.7h-12.2v34.6l-26.3-34.6h-11.4v56.1h12.2V94.1l27.2 35.7z" fill="#FFFFFF"/>
@@ -78,24 +64,8 @@ shape-rendering="geometricPrecision"/>
 <path d="M496.4 120.7l-7.9-7.9c-4.4 4-8.3 6.6-14.8 6.6-9.6 0-16.3-8-16.3-17.6v-.2c0-9.6 6.8-17.5 16.3-17.5 5.6 0 10 2.4 14.4 6.3l7.8-9.1c-5.2-5.1-11.5-8.7-22.1-8.7-17.2 0-29.3 13.1-29.3 29v.2c0 16.1 12.3 28.9 28.8 28.9 10.8 0 17.2-3.8 23-10z" fill="#FFFFFF"/>
 <path d="M549.1 129.8v-11h-30.1v-11.8h26.5V96H519V84.7h30.1v-11h-42.4v56.1z" fill="#FFFFFF"/>
 </g>
-<style>
-path {
-shape-rendering: geometricPrecision;
-}
-.binance path {
-vector-effect: non-scaling-stroke;
-}
-</style>
 </svg>
-<svg xmlns="http://www.w3.org/2000/svg"
-class="filter-btn bybit"
-data-filter="exchange"
-data-value="bybit"
-height="28"
-viewBox="-200 -50 2900 1000"
-style="cursor: pointer; width: auto; display: block; padding: 4px 10px;"
-role="button"
-tabindex="0">
+<svg xmlns="http://www.w3.org/2000/svg" class="filter-btn bybit" data-filter="exchange" data-value="bybit" height="28" viewBox="-200 -50 2900 1000" style="cursor: pointer; width: auto; display: block; padding: 4px 10px;" role="button" tabindex="0">
 <style type="text/css">
 .st0 { fill: #FFFFFF; stroke: #FFFFFF; stroke-width: 5; }
 .st1 { fill: #F7A600; stroke: #FFFFFF; stroke-width: 5; }
@@ -117,7 +87,6 @@ tabindex="0">
 </div>
 </div>
 </div>
-<!-- Вкладки с флагами (изначально скрыты) -->
 <div class="flag-tabs" id="flagTabs" style="display: none;">
 <button class="tab" data-flag="red"><span class="flag-preview-small flag-red-small"></span></button>
 <button class="tab" data-flag="yellow"><span class="flag-preview-small flag-yellow-small"></span></button>
@@ -127,7 +96,6 @@ tabindex="0">
 <button class="tab" data-flag="purple"><span class="flag-preview-small flag-purple-small"></span></button>
 <button class="tab" data-flag="cyan"><span class="flag-preview-small flag-cyan-small"></span></button>
 </div>
-<!-- Заголовок таблицы -->
 <div class="table-header">
 <span data-sort="flag" class="sortable flag-header">
 <span class="flag flag-red" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
@@ -145,12 +113,11 @@ tabindex="0">
 <div style="width:24px; height:24px; border:2px solid #333; border-top-color:#5b9bd5; border-radius:50%; animation:spin 0.8s linear infinite; margin:0 auto 10px;"></div>
 Загрузка тикеров...
 </div>
-<!-- Контейнер со списком тикеров -->
 <div class="ticker-list-container" id="tickerListContainer">
 <div class="no-results">Загрузка инструментов...</div>
 </div>
 </div>
-<!-- МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ ИНСТРУМЕНТОВ -->
+<!-- МОДАЛЬНОЕ ОКНО -->
 <div class="modal-overlay" id="addInstrumentModal">
 <div class="modal-content">
 <div class="modal-header">
@@ -182,35 +149,20 @@ tabindex="0">
 </button>
 </div>
 <div class="modal-search">
-<input type="text" class="modal-search-input" id="modalSearchInput"
-placeholder="Поиск по символу..." autocomplete="off">
+<input type="text" class="modal-search-input" id="modalSearchInput" placeholder="Поиск по символу..." autocomplete="off">
 </div>
 <div class="modal-results" id="modalResults"></div>
 </div>
 </div>
-<!-- КОНТЕКСТНОЕ МЕНЮ ДЛЯ ФЛАГОВ -->
+<!-- КОНТЕКСТНОЕ МЕНЮ ФЛАГОВ -->
 <div class="context-menu" id="flagContextMenu">
-<div class="context-menu-item" data-flag="red">
-<span class="flag-preview flag-red"></span>Красный
-</div>
-<div class="context-menu-item" data-flag="yellow">
-<span class="flag-preview flag-yellow"></span>Желтый
-</div>
-<div class="context-menu-item" data-flag="green">
-<span class="flag-preview flag-green"></span>Зеленый
-</div>
-<div class="context-menu-item" data-flag="lime">
-<span class="flag-preview flag-lime"></span>Лайм
-</div>
-<div class="context-menu-item" data-flag="blue">
-<span class="flag-preview flag-blue"></span>Синий
-</div>
-<div class="context-menu-item" data-flag="purple">
-<span class="flag-preview flag-purple"></span>Фиолетовый
-</div>
-<div class="context-menu-item" data-flag="cyan">
-<span class="flag-preview flag-cyan"></span>Бирюзовый
-</div>
+<div class="context-menu-item" data-flag="red"><span class="flag-preview flag-red"></span>Красный</div>
+<div class="context-menu-item" data-flag="yellow"><span class="flag-preview flag-yellow"></span>Желтый</div>
+<div class="context-menu-item" data-flag="green"><span class="flag-preview flag-green"></span>Зеленый</div>
+<div class="context-menu-item" data-flag="lime"><span class="flag-preview flag-lime"></span>Лайм</div>
+<div class="context-menu-item" data-flag="blue"><span class="flag-preview flag-blue"></span>Синий</div>
+<div class="context-menu-item" data-flag="purple"><span class="flag-preview flag-purple"></span>Фиолетовый</div>
+<div class="context-menu-item" data-flag="cyan"><span class="flag-preview flag-cyan"></span>Бирюзовый</div>
 </div>
 <div class="app-container">
 <div class="timeframe-bar">
@@ -243,9 +195,8 @@ placeholder="Поиск по символу..." autocomplete="off">
 </svg>
 </button>
 </div>
-<!-- ПАНЕЛЬ НАСТРОЕК ГРАФИКА -->
+<!-- ПАНЕЛЬ НАСТРОЕК ГРАФИКА - С COLOR PICKER'АМИ -->
 <div class="drawing-settings-panel" id="chartColorPanel" style="display: none; position: fixed; background: #2D2D2D; border: 1px solid #404040; border-radius: 8px; padding: 15px; color: #B0B0B0; font-size: 12px; z-index: 10002; width: 400px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); left: 50%; top: 50%; transform: translate(-50%, -50%);">
-<!-- Вкладки -->
 <div class="settings-tabs" style="display: flex; border-bottom: 1px solid #404040; background: #1E1E1E; padding: 4px; gap: 4px; margin-bottom: 15px;">
 <button class="settings-tab active" data-color-tab="background" style="flex: 1; padding: 8px; text-align: center; background: #4A4A4A; border: 1px solid #888888; color: #FFFFFF; font-size: 12px; cursor: pointer; border-radius: 4px;">ФОН</button>
 <button class="settings-tab" data-color-tab="candles" style="flex: 1; padding: 8px; text-align: center; background: #2D2D2D; border: 1px solid #404040; color: #B0B0B0; font-size: 12px; cursor: pointer; border-radius: 4px;">СВЕЧИ</button>
@@ -257,29 +208,29 @@ placeholder="Поиск по символу..." autocomplete="off">
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Цвет фона</span>
 <div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-<label style="color:#fff;font-size:12px;">Фон:</label>
-<input type="color" id="bgColorInput" value="#000000"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="current-color-box" id="bgCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #000000; flex-shrink: 0;"></div>
+<input type="color" class="color-picker-input" id="bgColorPicker" value="#000000" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
+<div class="colors-grid" id="bgColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
 </div>
 </div>
 <!-- Вкладка СВЕЧИ -->
 <div class="color-tab-content" id="tab-candles" style="display: none;">
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #00bcd4; font-size: 13px; margin-bottom: 8px; display: block;">Бычий цвет (рост)</span>
-<div class="color-picker-row" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-<label style="color:#fff;font-size:12px;">Бычий:</label>
-<input type="color" id="bullishColorInput" value="#00bcd4"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+<div class="current-color-box" id="bullishCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #00bcd4;"></div>
+<input type="color" class="color-picker-input" id="bullishColorPicker" value="#00bcd4" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
+<div class="colors-grid" id="bullishColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
 </div>
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #f23645; font-size: 13px; margin-bottom: 8px; display: block;">Медвежий цвет (падение)</span>
-<div class="color-picker-row" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-<label style="color:#fff;font-size:12px;">Медвежий:</label>
-<input type="color" id="bearishColorInput" value="#f23645"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+<div class="current-color-box" id="bearishCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #f23645;"></div>
+<input type="color" class="color-picker-input" id="bearishColorPicker" value="#f23645" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
+<div class="colors-grid" id="bearishColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
 </div>
 </div>
 <!-- Вкладка РАЗДЕЛИТЕЛИ -->
@@ -295,11 +246,11 @@ placeholder="Поиск по символу..." autocomplete="off">
 </div>
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Цвет разделителя</span>
-<div class="color-picker-row" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-<label style="color:#fff;font-size:12px;">Цвет:</label>
-<input type="color" id="separatorColorInput" value="#808080"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+<div class="current-color-box" id="separatorCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #808080; flex-shrink: 0;"></div>
+<input type="color" class="color-picker-input" id="separatorColorPicker" value="#808080" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
+<div class="colors-grid" id="separatorColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
 </div>
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Стиль линии</span>
@@ -322,7 +273,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 </div>
 <!-- Вкладка СЕССИИ -->
 <div class="color-tab-content" id="tab-sessions" style="display: none;">
-<!-- Включение/Выключение -->
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <div style="display: flex; align-items: center; justify-content: space-between;">
 <span class="color-label" style="color: #fff; font-size: 13px;">Показывать сессии</span>
@@ -332,41 +282,33 @@ placeholder="Поиск по символу..." autocomplete="off">
 </label>
 </div>
 </div>
-<!-- Азиатская -->
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Азиатская (00:00 - 09:00 UTC)</span>
-<div class="color-picker-row" style="display:flex;align-items:center;gap:10px;">
-<label style="color:#fff;font-size:12px;">Цвет:</label>
-<input type="color" id="sessionAsianColor" value="#FF9800"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px;">
+<div class="current-color-box" id="sessionAsianColorBox" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #FF9800; flex-shrink: 0;"></div>
+<input type="color" class="color-picker-input" id="sessionAsianColor" value="#FF9800" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
 </div>
-<!-- Европейская -->
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Европейская (07:00 - 16:00 UTC)</span>
-<div class="color-picker-row" style="display:flex;align-items:center;gap:10px;">
-<label style="color:#fff;font-size:12px;">Цвет:</label>
-<input type="color" id="sessionEuropeanColor" value="#2196F3"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px;">
+<div class="current-color-box" id="sessionEuropeanColorBox" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #2196F3; flex-shrink: 0;"></div>
+<input type="color" class="color-picker-input" id="sessionEuropeanColor" value="#2196F3" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
 </div>
-<!-- Американская -->
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Американская (13:00 - 00:00 UTC)</span>
-<div class="color-picker-row" style="display:flex;align-items:center;gap:10px;">
-<label style="color:#fff;font-size:12px;">Цвет:</label>
-<input type="color" id="sessionAmericanColor" value="#E040FB"
-       style="width:60px;height:34px;border:1px solid #404040;border-radius:4px;background:#1E1E1E;cursor:pointer;padding:2px;">
+<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px;">
+<div class="current-color-box" id="sessionAmericanColorBox" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #E040FB; flex-shrink: 0;"></div>
+<input type="color" class="color-picker-input" id="sessionAmericanColor" value="#E040FB" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
 </div>
 </div>
-<!-- Прозрачность сессий -->
 <div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
 <span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Прозрачность сессий</span>
 <input type="range" id="sessionOpacity" min="1" max="50" value="15" style="width: 100%;">
 <span style="color: #B0B0B0; font-size: 11px;">Текущая: <span id="sessionOpacityValue">15%</span></span>
 </div>
 </div>
-<!-- Кнопки -->
 <div class="settings-actions" style="display: flex; gap: 10px; margin-top: 15px;">
 <button id="saveChartColors" style="flex: 1; padding: 8px; border: none; border-radius: 4px; cursor: pointer; background: #404040; color: #fff; transition: all 0.2s; font-size: 12px;">Сохранить</button>
 <button class="delete-btn" id="resetChartColors" style="flex: 1; padding: 8px; border: none; border-radius: 4px; cursor: pointer; background: #404040; color: #fff; transition: all 0.2s; font-size: 12px;">Сброс</button>
@@ -405,10 +347,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="alert-history-btn" id="alertHistoryBtn" title="История алертов">
 <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 126.5 0 L 134.5 1 L 144 6 L 150 17.5 L 150 39.5 L 151.5 41 L 158.5 43 Q 169.8 49.2 178 58.5 Q 187.1 67.9 192 81.5 L 195 93.5 L 195 145.5 Q 197.5 147 196 152.5 L 202 166.5 L 207.5 172 L 219 177 L 225 188.5 L 225 198.5 L 219 210 L 209.5 215 L 204.5 216 L 175 216 L 168 234.5 L 159.5 244 L 147.5 252 L 138.5 255 L 125.5 256 Q 123.7 253.3 117.5 255 L 108.5 252 L 93 240.5 Q 83.7 230.9 81 216 L 51.5 216 L 46.5 215 L 36 208.5 Q 30.1 202.4 31 189.5 Q 32.7 181.7 37.5 177 L 48.5 172 L 54 166.5 L 58 158.5 L 61 145.5 L 61 93.5 L 64 81.5 Q 70.9 63.4 84.5 52 L 97.5 43 L 106 39.5 L 106 17.5 L 112 6 L 121.5 1 L 126.5 0 Z M 126 15 L 124 16 L 120 20 L 121 21 L 120 22 L 120 37 L 125 36 Q 131 34 133 37 L 136 37 L 136 22 L 136 20 Q 134 14 126 15 Z M 120 51 Q 107 53 99 59 L 84 74 L 77 89 L 75 100 L 75 152 L 69 170 L 69 171 L 188 171 L 184 163 L 181 152 L 181 100 Q 178 98 180 92 L 172 74 L 158 59 L 153 56 L 138 51 L 120 51 Z M 51 186 L 49 187 L 45 193 L 47 199 L 51 201 L 206 201 L 208 200 L 211 197 L 210 196 L 211 193 L 211 191 L 206 186 L 51 186 Z M 97 216 L 100 227 Q 107 237 122 241 L 135 241 L 147 236 Q 157 230 160 217 L 97 216 Z" />
-<path fill="currentColor" d="M 51.5 4 L 57 7.5 L 58 13.5 Q 42.5 27.5 31 45.5 Q 20.6 61.6 17 84.5 L 13.5 89 L 8.5 90 L 3 85.5 L 3 78.5 L 6 66.5 Q 10.3 50.8 18 38.5 Q 28 22.5 41.5 10 L 47.5 5 L 51.5 4 Z" />
-<path fill="currentColor" d="M 204.5 4 L 208.5 5 L 223 18.5 Q 237.3 33.7 246 54.5 L 253 78.5 L 253 85.5 Q 250.9 89.9 244.5 90 L 240 86.5 L 233 61.5 L 225 45.5 Q 214.3 28.2 199 15.5 L 198 9.5 L 201.5 5 L 204.5 4 Z" />
-<path fill="currentColor" d="M 66.5 28 Q 75.3 26.3 77 31.5 L 77 37.5 Q 63.1 49.1 54 65.5 L 51 74.5 L 49 76.5 L 47 88.5 L 43.5 94 L 37.5 95 L 33 91.5 L 32 85.5 Q 38.9 54.9 57.5 36 L 66.5 28 Z" />
-<path fill="currentColor" d="M 182.5 28 L 189.5 28 L 201 38.5 Q 210.6 49.4 217 63.5 L 221 73.5 L 224 89.5 L 220.5 94 L 214.5 95 L 211 92.5 L 209 88.5 L 207 76.5 L 205 74.5 L 202 65.5 Q 192.9 49.1 179 37.5 L 179 31.5 L 182.5 28 Z" />
 </svg>
 </button>
 <button class="alert-history-btn" id="telegramBtn" title="Telegram настройки">
@@ -430,17 +368,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <svg width="24" height="24" viewBox="0 0 512 512" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
 <path d="M56.5 34L455.5 34Q467.3 36.2 473 44.5L478 56.5L478 455.5Q475.8 467.3 467.5 473L455.5 478L56.5 478Q44.7 475.8 39 467.5L34 455.5L34 56.5Q36.2 44.7 44.5 39L56.5 34ZM75 64L73 65L69 70L69 166L70 168L75 171L438 171L440 170L443 166L443 70L442 68L438 64L75 64ZM76 201L73 202L69 207L69 258L70 260L74 263L127 263L131 258L131 207L130 205L125 201L76 201ZM180 201L177 202L173 207L173 258L174 260L178 263L231 263L235 258L235 207L234 205L229 201L180 201ZM284 201L281 202L277 207L277 258L278 260L282 263L335 263L339 258L339 207L338 205L333 201L284 201ZM388 201L384 203L381 207L381 258L382 260L386 263L439 263L443 258L443 207L442 205L437 201L388 201ZM77 293L69 299L69 351L71 354L76 356L125 356L129 354L131 351L131 299L124 293L77 293ZM181 293L173 299L173 351L175 354L180 356L229 356L233 354L235 351L235 299L228 293L181 293ZM285 293L277 299L277 351L279 354L284 356L333 356L337 354L339 351L339 299L332 293L285 293ZM389 293L381 299L381 443L382 445L387 448L438 448L440 447L443 443L443 299L436 293L389 293ZM74 386L69 392L69 443L70 445L75 448L126 448L128 447L131 443L131 392L130 390L127 386L74 386ZM178 386L173 392L173 443L174 445L179 448L230 448L232 447L235 443L235 392L234 390L231 386L178 386ZM282 386L277 392L277 443L278 445L283 448L334 448L336 447L339 443L339 392L338 390L335 386L282 386Z"/>
 <path d="M85 80L426.5 80L427 80.5L427 155L85.5 155L85 154.5L85 80Z"/>
-<path d="M85 217L115 217L115 247L85 247L85 217Z"/>
-<path d="M189 217L219 217L219 247L189 247L189 217Z"/>
-<path d="M293 217L323 217L323 247L293 247L293 217Z"/>
-<path d="M397 217L427 217L427 247L397 247L397 217Z"/>
-<path d="M85 310L115 310L115 340L85 340L85 310Z"/>
-<path d="M189 310L219 310L219 340L189 340L189 310Z"/>
-<path d="M293 310L323 310L323 340L293 340L293 310Z"/>
-<path d="M397 310L426.5 310L427 310.5L427 432L397.5 432L397 431.5L397 310Z"/>
-<path d="M85 402L115 402L115 432L85 432L85 402Z"/>
-<path d="M189 402L219 402L219 432L189 432L189 402Z"/>
-<path d="M293 402L323 402L323 432L293 432L293 402Z"/>
 </svg>
 </button>
 <button class="alert-history-btn" id="screenerBtn" title="Скринер" onclick="window.open('https://donpu333.github.io/screener/', '_blank')">
@@ -500,9 +427,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="tool-btn" id="toolTrash" title="Удалить всё 0">
 <svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
 </svg>
 <span class="tooltip">Удалить всё 0</span>
 </button>
@@ -515,10 +439,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="tool-btn" id="toolAlert" title="Алерт (i)">
 <svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 126.5 0 L 134.5 1 L 144 6 L 150 17.5 L 150 39.5 L 151.5 41 L 158.5 43 Q 169.8 49.2 178 58.5 Q 187.1 67.9 192 81.5 L 195 93.5 L 195 145.5 Q 197.5 147 196 152.5 L 202 166.5 L 207.5 172 L 219 177 L 225 188.5 L 225 198.5 L 219 210 L 209.5 215 L 204.5 216 L 175 216 L 168 234.5 L 159.5 244 L 147.5 252 L 138.5 255 L 125.5 256 Q 123.7 253.3 117.5 255 L 108.5 252 L 93 240.5 Q 83.7 230.9 81 216 L 51.5 216 L 46.5 215 L 36 208.5 Q 30.1 202.4 31 189.5 Q 32.7 181.7 37.5 177 L 48.5 172 L 54 166.5 L 58 158.5 L 61 145.5 L 61 93.5 L 64 81.5 Q 70.9 63.4 84.5 52 L 97.5 43 L 106 39.5 L 106 17.5 L 112 6 L 121.5 1 L 126.5 0 Z M 126 15 L 124 16 L 120 20 L 121 21 L 120 22 L 120 37 L 125 36 Q 131 34 133 37 L 136 37 L 136 22 L 136 20 Q 134 14 126 15 Z M 120 51 Q 107 53 99 59 L 84 74 L 77 89 L 75 100 L 75 152 L 69 170 L 69 171 L 188 171 L 184 163 L 181 152 L 181 100 Q 178 98 180 92 L 172 74 L 158 59 L 153 56 L 138 51 L 120 51 Z M 51 186 L 49 187 L 45 193 L 47 199 L 51 201 L 206 201 L 208 200 L 211 197 L 210 196 L 211 193 L 211 191 L 206 186 L 51 186 Z M 97 216 L 100 227 Q 107 237 122 241 L 135 241 L 147 236 Q 157 230 160 217 L 97 216 Z" />
-<path fill="currentColor" d="M 51.5 4 L 57 7.5 L 58 13.5 Q 42.5 27.5 31 45.5 Q 20.6 61.6 17 84.5 L 13.5 89 L 8.5 90 L 3 85.5 L 3 78.5 L 6 66.5 Q 10.3 50.8 18 38.5 Q 28 22.5 41.5 10 L 47.5 5 L 51.5 4 Z" />
-<path fill="currentColor" d="M 204.5 4 L 208.5 5 L 223 18.5 Q 237.3 33.7 246 54.5 L 253 78.5 L 253 85.5 Q 250.9 89.9 244.5 90 L 240 86.5 L 233 61.5 L 225 45.5 Q 214.3 28.2 199 15.5 L 198 9.5 L 201.5 5 L 204.5 4 Z" />
-<path fill="currentColor" d="M 66.5 28 Q 75.3 26.3 77 31.5 L 77 37.5 Q 63.1 49.1 54 65.5 L 51 74.5 L 49 76.5 L 47 88.5 L 43.5 94 L 37.5 95 L 33 91.5 L 32 85.5 Q 38.9 54.9 57.5 36 L 66.5 28 Z" />
-<path fill="currentColor" d="M 182.5 28 L 189.5 28 L 201 38.5 Q 210.6 49.4 217 63.5 L 221 73.5 L 224 89.5 L 220.5 94 L 214.5 95 L 211 92.5 L 209 88.5 L 207 76.5 L 205 74.5 L 202 65.5 Q 192.9 49.1 179 37.5 L 179 31.5 L 182.5 28 Z" />
 </svg>
 <span class="tooltip">Алерт i </span>
 </button>
@@ -550,7 +470,7 @@ placeholder="Поиск по символу..." autocomplete="off">
 </button>
 </div>
 <div class="drawings-container" id="drawingsContainer"></div>
-<!-- Контекстное меню -->
+<!-- Контекстное меню для лучей -->
 <div class="drawing-context-menu" id="drawingContextMenu" style="display: none;">
 <button class="context-menu-btn copy-btn" id="contextCopyBtn" title="Копировать">
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -566,9 +486,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="context-menu-btn delete-btn" id="contextDeleteBtn" title="Удалить">
 <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
 </svg>
 </button>
 </div>
@@ -587,9 +504,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="context-menu-btn delete-btn" id="trendDeleteBtn" title="Удалить">
 <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
 </svg>
 </button>
 </div>
@@ -609,9 +523,6 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="context-menu-btn delete-btn" id="alertContextDeleteBtn" title="Удалить">
 <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
 </svg>
 </button>
 </div>
@@ -625,218 +536,8 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="context-menu-btn delete-btn" id="rulerDeleteBtn" title="Удалить">
 <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
 </svg>
 </button>
-</div>
-<!-- Панель настроек для лучей -->
-<div class="drawing-settings-panel" id="drawingSettings">
-<div class="settings-tabs">
-<button class="settings-tab active" data-settings-tab="style">Стиль</button>
-<button class="settings-tab" data-settings-tab="visibility">Видимость</button>
-</div>
-<div class="visibility-panel active" id="stylePanel">
-<div class="color-section">
-<span class="color-label">Цвет линии</span>
-<div class="color-picker-row">
-<div class="current-color-box" id="currentColorBox" style="background-color: #0933e2;"></div>
-<div class="hex-input-group">
-<input type="text" class="hex-input" id="hexInputInline" placeholder="#4A90E2" value="#4A90E2">
-<button class="add-btn" id="addColorInline">Добавить</button>
-</div>
-</div>
-<div class="colors-grid" id="inlineColorsGrid"></div>
-</div>
-<div class="settings-row" id="colorOpacityRow" style="display: flex; margin-bottom: 15px;">
-<label>Прозрачность:</label>
-<input type="range" id="colorOpacity" min="0" max="100" value="100">
-<span class="value-display" id="colorOpacityValue">100%</span>
-</div>
-<div class="settings-row" id="priceInputRow" style="display: flex; margin-bottom: 15px;">
-<label>Цена:</label>
-<input type="text" id="settingsPriceInput" value="" placeholder="Введите цену">
-<button class="apply-price-btn" id="applyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
-</div>
-<div id="templateSection" style="display: block;">
-<div class="template-section" id="templateSectionDefault" style="display: block;">
-<div class="template-title">Шаблон</div>
-<select class="template-select" id="templateSelect">
-<option value="solid">Сплошная</option>
-<option value="dashed">Пунктирная</option>
-<option value="dotted">Точечная</option>
-</select>
-</div>
-</div>
-<div class="settings-row" id="settingThicknessRow">
-<label>Толщина:</label>
-<input type="number" id="settingThickness" value="1" min="1" max="10" style="width: 60px;">
-</div>
-</div>
-<div class="visibility-panel" id="visibilityPanel">
-<div class="visibility-title">Видимость на таймфреймах</div>
-<div class="timeframe-checkbox-list" id="timeframeCheckboxList"></div>
-<div class="visibility-actions">
-<button class="visibility-btn select-all" id="selectAllTimeframes">Выбрать все</button>
-<button class="visibility-btn deselect-all" id="deselectAllTimeframes">Снять все</button>
-</div>
-</div>
-<div class="settings-actions">
-<button id="saveSettings">Сохранить</button>
-<button class="delete-btn" id="deleteDrawing">Удалить</button>
-</div>
-</div>
-<!-- Панель настроек для трендовых линий -->
-<div class="drawing-settings-panel" id="trendSettings">
-<div class="settings-tabs">
-<button class="settings-tab active" data-settings-tab="style">Стиль</button>
-<button class="settings-tab" data-settings-tab="visibility">Видимость</button>
-</div>
-<div class="visibility-panel active" id="trendStylePanel">
-<div class="color-section">
-<span class="color-label">Цвет линии</span>
-<div class="color-picker-row">
-<div class="current-color-box" id="trendCurrentColorBox" style="background-color: #0933e2;"></div>
-<div class="hex-input-group">
-<input type="text" class="hex-input" id="trendHexInputInline" placeholder="#4A90E2" value="#4A90E2">
-<button class="add-btn" id="trendAddColorInline">Добавить</button>
-</div>
-</div>
-<div class="colors-grid" id="trendInlineColorsGrid"></div>
-</div>
-<div class="settings-row" id="trendColorOpacityRow" style="display: flex; margin-bottom: 15px;">
-<label>Прозрачность:</label>
-<input type="range" id="trendColorOpacity" min="0" max="100" value="100">
-<span class="value-display" id="trendColorOpacityValue">100%</span>
-</div>
-<div id="trendTemplateSection" style="display: block;">
-<div class="template-section" id="trendTemplateSectionDefault" style="display: block;">
-<div class="template-title">Шаблон</div>
-<select class="template-select" id="trendTemplateSelect">
-<option value="solid">Сплошная</option>
-<option value="dashed">Пунктирная</option>
-<option value="dotted">Точечная</option>
-</select>
-</div>
-</div>
-<div class="settings-row" id="trendSettingThicknessRow">
-<label>Толщина:</label>
-<input type="number" id="trendSettingThickness" value="1" min="1" max="10" style="width: 60px;">
-</div>
-</div>
-<div class="visibility-panel" id="trendVisibilityPanel">
-<div class="visibility-title">Видимость на таймфреймах</div>
-<div class="timeframe-checkbox-list" id="trendTimeframeCheckboxList"></div>
-<div class="visibility-actions">
-<button class="visibility-btn select-all" id="trendSelectAllTimeframes">Выбрать все</button>
-<button class="visibility-btn deselect-all" id="trendDeselectAllTimeframes">Снять все</button>
-</div>
-</div>
-<div class="settings-actions">
-<button id="trendSaveSettings">Сохранить</button>
-<button class="delete-btn" id="trendDeleteDrawing">Удалить</button>
-</div>
-</div>
-<!-- Панель настроек для алертов -->
-<div class="drawing-settings-panel" id="alertSettings">
-<div class="settings-tabs">
-<button class="settings-tab active" data-alert-settings-tab="style">Стиль</button>
-<button class="settings-tab" data-alert-settings-tab="repeat">Повтор</button>
-<button class="settings-tab" data-alert-settings-tab="visibility">Видимость</button>
-</div>
-<div class="visibility-panel active" id="alertStylePanel">
-<div class="color-section">
-<span class="color-label">Цвет линии</span>
-<div class="color-picker-row">
-<div class="current-color-box" id="alertCurrentColorBox" style="background-color: #808080;"></div>
-<div class="hex-input-group">
-<input type="text" class="hex-input" id="alertHexInputInline" placeholder="#808080" value="#808080">
-<button class="add-btn" id="alertAddColorInline">Добавить</button>
-</div>
-</div>
-<div class="colors-grid" id="alertInlineColorsGrid"></div>
-</div>
-<div class="settings-row" style="display: flex; margin-bottom: 15px;">
-<label>Прозрачность:</label>
-<input type="range" id="alertColorOpacity" min="0" max="100" value="60">
-<span class="value-display" id="alertColorOpacityValue">60%</span>
-</div>
-<div class="settings-row">
-<label>Цена:</label>
-<input type="text" id="alertSettingsPriceInput" value="" placeholder="Введите цену">
-<button class="apply-price-btn" id="alertApplyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
-</div>
-<div class="settings-row" style="display: flex; align-items: center;">
-<label style="width: auto; margin-right: 10px;">Колокольчик:</label>
-<input type="checkbox" id="alertShowBell" checked style="width: 18px; height: 18px; accent-color: #4A90E2;">
-</div>
-<div class="template-section">
-<div class="template-title">Шаблон линии</div>
-<select class="template-select" id="alertTemplateSelect">
-<option value="solid">Сплошная</option>
-<option value="dashed">Пунктирная</option>
-<option value="dotted" selected>Точечная</option>
-</select>
-</div>
-<div class="settings-row">
-<label>Толщина:</label>
-<input type="number" id="alertSettingThickness" value="1" min="1" max="10" style="width: 60px;">
-</div>
-</div>
-<div class="visibility-panel" id="alertRepeatPanel">
-<div class="visibility-title">Настройки повторных оповещений</div>
-<div class="settings-row" style="margin-bottom: 15px;">
-<label>Количество:</label>
-<select id="alertRepeatCount" style="flex: 1; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px;">
-<option value="1">1 раз</option>
-<option value="3">3 раза</option>
-<option value="5" selected>5 раз</option>
-<option value="10">10 раз</option>
-<option value="Infinity">Бесконечно</option>
-</select>
-</div>
-<div class="settings-row" style="margin-bottom: 15px;">
-<label>Интервал:</label>
-<select id="alertRepeatInterval" style="flex: 1; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px;">
-<option value="1">1 минута</option>
-<option value="2">2 минуты</option>
-<option value="3">3 минуты</option>
-<option value="5">5 минут</option>
-</select>
-</div>
-<div class="settings-row" style="margin-top: 20px; padding: 10px; background: #2D2D2D; border-radius: 4px;">
-<span style="color: #B0B0B0; font-size: 11px;">Алерт будет повторяться указанное количество раз с заданным интервалом. После исчерпания лимита алерт автоматически удалится.</span>
-</div>
-</div>
-<div class="visibility-panel" id="alertVisibilityPanel">
-<div class="visibility-title">Видимость на таймфреймах</div>
-<div class="timeframe-checkbox-list" id="alertTimeframeCheckboxList"></div>
-<div class="visibility-actions">
-<button class="visibility-btn select-all" id="alertSelectAllTimeframes">Выбрать все</button>
-<button class="visibility-btn deselect-all" id="alertDeselectAllTimeframes">Снять все</button>
-</div>
-</div>
-<div class="settings-actions">
-<button id="alertSaveSettings">Сохранить</button>
-<button class="delete-btn" id="alertDeleteDrawing">Удалить</button>
-</div>
-</div>
-<!-- Панель настроек для линейки -->
-<div class="drawing-settings-panel" id="rulerSettingsPanel" style="display: none;">
-<div class="settings-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-<span style="color:#fff;">Настройки линейки</span>
-<button class="close-settings" style="background:transparent; border:none; color:#B0B0B0; font-size:18px; cursor:pointer;">✕</button>
-</div>
-<div class="settings-row">
-<label>Прозрачность заливки:</label>
-<input type="range" id="rulerFillOpacity" min="0" max="100" value="25">
-<span class="value-display" id="rulerFillOpacityValue">25%</span>
-</div>
-<div class="settings-actions">
-<button id="rulerSaveSettings">Сохранить</button>
-<button class="delete-btn" id="rulerDeleteFromSettings">Удалить</button>
-</div>
 </div>
 <!-- Контекстное меню для текста -->
 <div class="drawing-context-menu" id="textContextMenu" style="display: none;">
@@ -854,81 +555,291 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="context-menu-btn delete-btn" id="textContextDeleteBtn" title="Удалить">
 <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
 </svg>
 </button>
 </div>
-<!-- Панель настроек для текста -->
+<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ЛУЧЕЙ ========== -->
+<div class="drawing-settings-panel" id="drawingSettings">
+    <div class="settings-tabs">
+        <button class="settings-tab active" data-settings-tab="style">Стиль</button>
+        <button class="settings-tab" data-settings-tab="visibility">Видимость</button>
+    </div>
+    <div class="visibility-panel active" id="stylePanel">
+        <!-- Скрытый контейнер для JS (невидимый) -->
+        <div class="current-color-box" id="currentColorBox" style="display:none;"></div>
+        <div class="color-section">
+            <span class="color-label">Цвет линии</span>
+            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
+                <input type="color" class="color-picker-inline" id="colorPickerInline" value="#4A90E2" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
+                <input type="text" class="hex-input" id="hexInputInline" placeholder="#4A90E2" value="#4A90E2" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
+                <button class="add-btn" id="addColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
+            </div>
+            <div class="colors-grid" id="inlineColorsGrid"></div>
+        </div>
+        <!-- остальные настройки (прозрачность, цена, шаблон, толщина) без изменений -->
+        <div class="settings-row" id="colorOpacityRow" style="display: flex; margin-bottom: 15px;">
+            <label>Прозрачность:</label>
+            <input type="range" id="colorOpacity" min="0" max="100" value="100">
+            <span class="value-display" id="colorOpacityValue">100%</span>
+        </div>
+        <div class="settings-row" id="priceInputRow" style="display: flex; margin-bottom: 15px;">
+            <label>Цена:</label>
+            <input type="text" id="settingsPriceInput" value="" placeholder="Введите цену">
+            <button class="apply-price-btn" id="applyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
+        </div>
+        <div id="templateSection" style="display: block;">
+            <div class="template-section" id="templateSectionDefault" style="display: block;">
+                <div class="template-title">Шаблон</div>
+                <select class="template-select" id="templateSelect">
+                    <option value="solid">Сплошная</option>
+                    <option value="dashed">Пунктирная</option>
+                    <option value="dotted">Точечная</option>
+                </select>
+            </div>
+        </div>
+        <div class="settings-row" id="settingThicknessRow">
+            <label>Толщина:</label>
+            <input type="number" id="settingThickness" value="1" min="1" max="10" style="width: 60px;">
+        </div>
+    </div>
+    <div class="visibility-panel" id="visibilityPanel">
+        <div class="visibility-title">Видимость на таймфреймах</div>
+        <div class="timeframe-checkbox-list" id="timeframeCheckboxList"></div>
+        <<div class="visibility-actions">
+    <button class="visibility-btn select-all" id="selectAllTimeframes">Выбрать все</button>
+    <button class="visibility-btn deselect-all" id="deselectAllTimeframes">Снять все</button>
+    <!-- Новая кнопка -->
+    <button class="visibility-btn select-minutes" id="selectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
+</div>
+    </div>
+    <div class="settings-actions">
+        <button id="saveSettings">Сохранить</button>
+        <button class="delete-btn" id="deleteDrawing">Удалить</button>
+    </div>
+</div>
+
+<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ТРЕНДОВЫХ ЛИНИЙ ========== -->
+<div class="drawing-settings-panel" id="trendSettings">
+    <div class="settings-tabs">
+        <button class="settings-tab active" data-settings-tab="style">Стиль</button>
+        <button class="settings-tab" data-settings-tab="visibility">Видимость</button>
+    </div>
+    <div class="visibility-panel active" id="trendStylePanel">
+        <div class="current-color-box" id="trendCurrentColorBox" style="display:none;"></div>
+        <div class="color-section">
+            <span class="color-label">Цвет линии</span>
+            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
+                <input type="color" class="color-picker-inline" id="trendColorPickerInline" value="#4A90E2" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
+                <input type="text" class="hex-input" id="trendHexInputInline" placeholder="#4A90E2" value="#4A90E2" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
+                <button class="add-btn" id="trendAddColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
+            </div>
+            <div class="colors-grid" id="trendInlineColorsGrid"></div>
+        </div>
+        <div class="settings-row" id="trendColorOpacityRow" style="display: flex; margin-bottom: 15px;">
+            <label>Прозрачность:</label>
+            <input type="range" id="trendColorOpacity" min="0" max="100" value="100">
+            <span class="value-display" id="trendColorOpacityValue">100%</span>
+        </div>
+        <div id="trendTemplateSection" style="display: block;">
+            <div class="template-section" id="trendTemplateSectionDefault" style="display: block;">
+                <div class="template-title">Шаблон</div>
+                <select class="template-select" id="trendTemplateSelect">
+                    <option value="solid">Сплошная</option>
+                    <option value="dashed">Пунктирная</option>
+                    <option value="dotted">Точечная</option>
+                </select>
+            </div>
+        </div>
+        <div class="settings-row" id="trendSettingThicknessRow">
+            <label>Толщина:</label>
+            <input type="number" id="trendSettingThickness" value="1" min="1" max="10" style="width: 60px;">
+        </div>
+    </div>
+    <div class="visibility-panel" id="trendVisibilityPanel">
+        <div class="visibility-title">Видимость на таймфреймах</div>
+        <div class="timeframe-checkbox-list" id="trendTimeframeCheckboxList"></div>
+        <div class="visibility-actions">
+            <button class="visibility-btn select-all" id="trendSelectAllTimeframes">Выбрать все</button>
+            <button class="visibility-btn deselect-all" id="trendDeselectAllTimeframes">Снять все</button>
+            <button class="visibility-btn select-minutes" id="trendSelectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
+        </div>
+    </div>
+    <div class="settings-actions">
+        <button id="trendSaveSettings">Сохранить</button>
+        <button class="delete-btn" id="trendDeleteDrawing">Удалить</button>
+    </div>
+</div>
+
+<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ АЛЕРТОВ ========== -->
+<div class="drawing-settings-panel" id="alertSettings">
+    <div class="settings-tabs">
+        <button class="settings-tab active" data-alert-settings-tab="style">Стиль</button>
+        <button class="settings-tab" data-alert-settings-tab="repeat">Повтор</button>
+        <button class="settings-tab" data-alert-settings-tab="visibility">Видимость</button>
+    </div>
+    <div class="visibility-panel active" id="alertStylePanel">
+        <div class="current-color-box" id="alertCurrentColorBox" style="display:none;"></div>
+        <div class="color-section">
+            <span class="color-label">Цвет линии</span>
+            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
+                <input type="color" class="color-picker-inline" id="alertColorPickerInline" value="#808080" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
+                <input type="text" class="hex-input" id="alertHexInputInline" placeholder="#808080" value="#808080" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
+                <button class="add-btn" id="alertAddColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
+            </div>
+            <div class="colors-grid" id="alertInlineColorsGrid"></div>
+        </div>
+        <div class="settings-row" style="display: flex; margin-bottom: 15px;">
+            <label>Прозрачность:</label>
+            <input type="range" id="alertColorOpacity" min="0" max="100" value="60">
+            <span class="value-display" id="alertColorOpacityValue">60%</span>
+        </div>
+        <div class="settings-row">
+            <label>Цена:</label>
+            <input type="text" id="alertSettingsPriceInput" value="" placeholder="Введите цену">
+            <button class="apply-price-btn" id="alertApplyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
+        </div>
+        <div class="settings-row" style="display: flex; align-items: center;">
+            <label style="width: auto; margin-right: 10px;">Колокольчик:</label>
+            <input type="checkbox" id="alertShowBell" checked style="width: 18px; height: 18px; accent-color: #4A90E2;">
+        </div>
+        <div class="template-section">
+            <div class="template-title">Шаблон линии</div>
+            <select class="template-select" id="alertTemplateSelect">
+                <option value="solid">Сплошная</option>
+                <option value="dashed">Пунктирная</option>
+                <option value="dotted" selected>Точечная</option>
+            </select>
+        </div>
+        <div class="settings-row">
+            <label>Толщина:</label>
+            <input type="number" id="alertSettingThickness" value="1" min="1" max="10" style="width: 60px;">
+        </div>
+    </div>
+    <div class="visibility-panel" id="alertRepeatPanel">
+        <div class="visibility-title">Настройки повторных оповещений</div>
+        <div class="settings-row" style="margin-bottom: 15px;">
+            <label>Количество:</label>
+            <select id="alertRepeatCount" style="flex: 1; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px;">
+                <option value="1">1 раз</option>
+                <option value="3">3 раза</option>
+                <option value="5" selected>5 раз</option>
+                <option value="10">10 раз</option>
+                <option value="Infinity">Бесконечно</option>
+            </select>
+        </div>
+        <div class="settings-row" style="margin-bottom: 15px;">
+            <label>Интервал:</label>
+            <select id="alertRepeatInterval" style="flex: 1; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px;">
+                <option value="1">1 минута</option>
+                <option value="2">2 минуты</option>
+                <option value="3">3 минуты</option>
+                <option value="5">5 минут</option>
+            </select>
+        </div>
+        <div class="settings-row" style="margin-top: 20px; padding: 10px; background: #2D2D2D; border-radius: 4px;">
+            <span style="color: #B0B0B0; font-size: 11px;">Алерт будет повторяться указанное количество раз с заданным интервалом. После исчерпания лимита алерт автоматически удалится.</span>
+        </div>
+    </div>
+    <div class="visibility-panel" id="alertVisibilityPanel">
+        <div class="visibility-title">Видимость на таймфреймах</div>
+        <div class="timeframe-checkbox-list" id="alertTimeframeCheckboxList"></div>
+        <div class="visibility-actions">
+            <button class="visibility-btn select-all" id="alertSelectAllTimeframes">Выбрать все</button>
+            <button class="visibility-btn deselect-all" id="alertDeselectAllTimeframes">Снять все</button>
+        </div>
+    </div>
+    <div class="settings-actions">
+        <button id="alertSaveSettings">Сохранить</button>
+        <button class="delete-btn" id="alertDeleteDrawing">Удалить</button>
+    </div>
+</div>
+
+<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ЛИНЕЙКИ ========== -->
+<div class="drawing-settings-panel" id="rulerSettingsPanel" style="display: none;">
+    <div class="settings-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <span style="color:#fff;">Настройки линейки</span>
+        <button class="close-settings" style="background:transparent; border:none; color:#B0B0B0; font-size:18px; cursor:pointer;">✕</button>
+    </div>
+    <div class="settings-row">
+        <label>Прозрачность заливки:</label>
+        <input type="range" id="rulerFillOpacity" min="0" max="100" value="25">
+        <span class="value-display" id="rulerFillOpacityValue">25%</span>
+    </div>
+    <div class="settings-actions">
+        <button id="rulerSaveSettings">Сохранить</button>
+        <button class="delete-btn" id="rulerDeleteFromSettings">Удалить</button>
+    </div>
+</div>
+
+<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ТЕКСТА ========== -->
 <div class="drawing-settings-panel" id="textSettings">
-<div class="settings-tabs">
-<button class="settings-tab" data-text-settings-tab="text">Текст</button>
-<button class="settings-tab active" data-text-settings-tab="style">Стиль</button>
-<button class="settings-tab" data-text-settings-tab="visibility">Видимость</button>
-</div>
-<div class="visibility-panel active" id="textStylePanel">
-<div class="color-section">
-<span class="color-label">Цвет текста</span>
-<div class="color-picker-row">
-<div class="current-color-box" id="textCurrentColorBox" style="background-color: #FFFFFF;"></div>
-<div class="hex-input-group">
-<input type="text" class="hex-input" id="textHexInputInline" placeholder="#FFFFFF" value="#FFFFFF">
-<button class="add-btn" id="textAddColorInline">Добавить</button>
-</div>
-</div>
-<div class="colors-grid" id="textInlineColorsGrid"></div>
-</div>
-<div class="color-section" style="margin-top: 10px;">
-<span class="color-label">Цвет фона</span>
-<div class="color-picker-row">
-<div class="current-color-box" id="textBgColorBox" style="background-color: #000000;"></div>
-<div class="hex-input-group">
-<input type="text" class="hex-input" id="textBgHexInput" placeholder="#000000" value="#000000">
-<button class="add-btn" id="textBgAddColor">Добавить</button>
-</div>
-</div>
-<div class="colors-grid" id="textBgColorsGrid"></div>
-</div>
-<div class="settings-row" style="display: flex; margin-bottom: 15px;">
-<label>Прозрачность текста:</label>
-<input type="range" id="textOpacity" min="0" max="100" value="100">
-<span class="value-display" id="textOpacityValue">100%</span>
-</div>
-<div class="settings-row" style="display: flex; margin-bottom: 15px;">
-<label>Прозрачность фона:</label>
-<input type="range" id="textBgOpacity" min="0" max="100" value="0">
-<span class="value-display" id="textBgOpacityValue">0%</span>
-</div>
-<div class="settings-row">
-<label>Размер шрифта:</label>
-<input type="number" id="textFontSize" value="12" min="8" max="48" style="width: 70px;">
-</div>
-<div class="settings-row">
-<label>Жирный</label>
-<input type="checkbox" id="textBold" style="width: 18px; height: 18px; accent-color: #4A90E2;">
-</div>
-</div>
-<div class="visibility-panel" id="textEditPanel">
-<div class="visibility-title">Редактирование текста</div>
-<div class="settings-row">
-<textarea id="textContentInput" rows="3" placeholder="Введите текст..." style="width: 100%; background: #1E1E1E; color: #fff; border: 1px solid #404040; border-radius: 4px; padding: 8px; resize: vertical;"></textarea>
-</div>
-<div class="settings-row">
-<span style="color: #B0B0B0; font-size: 11px;">При фокусе поле увеличивается для удобного ввода.</span>
-</div>
-</div>
-<div class="visibility-panel" id="textVisibilityPanel">
-<div class="visibility-title">Видимость на таймфреймах</div>
-<div class="timeframe-checkbox-list" id="textTimeframeCheckboxList"></div>
-<div class="visibility-actions">
-<button class="visibility-btn select-all" id="textSelectAllTimeframes">Выбрать все</button>
-<button class="visibility-btn deselect-all" id="textDeselectAllTimeframes">Снять все</button>
-</div>
-</div>
-<div class="settings-actions">
-<button id="textSaveSettings">Сохранить</button>
-<button class="delete-btn" id="textDeleteDrawing">Удалить</button>
+    <div class="settings-tabs">
+        <button class="settings-tab" data-text-settings-tab="text">Текст</button>
+        <button class="settings-tab active" data-text-settings-tab="style">Стиль</button>
+        <button class="settings-tab" data-text-settings-tab="visibility">Видимость</button>
+    </div>
+    <div class="visibility-panel active" id="textStylePanel">
+        <div class="current-color-box" id="textCurrentColorBox" style="display:none;"></div>
+        <div class="current-color-box" id="textBgColorBox" style="display:none;"></div>
+        <div class="color-section">
+            <span class="color-label">Цвет текста</span>
+            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
+                <input type="color" class="color-picker-inline" id="textColorPickerInline" value="#FFFFFF" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
+                <input type="text" class="hex-input" id="textHexInputInline" placeholder="#FFFFFF" value="#FFFFFF" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
+                <button class="add-btn" id="textAddColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
+            </div>
+            <div class="colors-grid" id="textInlineColorsGrid"></div>
+        </div>
+        <div class="color-section" style="margin-top: 10px;">
+            <span class="color-label">Цвет фона</span>
+            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
+                <input type="color" class="color-picker-inline" id="textBgColorPicker" value="#000000" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
+                <input type="text" class="hex-input" id="textBgHexInput" placeholder="#000000" value="#000000" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
+                <button class="add-btn" id="textBgAddColor" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
+            </div>
+            <div class="colors-grid" id="textBgColorsGrid"></div>
+        </div>
+        <div class="settings-row" style="display: flex; margin-bottom: 15px;">
+            <label>Прозрачность текста:</label>
+            <input type="range" id="textOpacity" min="0" max="100" value="100">
+            <span class="value-display" id="textOpacityValue">100%</span>
+        </div>
+        <div class="settings-row" style="display: flex; margin-bottom: 15px;">
+            <label>Прозрачность фона:</label>
+            <input type="range" id="textBgOpacity" min="0" max="100" value="0">
+            <span class="value-display" id="textBgOpacityValue">0%</span>
+        </div>
+        <div class="settings-row">
+            <label>Размер шрифта:</label>
+            <input type="number" id="textFontSize" value="12" min="8" max="48" style="width: 70px;">
+        </div>
+        <div class="settings-row">
+            <label>Жирный</label>
+            <input type="checkbox" id="textBold" style="width: 18px; height: 18px; accent-color: #4A90E2;">
+        </div>
+    </div>
+    <div class="visibility-panel" id="textEditPanel">
+        <div class="visibility-title">Редактирование текста</div>
+        <div class="settings-row">
+            <textarea id="textContentInput" rows="3" placeholder="Введите текст..." style="width: 100%; background: #1E1E1E; color: #fff; border: 1px solid #404040; border-radius: 4px; padding: 8px; resize: vertical;"></textarea>
+        </div>
+        <div class="settings-row">
+            <span style="color: #B0B0B0; font-size: 11px;">При фокусе поле увеличивается для удобного ввода.</span>
+        </div>
+    </div>
+    <div class="visibility-panel" id="textVisibilityPanel">
+        <div class="visibility-title">Видимость на таймфреймах</div>
+        <div class="timeframe-checkbox-list" id="textTimeframeCheckboxList"></div>
+        <div class="visibility-actions">
+            <button class="visibility-btn select-all" id="textSelectAllTimeframes">Выбрать все</button>
+            <button class="visibility-btn deselect-all" id="textDeselectAllTimeframes">Снять все</button>
+            <button class="visibility-btn select-minutes" id="textSelectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
+        </div>
+    </div>
+    <div class="settings-actions">
+        <button id="textSaveSettings">Сохранить</button>
+        <button class="delete-btn" id="textDeleteDrawing">Удалить</button>
+    </div>
 </div>
 </div>
 <div class="alert-notification" id="alertNotification"></div>
@@ -980,9 +891,15 @@ placeholder="Поиск по символу..." autocomplete="off">
 <button class="delete-btn" id="indicatorDelete">Удалить</button>
 </div>
 </div>
-<!-- 1. Базовые конфиги -->
+
+
 <script>
+
+
+
+
 (function() {
+// ========== БЕЗОПАСНЫЕ ФУНКЦИИ ==========
 class SafeFetcher {
 static async fetchWithRetry(url, options = {}, maxRetries = 3, delay = 1000) {
 let lastError = null;
@@ -997,82 +914,24 @@ const data = await response.json();
 return { success: true, data, error: null };
 } catch (error) {
 lastError = error;
-console.warn(`Попытка ${attempt}/${maxRetries} не удалась:`, error.message);
 if (attempt < maxRetries) {
-const waitTime = delay * Math.pow(2, attempt - 1);
-await new Promise(resolve => setTimeout(resolve, waitTime));
+await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt - 1)));
 }
 }
 }
 return { success: false, data: null, error: lastError };
 }
-static async fetchBinanceKlines(symbol, interval, limit = 200, marketType = 'futures') {
-const baseUrl = marketType === 'futures' ? 'https://fapi.binance.com' : 'https://api.binance.com';
-const url = `${baseUrl}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-const result = await this.fetchWithRetry(url, {}, 3);
-if (!result.success) {
-console.error(`Ошибка загрузки ${symbol}:`, result.error);
-this.showErrorNotification(symbol, result.error.message);
-return [];
 }
-if (!Array.isArray(result.data)) return [];
-return result.data.map(item => ({
-time: Math.floor(item[0] / 1000),
-open: parseFloat(item[1]),
-high: parseFloat(item[2]),
-low: parseFloat(item[3]),
-close: parseFloat(item[4]),
-volume: parseFloat(item[5])
-}));
-}
-static showErrorNotification(symbol, errorMsg) {
-const notification = document.getElementById('alertNotification');
-if (notification) {
-notification.innerHTML = `
-<div class="alert-title">❌ Ошибка загрузки</div>
-<div class="alert-price">${symbol}</div>
-<div class="alert-repeat">${errorMsg}</div>
-`;
-notification.style.display = 'block';
-notification.style.borderLeftColor = '#f23645';
-setTimeout(() => { notification.style.display = 'none'; }, 3000);
-}
-}
-}
-const workerBlob = new Blob([`
-self.onmessage = async function(e) {
-const { task, urls } = e.data;
-if (task === 'fetchAll') {
-try {
-const fetchPromises = urls.map(async (url, index) => {
-try {
-const controller = new AbortController();
-const timeoutId = setTimeout(() => controller.abort(), 8000);
-const response = await fetch(url, { signal: controller.signal });
-clearTimeout(timeoutId);
-if (!response.ok) throw new Error(\`HTTP \${response.status}\`);
-const data = await response.json();
-return { index, data, error: null };
-} catch (error) {
-return { index, data: null, error: error.message };
-}
-});
-const results = await Promise.all(fetchPromises);
-const sortedResults = results.sort((a, b) => a.index - b.index).map(r => r.data);
-self.postMessage({ task: 'fetchAll', results: sortedResults, errors: results.filter(r => r.error).map(r => ({ index: r.index, error: r.error })) });
-} catch (error) {
-self.postMessage({ task: 'fetchAll', error: error.message });
-}
-}
-};
-`], { type: 'application/javascript' });
-const dataLoaderWorker = new Worker(URL.createObjectURL(workerBlob));
+
 const RIGHT_OFFSET = 35;
+
 function safeGet(id) {
 const el = document.getElementById(id);
 if (!el) console.warn(`Элемент ${id} не найден`);
 return el;
 }
+
+// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 const drawingsContainer = safeGet('drawingsContainer');
 const drawingSettings = safeGet('drawingSettings');
 const currentColorBox = safeGet('currentColorBox');
@@ -1109,13 +968,17 @@ const indicatorsPanel = safeGet('indicatorsPanel');
 const closeIndicatorsBtn = safeGet('closeIndicatorsBtn');
 const indicatorsList = safeGet('indicatorsList');
 const activeIndicatorsList = safeGet('activeIndicatorsList');
+
 let currentHistoryTab = 'active';
 let telegramChatId = localStorage.getItem('telegramChatId') || '';
 let isDraggingToolbar = false;
 let dragToolbarStartX = 0, dragToolbarStartY = 0, dragToolbarStartLeft = 0, dragToolbarStartTop = 0;
+
 window.rayManager = null;
 window.trendLineManager = null;
 window.alertLineManager = null;
+
+// ========== РЕНДЕР СПИСКА АЛЕРТОВ ==========
 window.renderAlertsListUI = function(alertsData) {
 const content = document.getElementById('alertHistoryContent');
 if (!content) return;
@@ -1124,49 +987,33 @@ const triggeredAlerts = alertsData.triggered || [];
 const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
 let html = '';
 if (activeTab === 'active') {
-if (activeAlerts.length === 0) {
-html = '<div class="empty-alerts">Нет активных алертов</div>';
-} else {
+if (activeAlerts.length === 0) html = '<div class="empty-alerts">Нет активных алертов</div>';
+else {
 html = '<div class="alert-list">';
 activeAlerts.forEach(alert => {
 const priceFormatted = Utils.formatPrice(alert.price);
 const color = alert.options.color;
-html += `
-<div class="alert-list-item" style="border-left-color: ${color};" data-id="${alert.id}">
-<div>
-<div class="price">${priceFormatted}</div>
-<div class="info">
-<span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
-<span>Создан: ${new Date().toLocaleTimeString()}</span>
-</div>
-</div>
-<div class="actions">
-<button class="delete-alert" data-id="${alert.id}" title="Удалить">🗑️</button>
-</div>
-</div>`;
+html += `<div class="alert-list-item" style="border-left-color: ${color};" data-id="${alert.id}">
+<div><div class="price">${priceFormatted}</div>
+<div class="info"><span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
+<span>Создан: ${new Date().toLocaleTimeString()}</span></div></div>
+<div class="actions"><button class="delete-alert" data-id="${alert.id}" title="Удалить">🗑️</button></div></div>`;
 });
 html += '</div>';
 }
 } else {
-if (triggeredAlerts.length === 0) {
-html = '<div class="empty-alerts">Нет сработавших алертов</div>';
-} else {
+if (triggeredAlerts.length === 0) html = '<div class="empty-alerts">Нет сработавших алертов</div>';
+else {
 html = '<div class="alert-list">';
 triggeredAlerts.forEach(alert => {
 const priceFormatted = Utils.formatPrice(alert.price);
 const color = alert.options.color;
 const timeStr = alert.lastTriggerTime ? new Date(alert.lastTriggerTime).toLocaleTimeString() : 'только что';
 const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}/${alert.triggerLimit === Infinity ? '∞' : alert.triggerLimit})` : '';
-html += `
-<div class="alert-list-item triggered" style="border-left-color: ${color};" data-id="${alert.id}">
-<div>
-<div class="price">${priceFormatted}${repeatInfo}</div>
-<div class="info"><span>Сработал: ${timeStr}</span></div>
-</div>
-<div class="actions">
-<button class="delete-alert" data-id="${alert.id}" title="Удалить">🗑️</button>
-</div>
-</div>`;
+html += `<div class="alert-list-item triggered" style="border-left-color: ${color};" data-id="${alert.id}">
+<div><div class="price">${priceFormatted}${repeatInfo}</div>
+<div class="info"><span>Сработал: ${timeStr}</span></div></div>
+<div class="actions"><button class="delete-alert" data-id="${alert.id}" title="Удалить">🗑️</button></div></div>`;
 });
 html += '</div>';
 }
@@ -1180,13 +1027,16 @@ if (window.alertLineManager) window.alertLineManager.deleteAlert(id);
 });
 });
 };
+
 window.renderDrawings = function() {
 if (window.rayManager && typeof window.rayManager._requestRedraw === 'function') window.rayManager._requestRedraw();
 if (window.trendLineManager && typeof window.trendLineManager._requestRedraw === 'function') window.trendLineManager._requestRedraw();
 };
+
 function renderDrawings() { window.renderDrawings(); }
 function saveDrawings() { if (window.rayManager) window.rayManager._saveRays(); }
 function saveColors() { localStorage.setItem('chartColors', JSON.stringify(availableColors)); }
+
 function renderInlineColorsGrid(selectedColor) {
 inlineColorsGrid.innerHTML = '';
 availableColors.forEach(color => {
@@ -1203,17 +1053,17 @@ hexInputInline.value = color;
 inlineColorsGrid.appendChild(square);
 });
 }
+
 let availableColors = [
-'#4A90E2', '#EF5350', '#26A69A', '#FFA726', '#AB47BC',
-'#5C6BC0', '#66BB6A', '#FF7043', '#7E57C2', '#42A5F5',
-'#EC407A', '#FFCA28', '#8D6E63', '#B0BEC5', '#FFFFFF',
-'#F44336', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5',
-'#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50'
+'#4A90E2','#EF5350','#26A69A','#FFA726','#AB47BC','#5C6BC0','#66BB6A','#FF7043',
+'#7E57C2','#42A5F5','#EC407A','#FFCA28','#8D6E63','#B0BEC5','#FFFFFF','#F44336',
+'#E91E63','#9C27B0','#673AB7','#3F51B5','#2196F3','#03A9F4','#00BCD4','#009688','#4CAF50'
 ];
 try {
 const savedColors = localStorage.getItem('chartColors');
 if (savedColors) availableColors = JSON.parse(savedColors);
 } catch(e) {}
+
 addColorInline.addEventListener('click', () => {
 let hex = hexInputInline.value.trim();
 if (!hex.startsWith('#')) hex = '#' + hex;
@@ -1226,20 +1076,20 @@ renderInlineColorsGrid(hex);
 currentColorBox.style.backgroundColor = hex;
 }
 });
-colorOpacity.addEventListener('input', function() {
-colorOpacityValue.textContent = this.value + '%';
-});
+
+colorOpacity.addEventListener('input', function() { colorOpacityValue.textContent = this.value + '%'; });
+
+// ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
 toolbarHeader.addEventListener('mousedown', (e) => {
 if (e.target.closest('.toolbar-toggle')) return;
 isDraggingToolbar = true;
 const rect = drawingToolbar.getBoundingClientRect();
-dragToolbarStartX = e.clientX;
-dragToolbarStartY = e.clientY;
-dragToolbarStartLeft = rect.left;
-dragToolbarStartTop = rect.top;
+dragToolbarStartX = e.clientX; dragToolbarStartY = e.clientY;
+dragToolbarStartLeft = rect.left; dragToolbarStartTop = rect.top;
 toolbarHeader.style.cursor = 'grabbing';
 e.preventDefault();
 });
+
 document.addEventListener('mousemove', (e) => {
 if (!isDraggingToolbar) return;
 const deltaX = e.clientX - dragToolbarStartX;
@@ -1253,16 +1103,19 @@ newTop = Math.max(5, Math.min(containerRect.height - toolbarRect.height - 5, new
 drawingToolbar.style.left = newLeft + 'px';
 drawingToolbar.style.top = newTop + 'px';
 });
+
 document.addEventListener('mouseup', () => {
 if (isDraggingToolbar) {
 isDraggingToolbar = false;
 toolbarHeader.style.cursor = 'grab';
 }
 });
+
 toolbarToggle.addEventListener('click', () => {
 drawingToolbar.classList.toggle('collapsed');
 toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
 });
+
 const chartContainerForToolbar = document.getElementById('chart-container');
 if (chartContainerForToolbar && window.ResizeObserver) {
 const toolbarObserver = new ResizeObserver(() => {
@@ -1278,29 +1131,23 @@ drawingToolbar.style.top = newTop + 'px';
 });
 toolbarObserver.observe(chartContainerForToolbar);
 }
+
+// ========== TELEGRAM ==========
 function saveTelegramChatId(id) {
 telegramChatId = id;
 localStorage.setItem('telegramChatId', id);
 renderTelegramPanel();
 }
+
 function renderTelegramPanel() {
-const html = `
-<div class="telegram-connect">
-<h4> Подключение Telegram</h4>
-<div class="telegram-step">
-<p>1. Перейдите в бота и нажмите Start</p>
-<a href="https://t.me/ALLERT1ALERT_BOT" target="_blank" style="color: #B0B0B0; background: #404040; border: 1px solid #404040; display: inline-block; padding: 12px 25px; border-radius: 6px; text-decoration: none; font-size: 16px; margin-bottom: 15px; font-weight: bold; transition: all 0.2s;">ПОДКЛЮЧИТЬСЯ</a>
+const html = `<div class="telegram-connect"><h4>Подключение Telegram</h4>
+<div class="telegram-step"><p>1. Перейдите в бота и нажмите Start</p>
+<a href="https://t.me/ALLERT1ALERT_BOT" target="_blank" style="color: #B0B0B0; background: #404040; border: 1px solid #404040; display: inline-block; padding: 12px 25px; border-radius: 6px; text-decoration: none; font-size: 16px; margin-bottom: 15px; font-weight: bold;">ПОДКЛЮЧИТЬСЯ</a>
 <p>2. Введи свой Telegram ID</p>
-<div class="input-group">
-<input type="text" id="telegramIdInput" placeholder="Например: 123456789" value="${telegramChatId || ''}">
-</div>
-<button id="saveTelegramBtn"> Сохранить ID</button>
-<div id="telegramStatus" class="telegram-status ${telegramChatId ? 'success' : ''}">
-${telegramChatId ? '✅ Telegram подключен! ID: ' + telegramChatId : ''}
-</div>
-</div>
-</div>
-</div>`;
+<div class="input-group"><input type="text" id="telegramIdInput" placeholder="Например: 123456789" value="${telegramChatId || ''}"></div>
+<button id="saveTelegramBtn">Сохранить ID</button>
+<div id="telegramStatus" class="telegram-status ${telegramChatId ? 'success' : ''}">${telegramChatId ? '✅ Telegram подключен! ID: ' + telegramChatId : ''}</div>
+</div></div>`;
 telegramContent.innerHTML = html;
 const saveBtn = document.getElementById('saveTelegramBtn');
 const input = document.getElementById('telegramIdInput');
@@ -1316,9 +1163,12 @@ status.className = 'telegram-status success';
 });
 }
 }
+
+// ========== ИНДИКАТОРЫ ==========
 function renderIndicatorsList() {
 if (!indicatorsList) return;
-const currentIndicatorsList = (window.IndicatorFactory && window.IndicatorFactory.getIndicatorsList) ? window.IndicatorFactory.getIndicatorsList() : [];
+const currentIndicatorsList = (window.IndicatorFactory && window.IndicatorFactory.getIndicatorsList)
+? window.IndicatorFactory.getIndicatorsList() : [];
 if (currentIndicatorsList.length === 0) return;
 const categories = {};
 currentIndicatorsList.forEach(ind => {
@@ -1327,14 +1177,11 @@ categories[ind.category].push(ind);
 });
 let html = '';
 Object.keys(categories).forEach(category => {
-html += `<div class="indicators-category">`;
-html += `<div class="indicators-category-title">${category}</div>`;
+html += `<div class="indicators-category"><div class="indicators-category-title">${category}</div>`;
 categories[category].forEach(ind => {
-html += `
-<div class="indicator-item" data-id="${ind.id}">
+html += `<div class="indicator-item" data-id="${ind.id}">
 <span class="indicator-name" style="border-left: 3px solid ${ind.color}; padding-left: 8px;">${ind.name}</span>
-<span class="indicator-type">${category}</span>
-</div>`;
+<span class="indicator-type">${category}</span></div>`;
 });
 html += `</div>`;
 });
@@ -1346,6 +1193,7 @@ if (window.chartManagerInstance) window.chartManagerInstance.addIndicator(id);
 });
 });
 }
+
 function renderActiveIndicatorsUI(indicators) {
 const activeIndicatorsList = document.getElementById('activeIndicatorsList');
 if (!activeIndicatorsList) return;
@@ -1365,17 +1213,9 @@ name = typeNames[indicator.type] || indicator.type;
 if (indicator.settings && indicator.settings.color) color = indicator.settings.color;
 else if (indicator.data && indicator.data.color) color = indicator.data.color;
 const eyeIcon = isVisible ?
-`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-<circle cx="12" cy="12" r="3"></circle>
-</svg>` :
-`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-<circle cx="12" cy="12" r="3"></circle>
-<line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2"/>
-</svg>`;
-html += `
-<div class="active-indicator-item" style="border-left-color: ${color}; opacity: ${isVisible ? 1 : 0.5};" data-id="${indicator.id}">
+`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>` :
+`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2"/></svg>`;
+html += `<div class="active-indicator-item" style="border-left-color: ${color}; opacity: ${isVisible ? 1 : 0.5};" data-id="${indicator.id}">
 <span class="active-indicator-name">${name}</span>
 <div class="active-indicator-actions">
 <button class="eye-indicator" data-id="${indicator.id}" title="${isVisible ? 'Скрыть' : 'Показать'}">${eyeIcon}</button>
@@ -1385,12 +1225,9 @@ html += `
 </svg>
 </button>
 <button class="delete-indicator" data-id="${indicator.id}" title="Удалить">
-<svg width="14" height="14" viewBox="0 0 256 256" fill="none">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
-</svg>
+<svg width="14" height="14" viewBox="0 0 256 256" fill="none"><path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/></svg>
 </button>
-</div>
-</div>`;
+</div></div>`;
 });
 }
 activeIndicatorsList.innerHTML = html;
@@ -1426,11 +1263,12 @@ window.chartManagerInstance.indicatorManager.removeIndicator(index);
 });
 }
 window.renderActiveIndicatorsUI = renderActiveIndicatorsUI;
+
+// ========== ОБРАБОТЧИКИ КНОПОК ПАНЕЛЕЙ ==========
 indicatorsBtn.addEventListener('click', (e) => {
 const rect = indicatorsBtn.getBoundingClientRect();
-if (indicatorsPanel.style.display === 'block') {
-indicatorsPanel.style.display = 'none';
-} else {
+if (indicatorsPanel.style.display === 'block') { indicatorsPanel.style.display = 'none'; }
+else {
 alertHistoryPanel.style.display = 'none';
 telegramPanel.style.display = 'none';
 indicatorsPanel.style.top = (rect.bottom + 5) + 'px';
@@ -1442,12 +1280,13 @@ renderActiveIndicatorsUI(window.chartManagerInstance.indicatorManager.activeIndi
 indicatorsPanel.style.display = 'block';
 }
 });
+
 closeIndicatorsBtn.addEventListener('click', () => { indicatorsPanel.style.display = 'none'; });
+
 alertHistoryBtn.addEventListener('click', (e) => {
 const rect = alertHistoryBtn.getBoundingClientRect();
-if (alertHistoryPanel.style.display === 'block') {
-alertHistoryPanel.style.display = 'none';
-} else {
+if (alertHistoryPanel.style.display === 'block') { alertHistoryPanel.style.display = 'none'; }
+else {
 telegramPanel.style.display = 'none';
 indicatorsPanel.style.display = 'none';
 alertHistoryPanel.style.top = (rect.bottom + 5) + 'px';
@@ -1455,12 +1294,13 @@ alertHistoryPanel.style.right = (window.innerWidth - rect.right) + 'px';
 alertHistoryPanel.style.display = 'block';
 }
 });
+
 closeHistoryBtn.addEventListener('click', () => { alertHistoryPanel.style.display = 'none'; });
+
 telegramBtn.addEventListener('click', (e) => {
 const rect = telegramBtn.getBoundingClientRect();
-if (telegramPanel.style.display === 'block') {
-telegramPanel.style.display = 'none';
-} else {
+if (telegramPanel.style.display === 'block') { telegramPanel.style.display = 'none'; }
+else {
 alertHistoryPanel.style.display = 'none';
 indicatorsPanel.style.display = 'none';
 telegramPanel.style.top = (rect.bottom + 5) + 'px';
@@ -1469,7 +1309,9 @@ renderTelegramPanel();
 telegramPanel.style.display = 'block';
 }
 });
+
 closeTelegramBtn.addEventListener('click', () => { telegramPanel.style.display = 'none'; });
+
 historyTabs.forEach(tab => {
 tab.addEventListener('click', () => {
 historyTabs.forEach(t => t.classList.remove('active'));
@@ -1478,6 +1320,7 @@ currentHistoryTab = tab.dataset.tab;
 if (window.alertLineManager) window.alertLineManager._updateAlertsListUI();
 });
 });
+
 document.addEventListener('click', (e) => {
 if (!alertHistoryPanel.contains(e.target) && e.target !== alertHistoryBtn && !alertHistoryBtn.contains(e.target) &&
 !telegramPanel.contains(e.target) && e.target !== telegramBtn && !telegramBtn.contains(e.target) &&
@@ -1487,20 +1330,19 @@ telegramPanel.style.display = 'none';
 indicatorsPanel.style.display = 'none';
 }
 });
+
 renderInlineColorsGrid('#4A90E2');
+
 let tickerPanelInstance = null;
 setTimeout(() => {
-if (window.app && window.app.tickerPanel) {
-tickerPanelInstance = window.app.tickerPanel;
-} else if (window.tickerPanel) {
-tickerPanelInstance = window.tickerPanel;
-}
+if (window.app && window.app.tickerPanel) tickerPanelInstance = window.app.tickerPanel;
+else if (window.tickerPanel) tickerPanelInstance = window.tickerPanel;
 }, 1000);
+
 window.addEventListener('beforeunload', () => {
-if (tickerPanelInstance && typeof tickerPanelInstance.cleanup === 'function') {
-tickerPanelInstance.cleanup();
-}
+if (tickerPanelInstance && typeof tickerPanelInstance.cleanup === 'function') tickerPanelInstance.cleanup();
 });
+
 document.addEventListener('visibilitychange', () => {
 if (!document.hidden) {
 if (window.wsManager && window.chartManagerInstance) {
@@ -1514,272 +1356,527 @@ window.chartManagerInstance.currentMarketType
 }
 });
 
+// ========== ЦВЕТА ДЛЯ СЕТКИ ==========
+const colorPalette = [
+'#000000','#0A1929','#1E1E1E','#2D2D2D','#14171C',
+'#00bcd4','#4CAF50','#26A69A','#66BB6A','#00E5FF',
+'#f23645','#FF5252','#EF5350','#F44336','#D32F2F',
+'#4A90E2','#9C27B0','#FF9800','#795548','#607D8B'
+];
+
 // ============================================================
-// === ПАНЕЛЬ ЦВЕТОВ ГРАФИКА (ФОН / СВЕЧИ / РАЗДЕЛ / СЕССИИ) ===
+// ========= initChartColorPanel — С НОВЫМИ COLOR PICKER =======
 // ============================================================
 function initChartColorPanel() {
-    const panel = document.getElementById('chartColorPanel');
-    const openBtn = document.getElementById('openChartColorPanel');
-    const tabs = document.querySelectorAll('[data-color-tab]');
-    const tabContents = document.querySelectorAll('.color-tab-content');
+const panel = document.getElementById('chartColorPanel');
+const openBtn = document.getElementById('openChartColorPanel');
+const tabs = document.querySelectorAll('[data-color-tab]');
+const tabContents = document.querySelectorAll('.color-tab-content');
 
-    // Загружаем сохранённые цвета в color-инпуты
-    loadSavedColors();
-    loadSeparatorSettings();
-    loadSessionSettings();
+// Заполняем сетки цветов
+fillColorGrid('bgColorsGrid', colorPalette.slice(0, 8), '#000000');
+fillColorGrid('bullishColorsGrid', ['#00bcd4','#4CAF50','#26A69A','#66BB6A','#00E5FF','#4A90E2','#9C27B0','#FF9800'], '#00bcd4');
+fillColorGrid('bearishColorsGrid', ['#f23645','#FF5252','#EF5350','#F44336','#D32F2F','#E91E63','#9C27B0','#795548'], '#f23645');
+fillColorGrid('separatorColorsGrid', ['#808080','#404040','#606060','#A0A0A0','#FFFFFF','#FF9800','#4A90E2','#333333'], '#808080');
 
-    // Открытие панели
-    openBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        panel.style.display = 'block';
-    });
+// Загружаем сохраненные цвета
+loadSavedColors();
+loadSeparatorSettings();
 
-    // Переключение вкладок
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            tabs.forEach(t => {
-                t.style.background = '#2D2D2D';
-                t.style.borderColor = '#404040';
-                t.style.color = '#B0B0B0';
-            });
-            tab.style.background = '#4A4A4A';
-            tab.style.borderColor = '#888888';
-            tab.style.color = '#FFFFFF';
+// Открытие панели
+openBtn.addEventListener('click', (e) => {
+e.stopPropagation();
+panel.style.display = 'block';
+});
 
-            const tabId = tab.dataset.colorTab;
-            tabContents.forEach(content => {
-                content.classList.remove('active');
-                content.style.display = 'none';
-            });
-            document.getElementById(`tab-${tabId}`).classList.add('active');
-            document.getElementById(`tab-${tabId}`).style.display = 'block';
-        });
-    });
+// Переключение вкладок
+tabs.forEach(tab => {
+tab.addEventListener('click', () => {
+tabs.forEach(t => {
+t.style.background = '#2D2D2D';
+t.style.borderColor = '#404040';
+t.style.color = '#B0B0B0';
+});
+tab.style.background = '#4A4A4A';
+tab.style.borderColor = '#888888';
+tab.style.color = '#FFFFFF';
+const tabId = tab.dataset.colorTab;
+tabContents.forEach(content => {
+content.classList.remove('active');
+content.style.display = 'none';
+});
+document.getElementById(`tab-${tabId}`).classList.add('active');
+document.getElementById(`tab-${tabId}`).style.display = 'block';
+});
+});
 
-    // === ЖИВОЕ ПРИМЕНЕНИЕ ЦВЕТОВ ФОНА / СВЕЧЕЙ ===
-    document.getElementById('bgColorInput').addEventListener('input', applyColorsNow);
-    document.getElementById('bullishColorInput').addEventListener('input', applyColorsNow);
-    document.getElementById('bearishColorInput').addEventListener('input', applyColorsNow);
+// === ✅ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ <input type="color"> ===
+const colorPickerBindings = [
+{ picker: 'bgColorPicker',        box: 'bgCurrentColor',        grid: 'bgColorsGrid',        storageKey: 'chartBgColor' },
+{ picker: 'bullishColorPicker',   box: 'bullishCurrentColor',   grid: 'bullishColorsGrid',   storageKey: 'chartBullishColor' },
+{ picker: 'bearishColorPicker',   box: 'bearishCurrentColor',   grid: 'bearishColorsGrid',   storageKey: 'chartBearishColor' },
+{ picker: 'separatorColorPicker', box: 'separatorCurrentColor', grid: 'separatorColorsGrid', storageKey: 'separatorColor' }
+];
 
-    function applyColorsNow() {
-        const bg = document.getElementById('bgColorInput').value;
-        const bullish = document.getElementById('bullishColorInput').value;
-        const bearish = document.getElementById('bearishColorInput').value;
-        applyColorsToChart(bg, bullish, bearish);
-    }
+colorPickerBindings.forEach(({ picker, box, grid, storageKey }) => {
+const el = document.getElementById(picker);
+if (!el) return;
+el.addEventListener('input', (e) => {
+const color = e.target.value;
+const boxEl = document.getElementById(box);
+if (boxEl) boxEl.style.backgroundColor = color;
+// Подсветка квадрата в сетке
+document.querySelectorAll(`#${grid} .color-square`).forEach(s => {
+const sqColor = s.style.backgroundColor;
+const sqHex = rgbToHex(sqColor);
+s.style.border = (sqColor === color || sqHex.toLowerCase() === color.toLowerCase())
+? '2px solid #4A90E2' : '1px solid transparent';
+});
+// Мгновенное сохранение
+localStorage.setItem(storageKey, color);
+// Применение к графику
+const bg = document.getElementById('bgColorPicker').value;
+const bullish = document.getElementById('bullishColorPicker').value;
+const bearish = document.getElementById('bearishColorPicker').value;
+applyColorsToChart(bg, bullish, bearish);
+// Если это разделитель — обновляем сразу
+if (picker === 'separatorColorPicker' && window._dailySeparator) {
+window._dailySeparator.updateSettings({
+enabled: document.getElementById('separatorsEnabled').checked,
+color: color,
+style: document.getElementById('separatorLineStyle').value,
+width: parseInt(document.getElementById('separatorLineWidth').value),
+opacity: parseInt(document.getElementById('separatorOpacity').value) / 100
+});
+}
+});
+});
 
-    // === Слайдеры разделителя ===
-    document.getElementById('separatorLineWidth').addEventListener('input', function() {
-        document.getElementById('separatorWidthValue').textContent = this.value + 'px';
-        applySeparatorNow();
-    });
-    document.getElementById('separatorOpacity').addEventListener('input', function() {
-        document.getElementById('separatorOpacityValue').textContent = this.value + '%';
-        applySeparatorNow();
-    });
+// Обработчики слайдеров разделителя
+document.getElementById('separatorLineWidth').addEventListener('input', function() {
+document.getElementById('separatorWidthValue').textContent = this.value + 'px';
+});
+document.getElementById('separatorOpacity').addEventListener('input', function() {
+document.getElementById('separatorOpacityValue').textContent = this.value + '%';
+});
 
-    // === ЖИВОЕ ПРИМЕНЕНИЕ РАЗДЕЛИТЕЛЯ ===
-    document.getElementById('separatorColorInput').addEventListener('input', applySeparatorNow);
-    document.getElementById('separatorLineStyle').addEventListener('change', applySeparatorNow);
-    document.getElementById('separatorsEnabled').addEventListener('change', applySeparatorNow);
+// ✅ Сохранение
+document.getElementById('saveChartColors').addEventListener('click', () => {
+const bgHex = document.getElementById('bgColorPicker').value;
+const bullishHex = document.getElementById('bullishColorPicker').value;
+const bearishHex = document.getElementById('bearishColorPicker').value;
+localStorage.setItem('chartBgColor', bgHex);
+localStorage.setItem('chartBullishColor', bullishHex);
+localStorage.setItem('chartBearishColor', bearishHex);
 
-    function applySeparatorNow() {
-        if (!window._dailySeparator) return;
-        window._dailySeparator.updateSettings({
-            enabled: document.getElementById('separatorsEnabled').checked,
-            color: document.getElementById('separatorColorInput').value,
-            style: document.getElementById('separatorLineStyle').value,
-            width: parseInt(document.getElementById('separatorLineWidth').value),
-            opacity: parseInt(document.getElementById('separatorOpacity').value) / 100
-        });
-    }
+const sepEnabled = document.getElementById('separatorsEnabled').checked;
+const sepColor = document.getElementById('separatorColorPicker').value;
+const sepStyle = document.getElementById('separatorLineStyle').value;
+const sepWidth = document.getElementById('separatorLineWidth').value;
+const sepOpacity = document.getElementById('separatorOpacity').value;
+localStorage.setItem('separatorEnabled', sepEnabled);
+localStorage.setItem('separatorColor', sepColor);
+localStorage.setItem('separatorStyle', sepStyle);
+localStorage.setItem('separatorWidth', sepWidth);
+localStorage.setItem('separatorOpacity', sepOpacity);
 
-    // === ЖИВОЕ ПРИМЕНЕНИЕ СЕССИЙ ===
-    ['Asian', 'European', 'American'].forEach(name => {
-        const input = document.getElementById(`session${name}Color`);
-        if (input) {
-            input.addEventListener('input', function() {
-                if (!window._sessionHighlighter) return;
-                window._sessionHighlighter.updateSettings({
-                    colors: { [name.toLowerCase()]: this.value }
-                });
-            });
-        }
-    });
+if (window._dailySeparator) {
+window._dailySeparator.updateSettings({
+enabled: sepEnabled, color: sepColor, style: sepStyle,
+width: parseInt(sepWidth), opacity: parseInt(sepOpacity) / 100
+});
+}
+applyColorsToChart(bgHex, bullishHex, bearishHex);
+panel.style.display = 'none';
+});
 
-    // === СОХРАНЕНИЕ ===
-    document.getElementById('saveChartColors').addEventListener('click', () => {
-        const bg = document.getElementById('bgColorInput').value;
-        const bullish = document.getElementById('bullishColorInput').value;
-        const bearish = document.getElementById('bearishColorInput').value;
-        localStorage.setItem('chartBgColor', bg);
-        localStorage.setItem('chartBullishColor', bullish);
-        localStorage.setItem('chartBearishColor', bearish);
+// ✅ Сброс — С СОХРАНЕНИЕМ СРАЗУ
+document.getElementById('resetChartColors').addEventListener('click', () => {
+// Сброс DOM
+document.getElementById('bgCurrentColor').style.backgroundColor = '#000000';
+document.getElementById('bgColorPicker').value = '#000000';
+document.getElementById('bullishCurrentColor').style.backgroundColor = '#00bcd4';
+document.getElementById('bullishColorPicker').value = '#00bcd4';
+document.getElementById('bearishCurrentColor').style.backgroundColor = '#f23645';
+document.getElementById('bearishColorPicker').value = '#f23645';
+document.getElementById('separatorsEnabled').checked = true;
+document.getElementById('separatorCurrentColor').style.backgroundColor = '#808080';
+document.getElementById('separatorColorPicker').value = '#808080';
+document.getElementById('separatorLineStyle').value = 'dashed';
+document.getElementById('separatorLineWidth').value = 1;
+document.getElementById('separatorWidthValue').textContent = '1px';
+document.getElementById('separatorOpacity').value = 30;
+document.getElementById('separatorOpacityValue').textContent = '30%';
 
-        localStorage.setItem('separatorEnabled', document.getElementById('separatorsEnabled').checked);
-        localStorage.setItem('separatorColor', document.getElementById('separatorColorInput').value);
-        localStorage.setItem('separatorStyle', document.getElementById('separatorLineStyle').value);
-        localStorage.setItem('separatorWidth', document.getElementById('separatorLineWidth').value);
-        localStorage.setItem('separatorOpacity', document.getElementById('separatorOpacity').value);
+// ✅ СОХРАНЕНИЕ ДЕФОЛТОВ В localStorage
+localStorage.setItem('chartBgColor', '#000000');
+localStorage.setItem('chartBullishColor', '#00bcd4');
+localStorage.setItem('chartBearishColor', '#f23645');
+localStorage.setItem('separatorEnabled', 'true');
+localStorage.setItem('separatorColor', '#808080');
+localStorage.setItem('separatorStyle', 'dashed');
+localStorage.setItem('separatorWidth', '1');
+localStorage.setItem('separatorOpacity', '30');
 
-        const sessionColors = {
-            asian: document.getElementById('sessionAsianColor').value,
-            european: document.getElementById('sessionEuropeanColor').value,
-            american: document.getElementById('sessionAmericanColor').value
-        };
-        localStorage.setItem('sessionSettings', JSON.stringify({
-            enabled: document.getElementById('sessionsEnabled').checked,
-            opacity: parseInt(document.getElementById('sessionOpacity').value) / 100,
-            colors: sessionColors
-        }));
+// ✅ ПРИМЕНЕНИЕ К ГРАФИКУ СРАЗУ
+applyColorsToChart('#000000', '#00bcd4', '#f23645');
 
-        applyColorsToChart(bg, bullish, bearish);
-        panel.style.display = 'none';
-    });
-
-    // === СБРОС ===
-    document.getElementById('resetChartColors').addEventListener('click', () => {
-        document.getElementById('bgColorInput').value = '#000000';
-        document.getElementById('bullishColorInput').value = '#00bcd4';
-        document.getElementById('bearishColorInput').value = '#f23645';
-
-        document.getElementById('separatorsEnabled').checked = true;
-        document.getElementById('separatorColorInput').value = '#808080';
-        document.getElementById('separatorLineStyle').value = 'dashed';
-        document.getElementById('separatorLineWidth').value = 1;
-        document.getElementById('separatorWidthValue').textContent = '1px';
-        document.getElementById('separatorOpacity').value = 30;
-        document.getElementById('separatorOpacityValue').textContent = '30%';
-
-        document.getElementById('sessionAsianColor').value = '#FF9800';
-        document.getElementById('sessionEuropeanColor').value = '#2196F3';
-        document.getElementById('sessionAmericanColor').value = '#E040FB';
-
-        if (window._dailySeparator) {
-            window._dailySeparator.updateSettings({
-                enabled: true, color: '#808080', style: 'dashed', width: 1, opacity: 0.3
-            });
-        }
-        applyColorsToChart('#000000', '#00bcd4', '#f23645');
-    });
-
-    // Закрытие при клике вне панели
-    document.addEventListener('click', (e) => {
-        if (!panel.contains(e.target) && !openBtn.contains(e.target) && panel.style.display === 'block') {
-            panel.style.display = 'none';
-        }
-    });
+if (window._dailySeparator) {
+window._dailySeparator.updateSettings({
+enabled: true, color: '#808080', style: 'dashed', width: 1, opacity: 0.3
+});
 }
 
-// === ЛОГИКА ВКЛАДКИ СЕССИЙ ===
+// ✅ ЗАКРЫВАЕМ ПАНЕЛЬ
+panel.style.display = 'none';
+});
+
+// Применять настройки разделителя СРАЗУ при изменении
+setTimeout(function() {
+document.getElementById('separatorColorPicker').addEventListener('input', applySeparatorNow);
+document.getElementById('separatorColorsGrid').addEventListener('click', function() { setTimeout(applySeparatorNow, 50); });
+document.getElementById('separatorLineStyle').addEventListener('change', applySeparatorNow);
+document.getElementById('separatorLineWidth').addEventListener('input', applySeparatorNow);
+document.getElementById('separatorOpacity').addEventListener('input', applySeparatorNow);
+document.getElementById('separatorsEnabled').addEventListener('change', applySeparatorNow);
+function applySeparatorNow() {
+if (!window._dailySeparator) return;
+const enabled = document.getElementById('separatorsEnabled').checked;
+const color = document.getElementById('separatorColorPicker').value;
+const style = document.getElementById('separatorLineStyle').value;
+const width = parseInt(document.getElementById('separatorLineWidth').value);
+const opacity = parseInt(document.getElementById('separatorOpacity').value) / 100;
+window._dailySeparator.updateSettings({ enabled, color, style, width, opacity });
+}
+}, 1000);
+
+loadSeparatorSettings();
+
+// Закрытие при клике вне панели
+document.addEventListener('click', (e) => {
+if (!panel.contains(e.target) && !openBtn.contains(e.target) && panel.style.display === 'block') {
+panel.style.display = 'none';
+}
+});
+}
+
+// ========== ЛОГИКА ВКЛАДКИ СЕССИЙ ==========
 document.getElementById('sessionsEnabled')?.addEventListener('change', function() {
-    if (!window._sessionHighlighter) return;
-    window._sessionHighlighter.updateSettings({ enabled: this.checked });
-});
-document.getElementById('sessionOpacity')?.addEventListener('input', function() {
-    const percent = parseInt(this.value);
-    document.getElementById('sessionOpacityValue').textContent = percent + '%';
-    if (!window._sessionHighlighter) return;
-    window._sessionHighlighter.updateSettings({ opacity: percent / 100 });
+if (!window._sessionHighlighter) return;
+window._sessionHighlighter.updateSettings({ enabled: this.checked });
 });
 
-// Загрузка сохраненных настроек сессий
-function loadSessionSettings() {
-    const saved = localStorage.getItem('sessionSettings');
-    if (!saved) return;
-    const s = JSON.parse(saved);
-    if (s.enabled === false) document.getElementById('sessionsEnabled').checked = false;
-    if (s.opacity) {
-        document.getElementById('sessionOpacity').value = s.opacity * 100;
-        document.getElementById('sessionOpacityValue').textContent = Math.round(s.opacity * 100) + '%';
-    }
-    if (s.colors) {
-        if (s.colors.asian) document.getElementById('sessionAsianColor').value = s.colors.asian;
-        if (s.colors.european) document.getElementById('sessionEuropeanColor').value = s.colors.european;
-        if (s.colors.american) document.getElementById('sessionAmericanColor').value = s.colors.american;
-    }
-    if (window._sessionHighlighter && s.colors) {
-        window._sessionHighlighter.updateSettings({ colors: s.colors });
-    }
+document.getElementById('sessionOpacity')?.addEventListener('input', function() {
+const percent = parseInt(this.value);
+document.getElementById('sessionOpacityValue').textContent = percent + '%';
+if (!window._sessionHighlighter) return;
+window._sessionHighlighter.updateSettings({ opacity: percent / 100 });
+});
+
+// ✅ Живое обновление color picker'ов сессий
+['Asian', 'European', 'American'].forEach(name => {
+const picker = document.getElementById(`session${name}Color`);
+if (picker) {
+picker.addEventListener('input', function() {
+const colorBox = document.getElementById(`session${name}ColorBox`);
+if (colorBox) colorBox.style.backgroundColor = this.value;
+const lower = name.toLowerCase();
+if (window._sessionHighlighter) {
+window._sessionHighlighter.updateSettings({ colors: { [lower]: this.value } });
 }
+const saved = JSON.parse(localStorage.getItem('sessionSettings') || '{}');
+saved.colors = saved.colors || {};
+saved.colors[lower] = this.value;
+localStorage.setItem('sessionSettings', JSON.stringify(saved));
+});
+}
+});
+
+// Загрузка сохраненных настроек сессий при старте
+function loadSessionSettings() {
+const saved = localStorage.getItem('sessionSettings');
+if (!saved) return;
+const s = JSON.parse(saved);
+if (s.enabled === false) document.getElementById('sessionsEnabled').checked = false;
+if (s.opacity) {
+document.getElementById('sessionOpacity').value = s.opacity * 100;
+document.getElementById('sessionOpacityValue').textContent = Math.round(s.opacity * 100) + '%';
+}
+if (s.colors) {
+if (s.colors.asian) {
+document.getElementById('sessionAsianColor').value = s.colors.asian;
+document.getElementById('sessionAsianColorBox').style.backgroundColor = s.colors.asian;
+}
+if (s.colors.european) {
+document.getElementById('sessionEuropeanColor').value = s.colors.european;
+document.getElementById('sessionEuropeanColorBox').style.backgroundColor = s.colors.european;
+}
+if (s.colors.american) {
+document.getElementById('sessionAmericanColor').value = s.colors.american;
+document.getElementById('sessionAmericanColorBox').style.backgroundColor = s.colors.american;
+}
+}
+if (window._sessionHighlighter && s.colors) {
+window._sessionHighlighter.updateSettings({ colors: s.colors });
+}
+}
+loadSessionSettings();
 
 // Загрузка настроек разделителя
 function loadSeparatorSettings() {
-    const sepEnabled = localStorage.getItem('separatorEnabled') !== 'false';
-    const sepColor = localStorage.getItem('separatorColor') || '#808080';
-    const sepStyle = localStorage.getItem('separatorStyle') || 'dashed';
-    const sepWidth = localStorage.getItem('separatorWidth') || '1';
-    const sepOpacity = localStorage.getItem('separatorOpacity') || '30';
+const sepEnabled = localStorage.getItem('separatorEnabled') !== 'false';
+const sepColor = localStorage.getItem('separatorColor') || '#808080';
+const sepStyle = localStorage.getItem('separatorStyle') || 'dashed';
+const sepWidth = localStorage.getItem('separatorWidth') || '1';
+const sepOpacity = localStorage.getItem('separatorOpacity') || '30';
+document.getElementById('separatorsEnabled').checked = sepEnabled;
+document.getElementById('separatorCurrentColor').style.backgroundColor = sepColor;
+document.getElementById('separatorColorPicker').value = sepColor;
+document.getElementById('separatorLineStyle').value = sepStyle;
+document.getElementById('separatorLineWidth').value = sepWidth;
+document.getElementById('separatorWidthValue').textContent = sepWidth + 'px';
+document.getElementById('separatorOpacity').value = sepOpacity;
+document.getElementById('separatorOpacityValue').textContent = sepOpacity + '%';
+}
 
-    document.getElementById('separatorsEnabled').checked = sepEnabled;
-    document.getElementById('separatorColorInput').value = sepColor;
-    document.getElementById('separatorLineStyle').value = sepStyle;
-    document.getElementById('separatorLineWidth').value = sepWidth;
-    document.getElementById('separatorWidthValue').textContent = sepWidth + 'px';
-    document.getElementById('separatorOpacity').value = sepOpacity;
-    document.getElementById('separatorOpacityValue').textContent = sepOpacity + '%';
+// ✅ fillColorGrid — С СОХРАНЕНИЕМ И ПРИМЕНЕНИЕМ ПРИ КЛИКЕ
+function fillColorGrid(gridId, colors, selectedColor) {
+const grid = document.getElementById(gridId);
+if (!grid) return;
+grid.innerHTML = '';
+colors.forEach(color => {
+const square = document.createElement('div');
+square.className = 'color-square';
+square.style.backgroundColor = color;
+square.style.width = '24px';
+square.style.height = '24px';
+square.style.borderRadius = '3px';
+square.style.cursor = 'pointer';
+square.style.border = color === selectedColor ? '2px solid #4A90E2' : '1px solid transparent';
+square.addEventListener('click', () => {
+document.querySelectorAll(`#${gridId} .color-square`).forEach(s => {
+s.style.border = '1px solid transparent';
+});
+square.style.border = '2px solid #4A90E2';
+
+if (gridId === 'bgColorsGrid') {
+document.getElementById('bgCurrentColor').style.backgroundColor = color;
+document.getElementById('bgColorPicker').value = color;
+localStorage.setItem('chartBgColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+applyColorsToChart(color,
+document.getElementById('bullishColorPicker').value,
+document.getElementById('bearishColorPicker').value);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
+} else if (gridId === 'bullishColorsGrid') {
+document.getElementById('bullishCurrentColor').style.backgroundColor = color;
+document.getElementById('bullishColorPicker').value = color;
+localStorage.setItem('chartBullishColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+applyColorsToChart(
+document.getElementById('bgColorPicker').value,
+color,
+document.getElementById('bearishColorPicker').value);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
+} else if (gridId === 'bearishColorsGrid') {
+document.getElementById('bearishCurrentColor').style.backgroundColor = color;
+document.getElementById('bearishColorPicker').value = color;
+localStorage.setItem('chartBearishColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+applyColorsToChart(
+document.getElementById('bgColorPicker').value,
+document.getElementById('bullishColorPicker').value,
+color);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
+} else if (gridId === 'separatorColorsGrid') {
+document.getElementById('separatorCurrentColor').style.backgroundColor = color;
+document.getElementById('separatorColorPicker').value = color;
+localStorage.setItem('separatorColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+if (window._dailySeparator) {
+window._dailySeparator.updateSettings({
+enabled: document.getElementById('separatorsEnabled').checked,
+color: color,
+style: document.getElementById('separatorLineStyle').value,
+width: parseInt(document.getElementById('separatorLineWidth').value),
+opacity: parseInt(document.getElementById('separatorOpacity').value) / 100
+});
+}
+}
+});
+grid.appendChild(square);
+});
 }
 
 function loadSavedColors() {
-    const bg = localStorage.getItem('chartBgColor') || '#000000';
-    const bullish = localStorage.getItem('chartBullishColor') || '#00bcd4';
-    const bearish = localStorage.getItem('chartBearishColor') || '#f23645';
-
-    document.getElementById('bgColorInput').value = bg;
-    document.getElementById('bullishColorInput').value = bullish;
-    document.getElementById('bearishColorInput').value = bearish;
-
-    applyColorsToChart(bg, bullish, bearish);
+const bgColor = localStorage.getItem('chartBgColor') || '#000000';
+const bullishColor = localStorage.getItem('chartBullishColor') || '#00bcd4';
+const bearishColor = localStorage.getItem('chartBearishColor') || '#f23645';
+document.getElementById('bgCurrentColor').style.backgroundColor = bgColor;
+document.getElementById('bgColorPicker').value = bgColor;
+document.getElementById('bullishCurrentColor').style.backgroundColor = bullishColor;
+document.getElementById('bullishColorPicker').value = bullishColor;
+document.getElementById('bearishCurrentColor').style.backgroundColor = bearishColor;
+document.getElementById('bearishColorPicker').value = bearishColor;
+applyColorsToChart(bgColor, bullishColor, bearishColor);
 }
 
 function applyColorsToChart(bg, bullish, bearish) {
-    if (window.chartManagerInstance) {
-        window.chartManagerInstance.chart.applyOptions({
-            layout: { background: { color: bg } }
-        });
-        if (window.chartManagerInstance.candleSeries) {
-            window.chartManagerInstance.candleSeries.applyOptions({
-                upColor: bullish, downColor: bearish,
-                wickUpColor: bullish, wickDownColor: bearish
-            });
-        }
-        if (window.chartManagerInstance.barSeries) {
-            window.chartManagerInstance.barSeries.applyOptions({
-                upColor: bullish, downColor: bearish
-            });
-        }
-        const cm = window.chartManagerInstance;
-        const lastCandle = cm.chartData?.[cm.chartData.length - 1];
-        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-        const lineColor = isBullish ? bullish : bearish;
-        const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-        if (series && cm.currentRealPrice) {
-            series.applyOptions({ priceLineColor: lineColor });
-        }
-        if (window.chartManagerInstance.volumeSeries) {
-            const currentData = window.chartManagerInstance.chartData;
-            if (currentData && currentData.length > 0) {
-                const volumeData = currentData.map(candle => ({
-                    time: candle.time,
-                    value: candle.volume,
-                    color: candle.close >= candle.open ? bullish : bearish
-                }));
-                window.chartManagerInstance.volumeSeries.setData(volumeData);
-            }
-        }
-        window.chartManagerInstance.bullishColor = bullish;
-        window.chartManagerInstance.bearishColor = bearish;
-        if (window.rulerLineManager) {
-            window.rulerLineManager._rulers.forEach(item => {
-                if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
-            });
-        }
-    }
+if (window.chartManagerInstance) {
+window.chartManagerInstance.chart.applyOptions({
+layout: { background: { color: bg } }
+});
+if (window.chartManagerInstance.candleSeries) {
+window.chartManagerInstance.candleSeries.applyOptions({
+upColor: bullish, downColor: bearish, wickUpColor: bullish, wickDownColor: bearish
+});
+}
+if (window.chartManagerInstance.barSeries) {
+window.chartManagerInstance.barSeries.applyOptions({ upColor: bullish, downColor: bearish });
+}
+const cm = window.chartManagerInstance;
+const lastCandle = cm.chartData?.[cm.chartData.length - 1];
+const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+const lineColor = isBullish ? bullish : bearish;
+const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+if (series && cm.currentRealPrice) series.applyOptions({ priceLineColor: lineColor });
+if (window.chartManagerInstance.volumeSeries) {
+const currentData = window.chartManagerInstance.chartData;
+if (currentData && currentData.length > 0) {
+const volumeData = currentData.map(candle => ({
+time: candle.time, value: candle.volume,
+color: candle.close >= candle.open ? bullish : bearish
+}));
+window.chartManagerInstance.volumeSeries.setData(volumeData);
+}
+}
+window.chartManagerInstance.bullishColor = bullish;
+window.chartManagerInstance.bearishColor = bearish;
+if (window.rulerLineManager) {
+window.rulerLineManager._rulers.forEach(item => {
+if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+});
+}
+}
+}
+
+function rgbToHex(rgb) {
+if (!rgb) return '#000000';
+if (rgb.startsWith('#')) return rgb;
+const match = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+if (!match) return rgb;
+return '#' + ((1 << 24) + (parseInt(match[1]) << 16) + (parseInt(match[2]) << 8) + parseInt(match[3])).toString(16).slice(1);
 }
 
 document.addEventListener('DOMContentLoaded', initChartColorPanel);
-// ============================================================
 
+// ✅ applySessionColor — через color picker
+window.applySessionColor = function(sessionName) {
+const capital = sessionName.charAt(0).toUpperCase() + sessionName.slice(1);
+const picker = document.getElementById(`session${capital}Color`);
+const box = document.getElementById(`session${capital}ColorBox`);
+if (!picker || !box) return;
+const color = picker.value;
+box.style.backgroundColor = color;
+if (window._sessionHighlighter) {
+window._sessionHighlighter.updateSettings({ colors: { [sessionName]: color } });
+}
+const saved = JSON.parse(localStorage.getItem('sessionSettings') || '{}');
+saved.colors = saved.colors || {};
+saved.colors[sessionName] = color;
+localStorage.setItem('sessionSettings', JSON.stringify(saved));
+};
+})();
+
+// ========== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ ЦВЕТОВОЙ СЕТКИ С УДАЛЕНИЕМ (для рисовалок) ==========
+function createColorGrid(gridId, colorBoxId, colorPickerId, hexInputId, selectedColor, addBtnId) {
+const grid = document.getElementById(gridId);
+if (!grid) return;
+const defaultColors = [
+'#4A90E2','#EF5350','#26A69A','#FFA726','#AB47BC','#5C6BC0',
+'#66BB6A','#FF7043','#7E57C2','#42A5F5','#EC407A','#FFCA28',
+'#8D6E63','#B0BEC5','#FFFFFF','#F44336','#E91E63','#9C27B0',
+'#673AB7','#3F51B5','#2196F3','#03A9F4','#00BCD4','#009688','#4CAF50'
+];
+let colors = [];
+try {
+const saved = localStorage.getItem(`colorGrid_${gridId}`);
+colors = saved ? JSON.parse(saved) : [...defaultColors];
+} catch(e) { colors = [...defaultColors]; }
+grid.innerHTML = '';
+colors.forEach(c => {
+const s = document.createElement('div');
+s.className = 'color-square';
+s.style.backgroundColor = c;
+if (c === selectedColor) s.classList.add('selected');
+const delBtn = document.createElement('span');
+delBtn.className = 'delete-color';
+delBtn.innerHTML = '×';
+delBtn.onclick = (e) => {
+e.stopPropagation();
+s.remove();
+colors = colors.filter(col => col !== c);
+localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
+};
+s.appendChild(delBtn);
+s.onclick = () => {
+grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
+s.classList.add('selected');
+const colorBox = document.getElementById(colorBoxId);
+const hexInput = document.getElementById(hexInputId);
+const colorPicker = document.getElementById(colorPickerId);
+if (colorBox) colorBox.style.backgroundColor = c;
+if (hexInput) hexInput.value = c;
+// ✅ Триггерим событие input на color picker для мгновенного применения
+if (colorPicker) {
+colorPicker.value = c;
+colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
+}
+};
+grid.appendChild(s);
+});
+const addBtn = document.getElementById(addBtnId);
+const hexInput = document.getElementById(hexInputId);
+if (addBtn && hexInput) {
+addBtn.onclick = () => {
+let hex = hexInput.value.trim();
+if (!hex.startsWith('#')) hex = '#' + hex;
+if (/^#[0-9A-F]{6}$/i.test(hex)) {
+if (!colors.includes(hex)) {
+colors.push(hex);
+localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
+}
+const s = document.createElement('div');
+s.className = 'color-square';
+s.style.backgroundColor = hex;
+const delBtn = document.createElement('span');
+delBtn.className = 'delete-color';
+delBtn.innerHTML = '×';
+delBtn.onclick = (e) => {
+e.stopPropagation();
+s.remove();
+colors = colors.filter(col => col !== hex);
+localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
+};
+s.appendChild(delBtn);
+s.onclick = () => {
+grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
+s.classList.add('selected');
+const colorBox = document.getElementById(colorBoxId);
+const hexInput2 = document.getElementById(hexInputId);
+const colorPicker = document.getElementById(colorPickerId);
+if (colorBox) colorBox.style.backgroundColor = hex;
+if (hexInput2) hexInput2.value = hex;
+// ✅ Триггерим событие input на color picker для мгновенного применения
+if (colorPicker) {
+colorPicker.value = hex;
+colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
+}
+};
+grid.appendChild(s);
+grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
+s.classList.add('selected');
+const colorBox = document.getElementById(colorBoxId);
+if (colorBox) colorBox.style.backgroundColor = hex;
+}
+};
+}
+}
+
+// Горячая клавиша Tab
 (function() {
 let isToolbarVisible = true;
 document.addEventListener('keydown', function(e) {
@@ -1811,30 +1908,48 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
 });
 }
 })();
-})();
 </script>
 <!-- СКРИПТ ПОЛНОЭКРАННОГО РЕЖИМА -->
 <style>
-.fullscreen-mode .ticker-panel { display: none !important; }
-.fullscreen-mode #chart-container { right: 0 !important; width: 100vw !important; left: 0 !important; }
+.fullscreen-mode .ticker-panel {
+display: none !important;
+}
+.fullscreen-mode #chart-container {
+right: 0 !important;
+width: 100vw !important;
+left: 0 !important;
+}
 </style>
 <script>
 (function() {
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 const body = document.body;
+
 function toggleFullscreen() {
 if (!document.fullscreenElement) {
-document.documentElement.requestFullscreen().catch(err => console.error('Ошибка перехода в полный экран:', err));
+document.documentElement.requestFullscreen().catch(err => {
+console.error('Ошибка перехода в полный экран:', err);
+});
 } else {
 document.exitFullscreen();
 }
 }
-if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullscreen);
+
+if (fullscreenBtn) {
+fullscreenBtn.addEventListener('click', toggleFullscreen);
+}
+
 document.addEventListener('fullscreenchange', function() {
-if (fullscreenBtn) fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
-if (document.fullscreenElement) body.classList.add('fullscreen-mode');
-else body.classList.remove('fullscreen-mode');
+if (fullscreenBtn) {
+fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
+}
+if (document.fullscreenElement) {
+body.classList.add('fullscreen-mode');
+} else {
+body.classList.remove('fullscreen-mode');
+}
 });
+
 document.addEventListener('keydown', function(e) {
 const isPKey = e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З';
 if (isPKey) {
@@ -1848,6 +1963,7 @@ toggleFullscreen();
 });
 })();
 </script>
+
 <!-- СКРИПТ ДЛЯ СКРИНШОТА -->
 <script>
 function takeChartScreenshot() {
@@ -1856,59 +1972,85 @@ let symbol = 'UNKNOWN';
 let timeframe = 'UNKNOWN';
 const pairDisplay = document.getElementById('pairDisplay');
 const currentTfBadge = document.getElementById('currentTfBadge');
+
 if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
 if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
+
 if (window.chartManagerInstance) {
-if (window.chartManagerInstance.currentSymbol) symbol = window.chartManagerInstance.currentSymbol;
+if (window.chartManagerInstance.currentSymbol) {
+symbol = window.chartManagerInstance.currentSymbol;
+}
 if (window.chartManagerInstance.currentInterval) {
 const interval = window.chartManagerInstance.currentInterval;
-const tfMap = { '1m':'1m','3m':'3m','5m':'5m','15m':'15m','30m':'30m','1h':'1h','4h':'4h','6h':'6h','12h':'12h','1d':'1D','1w':'1W','1M':'1M' };
+const tfMap = {
+'1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+'1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
+'1d': '1D', '1w': '1W', '1M': '1M'
+};
 timeframe = tfMap[interval] || interval;
 }
 }
+
 const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
 const filename = `${cleanSymbol}_${timeframe}.png`;
 const originalOverflow = document.body.style.overflow;
 document.body.style.overflow = 'hidden';
-const pixelRatio = window.devicePixelRatio || 1;
-const scale = Math.min(pixelRatio * 2, 4);
+
 html2canvas(element, {
-scale: scale, logging: false, allowTaint: false, useCORS: true,
-backgroundColor: '#000000', windowWidth: window.innerWidth, windowHeight: window.innerHeight
+scale: 2,
+logging: false,
+allowTaint: false,
+useCORS: true,
+backgroundColor: '#000000',
+windowWidth: window.innerWidth,
+windowHeight: window.innerHeight
 }).then((canvas) => {
 document.body.style.overflow = originalOverflow;
-canvas.toBlob((blob) => {
 const link = document.createElement('a');
 link.download = filename;
-link.href = URL.createObjectURL(blob);
+link.href = canvas.toDataURL('image/png');
 link.click();
-URL.revokeObjectURL(link.href);
-}, 'image/png', 1.0);
 }).catch((error) => {
 document.body.style.overflow = originalOverflow;
 console.error('❌ Ошибка html2canvas:', error);
 });
 }
+
 document.addEventListener('DOMContentLoaded', function() {
 const screenshotBtn = document.getElementById('toolScreenshot');
-if (screenshotBtn) screenshotBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); takeChartScreenshot(); });
+if (screenshotBtn) {
+screenshotBtn.addEventListener('click', function(e) {
+e.preventDefault();
+e.stopPropagation();
+takeChartScreenshot();
+});
+}
+
 document.addEventListener('keydown', function(e) {
 if (e.key === 's' || e.key === 'S') {
-if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'SELECT') {
+if (document.activeElement.tagName !== 'INPUT' &&
+document.activeElement.tagName !== 'TEXTAREA' &&
+document.activeElement.tagName !== 'SELECT') {
 e.preventDefault();
 takeChartScreenshot();
 }
 }
 });
 });
+
+// ✅ ИСПРАВЛЕНО: переключение ориентации панели рисовалок (обёрнуто в IIFE)
+(function() {
 const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
 const drawingToolbar = document.getElementById('drawingToolbar');
-if (toolbarOrientationBtn && drawingToolbar) {
+
+if (!toolbarOrientationBtn || !drawingToolbar) return;
+
 const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
 if (savedOrientation === 'vertical') {
 drawingToolbar.classList.add('vertical');
 toolbarOrientationBtn.textContent = '⇅';
 }
+
 toolbarOrientationBtn.addEventListener('click', (e) => {
 e.stopPropagation();
 drawingToolbar.classList.toggle('vertical');
@@ -1920,33 +2062,51 @@ toolbarOrientationBtn.textContent = '⇄';
 localStorage.setItem('drawingToolbarOrientation', 'horizontal');
 }
 });
-}
+})();
 </script>
+
 <script>
 (function() {
 function positionButtons() {
 const buttons = document.querySelector('.chart-footer-buttons');
 const panelsContainer = document.getElementById('indicator-panels-container');
 if (!buttons) return;
+
 let offset = 20;
 if (panelsContainer) {
 const rect = panelsContainer.getBoundingClientRect();
-if (rect.height > 0) offset += rect.height;
+if (rect.height > 0) {
+offset += rect.height;
+}
 }
 buttons.style.bottom = offset + 'px';
 }
+
 setTimeout(positionButtons, 500);
+
 const panels = document.getElementById('indicator-panels-container');
 if (panels && window.ResizeObserver) {
-const resizeObserver = new ResizeObserver(() => { requestAnimationFrame(positionButtons); });
+const resizeObserver = new ResizeObserver(() => {
+requestAnimationFrame(positionButtons);
+});
 resizeObserver.observe(panels);
 }
+
 const mainContainer = document.getElementById('chart-container') || document.body;
-const mutationObserver = new MutationObserver(() => { requestAnimationFrame(positionButtons); });
-mutationObserver.observe(mainContainer, { childList: true, subtree: true, attributes: true });
+const mutationObserver = new MutationObserver(() => {
+requestAnimationFrame(positionButtons);
+});
+mutationObserver.observe(mainContainer, {
+childList: true,
+subtree: true,
+attributes: true
+});
+
 window.addEventListener('resize', positionButtons);
 })();
 </script>
+
+<!-- ПОДКЛЮЧЕНИЕ ВНЕШНИХ СКРИПТОВ -->
 <script src="./Config.js"></script>
 <script src="./Utils.js"></script>
 <script src="./TFLabels.js"></script>
@@ -1979,30 +2139,403 @@ window.addEventListener('resize', positionButtons);
 <script src="./SessionHighlighter.js"></script>
 <script>
 (function() {
-async function main() { window.app = new window.AppCoordinator(); }
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main);
-else main();
+async function main() {
+window.app = new window.AppCoordinator();
+}
+if (document.readyState === 'loading') {
+document.addEventListener('DOMContentLoaded', main);
+} else {
+main();
+}
 })();
 </script>
+
 <script>
 (function() {
 document.addEventListener('keydown', function(e) {
 if (e.code === 'Digit0' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
 e.preventDefault();
 const trashBtn = document.getElementById('toolTrash');
-if (trashBtn) trashBtn.click();
+if (trashBtn) {
+trashBtn.click();
+}
 }
 });
 })();
 </script>
+
 <script>
 (function() {
 const toolbar = document.getElementById('drawingToolbar');
 if (!toolbar) return;
-toolbar.addEventListener('mousedown', (e) => { e.stopPropagation(); });
-toolbar.addEventListener('click', (e) => { e.stopPropagation(); });
-toolbar.addEventListener('mouseup', (e) => { e.stopPropagation(); });
+toolbar.addEventListener('mousedown', (e) => {
+e.stopPropagation();
+});
+toolbar.addEventListener('click', (e) => {
+e.stopPropagation();
+});
+toolbar.addEventListener('mouseup', (e) => {
+e.stopPropagation();
+});
 })();
 </script>
+
+<!-- ========== COLOR PICKER'Ы ДЛЯ РИСОВАЛОК (СИНХРОНИЗАЦИЯ) ========== -->
+<script>
+(function() {
+const colorPickerBindings = [
+{ picker: 'colorPickerInline',      hexInput: 'hexInputInline',      addBtn: 'addColorInline' },
+{ picker: 'trendColorPickerInline', hexInput: 'trendHexInputInline', addBtn: 'trendAddColorInline' },
+{ picker: 'alertColorPickerInline', hexInput: 'alertHexInputInline', addBtn: 'alertAddColorInline' },
+{ picker: 'textColorPickerInline',  hexInput: 'textHexInputInline',  addBtn: 'textAddColorInline' },
+{ picker: 'textBgColorPicker',      hexInput: 'textBgHexInput',      addBtn: 'textBgAddColor' }
+];
+
+colorPickerBindings.forEach(({ picker, hexInput, addBtn }) => {
+const pickerEl = document.getElementById(picker);
+const hexEl = document.getElementById(hexInput);
+const addBtnEl = document.getElementById(addBtn);
+
+if (pickerEl && hexEl) {
+// При выборе цвета в палитре — обновляем hex-input
+pickerEl.addEventListener('input', (e) => {
+hexEl.value = e.target.value;
+});
+// При изменении hex-input — обновляем палитру
+hexEl.addEventListener('input', (e) => {
+let hex = e.target.value.trim();
+if (!hex.startsWith('#')) hex = '#' + hex;
+if (/^#[0-9A-F]{6}$/i.test(hex)) {
+pickerEl.value = hex;
+}
+});
+// При нажатии "Добавить" — синхронизируем палитру с hex-input
+if (addBtnEl) {
+addBtnEl.addEventListener('click', () => {
+let hex = hexEl.value.trim();
+if (!hex.startsWith('#')) hex = '#' + hex;
+if (/^#[0-9A-F]{6}$/i.test(hex)) {
+pickerEl.value = hex;
+}
+});
+}
+}
+});
+console.log('✅ Color picker\'ы для рисовалок синхронизированы');
+})();
+</script>
+
+<script>
+    
+(function() {
+    // Функция для применения цвета к выбранному объекту
+    function applyColorToSelected(manager, color) {
+    if (!manager) return false;
+    
+    // 🔥 ПРАВИЛЬНЫЕ ИМЕНА СВОЙСТВ (с подчёркиванием!)
+    const selected = manager._selectedRay || manager._selectedLine || manager._selectedAlert || manager._selectedText;
+    if (!selected) return false;
+    
+    // Определяем, где хранится цвет
+    if (selected.options) {
+        selected.options.color = color;
+    } else if (selected.color !== undefined) {
+        selected.color = color;
+    } else {
+        return false;
+    }
+    
+    // Перерисовка
+    if (manager._requestRedraw) manager._requestRedraw();
+    
+    // Сохранение
+    if (manager._saveRays) manager._saveRays();
+    if (manager._saveTrends) manager._saveTrends();
+    if (manager._saveAlerts) manager._saveAlerts();
+    if (manager._saveTexts) manager._saveTexts();
+    if (manager.saveState) manager.saveState();
+    
+    console.log('✅ Цвет применён к объекту:', color);
+    return true;
+}
+
+    // Ждём, пока менеджеры будут созданы
+    function setupColorPickers() {
+        // Проверяем, что хотя бы один менеджер уже создан
+        if (!window.rayManager && !window.trendLineManager && !window.alertLineManager && !window.textManager) {
+            console.log('⏳ Ожидание инициализации менеджеров рисования...');
+            setTimeout(setupColorPickers, 300);
+            return;
+        }
+
+        console.log('✅ Менеджеры рисования готовы, активируем пикеры');
+
+        // Обработчики для всех пикеров
+        document.querySelectorAll('.color-picker-inline').forEach(picker => {
+            picker.addEventListener('input', function(e) {
+                const color = e.target.value;
+                const hexInput = this.closest('.color-picker-row').querySelector('.hex-input');
+                if (hexInput) hexInput.value = color;
+
+                const panel = this.closest('.drawing-settings-panel');
+                if (!panel) return;
+                const panelId = panel.id;
+
+                let applied = false;
+                switch (panelId) {
+                    case 'drawingSettings':
+                        applied = applyColorToSelected(window.rayManager, color);
+                        break;
+                    case 'trendSettings':
+                        applied = applyColorToSelected(window.trendLineManager, color);
+                        break;
+                    case 'alertSettings':
+                        applied = applyColorToSelected(window.alertLineManager, color);
+                        break;
+                    case 'textSettings':
+                        applied = applyColorToSelected(window.textManager, color);
+                        break;
+                    default:
+                        break;
+                }
+                
+                // Если не удалось применить (нет выбранного объекта) — запоминаем цвет для будущих объектов
+                if (!applied) {
+                    const manager = window[panelId === 'drawingSettings' ? 'rayManager' :
+                                     panelId === 'trendSettings' ? 'trendLineManager' :
+                                     panelId === 'alertSettings' ? 'alertLineManager' :
+                                     panelId === 'textSettings' ? 'textManager' : null];
+                    if (manager) {
+                        manager._pendingColor = color;
+                        console.log(`💡 Цвет ${color} сохранён как дефолтный для ${panelId}`);
+                    }
+                }
+            });
+        });
+
+        // Синхронизация пикера при вводе hex
+        document.querySelectorAll('.hex-input').forEach(hexInput => {
+            hexInput.addEventListener('input', function(e) {
+                let hex = e.target.value.trim();
+                if (!hex.startsWith('#')) hex = '#' + hex;
+                if (/^#[0-9A-F]{6}$/i.test(hex)) {
+                    const picker = this.closest('.color-picker-row').querySelector('.color-picker-inline');
+                    if (picker) {
+                        picker.value = hex;
+                        picker.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                }
+            });
+        });
+
+        console.log('✅ Мгновенное применение цвета для рисовалок активировано');
+    }
+
+    // Запускаем после загрузки DOM
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupColorPickers);
+    } else {
+        setupColorPickers();
+    }
+})();
+</script>
+
+<script>
+// ========== МГНОВЕННОЕ ПРИМЕНЕНИЕ НАСТРОЕК РИСОВАЛОК ==========
+(function() {
+    
+    // Универсальная функция для мгновенного применения
+    function bindInstantApply(config) {
+        const el = document.getElementById(config.elementId);
+        if (!el) {
+            console.log('❌ Элемент не найден:', config.elementId);
+            return;
+        }
+        
+        el.addEventListener(config.eventType, function() {
+            // Ищем менеджер
+            const manager = window[config.managerName];
+            if (!manager) return;
+            
+            // Ищем выбранный объект
+            const selected = manager[config.selectedProp];
+            if (!selected) return;
+            
+            // Получаем значение
+            let value;
+            if (this.type === 'checkbox') {
+                value = this.checked;
+            } else if (this.type === 'range') {
+                value = parseInt(this.value) / 100;
+            } else if (this.type === 'number') {
+                value = parseInt(this.value) || 1;
+            } else {
+                value = this.value;
+            }
+            
+            // Обновляем свойство объекта
+            const target = selected.options || selected;
+            target[config.optionKey] = value;
+            
+            // Обновляем отображение процентов
+            const displayEl = document.getElementById(config.displayId);
+            if (displayEl && this.type === 'range') {
+                displayEl.textContent = this.value + '%';
+            }
+            
+            // Применяем к примитиву
+            if (selected.primitive && config.applyToPrimitive) {
+                config.applyToPrimitive(selected.primitive, value, this);
+            }
+            
+            // Перерисовка
+            if (manager._requestRedraw) manager._requestRedraw();
+            
+            // Сохранение
+            if (manager[config.saveMethod]) manager[config.saveMethod]();
+            
+            console.log('✅ Применено:', config.optionKey, '=', value);
+        });
+    }
+
+    // ========== НАСТРОЙКИ ДЛЯ КАЖДОГО ЭЛЕМЕНТА ==========
+    const bindings = [
+        // === ЛУЧИ ===
+        {
+            elementId: 'settingThickness', eventType: 'input',
+            managerName: 'rayManager', selectedProp: '_selectedRay',
+            optionKey: 'lineWidth', saveMethod: '_saveRays',
+            applyToPrimitive: (p, v) => p.applyOptions({ lineWidth: v })
+        },
+        {
+            elementId: 'colorOpacity', eventType: 'input',
+            managerName: 'rayManager', selectedProp: '_selectedRay',
+            optionKey: 'opacity', saveMethod: '_saveRays',
+            displayId: 'colorOpacityValue'
+        },
+        {
+            elementId: 'templateSelect', eventType: 'change',
+            managerName: 'rayManager', selectedProp: '_selectedRay',
+            optionKey: 'lineStyle', saveMethod: '_saveRays',
+            applyToPrimitive: (p, v) => {
+                const map = { solid: 0, dotted: 1, dashed: 2 };
+                p.applyOptions({ lineStyle: map[v] || 0 });
+            }
+        },
+        
+        // === ТРЕНДОВЫЕ ЛИНИИ ===
+        {
+            elementId: 'trendSettingThickness', eventType: 'input',
+            managerName: 'trendLineManager', selectedProp: '_selectedLine',
+            optionKey: 'lineWidth', saveMethod: '_saveTrends',
+            applyToPrimitive: (p, v) => p.applyOptions({ lineWidth: v })
+        },
+        {
+            elementId: 'trendColorOpacity', eventType: 'input',
+            managerName: 'trendLineManager', selectedProp: '_selectedLine',
+            optionKey: 'opacity', saveMethod: '_saveTrends',
+            displayId: 'trendColorOpacityValue'
+        },
+        {
+            elementId: 'trendTemplateSelect', eventType: 'change',
+            managerName: 'trendLineManager', selectedProp: '_selectedLine',
+            optionKey: 'lineStyle', saveMethod: '_saveTrends',
+            applyToPrimitive: (p, v) => {
+                const map = { solid: 0, dotted: 1, dashed: 2 };
+                p.applyOptions({ lineStyle: map[v] || 0 });
+            }
+        },
+        
+        // === АЛЕРТЫ ===
+        {
+            elementId: 'alertSettingThickness', eventType: 'input',
+            managerName: 'alertLineManager', selectedProp: '_selectedAlert',
+            optionKey: 'lineWidth', saveMethod: '_saveAlerts',
+            applyToPrimitive: (p, v) => p.applyOptions({ lineWidth: v })
+        },
+        {
+            elementId: 'alertColorOpacity', eventType: 'input',
+            managerName: 'alertLineManager', selectedProp: '_selectedAlert',
+            optionKey: 'opacity', saveMethod: '_saveAlerts',
+            displayId: 'alertColorOpacityValue'
+        },
+        {
+            elementId: 'alertTemplateSelect', eventType: 'change',
+            managerName: 'alertLineManager', selectedProp: '_selectedAlert',
+            optionKey: 'lineStyle', saveMethod: '_saveAlerts',
+            applyToPrimitive: (p, v) => {
+                const map = { solid: 0, dotted: 1, dashed: 2 };
+                p.applyOptions({ lineStyle: map[v] || 0 });
+            }
+        },
+        
+        // === ТЕКСТ ===
+        {
+            elementId: 'textFontSize', eventType: 'input',
+            managerName: 'textManager', selectedProp: '_selectedText',
+            optionKey: 'fontSize', saveMethod: '_saveTexts',
+            applyToPrimitive: (p, v) => p.applyOptions({ fontSize: v })
+        },
+        {
+            elementId: 'textBold', eventType: 'change',
+            managerName: 'textManager', selectedProp: '_selectedText',
+            optionKey: 'bold', saveMethod: '_saveTexts',
+            applyToPrimitive: (p, v) => p.applyOptions({ bold: v })
+        },
+        {
+            elementId: 'textOpacity', eventType: 'input',
+            managerName: 'textManager', selectedProp: '_selectedText',
+            optionKey: 'opacity', saveMethod: '_saveTexts',
+            displayId: 'textOpacityValue'
+        },
+        {
+            elementId: 'textBgOpacity', eventType: 'input',
+            managerName: 'textManager', selectedProp: '_selectedText',
+            optionKey: 'backgroundOpacity', saveMethod: '_saveTexts',
+            displayId: 'textBgOpacityValue'
+        }
+    ];
+
+    // Назначаем все обработчики
+    bindings.forEach(bindInstantApply);
+
+    // ====== ЛИНЕЙКА (особый случай) ======
+    const rulerOpacity = document.getElementById('rulerFillOpacity');
+    if (rulerOpacity) {
+        rulerOpacity.addEventListener('input', function() {
+            const val = parseInt(this.value) / 100;
+            const displayEl = document.getElementById('rulerFillOpacityValue');
+            if (displayEl) displayEl.textContent = this.value + '%';
+            
+            if (window.rulerLineManager) {
+                const rulers = window.rulerLineManager._rulers || [];
+                rulers.forEach(function(r) {
+                    r.fillOpacity = val;
+                    if (r.primitive && r.primitive.requestRedraw) {
+                        r.primitive.requestRedraw();
+                    }
+                });
+                window.rulerLineManager._saveRulers();
+            }
+        });
+    }
+
+    console.log('🚀 Обработчики мгновенного применения НАЗНАЧЕНЫ!');
+})();
+
+
+
+</script>
+<script>
+document.addEventListener('mousedown', function(e) {
+    // Не даём графику снять выделение с линии, когда мы кликаем внутри панели настроек
+    if (e.target.closest('#trendSettings') ||
+        e.target.closest('#textSettings') ||
+        e.target.closest('#rulerSettingsPanel')) {
+        e.stopPropagation();
+    }
+}, true);
+</script>
+
 </body>
 </html>
