@@ -1081,58 +1081,103 @@ currentColorBox.style.backgroundColor = hex;
 });
 
 colorOpacity.addEventListener('input', function() { colorOpacityValue.textContent = this.value + '%'; });
-
+let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
+let toolbarRafId = null; // Для плавности
 // ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
 toolbarHeader.addEventListener('mousedown', (e) => {
-if (e.target.closest('.toolbar-toggle')) return;
-isDraggingToolbar = true;
-const rect = drawingToolbar.getBoundingClientRect();
-dragToolbarStartX = e.clientX; dragToolbarStartY = e.clientY;
-dragToolbarStartLeft = rect.left; dragToolbarStartTop = rect.top;
-toolbarHeader.style.cursor = 'grabbing';
-e.preventDefault();
+    if (e.target.closest('.toolbar-toggle')) return;
+    isDraggingToolbar = true;
+    
+    const rect = drawingToolbar.getBoundingClientRect();
+    dragToolbarStartX = e.clientX; 
+    dragToolbarStartY = e.clientY;
+    dragToolbarStartLeft = rect.left; 
+    dragToolbarStartTop = rect.top;
+    
+    // Запоминаем размеры один раз при старте перетаскивания
+    toolbarWidth = rect.width;
+    toolbarHeight = rect.height;
+
+    // Блокируем выделение текста на странице
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+    
+    toolbarHeader.style.cursor = 'grabbing';
+    e.preventDefault();
 });
 
 document.addEventListener('mousemove', (e) => {
-if (!isDraggingToolbar) return;
-const deltaX = e.clientX - dragToolbarStartX;
-const deltaY = e.clientY - dragToolbarStartY;
-let newLeft = dragToolbarStartLeft + deltaX;
-let newTop = dragToolbarStartTop + deltaY;
-const containerRect = chartElement.getBoundingClientRect();
-const toolbarRect = drawingToolbar.getBoundingClientRect();
-newLeft = Math.max(5, Math.min(containerRect.width - toolbarRect.width - 5, newLeft));
-newTop = Math.max(5, Math.min(containerRect.height - toolbarRect.height - 5, newTop));
-drawingToolbar.style.left = newLeft + 'px';
-drawingToolbar.style.top = newTop + 'px';
+    if (!isDraggingToolbar) return;
+
+    // Синхронизируем с частотой кадров монитора
+    if (!toolbarRafId) {
+        toolbarRafId = requestAnimationFrame(() => {
+            const deltaX = e.clientX - dragToolbarStartX;
+            const deltaY = e.clientY - dragToolbarStartY;
+            let newLeft = dragToolbarStartLeft + deltaX;
+            let newTop = dragToolbarStartTop + deltaY;
+            
+            const containerRect = chartElement.getBoundingClientRect();
+            // Используем кэшированные размеры
+            newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, newLeft));
+            newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, newTop));
+            
+            drawingToolbar.style.left = newLeft + 'px';
+            drawingToolbar.style.top = newTop + 'px';
+            
+            toolbarRafId = null;
+        });
+    }
 });
 
 document.addEventListener('mouseup', () => {
-if (isDraggingToolbar) {
-isDraggingToolbar = false;
-toolbarHeader.style.cursor = 'grab';
-}
+    if (isDraggingToolbar) {
+        isDraggingToolbar = false;
+        toolbarHeader.style.cursor = 'grab';
+        
+        // Разблокируем выделение текста
+        document.body.style.userSelect = '';
+        document.body.style.webkitUserSelect = '';
+        
+        if (toolbarRafId) {
+            cancelAnimationFrame(toolbarRafId);
+            toolbarRafId = null;
+        }
+    }
 });
 
 toolbarToggle.addEventListener('click', () => {
-drawingToolbar.classList.toggle('collapsed');
-toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
+    drawingToolbar.classList.toggle('collapsed');
+    toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
+    
+    // Обновляем кэш размеров при сворачивании/разворачивании
+    setTimeout(() => {
+        const rect = drawingToolbar.getBoundingClientRect();
+        toolbarWidth = rect.width;
+        toolbarHeight = rect.height;
+    }, 50);
 });
 
 const chartContainerForToolbar = document.getElementById('chart-container');
 if (chartContainerForToolbar && window.ResizeObserver) {
-const toolbarObserver = new ResizeObserver(() => {
-if (!drawingToolbar) return;
-const containerRect = chartContainerForToolbar.getBoundingClientRect();
-const toolbarRect = drawingToolbar.getBoundingClientRect();
-let currentLeft = parseFloat(drawingToolbar.style.left) || (toolbarRect.left - containerRect.left);
-let currentTop = parseFloat(drawingToolbar.style.top) || (toolbarRect.top - containerRect.top);
-let newLeft = Math.max(5, Math.min(containerRect.width - toolbarRect.width - 5, currentLeft));
-let newTop = Math.max(60, Math.min(containerRect.height - toolbarRect.height - 5, currentTop));
-drawingToolbar.style.left = newLeft + 'px';
-drawingToolbar.style.top = newTop + 'px';
-});
-toolbarObserver.observe(chartContainerForToolbar);
+    const toolbarObserver = new ResizeObserver(() => {
+        if (!drawingToolbar) return;
+        const containerRect = chartContainerForToolbar.getBoundingClientRect();
+        
+        // Обновляем кэш
+        toolbarWidth = drawingToolbar.offsetWidth;
+        toolbarHeight = drawingToolbar.offsetHeight;
+        
+        let currentLeft = parseFloat(drawingToolbar.style.left) || (drawingToolbar.getBoundingClientRect().left - containerRect.left);
+        let currentTop = parseFloat(drawingToolbar.style.top) || (drawingToolbar.getBoundingClientRect().top - containerRect.top);
+        
+        let newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, currentLeft));
+        let newTop = Math.max(60, Math.min(containerRect.height - toolbarHeight - 5, currentTop));
+        
+        drawingToolbar.style.left = newLeft + 'px';
+        drawingToolbar.style.top = newTop + 'px';
+    });
+    toolbarObserver.observe(chartContainerForToolbar);
 }
 
 // ========== TELEGRAM ==========
@@ -2043,28 +2088,41 @@ takeChartScreenshot();
 
 // ✅ ИСПРАВЛЕНО: переключение ориентации панели рисовалок (обёрнуто в IIFE)
 (function() {
-const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
-const drawingToolbar = document.getElementById('drawingToolbar');
+  const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
+  const drawingToolbar = document.getElementById('drawingToolbar');
+  
+  // ✅ Защита от ошибок, если скрипт загрузился раньше HTML
+  if (!toolbarOrientationBtn || !drawingToolbar) return;
 
-if (!toolbarOrientationBtn || !drawingToolbar) return;
-
-const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
-if (savedOrientation === 'vertical') {
-drawingToolbar.classList.add('vertical');
-toolbarOrientationBtn.textContent = '⇅';
-}
-
-toolbarOrientationBtn.addEventListener('click', (e) => {
-e.stopPropagation();
-drawingToolbar.classList.toggle('vertical');
-if (drawingToolbar.classList.contains('vertical')) {
-toolbarOrientationBtn.textContent = '⇅';
-localStorage.setItem('drawingToolbarOrientation', 'vertical');
-} else {
-toolbarOrientationBtn.textContent = '⇄';
-localStorage.setItem('drawingToolbarOrientation', 'horizontal');
-}
-});
+  const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
+  
+  if (savedOrientation === 'vertical') {
+    drawingToolbar.classList.add('vertical');
+    toolbarOrientationBtn.textContent = '⇅';
+  } else {
+    // ✅ Гарантируем правильную иконку даже для горизонтального вида
+    toolbarOrientationBtn.textContent = '⇄';
+  }
+  
+  toolbarOrientationBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    drawingToolbar.classList.toggle('vertical');
+    if (drawingToolbar.classList.contains('vertical')) {
+      toolbarOrientationBtn.textContent = '⇅';
+      localStorage.setItem('drawingToolbarOrientation', 'vertical');
+    } else {
+      toolbarOrientationBtn.textContent = '⇄';
+      localStorage.setItem('drawingToolbarOrientation', 'horizontal');
+    }
+    
+    // ✅ КРИТИЧНО: Обновляем кэш размеров для плавного перетаскивания!
+    // При повороте меняются ширина и высота, поэтому ждем окончания CSS-анимации и обновляем данные
+    setTimeout(() => {
+      const rect = drawingToolbar.getBoundingClientRect();
+      if (typeof toolbarWidth !== 'undefined') toolbarWidth = rect.width;
+      if (typeof toolbarHeight !== 'undefined') toolbarHeight = rect.height;
+    }, 50); 
+  });
 })();
 </script>
 
@@ -2644,6 +2702,19 @@ document.addEventListener('mousedown', function(e) {
         console.log('❌ Кнопка economicCalendarBtn не найдена');
     }
 })();
+</script>
+<script>
+setTimeout(function() {
+    var btn = document.getElementById('autoScaleButton');
+    if (btn && window.chartManagerInstance) {
+        btn.onclick = function() {
+            window.chartManagerInstance.autoScale();
+        };
+        console.log('Кнопка A прикручена');
+    } else {
+        console.log('Не нашли кнопку или менеджер');
+    }
+}, 1000);
 </script>
 </body>
 </html>
