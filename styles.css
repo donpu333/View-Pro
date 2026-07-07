@@ -2618,17 +2618,47 @@ svg, svg * { font-family: none !important; }
 
 /* ===== КНОПКИ ПОД ГРАФИКОМ ===== */
 .chart-footer-buttons {
-    position: absolute !important;
+    position: fixed !important;
     bottom: 20px !important;
-    right: 10px !important;
-    display: flex;
-    gap: 5px;
-    z-index: 100 !important;
-    transition: all 0.2s ease !important;
+    right: 400px !important;
+    display: flex !important;
+    gap: 5px !important;
+    z-index: 10001 !important;
 }
 
-.fullscreen-mode .chart-footer-buttons { right: 15px !important; bottom: 25px !important; }
+/* В полноэкранном режиме панель тикеров скрывается, кнопки прижимаем к правому краю */
+.fullscreen-mode .chart-footer-buttons {
+    right: 20px !important;
+    bottom: 20px !important;
+}
 
+.nav-button, .auto-scale-button {
+    width: 28px !important;
+    height: 28px !important;
+    background: rgba(0, 0, 0, 0.9) !important;
+    border: 1px solid #404040 !important;
+    border-radius: 4px !important;
+    color: #B0B0B0 !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    opacity: 1 !important;
+}
+
+.nav-button::before {
+    content: "❯❯" !important;
+    font-size: 14px !important;
+    letter-spacing: -2px !important;
+}
+
+.nav-button:hover, .auto-scale-button:hover {
+    background: rgba(30, 30, 30, 0.9) !important;
+    border-color: #FFFFFF !important;
+    color: #FFFFFF !important;
+}
 /* ===== ПЕРЕКЛЮЧАТЕЛЬ ===== */
 .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
 .switch input { opacity: 0; width: 0; height: 0; }
