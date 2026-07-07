@@ -1138,38 +1138,61 @@ class ChartManager {
         }
     }
 
-    autoScale() {
-        if (this.chart && this.chartData.length > 0) {
-            const timeScale = this.chart.timeScale();
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            
-            if (visibleRange) {
-                const fromIndex = Math.max(0, Math.floor(visibleRange.from));
-                const toIndex = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
-                
-                if (fromIndex < toIndex && fromIndex >= 0 && toIndex < this.chartData.length) {
-                    const priceScale = this.chart.priceScale('right');
-                    if (priceScale) {
-                        priceScale.applyOptions({ autoScale: true });
-                        setTimeout(() => {
-                            priceScale.applyOptions({ autoScale: true });
-                        }, 10);
-                    }
-                    
-                    setTimeout(() => {
-                        if (this.timerManager && this.timerManager._primitive) {
-                            this.timerManager._primitive.requestRedraw();
-                        }
-                    }, 50);
-                }
-            } else {
-                const priceScale = this.chart.priceScale('right');
-                if (priceScale) {
-                    priceScale.applyOptions({ autoScale: true });
-                }
+  autoScale() {
+    if (!this.chart || this.chartData.length === 0) return;
+
+    const timeScale = this.chart.timeScale();
+    const priceScale = this.chart.priceScale('right');
+
+    // 1. ВЕРТИКАЛЬНОЕ ВЫРАВНИВАНИЕ — автоскейл цены с отступами
+    if (priceScale) {
+        priceScale.applyOptions({ 
+            autoScale: true,
+            scaleMargins: {
+                top: 0.1,
+                bottom: 0.1
             }
-        }
+        });
     }
+
+    // 2. ГОРИЗОНТАЛЬНОЕ ВЫРАВНИВАНИЕ — как в TradingView Auto
+    // Сбрасываем зум к дефолтному barSpacing и скроллим к последней свече
+    const defaultBarSpacing = 12; // стандартный spacing
+    
+    // Применяем дефолтный spacing
+    timeScale.applyOptions({ barSpacing: defaultBarSpacing });
+    
+    // Скроллим к последней свече (как в TV)
+    // Используем scrollToRealTime + небольшой отступ справа
+    requestAnimationFrame(() => {
+        // Сначала скроллим в конец
+        timeScale.scrollToRealTime();
+        
+        // Даем графику обновиться и проверяем результат
+        requestAnimationFrame(() => {
+            const range = timeScale.getVisibleLogicalRange();
+            if (range) {
+                const visibleBars = range.to - range.from;
+                const rightOffsetBars = Math.round(visibleBars * 0.15); // 15% отступа справа
+                
+                timeScale.setVisibleLogicalRange({
+                    from: this.chartData.length - visibleBars + rightOffsetBars,
+                    to: this.chartData.length + rightOffsetBars
+                });
+            } else {
+                // Если диапазон не получен, просто скроллим
+                timeScale.scrollToRealTime();
+            }
+        });
+    });
+
+    // 3. Обновляем кастомные примитивы
+    if (this.timerManager && this.timerManager._primitive) {
+        this.timerManager._primitive.requestRedraw();
+    }
+    
+    this.scheduleDrawingsUpdate(true);
+}
 
     getLastCandle() {
         return this.lastCandle;
