@@ -1144,54 +1144,39 @@ class ChartManager {
     const timeScale = this.chart.timeScale();
     const priceScale = this.chart.priceScale('right');
 
-    // 1. ВЕРТИКАЛЬНОЕ ВЫРАВНИВАНИЕ — автоскейл цены с отступами
+    // Вертикаль — сразу
     if (priceScale) {
         priceScale.applyOptions({ 
             autoScale: true,
-            scaleMargins: {
-                top: 0.1,
-                bottom: 0.1
-            }
+            scaleMargins: { top: 0.1, bottom: 0.1 }
         });
     }
 
-    // 2. ГОРИЗОНТАЛЬНОЕ ВЫРАВНИВАНИЕ — как в TradingView Auto
-    // Сбрасываем зум к дефолтному barSpacing и скроллим к последней свече
-    const defaultBarSpacing = 12; // стандартный spacing
+    const defaultBarSpacing = 12;
+    const rightOffsetBars = 10;
     
-    // Применяем дефолтный spacing
+    // Синхронно вычисляем и применяем ВСЁ в одном синхронном блоке
+    // (без requestAnimationFrame — мгновенно, без промежуточных перерисовок)
     timeScale.applyOptions({ barSpacing: defaultBarSpacing });
     
-    // Скроллим к последней свече (как в TV)
-    // Используем scrollToRealTime + небольшой отступ справа
-    requestAnimationFrame(() => {
-        // Сначала скроллим в конец
-        timeScale.scrollToRealTime();
-        
-        // Даем графику обновиться и проверяем результат
-        requestAnimationFrame(() => {
-            const range = timeScale.getVisibleLogicalRange();
-            if (range) {
-                const visibleBars = range.to - range.from;
-                const rightOffsetBars = Math.round(visibleBars * 0.15); // 15% отступа справа
-                
-                timeScale.setVisibleLogicalRange({
-                    from: this.chartData.length - visibleBars + rightOffsetBars,
-                    to: this.chartData.length + rightOffsetBars
-                });
-            } else {
-                // Если диапазон не получен, просто скроллим
-                timeScale.scrollToRealTime();
-            }
-        });
+    // Даём браузеру применить изменения перед расчётом диапазона
+    const totalBars = this.chartData.length;
+    const chartWidth = this.chartContainer.clientWidth;
+    const estimatedVisibleBars = Math.floor(chartWidth / defaultBarSpacing);
+    
+    const targetFrom = Math.max(0, totalBars - estimatedVisibleBars + rightOffsetBars);
+    const targetTo = totalBars + rightOffsetBars;
+    
+    timeScale.setVisibleLogicalRange({
+        from: targetFrom,
+        to: targetTo
     });
 
-    // 3. Обновляем кастомные примитивы
-    if (this.timerManager && this.timerManager._primitive) {
-        this.timerManager._primitive.requestRedraw();
-    }
-    
-    this.scheduleDrawingsUpdate(true);
+    // Примитивы — в следующем кадре
+    requestAnimationFrame(() => {
+        this.timerManager?._primitive?.requestRedraw();
+        this.scheduleDrawingsUpdate(true);
+    });
 }
 
     getLastCandle() {
