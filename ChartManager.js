@@ -1138,46 +1138,38 @@ class ChartManager {
         }
     }
 
-  autoScale() {
-    if (!this.chart || this.chartData.length === 0) return;
-
-    const timeScale = this.chart.timeScale();
-    const priceScale = this.chart.priceScale('right');
-
-    // Вертикаль — сразу
-    if (priceScale) {
-        priceScale.applyOptions({ 
-            autoScale: true,
-            scaleMargins: { top: 0.1, bottom: 0.1 }
-        });
+    autoScale() {
+        if (this.chart && this.chartData.length > 0) {
+            const timeScale = this.chart.timeScale();
+            const visibleRange = timeScale.getVisibleLogicalRange();
+            
+            if (visibleRange) {
+                const fromIndex = Math.max(0, Math.floor(visibleRange.from));
+                const toIndex = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
+                
+                if (fromIndex < toIndex && fromIndex >= 0 && toIndex < this.chartData.length) {
+                    const priceScale = this.chart.priceScale('right');
+                    if (priceScale) {
+                        priceScale.applyOptions({ autoScale: true });
+                        setTimeout(() => {
+                            priceScale.applyOptions({ autoScale: true });
+                        }, 10);
+                    }
+                    
+                    setTimeout(() => {
+                        if (this.timerManager && this.timerManager._primitive) {
+                            this.timerManager._primitive.requestRedraw();
+                        }
+                    }, 50);
+                }
+            } else {
+                const priceScale = this.chart.priceScale('right');
+                if (priceScale) {
+                    priceScale.applyOptions({ autoScale: true });
+                }
+            }
+        }
     }
-
-    const defaultBarSpacing = 12;
-    const rightOffsetBars = 10;
-    
-    // Синхронно вычисляем и применяем ВСЁ в одном синхронном блоке
-    // (без requestAnimationFrame — мгновенно, без промежуточных перерисовок)
-    timeScale.applyOptions({ barSpacing: defaultBarSpacing });
-    
-    // Даём браузеру применить изменения перед расчётом диапазона
-    const totalBars = this.chartData.length;
-    const chartWidth = this.chartContainer.clientWidth;
-    const estimatedVisibleBars = Math.floor(chartWidth / defaultBarSpacing);
-    
-    const targetFrom = Math.max(0, totalBars - estimatedVisibleBars + rightOffsetBars);
-    const targetTo = totalBars + rightOffsetBars;
-    
-    timeScale.setVisibleLogicalRange({
-        from: targetFrom,
-        to: targetTo
-    });
-
-    // Примитивы — в следующем кадре
-    requestAnimationFrame(() => {
-        this.timerManager?._primitive?.requestRedraw();
-        this.scheduleDrawingsUpdate(true);
-    });
-}
 
     getLastCandle() {
         return this.lastCandle;
