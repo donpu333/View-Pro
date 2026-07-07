@@ -1,36 +1,42 @@
 class HorizontalRay {
-    constructor(price, time, options = {}) {
-        this.price = price;
-        this.time = time;
-        this.anchorTime = options.anchorTime || time;
-        this.id = `ray_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-        this.options = {
-            color: options.color || '#4A90E2',
-            lineWidth: options.lineWidth || 1,
-            lineStyle: options.lineStyle || 'solid',
-            opacity: options.opacity !== undefined ? options.opacity : 0.9,
-            extendLeft: options.extendLeft || false,
-            extendRight: options.extendRight !== undefined ? options.extendRight : true,
-            showPrice: options.showPrice !== undefined ? options.showPrice : true,
-            fontSize: options.fontSize || 10,
-            ...options
-        };
-        this.anchorCandle = options.anchorCandle || null;
-        this.timeframeVisibility = options.timeframeVisibility || {
-            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
-            '1h': true, '4h': true, '6h': true, '12h': true,
-            '1d': true, '1w': true, '1M': true
-        };
-        this.selected = false;
-        this.hovered = false;
-        this.dragging = false;
-        this.showDragPoint = false;
-        this.readyToDrag = false; 
-        this.attached = false;
-        this.dragPointX = 0;
-        this.dragPointY = 0;
-        if (options.originalStartTime) this.anchorTime = options.originalStartTime;
-    }
+  constructor(price, time, options = {}) {
+    this.price = price;
+    this.time = time;
+    this.anchorTime = options.anchorTime || time;
+    this.id = `ray_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    
+    // ✅ Убираем timeframeVisibility из options
+    const { timeframeVisibility, anchorCandle, originalStartTime, ...restOptions } = options;
+    
+    this.options = {
+        color: restOptions.color || '#4A90E2',
+        lineWidth: restOptions.lineWidth || 1,
+        lineStyle: restOptions.lineStyle || 'solid',
+        opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.9,
+        extendLeft: restOptions.extendLeft || false,
+        extendRight: restOptions.extendRight !== undefined ? restOptions.extendRight : true,
+        showPrice: restOptions.showPrice !== undefined ? restOptions.showPrice : true,
+        fontSize: restOptions.fontSize || 10,
+        ...restOptions
+    };
+    
+    this.anchorCandle = anchorCandle || null;
+    this.timeframeVisibility = timeframeVisibility || {
+        '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+        '1h': true, '4h': true, '6h': true, '12h': true,
+        '1d': true, '1w': true, '1M': true
+    };
+    
+    this.selected = false;
+    this.hovered = false;
+    this.dragging = false;
+    this.showDragPoint = false;
+    this.readyToDrag = false;
+    this.attached = false;
+    this.dragPointX = 0;
+    this.dragPointY = 0;
+    if (originalStartTime) this.anchorTime = originalStartTime;
+}
 
     updateOptions(newOptions) {
         this.options = { ...this.options, ...newOptions };
@@ -1654,46 +1660,51 @@ _showSettings(ray) {
 // ============================================================
 
 class TrendLine {
-    constructor(point1, point2, options = {}) {
-        this.id = `trend_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-        this.point1 = point1 || { price: 0, time: 0 };
-        this.point2 = point2 || { price: 0, time: 0 };
-        this.anchorTime1 = point1?.time || 0;
-        this.anchorTime2 = point2?.time || 0;
-        this.options = {
-            color: options.color || '#4A90E2',
-            lineWidth: options.lineWidth || 2,
-            lineStyle: options.lineStyle || 'solid',
-            opacity: options.opacity !== undefined ? options.opacity : 0.9,
-            extendRight: options.extendRight || false,   
-            ...options
-        };
-        this.anchorCandle1 = options.anchorCandle1 || null;
-        this.anchorCandle2 = options.anchorCandle2 || null;
-        this.timeframeVisibility = options.timeframeVisibility || {
-            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
-            '1h': true, '4h': true, '6h': true, '12h': true,
-            '1d': true, '1w': true, '1M': true
-        };
-        this.selected = false;
-        this.hovered = false;
-        this.dragging = false;
-        this.editMode = false;
-        this.showDragPoint1 = false;
-        this.showDragPoint2 = false;
-        this.dragPointX1 = 0;
-        this.dragPointY1 = 0;
-        this.dragPointX2 = 0;
-        this.dragPointY2 = 0;
-        this._tempPixel1 = null;
-        this._tempPixel2 = null;
-        this._pixelStart1 = null;
-        this._pixelStart2 = null;
-        this.symbolKey = options.symbolKey || null;
-        this.symbol = options.symbol || null;
-        this.exchange = options.exchange || null;
-        this.marketType = options.marketType || null;
-    }
+ constructor(point1, point2, options = {}) {
+    this.id = `trend_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    this.point1 = point1 || { price: 0, time: 0 };
+    this.point2 = point2 || { price: 0, time: 0 };
+    this.anchorTime1 = point1?.time || 0;
+    this.anchorTime2 = point2?.time || 0;
+    
+    // ✅ Убираем всё, что не относится к options, чтобы не попало в this.options
+    const { timeframeVisibility, anchorCandle1, anchorCandle2, symbolKey, symbol, exchange, marketType, ...restOptions } = options;
+    
+    this.options = {
+        color: restOptions.color || '#4A90E2',
+        lineWidth: restOptions.lineWidth || 2,
+        lineStyle: restOptions.lineStyle || 'solid',
+        opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.9,
+        extendRight: restOptions.extendRight || false,
+        ...restOptions
+    };
+    
+    this.anchorCandle1 = anchorCandle1 || null;
+    this.anchorCandle2 = anchorCandle2 || null;
+    this.timeframeVisibility = timeframeVisibility || {
+        '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+        '1h': true, '4h': true, '6h': true, '12h': true,
+        '1d': true, '1w': true, '1M': true
+    };
+    this.selected = false;
+    this.hovered = false;
+    this.dragging = false;
+    this.editMode = false;
+    this.showDragPoint1 = false;
+    this.showDragPoint2 = false;
+    this.dragPointX1 = 0;
+    this.dragPointY1 = 0;
+    this.dragPointX2 = 0;
+    this.dragPointY2 = 0;
+    this._tempPixel1 = null;
+    this._tempPixel2 = null;
+    this._pixelStart1 = null;
+    this._pixelStart2 = null;
+    this.symbolKey = symbolKey || null;
+    this.symbol = symbol || null;
+    this.exchange = exchange || null;
+    this.marketType = marketType || null;
+}
 
     updateOptions(newOptions) {
         this.options = { ...this.options, ...newOptions };
@@ -6154,39 +6165,43 @@ async loadAllAlertsFromDB() {
 
 class TextDrawing {
     constructor(text, time, price, options = {}) {
-        this.text = text || 'Текст';
-        this.time = time;
-        this.price = price;
-        this.anchorTime = time;
-        this.id = `text_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-        this.options = {
-            color: options.color || '#FFFFFF',
-            bgColor: options.bgColor || '#000000',
-            fontSize: options.fontSize || 12,
-            bold: options.bold || false,
-            opacity: options.opacity !== undefined ? options.opacity : 1,
-            bgOpacity: options.bgOpacity !== undefined ? options.bgOpacity : 0,
-            ...options
-        };
-        this.anchorCandle = options.anchorCandle || null;
-        this.timeframeVisibility = options.timeframeVisibility || {
-            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
-            '1h': true, '4h': true, '6h': true, '12h': true,
-            '1d': true, '1w': true, '1M': true
-        };
-        this.selected = false;
-        this.hovered = false;
-        this.dragging = false;
-        this.showDragPoint = false;
-        this.attached = false;
-        this.dragPointX = 0;
-        this.dragPointY = 0;
-        this.symbolKey = options.symbolKey || null;
-        this.symbol = options.symbol || null;
-        this.exchange = options.exchange || null;
-        this.marketType = options.marketType || null;
-    }
-
+    this.text = text || 'Текст';
+    this.time = time;
+    this.price = price;
+    this.anchorTime = time;
+    this.id = `text_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    
+    // ✅ Убираем всё лишнее из options
+    const { timeframeVisibility, anchorCandle, symbolKey, symbol, exchange, marketType, ...restOptions } = options;
+    
+    this.options = {
+        color: restOptions.color || '#FFFFFF',
+        bgColor: restOptions.bgColor || '#000000',
+        fontSize: restOptions.fontSize || 12,
+        bold: restOptions.bold || false,
+        opacity: restOptions.opacity !== undefined ? restOptions.opacity : 1,
+        bgOpacity: restOptions.bgOpacity !== undefined ? restOptions.bgOpacity : 0,
+        ...restOptions
+    };
+    
+    this.anchorCandle = anchorCandle || null;
+    this.timeframeVisibility = timeframeVisibility || {
+        '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+        '1h': true, '4h': true, '6h': true, '12h': true,
+        '1d': true, '1w': true, '1M': true
+    };
+    this.selected = false;
+    this.hovered = false;
+    this.dragging = false;
+    this.showDragPoint = false;
+    this.attached = false;
+    this.dragPointX = 0;
+    this.dragPointY = 0;
+    this.symbolKey = symbolKey || null;
+    this.symbol = symbol || null;
+    this.exchange = exchange || null;
+    this.marketType = marketType || null;
+}
     updateOptions(newOptions) {
         this.options = { ...this.options, ...newOptions };
         if (newOptions.text !== undefined) this.text = newOptions.text;
