@@ -517,7 +517,8 @@ class HorizontalRayManager {
         
         this._setupEventListeners();
         this._setupHotkeys();
-        
+                this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
         // ✅ Регистрируем в координаторе
         window.drawingLoaderCoordinator.register(this, 'ray');
         
@@ -658,7 +659,26 @@ class HorizontalRayManager {
         const currentKey = this._getCurrentSymbolKey();
         return this._rays.filter(item => item.ray.symbolKey === currentKey);
     }
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        
+        this._isDragging = false;
+        this._potentialDrag = null;
 
+        if (this._dragRay) {
+            this._dragRay.dragging = false;
+            this._dragRay.attached = false;
+            
+            const newAnchor = this._findClosestCandleTime(this._dragRay.time);
+            if (newAnchor) this._dragRay.anchorTime = newAnchor;
+            
+            this._saveRays();
+            this._dragRay = null;
+            this._requestRedraw();
+        }
+        
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
     _setupHotkeys() {
         document.addEventListener('keydown', (e) => {
             const active = document.activeElement;
@@ -766,34 +786,30 @@ class HorizontalRayManager {
             const rect = container.getBoundingClientRect();
             const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
             const hit = this.hitTest(x, y);
-
             if (hit) {
                 e.preventDefault();
                 e.stopPropagation();
 
-                if (this._selectedRay && this._selectedRay === hit.ray && !hit.ray.readyToDrag) {
-                    this._selectedRay.selected = false;
-                    this._selectedRay.showDragPoint = false;
-                    this._selectedRay.readyToDrag = false;
-                    this._selectedRay.attached = false;
-                    this._selectedRay = null;
-                    this._requestRedraw();
-                    return;
+                if (this._selectedRay && this._selectedRay === hit.ray) {
+                    if (!hit.ray.readyToDrag) {
+                        hit.ray.readyToDrag = true;
+                        hit.ray.showDragPoint = true;
+                    }
+                } else {
+                    if (this._selectedRay) {
+                        this._selectedRay.selected = false;
+                        this._selectedRay.showDragPoint = false;
+                        this._selectedRay.readyToDrag = false;
+                        this._selectedRay.attached = false;
+                    }
+                    hit.ray.selected = true;
+                    hit.ray.attached = true;
+                    hit.ray.readyToDrag = false;
+                    this._selectedRay = hit.ray;
                 }
 
-                if (this._selectedRay && this._selectedRay !== hit.ray) {
-                    this._selectedRay.selected = false;
-                    this._selectedRay.showDragPoint = false;
-                    this._selectedRay.readyToDrag = false;
-                    this._selectedRay.attached = false;
-                }
-
-                hit.ray.selected = true;
-                hit.ray.attached = true;
-                this._selectedRay = hit.ray;
-
-                const rayX = this._chartManager.timeToCoordinate(hit.ray.time);
-                const rayY = this._chartManager.priceToCoordinate(hit.ray.price);
+                let rayX = this._chartManager.timeToCoordinate(hit.ray.time);
+                let rayY = this._chartManager.priceToCoordinate(hit.ray.price);
                 if (rayX !== null && rayY !== null) {
                     hit.ray.dragPointX = rayX * this._pixelRatio;
                     hit.ray.dragPointY = rayY * this._pixelRatio;
@@ -810,7 +826,8 @@ class HorizontalRayManager {
                 }
 
                 this._requestRedraw();
-            } else {
+            }
+             else {
                 const rayMenu = document.getElementById('drawingContextMenu');
                 if (rayMenu && rayMenu.style.display === 'flex') {
                     const menuRect = rayMenu.getBoundingClientRect();
@@ -872,9 +889,9 @@ class HorizontalRayManager {
             if (this._isDragging && this._dragRay) {
                 e.preventDefault();
                 e.stopPropagation();
-
-                const deltaX = bmX - this._dragStartX;
-                const deltaY = bmY - this._dragStartY;
+                
+                const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+                const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
 
                 const rayX = this._chartManager.timeToCoordinate(this._dragStartTime);
                 const rayY = this._chartManager.priceToCoordinate(this._dragStartPrice);
@@ -1038,10 +1055,8 @@ class HorizontalRayManager {
         
         const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
         
-        const ray = new HorizontalRay(price, time, {
-            ...options,
-            timeframeVisibility: timeframeVisibility
-        });
+               const ray = new HorizontalRay(price, time, options);
+        ray.timeframeVisibility = timeframeVisibility;
         ray.anchorTime = time;
         if (options.anchorCandle) {
             ray.anchorCandle = { ...options.anchorCandle };
@@ -1348,16 +1363,22 @@ _showSettings(ray) {
         settings.insertBefore(header, settings.firstChild);
     }
     
-    const closeOnOutsideClick = (e) => {
+       if (this._closeOnOutsideClick) {
+        document.removeEventListener('mousedown', this._closeOnOutsideClick);
+    }
+    
+    this._closeOnOutsideClick = (e) => {
         if (!settings.contains(e.target) && settings.style.display === 'block') {
             settings.style.display = 'none';
-            document.removeEventListener('mousedown', closeOnOutsideClick);
+            document.removeEventListener('mousedown', this._closeOnOutsideClick);
+            this._closeOnOutsideClick = null;
         }
     };
     
-    document.removeEventListener('mousedown', closeOnOutsideClick);
     setTimeout(() => {
-        document.addEventListener('mousedown', closeOnOutsideClick);
+        if (this._closeOnOutsideClick) {
+            document.addEventListener('mousedown', this._closeOnOutsideClick);
+        }
     }, 100);
     
     const stylePanel = document.getElementById('stylePanel');
@@ -2028,13 +2049,13 @@ class TempTrendLinePrimitive {
                         const chartManager = this._manager._chartManager;
                         if (!tempLine || !tempLine.point1 || !tempLine.point2) return;
 
-                        const point1X = chartManager.timeToCoordinate(tempLine.point1.time) 
+                                               const point1X = chartManager.timeToCoordinateWithFallback?.(tempLine.point1.time) 
                                         ?? chartManager.timeToCoordinate(tempLine.point1.time);
-                        const point1Y = chartManager.priceToCoordinate(tempLine.point1.price)
+                        const point1Y = chartManager.priceToCoordinateWithFallback?.(tempLine.point1.price)
                                         ?? chartManager.priceToCoordinate(tempLine.point1.price);
-                        const point2X = chartManager.timeToCoordinate(tempLine.point2.time) 
+                        const point2X = chartManager.timeToCoordinateWithFallback?.(tempLine.point2.time) 
                                         ?? chartManager.timeToCoordinate(tempLine.point2.time);
-                        const point2Y = chartManager.priceToCoordinate(tempLine.point2.price)
+                        const point2Y = chartManager.priceToCoordinateWithFallback?.(tempLine.point2.price)
                                         ?? chartManager.priceToCoordinate(tempLine.point2.price);
 
                         if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
@@ -2119,8 +2140,10 @@ class TrendLineManager {
         this._handleMouseUp = this._handleMouseUp.bind(this);
         this._handleMouseLeave = this._handleMouseLeave.bind(this);
         this._handleContextMenu = this._handleContextMenu.bind(this);
-        this._handleDblClick = this._handleDblClick.bind(this);
-        this._handleKeyDown = this._handleKeyDown.bind(this);
+       
+    
+                this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
         this._setupEventListeners();
         this._setupHotkeys();
         this._isLoading = false;
@@ -2188,13 +2211,19 @@ class TrendLineManager {
         for (const rec of lineRecords) {
             try {
                 const existing = this._trendLines.find(item => item.trendLine.id === rec.id);
-                if (existing) {
+                               if (existing) {
                     existing.trendLine.point1 = rec.data.point1;
                     existing.trendLine.point2 = rec.data.point2;
                     existing.trendLine.options = { ...existing.trendLine.options, ...rec.data.options };
                     
                     // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
                     existing.trendLine.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    // ✅ Восстанавливаем якоря, чтобы линия не прыгала
+                    existing.trendLine.anchorTime1 = rec.data.anchorTime1;
+                    existing.trendLine.anchorTime2 = rec.data.anchorTime2;
+                    existing.trendLine.anchorCandle1 = rec.data.anchorCandle1;
+                    existing.trendLine.anchorCandle2 = rec.data.anchorCandle2;
                     
                     continue;
                 }
@@ -2573,7 +2602,10 @@ class TrendLineManager {
         }
         this._potentialDrag = null;
     }
-
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        this._handleMouseUp(e); 
+    }
     _handleMouseLeave() {
         if (this._hoveredLine) { this._hoveredLine.hovered = false; this._hoveredLine = null; this._requestRedraw(); }
         this._chartManager.chartContainer.style.cursor = 'crosshair';
@@ -2614,14 +2646,7 @@ class TrendLineManager {
         } else { const menu = document.getElementById('trendContextMenu'); if (menu) menu.style.display = 'none'; }
     }
 
-    _handleDblClick(e) {
-        e.preventDefault(); e.stopPropagation();
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left, y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-        const hit = this.hitTest(bmX, bmY);
-        if (hit) this.deleteTrendLine(hit.trendLine.id);
-    }
+   
 
     _handleKeyDown(e) {
         if (e.key === 'Delete' && this._selectedLine) { this.deleteTrendLine(this._selectedLine.id); this._selectedLine = null; }
@@ -2860,14 +2885,7 @@ class TrendLineManager {
             trendLine.options.opacity = parseInt(document.getElementById('trendColorOpacity').value) / 100;
             trendLine.options.extendRight = document.getElementById('trendExtendRight')?.checked || false;
 
-            if (trendLine.primitive) {
-                const styleMap = { solid: 0, dotted: 1, dashed: 2 };
-                trendLine.primitive.applyOptions({
-                    color: trendLine.options.color,
-                    lineWidth: trendLine.options.lineWidth,
-                    lineStyle: styleMap[trendLine.options.lineStyle] || 0
-                });
-            }
+         
 
             this._requestRedraw();
             settings.style.display = 'none';
@@ -2894,7 +2912,7 @@ class TrendLineManager {
             if (!mgr || !mgr._selectedLine) return;
             const val = parseInt(this.value) || 1;
             mgr._selectedLine.options.lineWidth = val;
-            if (mgr._selectedLine.primitive) mgr._selectedLine.primitive.applyOptions({ lineWidth: val });
+        
             mgr._requestRedraw();
             mgr._saveTrendLines();
         });
@@ -2915,7 +2933,7 @@ class TrendLineManager {
             if (!mgr || !mgr._selectedLine) return;
             const styleMap = { solid: 0, dotted: 1, dashed: 2 };
             mgr._selectedLine.options.lineStyle = this.value;
-            if (mgr._selectedLine.primitive) mgr._selectedLine.primitive.applyOptions({ lineStyle: styleMap[this.value] || 0 });
+           
             mgr._requestRedraw();
             mgr._saveTrendLines();
         });
@@ -3597,12 +3615,24 @@ class RulerLineManager {
         this._handleMouseUp = this._handleMouseUp.bind(this);
         this._handleMouseLeave = this._handleMouseLeave.bind(this);
         this._handleContextMenu = this._handleContextMenu.bind(this);
-        this._handleDblClick = this._handleDblClick.bind(this);
-        this._handleKeyDown = this._handleKeyDown.bind(this);
-
+    
+    
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
         this._setupEventListeners();
         this._setupHotkeys();
-        this._autoLoadRulers();
+               // ✅ Регистрируем в координаторе
+        window.drawingLoaderCoordinator.register(this, 'ruler');
+        
+        // ✅ Единая задержка 150ms
+        setTimeout(async () => {
+            try {
+                if (!window.dbReady) {
+                    await new Promise(r => { const c = () => window.dbReady ? r() : setTimeout(c, 50); c(); });
+                }
+                await this.loadRulers();
+            } catch (e) { console.error(e); }
+        }, 150);
         this._isLoading = false;
     }
 
@@ -3962,7 +3992,10 @@ _setupHotkeys() {
         }
         this._potentialDrag = null;
     }
-
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        this._handleMouseUp(e); 
+    }
     _handleMouseLeave() {
         if (this._hoveredRuler) {
             this._hoveredRuler.hovered = false;
@@ -4012,23 +4045,8 @@ _setupHotkeys() {
         }
     }
 
-    _handleDblClick(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        const rect = this._chartManager.chartContainer.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
-        const hit = this.hitTest(bmX, bmY);
-        if (hit) this.deleteRuler(hit.ruler.id);
-    }
+   
 
-    _handleKeyDown(e) {
-        if (e.key === 'Delete' && this._selectedRuler) {
-            this.deleteRuler(this._selectedRuler.id);
-            this._selectedRuler = null;
-        }
-    }
 
     _startDrawing(x, y) {
         let price = this._chartManager.coordinateToPrice(y);
@@ -4204,40 +4222,103 @@ _setupHotkeys() {
         await Promise.all(promises);
     }
 
-    async loadRulers() {
+       async loadRulers() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+    }
+       async loadFromData(symbolKey, rulerRecords) {
+        if (this._getCurrentSymbolKey() !== symbolKey) return;
+
         try {
-            await waitForReady([() => window.dbReady === true, () => this._chartManager?.chartData?.length > 0, () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)]);
-            const currentKey = this._getCurrentSymbolKey();
-             this._detachAllPrimitivesForSymbol(currentKey);
-            const allDrawings = await window.db.getByIndex('drawings', 'symbolKey', currentKey);
-            const rulerRecords = allDrawings.filter(d => d.type === 'ruler');
-            const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+            const series = this._chartManager.currentChartType === 'candle' 
+                ? this._chartManager.candleSeries 
+                : this._chartManager.barSeries;
+
+            if (!series) return;
+
+            // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+            const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+            const defaultVisibility = {};
+            ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+            const existingIds = new Set(
+                this._rulers
+                    .filter(item => item.ruler.symbolKey === symbolKey)
+                    .map(item => item.ruler.id)
+            );
+            
+            const newRecordIds = new Set(rulerRecords.map(r => r.id));
+            
+            // ✅ Удаляем только те, которых больше нет в БД
+            const toDetach = this._rulers.filter(item => 
+                item.ruler.symbolKey === symbolKey && !newRecordIds.has(item.ruler.id)
+            );
+            
+            for (const item of toDetach) {
+                try { 
+                    if (item.series && item.primitive) {
+                        item.series.detachPrimitive(item.primitive); 
+                    }
+                } catch(e) {}
+            }
+            
+            this._rulers = this._rulers.filter(item => 
+                item.ruler.symbolKey !== symbolKey || newRecordIds.has(item.ruler.id)
+            );
+
             const newRulers = [];
             for (const rec of rulerRecords) {
                 try {
+                    const existing = this._rulers.find(item => item.ruler.id === rec.id);
+                    
+                    if (existing) {
+                        // Обновляем данные существующего
+                        existing.ruler.point1 = rec.data.point1;
+                        existing.ruler.point2 = rec.data.point2;
+                        existing.ruler.options = { ...existing.ruler.options, ...rec.data.options };
+                        
+                        // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                        existing.ruler.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                        
+                        // ✅ Восстанавливаем якоря
+                        existing.ruler.anchorTime1 = rec.data.anchorTime1;
+                        existing.ruler.anchorTime2 = rec.data.anchorTime2;
+                        existing.ruler.anchorCandle1 = rec.data.anchorCandle1;
+                        existing.ruler.anchorCandle2 = rec.data.anchorCandle2;
+                        
+                        continue;
+                    }
+
                     const ruler = new RulerLine(rec.data.point1, rec.data.point2, this._chartManager, rec.data.options);
-                    ruler.id = rec.id; ruler.symbolKey = rec.symbolKey; ruler.symbol = rec.data.symbol; ruler.exchange = rec.data.exchange; ruler.marketType = rec.data.marketType;
-                    ruler.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    ruler.anchorCandle1 = rec.data.anchorCandle1; ruler.anchorCandle2 = rec.data.anchorCandle2;
-                    ruler.anchorTime1 = rec.data.anchorTime1; ruler.anchorTime2 = rec.data.anchorTime2;
+                    ruler.id = rec.id;
+                    ruler.symbolKey = rec.symbolKey;
+                    ruler.symbol = rec.data.symbol;
+                    ruler.exchange = rec.data.exchange;
+                    ruler.marketType = rec.data.marketType;
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    ruler.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    ruler.anchorCandle1 = rec.data.anchorCandle1;
+                    ruler.anchorCandle2 = rec.data.anchorCandle2;
+                    ruler.anchorTime1 = rec.data.anchorTime1;
+                    ruler.anchorTime2 = rec.data.anchorTime2;
+
                     const primitive = new RulerLinePrimitive(ruler, this._chartManager);
                     series.attachPrimitive(primitive);
                     newRulers.push({ ruler, primitive, series });
-                } catch (e) { console.warn('Failed to load ruler:', rec.id, e); }
+                } catch (e) { 
+                    console.warn('Failed to load ruler:', rec.id, e); 
+                }
             }
-            this._rulers.forEach(item => { try { item.series?.detachPrimitive(item.primitive); } catch(e) {} });
-            this._rulers = newRulers; this._requestRedraw();
-        } catch (error) { console.error('❌ loadRulers failed:', error); }
-    }
 
-    _autoLoadRulers() {
-        setTimeout(async () => {
-            try {
-                if (this._rulers.length > 0) return;
-                if (!window.dbReady) { await new Promise(r => { const c = () => window.dbReady ? r() : setTimeout(c, 50); c(); }); }
-                await this.loadRulers();
-            } catch (e) { console.error(e); }
-        }, 200);
+            this._rulers.push(...newRulers);
+            this._requestRedraw();
+            console.log(`✅ Loaded ${rulerRecords.length} rulers for ${symbolKey}`);
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+            throw error;
+        }
     }
 _detachAllPrimitivesForSymbol(symbolKey) {
     const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
@@ -4291,17 +4372,20 @@ class AlertLine {
         
         this.status = options.status || 'active';
         
+               // ✅ Убираем всё, что не относится к отрисовке линии
+        const { timeframeVisibility, symbolKey, symbol, exchange, marketType, triggered, active, triggerCount, repeatCount, repeatInterval, lastTriggerTime, status, anchorCandle, ...restOptions } = options;
+        
         this.options = {
-            color: options.color || '#808080',
-            lineWidth: options.lineWidth || 2,
-            lineStyle: options.lineStyle || 'dotted',
-            opacity: options.opacity !== undefined ? options.opacity : 0.26,
-            extendLeft: options.extendLeft || true,
-            extendRight: options.extendRight || true,
-            showPrice: options.showPrice !== undefined ? options.showPrice : true,
-            showBell: options.showBell !== undefined ? options.showBell : true,
-            fontSize: options.fontSize || 10,
-            ...options
+            color: restOptions.color || '#808080',
+            lineWidth: restOptions.lineWidth || 2,
+            lineStyle: restOptions.lineStyle || 'dotted',
+            opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.26,
+            extendLeft: restOptions.extendLeft || true,
+            extendRight: restOptions.extendRight || true,
+            showPrice: restOptions.showPrice !== undefined ? restOptions.showPrice : true,
+            showBell: restOptions.showBell !== undefined ? restOptions.showBell : true,
+            fontSize: restOptions.fontSize || 10,
+            ...restOptions
         };
         
         this.anchorCandle = options.anchorCandle || null;
@@ -4687,6 +4771,9 @@ class AlertLineManager {
     this._lastClickTime = 0;
     
     this._handleContextMenu = this._handleContextMenu.bind(this);
+    this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+    window.addEventListener('mouseup', this._handleGlobalMouseUp);
+
     this._setupEventListeners();
     this._setupHotkeys();
     this._setupSettingsListeners();
@@ -5556,7 +5643,23 @@ async loadAllAlertsFromDB() {
             if (item.primitive) item.primitive.updateAllViews();
         }
     }
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        
+        this._isDragging = false;
+        this._potentialDrag = null;
 
+        if (this._dragAlert) {
+            this._dragAlert.dragging = false;
+            this._dragAlert.attached = false;
+            this._dragAlert.anchorTime = this._dragAlert.time;
+            this._saveAlerts();
+            this._dragAlert = null;
+            this._requestRedraw();
+        }
+        
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
     _handleChartClick(event) {
         if (!this._isDrawingMode) return;
         
@@ -6510,6 +6613,8 @@ class TextManager {
         this._dblClickTimeout = 350;
         this._lastClickTime = 0;
         this._handleContextMenu = this._handleContextMenu.bind(this);
+                this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
         this._setupEventListeners();
         this._setupHotkeys();
         this._needsRedraw = false;
@@ -6632,7 +6737,23 @@ class TextManager {
         const marketType = this._chartManager.currentMarketType || 'futures';
         return `${symbol}:${exchange}:${marketType}`;
     }
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        
+        this._isDragging = false;
+        this._potentialDrag = null;
 
+        if (this._dragText) {
+            this._dragText.dragging = false;
+            this._dragText.attached = false;
+            this._dragText.anchorTime = this._dragText.time;
+            this._saveTexts();
+            this._dragText = null;
+            this._requestRedraw();
+        }
+        
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
    _setupHotkeys() {
     document.addEventListener('keydown', (e) => {
         const active = document.activeElement;
@@ -7248,13 +7369,24 @@ hitTest(x, y) {
     }
 
     // Закрытие по клику вне панели
-    const closeOnOutsideClick = (e) => {
+      // Закрытие по клику вне панели
+    if (this._closeOnOutsideClick) {
+        document.removeEventListener('mousedown', this._closeOnOutsideClick);
+    }
+    
+    this._closeOnOutsideClick = (e) => {
         if (!settings.contains(e.target) && settings.style.display === 'block') {
             settings.style.display = 'none';
-            document.removeEventListener('mousedown', closeOnOutsideClick);
+            document.removeEventListener('mousedown', this._closeOnOutsideClick);
+            this._closeOnOutsideClick = null;
         }
     };
-    setTimeout(() => { document.addEventListener('mousedown', closeOnOutsideClick); }, 100);
+    
+    setTimeout(() => {
+        if (this._closeOnOutsideClick) {
+            document.addEventListener('mousedown', this._closeOnOutsideClick);
+        }
+    }, 100);
 
     // === Вкладки (без cloneNode!) ===
     const textPanel = document.getElementById('textEditPanel');
@@ -7502,24 +7634,9 @@ hitTest(x, y) {
         await Promise.all(promises);
     }
 
-    async loadTexts() {
-        while (this._isLoading) { await new Promise(r => setTimeout(r, 50)); }
-        this._isLoading = true;
-        try {
-            await waitForReady([
-                () => window.dbReady === true,
-                () => this._chartManager?.chartData?.length > 0,
-                () => !!(this._chartManager?.candleSeries || this._chartManager?.barSeries)
-            ]);
-            
-            const currentKey = this._getCurrentSymbolKey();
-            await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
-            
-        } catch (error) {
-            console.error('❌ loadTexts failed:', error);
-        } finally {
-            this._isLoading = false;
-        }
+      async loadTexts() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
     }
 
     syncWithNewTimeframe() {}
