@@ -1434,7 +1434,7 @@ _showSettings(ray) {
             minutesBtn.addEventListener('click', () => {
                 const container = document.getElementById('timeframeCheckboxList');
                 if (!container) return;
-                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m']);
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
                 container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                     const isMinute = minutesSet.has(cb.dataset.timeframe);
                     cb.checked = isMinute;
@@ -2918,7 +2918,7 @@ class TrendLineManager {
             minutesBtn.addEventListener('click', () => {
                 const container = document.getElementById('trendTimeframeCheckboxList');
                 if (!container) return;
-                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m']);
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
                 container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                     const isMinute = minutesSet.has(cb.dataset.timeframe);
                     cb.checked = isMinute;
@@ -7357,7 +7357,7 @@ hitTest(x, y) {
             minutesBtn.addEventListener('click', () => {
                 const container = document.getElementById('textTimeframeCheckboxList');
                 if (!container) return;
-                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m']);
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
                 container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                     const isMinute = minutesSet.has(cb.dataset.timeframe);
                     cb.checked = isMinute;
