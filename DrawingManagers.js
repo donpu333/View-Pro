@@ -538,93 +538,102 @@ class HorizontalRayManager {
     }
 
     // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
-    async loadFromData(symbolKey, rayRecords) {
-        if (this._getCurrentSymbolKey() !== symbolKey) {
-            console.warn('⏹️ Symbol changed during load, aborting');
+ async loadFromData(symbolKey, rayRecords) {
+    if (this._getCurrentSymbolKey() !== symbolKey) {
+        console.warn('⏹️ Symbol changed during load, aborting');
+        return;
+    }
+
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+
+        if (!series) {
+            console.warn('Series not ready for rays, skipping');
             return;
         }
 
-        try {
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
+        // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
 
-            if (!series) {
-                console.warn('Series not ready for rays, skipping');
-                return;
-            }
-
-            // ✅ Собираем существующие ID для atomic update
-            const existingIds = new Set(
-                this._rays
-                    .filter(item => item.ray.symbolKey === symbolKey)
-                    .map(item => item.ray.id)
-            );
-            
-            const newRecordIds = new Set(rayRecords.map(r => r.id));
-            
-            // ✅ Удаляем только те, которых больше нет в БД
-            const toDetach = this._rays.filter(item => 
-                item.ray.symbolKey === symbolKey && !newRecordIds.has(item.ray.id)
-            );
-            
-            for (const item of toDetach) {
-                try { 
-                    if (item.series && item.primitive) {
-                        item.series.detachPrimitive(item.primitive); 
-                    }
-                } catch(e) {}
-            }
-            
-            this._rays = this._rays.filter(item => 
-                item.ray.symbolKey !== symbolKey || newRecordIds.has(item.ray.id)
-            );
-
-            // ✅ Создаем только новые или обновляем существующие
-            const newRays = [];
-            
-            for (const rec of rayRecords) {
-                try {
-                    // Если уже существует - пропускаем создание primitive
-                    const existing = this._rays.find(item => item.ray.id === rec.id);
-                    
-                    if (existing) {
-                        // Обновляем данные существующего
-                        existing.ray.price = rec.data.price;
-                        existing.ray.time = rec.data.time;
-                        existing.ray.anchorTime = rec.data.anchorTime;
-                        existing.ray.options = { ...existing.ray.options, ...rec.data.options };
-                        existing.ray.timeframeVisibility = rec.data.timeframeVisibility;
-                        existing.ray.anchorCandle = rec.data.anchorCandle;
-                        continue;
-                    }
-
-                    const ray = new HorizontalRay(rec.data.price, rec.data.time, rec.data.options);
-                    ray.id = rec.id;
-                    ray.anchorTime = rec.data.anchorTime;
-                    ray.timeframeVisibility = rec.data.timeframeVisibility;
-                    ray.anchorCandle = rec.data.anchorCandle;
-                    ray.symbolKey = rec.symbolKey;
-
-                    const primitive = new HorizontalRayPrimitive(ray, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    newRays.push({ ray, primitive, series });
-                } catch (e) {
-                    console.warn('Failed to attach ray:', rec.id, e);
+        // ✅ Собираем существующие ID для atomic update
+        const existingIds = new Set(
+            this._rays
+                .filter(item => item.ray.symbolKey === symbolKey)
+                .map(item => item.ray.id)
+        );
+        
+        const newRecordIds = new Set(rayRecords.map(r => r.id));
+        
+        // ✅ Удаляем только те, которых больше нет в БД
+        const toDetach = this._rays.filter(item => 
+            item.ray.symbolKey === symbolKey && !newRecordIds.has(item.ray.id)
+        );
+        
+        for (const item of toDetach) {
+            try { 
+                if (item.series && item.primitive) {
+                    item.series.detachPrimitive(item.primitive); 
                 }
-            }
-
-            this._rays.push(...newRays);
-            this._requestRedraw();
-            
-            console.log(`✅ Loaded ${rayRecords.length} rays for ${symbolKey}`);
-            
-        } catch (error) {
-            console.error('❌ loadFromData failed:', error);
-            throw error;
+            } catch(e) {}
         }
-    }
+        
+        this._rays = this._rays.filter(item => 
+            item.ray.symbolKey !== symbolKey || newRecordIds.has(item.ray.id)
+        );
 
+        // ✅ Создаем только новые или обновляем существующие
+        const newRays = [];
+        
+        for (const rec of rayRecords) {
+            try {
+                const existing = this._rays.find(item => item.ray.id === rec.id);
+                
+                if (existing) {
+                    // Обновляем данные существующего
+                    existing.ray.price = rec.data.price;
+                    existing.ray.time = rec.data.time;
+                    existing.ray.anchorTime = rec.data.anchorTime;
+                    existing.ray.options = { ...existing.ray.options, ...rec.data.options };
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    existing.ray.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    existing.ray.anchorCandle = rec.data.anchorCandle;
+                    continue;
+                }
+
+                const ray = new HorizontalRay(rec.data.price, rec.data.time, rec.data.options);
+                ray.id = rec.id;
+                ray.anchorTime = rec.data.anchorTime;
+                
+                // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                ray.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                
+                ray.anchorCandle = rec.data.anchorCandle;
+                ray.symbolKey = rec.symbolKey;
+
+                const primitive = new HorizontalRayPrimitive(ray, this._chartManager);
+                series.attachPrimitive(primitive);
+                newRays.push({ ray, primitive, series });
+            } catch (e) {
+                console.warn('Failed to attach ray:', rec.id, e);
+            }
+        }
+
+        this._rays.push(...newRays);
+        this._requestRedraw();
+        
+        console.log(`✅ Loaded ${rayRecords.length} rays for ${symbolKey}`);
+        
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
+    }
+}
     _toBitmapCoords(cssX, cssY) {
         return {
             x: cssX * this._pixelRatio,
@@ -2126,75 +2135,87 @@ class TrendLineManager {
 
     // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
     async loadFromData(symbolKey, lineRecords) {
-        if (this._getCurrentSymbolKey() !== symbolKey) return;
+    if (this._getCurrentSymbolKey() !== symbolKey) return;
 
-        try {
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
 
-            if (!series) return;
+        if (!series) return;
 
-            const existingIds = new Set(
-                this._trendLines
-                    .filter(item => item.trendLine.symbolKey === symbolKey)
-                    .map(item => item.trendLine.id)
-            );
-            
-            const newRecordIds = new Set(lineRecords.map(l => l.id));
-            
-            const toDetach = this._trendLines.filter(item => 
-                item.trendLine.symbolKey === symbolKey && !newRecordIds.has(item.trendLine.id)
-            );
-            
-            for (const item of toDetach) {
-                try { 
-                    if (item.series && item.primitive) {
-                        item.series.detachPrimitive(item.primitive); 
-                    }
-                } catch(e) {}
-            }
-            
-            this._trendLines = this._trendLines.filter(item => 
-                item.trendLine.symbolKey !== symbolKey || newRecordIds.has(item.trendLine.id)
-            );
+        // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
 
-            const newLines = [];
-            for (const rec of lineRecords) {
-                try {
-                    const existing = this._trendLines.find(item => item.trendLine.id === rec.id);
-                    if (existing) {
-                        existing.trendLine.point1 = rec.data.point1;
-                        existing.trendLine.point2 = rec.data.point2;
-                        existing.trendLine.options = { ...existing.trendLine.options, ...rec.data.options };
-                        continue;
-                    }
-
-                    const line = new TrendLine(rec.data.point1, rec.data.point2, rec.data.options);
-                    line.id = rec.id;
-                    line.symbolKey = rec.symbolKey;
-                    line.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    line.anchorCandle1 = rec.data.anchorCandle1;
-                    line.anchorCandle2 = rec.data.anchorCandle2;
-                    line.anchorTime1 = rec.data.anchorTime1;
-                    line.anchorTime2 = rec.data.anchorTime2;
-
-                    const primitive = new TrendLinePrimitive(line, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    newLines.push({ trendLine: line, primitive, series });
-                } catch (e) { 
-                    console.warn('Failed to load trend line:', rec.id, e); 
+        const existingIds = new Set(
+            this._trendLines
+                .filter(item => item.trendLine.symbolKey === symbolKey)
+                .map(item => item.trendLine.id)
+        );
+        
+        const newRecordIds = new Set(lineRecords.map(l => l.id));
+        
+        const toDetach = this._trendLines.filter(item => 
+            item.trendLine.symbolKey === symbolKey && !newRecordIds.has(item.trendLine.id)
+        );
+        
+        for (const item of toDetach) {
+            try { 
+                if (item.series && item.primitive) {
+                    item.series.detachPrimitive(item.primitive); 
                 }
-            }
-
-            this._trendLines.push(...newLines);
-            this._requestRedraw();
-            console.log(`✅ Loaded ${lineRecords.length} trend lines for ${symbolKey}`);
-        } catch (error) {
-            console.error('❌ loadFromData failed:', error);
-            throw error;
+            } catch(e) {}
         }
+        
+        this._trendLines = this._trendLines.filter(item => 
+            item.trendLine.symbolKey !== symbolKey || newRecordIds.has(item.trendLine.id)
+        );
+
+        const newLines = [];
+        for (const rec of lineRecords) {
+            try {
+                const existing = this._trendLines.find(item => item.trendLine.id === rec.id);
+                if (existing) {
+                    existing.trendLine.point1 = rec.data.point1;
+                    existing.trendLine.point2 = rec.data.point2;
+                    existing.trendLine.options = { ...existing.trendLine.options, ...rec.data.options };
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    existing.trendLine.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    continue;
+                }
+
+                const line = new TrendLine(rec.data.point1, rec.data.point2, rec.data.options);
+                line.id = rec.id;
+                line.symbolKey = rec.symbolKey;
+                
+                // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                line.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                
+                line.anchorCandle1 = rec.data.anchorCandle1;
+                line.anchorCandle2 = rec.data.anchorCandle2;
+                line.anchorTime1 = rec.data.anchorTime1;
+                line.anchorTime2 = rec.data.anchorTime2;
+
+                const primitive = new TrendLinePrimitive(line, this._chartManager);
+                series.attachPrimitive(primitive);
+                newLines.push({ trendLine: line, primitive, series });
+            } catch (e) { 
+                console.warn('Failed to load trend line:', rec.id, e); 
+            }
+        }
+
+        this._trendLines.push(...newLines);
+        this._requestRedraw();
+        console.log(`✅ Loaded ${lineRecords.length} trend lines for ${symbolKey}`);
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
     }
+}
 
     _toBitmapCoords(cssX, cssY) {
         return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
@@ -4688,15 +4709,11 @@ class AlertLineManager {
 }
 
     // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
-   async loadFromData(symbolKey, alertRecords) {
-    // ❌ Убираем проверку "только текущий символ"
-    // if (this._getCurrentSymbolKey() !== symbolKey) return;
-
+  async loadFromData(symbolKey, alertRecords) {
     try {
         const currentSymbolKey = this._getCurrentSymbolKey();
         const isCurrentSymbol = (currentSymbolKey === symbolKey);
 
-        // Берём серию только если символ совпадает с текущим
         const series = isCurrentSymbol
             ? (this._chartManager.currentChartType === 'candle' 
                 ? this._chartManager.candleSeries 
@@ -4708,6 +4725,11 @@ class AlertLineManager {
             return;
         }
 
+        // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
         const existingIds = new Set(
             this._alerts
                 .filter(item => item.alert.symbolKey === symbolKey)
@@ -4716,7 +4738,6 @@ class AlertLineManager {
         
         const newRecordIds = new Set(alertRecords.map(a => a.id));
         
-        // Отключаем примитивы для удалённых алертов (только для текущего символа)
         if (isCurrentSymbol) {
             const toDetach = this._alerts.filter(item => 
                 item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
@@ -4735,7 +4756,6 @@ class AlertLineManager {
             }
         }
         
-        // Фильтруем: оставляем чужие символы + только те алерты symbolKey, что есть в newRecordIds
         this._alerts = this._alerts.filter(item => 
             item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
         );
@@ -4746,12 +4766,14 @@ class AlertLineManager {
                 const existing = this._alerts.find(item => item.alert.id === rec.id);
                 
                 if (existing) {
-                    // Обновляем существующий алерт
                     existing.alert.price = rec.data.price;
                     existing.alert.time = rec.data.time;
                     existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
                     existing.alert.options = { ...existing.alert.options, ...rec.data.options };
-                    existing.alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    existing.alert.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
                     existing.alert.triggered = rec.data.triggered || false;
                     existing.alert.triggerCount = rec.data.triggerCount || 0;
                     existing.alert.repeatCount = rec.data.repeatCount || 5;
@@ -4764,7 +4786,6 @@ class AlertLineManager {
                     existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
                     existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
                     
-                    // Восстанавливаем примитив для текущего символа, если алерт активен
                     if (isCurrentSymbol && 
                         !existing.alert.triggered && 
                         existing.alert.status !== 'completed' &&
@@ -4782,7 +4803,6 @@ class AlertLineManager {
                     continue;
                 }
 
-                // Создаём новый алерт
                 const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
                 alert.id = rec.id;
                 alert.symbolKey = rec.symbolKey;
@@ -4790,7 +4810,10 @@ class AlertLineManager {
                 alert.symbol = rec.data.symbol;
                 alert.exchange = rec.data.exchange;
                 alert.marketType = rec.data.marketType;
-                alert.timeframeVisibility = rec.data.timeframeVisibility || {};
+                
+                // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                alert.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                
                 alert.triggered = rec.data.triggered || false;
                 alert.triggerCount = rec.data.triggerCount || 0;
                 alert.repeatCount = rec.data.repeatCount || 5;
@@ -4800,7 +4823,6 @@ class AlertLineManager {
                 alert.status = rec.data.status || 'active';
                 alert.anchorCandle = rec.data.anchorCandle || null;
 
-                // Примитив создаём только для текущего символа и если алерт активен
                 if (isCurrentSymbol && 
                     !alert.triggered && 
                     alert.status !== 'completed') {
@@ -4823,7 +4845,6 @@ class AlertLineManager {
 
         this._alerts.push(...newAlerts);
 
-        // Подписки на WebSocket для всех активных символов
         const activeSymbols = new Set();
         for (const item of this._alerts) {
             if (!item.alert.triggered && item.alert.status !== 'completed') {
@@ -4834,7 +4855,6 @@ class AlertLineManager {
             this._subscribeToSymbol(symbol);
         }
         
-        // UI обновляем только если это текущий символ
         if (isCurrentSymbol) {
             this._updateAlertsListUI();
             this._requestRedraw();
@@ -4846,7 +4866,6 @@ class AlertLineManager {
         throw error;
     }
 }
-
 async loadAllAlertsFromDB() {
     try {
         if (!window.db) {
@@ -6502,85 +6521,92 @@ class TextManager {
     }
 
     // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
-    async loadFromData(symbolKey, textRecords) {
-        if (this._getCurrentSymbolKey() !== symbolKey) return;
+   async loadFromData(symbolKey, textRecords) {
+    if (this._getCurrentSymbolKey() !== symbolKey) return;
 
-        try {
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
 
-            if (!series) return;
+        if (!series) return;
 
-            // Atomic update: собираем существующие ID
-            const existingIds = new Set(
-                this._texts
-                    .filter(item => item.text.symbolKey === symbolKey)
-                    .map(item => item.text.id)
-            );
-            
-            const newRecordIds = new Set(textRecords.map(t => t.id));
-            
-            // Открепляем только те, которых больше нет в БД
-            const toDetach = this._texts.filter(item => 
-                item.text.symbolKey === symbolKey && !newRecordIds.has(item.text.id)
-            );
-            
-            for (const item of toDetach) {
-                try { 
-                    if (item.primitive && item.series) {
-                        item.series.detachPrimitive(item.primitive); 
-                    }
-                } catch(e) {
-                    console.warn('Error detaching old primitive:', e);
+        // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+        const existingIds = new Set(
+            this._texts
+                .filter(item => item.text.symbolKey === symbolKey)
+                .map(item => item.text.id)
+        );
+        
+        const newRecordIds = new Set(textRecords.map(t => t.id));
+        
+        const toDetach = this._texts.filter(item => 
+            item.text.symbolKey === symbolKey && !newRecordIds.has(item.text.id)
+        );
+        
+        for (const item of toDetach) {
+            try { 
+                if (item.primitive && item.series) {
+                    item.series.detachPrimitive(item.primitive); 
                 }
+            } catch(e) {
+                console.warn('Error detaching old primitive:', e);
             }
-            
-            this._texts = this._texts.filter(item => 
-                item.text.symbolKey !== symbolKey || newRecordIds.has(item.text.id)
-            );
-
-            // Создаем только новые
-            const newTexts = [];
-            for (const rec of textRecords) {
-                try {
-                    // Если уже существует — обновляем данные
-                    const existing = this._texts.find(item => item.text.id === rec.id);
-                    if (existing) {
-                        existing.text.text = rec.data.text;
-                        existing.text.price = rec.data.price;
-                        existing.text.time = rec.data.time;
-                        existing.text.options = { ...existing.text.options, ...rec.data.options };
-                        continue;
-                    }
-
-                    const textDrawing = new TextDrawing(rec.data.text, rec.data.time, rec.data.price, rec.data.options);
-                    textDrawing.id = rec.id;
-                    textDrawing.symbolKey = rec.symbolKey;
-                    textDrawing.symbol = rec.data.symbol;
-                    textDrawing.exchange = rec.data.exchange;
-                    textDrawing.marketType = rec.data.marketType;
-                    textDrawing.anchorTime = rec.data.anchorTime || rec.data.time;
-                    textDrawing.timeframeVisibility = rec.data.timeframeVisibility || {};
-                    textDrawing.anchorCandle = rec.data.anchorCandle || null;
-                    
-                    const primitive = new TextPrimitive(textDrawing, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    newTexts.push({ text: textDrawing, primitive, series });
-                } catch (e) { 
-                    console.warn('Failed to load text:', rec.id, e); 
-                }
-            }
-
-            this._texts.push(...newTexts);
-            this._requestRedraw();
-            console.log(`✅ Loaded ${textRecords.length} texts for ${symbolKey}`);
-        } catch (error) {
-            console.error('❌ loadFromData failed:', error);
-            throw error;
         }
-    }
+        
+        this._texts = this._texts.filter(item => 
+            item.text.symbolKey !== symbolKey || newRecordIds.has(item.text.id)
+        );
 
+        const newTexts = [];
+        for (const rec of textRecords) {
+            try {
+                const existing = this._texts.find(item => item.text.id === rec.id);
+                if (existing) {
+                    existing.text.text = rec.data.text;
+                    existing.text.price = rec.data.price;
+                    existing.text.time = rec.data.time;
+                    existing.text.options = { ...existing.text.options, ...rec.data.options };
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    existing.text.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    continue;
+                }
+
+                const textDrawing = new TextDrawing(rec.data.text, rec.data.time, rec.data.price, rec.data.options);
+                textDrawing.id = rec.id;
+                textDrawing.symbolKey = rec.symbolKey;
+                textDrawing.symbol = rec.data.symbol;
+                textDrawing.exchange = rec.data.exchange;
+                textDrawing.marketType = rec.data.marketType;
+                textDrawing.anchorTime = rec.data.anchorTime || rec.data.time;
+                
+                // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                textDrawing.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                
+                textDrawing.anchorCandle = rec.data.anchorCandle || null;
+                
+                const primitive = new TextPrimitive(textDrawing, this._chartManager);
+                series.attachPrimitive(primitive);
+                newTexts.push({ text: textDrawing, primitive, series });
+            } catch (e) { 
+                console.warn('Failed to load text:', rec.id, e); 
+            }
+        }
+
+        this._texts.push(...newTexts);
+        this._requestRedraw();
+        console.log(`✅ Loaded ${textRecords.length} texts for ${symbolKey}`);
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
+    }
+}
     _toBitmapCoords(cssX, cssY) {
         return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
     }
