@@ -2708,11 +2708,15 @@ setTimeout(function() {
     var btn = document.getElementById('autoScaleButton');
     if (btn && window.chartManagerInstance) {
         btn.onclick = function() {
-            window.chartManagerInstance.autoScale();
+            // Вызываем НОВУЮ функцию вместо autoScale()
+            window.chartManagerInstance.manualAutoScale();
+            
+            // Визуальная обратная связь
+            btn.classList.toggle('active');
         };
-        console.log('Кнопка A прикручена');
+        console.log('✅ Кнопка A прикручена к manualAutoScale()');
     } else {
-        console.log('Не нашли кнопку или менеджер');
+        console.log('❌ Не нашли кнопку или менеджер');
     }
 }, 1000);
 </script>
