@@ -2851,3 +2851,8 @@ input:checked + .slider:before { transform: translateX(22px); }
     cursor: default !important;
 }
 
+#chart-container {
+    touch-action: none; /* Отключаем системный скролл на тачпадах, передаем контроль графику */
+    will-change: transform; /* Говорим видеокарте выделить память под этот блок */
+    overflow: hidden; /* Гарантируем, что ничего не вылезет за края при резких движениях */
+}
