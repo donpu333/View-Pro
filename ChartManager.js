@@ -543,7 +543,7 @@ class ChartManager {
         this.scheduleDrawingsUpdate(true);
     }, { passive: true });
 }
-    setupEventListeners() {
+       setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
@@ -574,6 +574,24 @@ class ChartManager {
                 
                 this.scheduleDrawingsUpdate(true);
             }, 100);
+        });
+
+        // ✅ Мгновенный сброс кроссхайра при уходе мыши (убирает "зависание" линии)
+        this.chartContainer.addEventListener('mouseleave', () => {
+            // Мгновенно прячем оверлей без задержек
+            if (this.overlay) this.overlay.classList.remove('visible');
+            this._latestCrosshairData = null;
+            
+            // Отменяем ожидающий кадр, если мышь ушла до его отрисовки
+            if (this._crosshairRafId) {
+                cancelAnimationFrame(this._crosshairRafId);
+                this._crosshairRafId = null;
+            }
+            
+            // Очищаем кроссхайр внутри самого графика
+            try {
+                this.chart.clearCrosshairPosition();
+            } catch(e) {}
         });
     }
     
@@ -1023,67 +1041,73 @@ class ChartManager {
         ].filter(Boolean));
     }
 
-    // 🔥 O(1) поиск через Map
- onCrosshairMove(param) {
-    if (!this.overlay) {
-        this.overlay = safeElement('candleStatsOverlay');
-    }
-    
-    if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
-        if (this.overlay) this.overlay.classList.remove('visible');
-        return;
-    }
-
-    // Берем данные напрямую из активной серии графика
-    const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-    const candle = param.seriesData.get(activeSeries);
-    
-    if (candle) {
-        const isBullish = candle.close >= candle.open;
-        const bullishClass = isBullish ? 'bullish' : 'bearish';
+       onCrosshairMove(param) {
+        if (!this.overlay) {
+            this.overlay = safeElement('candleStatsOverlay');
+        }
         
-        if (this.openEl) {
-            this.openEl.textContent = Utils.formatPrice(candle.open);
-            this.openEl.className = `stat-value ${bullishClass}`;
+        if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
+            if (this.overlay) this.overlay.classList.remove('visible');
+            this._latestCrosshairData = null;
+            return;
         }
-        if (this.highEl) {
-            this.highEl.textContent = Utils.formatPrice(candle.high);
-            this.highEl.className = `stat-value ${bullishClass}`;
-        }
-        if (this.lowEl) {
-            this.lowEl.textContent = Utils.formatPrice(candle.low);
-            this.lowEl.className = `stat-value ${bullishClass}`;
-        }
-        if (this.closeEl) {
-            this.closeEl.textContent = Utils.formatPrice(candle.close);
-            this.closeEl.className = `stat-value ${bullishClass}`;
-        }
-        if (this.changeEl) {
+
+        // 1. СНАЧАЛА собираем данные в память (без обращения к DOM - работает мгновенно)
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const candle = param.seriesData.get(activeSeries);
+        
+        if (candle) {
+            const isBullish = candle.close >= candle.open;
+            const bullishClass = isBullish ? 'bullish' : 'bearish';
             const change = Utils.calculateChange(candle.open, candle.close);
             const changeNum = parseFloat(change);
-            this.changeEl.textContent = (changeNum > 0 ? '+' : '') + change + '%';
-            this.changeEl.className = `change-value ${bullishClass}`;
-        }
-        
-        // Объем LWC не отдает в seriesData для свечей, поэтому оставляем Map только для него
-        const volumeEl = document.getElementById('volumeValue');
-        if (volumeEl) {
+            
+            // Объем LWC не отдает в seriesData, поэтому берем через O(1) Map
             const index = this._candleTimeMap.get(param.time);
             const vol = index !== undefined ? this.chartData[index].volume : 0;
-            volumeEl.textContent = Utils.formatVolume(vol);
-            volumeEl.className = `stat-value ${bullishClass}`;
+
+            this._latestCrosshairData = {
+                open: Utils.formatPrice(candle.open),
+                high: Utils.formatPrice(candle.high),
+                low: Utils.formatPrice(candle.low),
+                close: Utils.formatPrice(candle.close),
+                change: (changeNum > 0 ? '+' : '') + change + '%',
+                volume: Utils.formatVolume(vol),
+                cls: bullishClass,
+                visible: true
+            };
+        } else {
+            this._latestCrosshairData = { visible: false };
         }
         
-        if (this.overlay) {
-            this.overlay.classList.add('visible');
-        }
-    } else {
-        if (this.overlay) {
-            this.overlay.classList.remove('visible');
+        // 2. ПОТОМ просим браузер обновить DOM строго в момент отрисовки кадра (60 FPS)
+        if (!this._crosshairRafId) {
+            this._crosshairRafId = requestAnimationFrame(() => {
+                this._applyCrosshairDOM();
+                this._crosshairRafId = null;
+            });
         }
     }
-}
 
+    // Отдельный метод для безопасного обновления DOM
+    _applyCrosshairDOM() {
+        const data = this._latestCrosshairData;
+        if (!data || !data.visible) {
+            if (this.overlay) this.overlay.classList.remove('visible');
+            return;
+        }
+
+        if (this.openEl) { this.openEl.textContent = data.open; this.openEl.className = `stat-value ${data.cls}`; }
+        if (this.highEl) { this.highEl.textContent = data.high; this.highEl.className = `stat-value ${data.cls}`; }
+        if (this.lowEl) { this.lowEl.textContent = data.low; this.lowEl.className = `stat-value ${data.cls}`; }
+        if (this.closeEl) { this.closeEl.textContent = data.close; this.closeEl.className = `stat-value ${data.cls}`; }
+        if (this.changeEl) { this.changeEl.textContent = data.change; this.changeEl.className = `change-value ${data.cls}`; }
+        
+        const volumeEl = document.getElementById('volumeValue');
+        if (volumeEl) { volumeEl.textContent = data.volume; volumeEl.className = `stat-value ${data.cls}`; }
+        
+        if (this.overlay) this.overlay.classList.add('visible');
+    }
     updateRealPrice(price) {
         this._syncPriceLine(price);
     }
