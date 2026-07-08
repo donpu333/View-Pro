@@ -1101,24 +1101,51 @@ this._debouncedSetData = this._debouncedSatData.bind(this);
     }
 
     // Отдельный метод для безопасного обновления DOM
-    _applyCrosshairDOM() {
-        const data = this._latestCrosshairData;
-        if (!data || !data.visible) {
-            if (this.overlay) this.overlay.classList.remove('visible');
-            return;
-        }
-
-        if (this.openEl) { this.openEl.textContent = data.open; this.openEl.className = `stat-value ${data.cls}`; }
-        if (this.highEl) { this.highEl.textContent = data.high; this.highEl.className = `stat-value ${data.cls}`; }
-        if (this.lowEl) { this.lowEl.textContent = data.low; this.lowEl.className = `stat-value ${data.cls}`; }
-        if (this.closeEl) { this.closeEl.textContent = data.close; this.closeEl.className = `stat-value ${data.cls}`; }
-        if (this.changeEl) { this.changeEl.textContent = data.change; this.changeEl.className = `change-value ${data.cls}`; }
-        
-        const volumeEl = document.getElementById('volumeValue');
-        if (volumeEl) { volumeEl.textContent = data.volume; volumeEl.className = `stat-value ${data.cls}`; }
-        
-        if (this.overlay) this.overlay.classList.add('visible');
+   _applyCrosshairDOM() {
+    const data = this._latestCrosshairData;
+    if (!data || !data.visible) {
+        if (this.overlay) this.overlay.classList.remove('visible');
+        return;
     }
+
+    // 🔥 БЕРЁМ ЦВЕТА ИЗ CONFIG (учитывает пользовательские настройки)
+    const bullishColor = this.bullishColor || CONFIG?.colors?.bullish || '#26a69a';
+    const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
+    const color = data.cls === 'bullish' ? bullishColor : bearishColor;
+
+    // Применяем цвет ко всем элементам
+    const elements = [
+        { el: this.openEl, defaultClass: 'stat-value' },
+        { el: this.highEl, defaultClass: 'stat-value' },
+        { el: this.lowEl, defaultClass: 'stat-value' },
+        { el: this.closeEl, defaultClass: 'stat-value' },
+        { el: this.changeEl, defaultClass: 'change-value' }
+    ];
+
+    elements.forEach(({ el, defaultClass }) => {
+        if (el) {
+            el.className = `${defaultClass} ${data.cls}`;
+            el.style.color = color; // 🔥 Устанавливаем цвет напрямую
+        }
+    });
+
+    // Значения
+    if (this.openEl) this.openEl.textContent = data.open;
+    if (this.highEl) this.highEl.textContent = data.high;
+    if (this.lowEl) this.lowEl.textContent = data.low;
+    if (this.closeEl) this.closeEl.textContent = data.close;
+    if (this.changeEl) this.changeEl.textContent = data.change;
+
+    // Объём (отдельно, т.к. id другой)
+    const volumeEl = document.getElementById('volumeValue');
+    if (volumeEl) {
+        volumeEl.textContent = data.volume;
+        volumeEl.className = `stat-value ${data.cls}`;
+        volumeEl.style.color = color;
+    }
+
+    if (this.overlay) this.overlay.classList.add('visible');
+}
     updateRealPrice(price) {
         this._syncPriceLine(price);
     }
