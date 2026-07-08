@@ -289,7 +289,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._isUpdating = false;
         this._updateTimeout = null;
         this._fallbackTimer = null;
-        this._currentPeriod = this.settings.atrPeriod;  // всегда основной период, как в Pine Script
+        this._currentApiInterval = '1h';
         
         this._setupEventHandlers();
         this._initTableDOM();
@@ -302,36 +302,24 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const saved = localStorage.getItem(key);
             return saved ? JSON.parse(saved) : {};
         } catch (e) {
-            console.warn('ATR Multi: ошибка загрузки настроек', e);
             return {};
         }
     }
 
     _saveSettings() {
         try {
-            const key = 'atr_multi_settings';
-            localStorage.setItem(key, JSON.stringify(this.settings));
-            console.log('✅ ATR Multi: настройки сохранены');
-        } catch (e) {
-            console.warn('ATR Multi: ошибка сохранения настроек', e);
-        }
+            localStorage.setItem('atr_multi_settings', JSON.stringify(this.settings));
+        } catch (e) {}
     }
     
-    get visible() {
-        return this._visible;
-    }
+    get visible() { return this._visible; }
     
     set visible(value) {
         this._visible = value;
         this.settings.showTable = value;
-        
         const table = document.getElementById('multiatr-full-table');
-        if (table) {
-            table.style.display = value && this.settings.showTable ? 'block' : 'none';
-        }
-        
+        if (table) table.style.display = value && this.settings.showTable ? 'block' : 'none';
         this._saveSettings();
-        
         if (this.manager) this.manager._saveIndicators();
     }
 
@@ -382,9 +370,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         document.getElementById('multiatr-close').addEventListener('click', () => {
             if (this.manager) {
                 const index = this.manager.activeIndicators?.indexOf(this);
-                if (index !== undefined && index !== -1) {
-                    this.manager.removeIndicator(index);
-                }
+                if (index !== undefined && index !== -1) this.manager.removeIndicator(index);
             }
         });
         body.addEventListener('click', (e) => this._handleCopy(e));
@@ -402,113 +388,79 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         e.stopPropagation();
         const value = btn.getAttribute('data-value');
         if (!value || value === '0') return;
-        
         navigator.clipboard.writeText(value).then(() => {
             const originalText = btn.innerText;
             btn.innerText = '✅';
             btn.style.color = '#22E00F';
-            setTimeout(() => {
-                btn.innerText = originalText;
-                btn.style.color = '#888';
-            }, 1000);
+            setTimeout(() => { btn.innerText = originalText; btn.style.color = '#888'; }, 1000);
         }).catch(() => {});
     }
 
-        _setupDrag(handle, element) {
-        let isDragging = false;
-        let startX, startY, initialLeft, initialTop;
-
+    _setupDrag(handle, element) {
+        let isDragging = false, startX, startY, initialLeft, initialTop;
         handle.addEventListener('mousedown', (e) => {
             if (e.target.id === 'multiatr-toggle' || e.target.id === 'multiatr-close') return;
-            isDragging = true;
-            startX = e.clientX;
-            startY = e.clientY;
-            const rect = element.getBoundingClientRect();
-            initialLeft = rect.left;
-            initialTop = rect.top;
-            element.style.transition = 'none';
-            element.style.right = 'auto';
-            element.style.bottom = 'auto';
+            isDragging = true; startX = e.clientX; startY = e.clientY;
+            const rect = element.getBoundingClientRect(); initialLeft = rect.left; initialTop = rect.top;
+            element.style.transition = 'none'; element.style.right = 'auto'; element.style.bottom = 'auto';
         });
-
-        // ✅ Сохраняем ссылки на функции
-        this._dragMoveHandler = (e) => {
-            if (!isDragging) return;
-            e.preventDefault();
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-            element.style.left = `${initialLeft + dx}px`;
-            element.style.top = `${initialTop + dy}px`;
-        };
-
-        this._dragUpHandler = () => {
-            if (isDragging) {
-                isDragging = false;
-                element.style.transition = '';
-            }
-        };
-
+        this._dragMoveHandler = (e) => { if (!isDragging) return; e.preventDefault(); element.style.left = `${initialLeft + e.clientX - startX}px`; element.style.top = `${initialTop + e.clientY - startY}px`; };
+        this._dragUpHandler = () => { if (isDragging) { isDragging = false; element.style.transition = ''; } };
         document.addEventListener('mousemove', this._dragMoveHandler);
         document.addEventListener('mouseup', this._dragUpHandler);
     }
 
-    calculateTrueRange(high, low, prevClose, mode) {
-        if (mode === 'True Range') {
-            return Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
-        }
-        return high - low;
+    _normalizeInterval(interval) {
+        if (!interval) return '1h';
+        const i = interval.toString().toLowerCase().trim();
+        if (['1', '1m', 'm1'].includes(i)) return '1m';
+        if (['3', '3m', 'm3'].includes(i)) return '3m';
+        if (['5', '5m', 'm5'].includes(i)) return '5m';
+        if (['15', '15m', 'm15'].includes(i)) return '15m';
+        if (['30', '30m', 'm30'].includes(i)) return '30m';
+        if (['60', '1h', 'h1', 'h'].includes(i)) return '1h';
+        if (['120', '2h', 'h2'].includes(i)) return '2h';
+        if (['240', '4h', 'h4'].includes(i)) return '4h';
+        if (['360', '6h', 'h6'].includes(i)) return '6h';
+        if (['720', '12h', 'h12'].includes(i)) return '12h';
+        if (['d', '1d', 'day'].includes(i)) return '1d';
+        if (['w', '1w', 'week'].includes(i)) return '1w';
+        return '1h';
     }
-    
+
+    _displayInterval(apiInterval) {
+        const map = { '1m': '1M', '3m': '3M', '5m': '5M', '15m': '15M', '30m': '30M', '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H', '1d': '1D', '1w': '1W' };
+        return map[apiInterval] || apiInterval.toUpperCase();
+    }
+
     calculateCandlesFromHours(hours, minuteTFStr) {
         return Math.max(Math.floor(hours * 60 / parseInt(minuteTFStr)), 1);
     }
     
     computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
-        if (!data || data.length < period + 1) {
-            return { 
-                atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
-                trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, 
-                isValid: true, isAnomaly: false, anomalyType: null 
-            };
-        }
+        if (!data || data.length < period + 1) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
 
-        // Построение массива диапазонов с учётом rangeMode (True Range / High-Low)
         const ranges = [];
         for (let i = 0; i < data.length; i++) {
             if (rangeMode === 'True Range' && i > 0) {
                 const prevClose = data[i - 1].close;
-                ranges.push(Math.max(
-                    data[i].high - data[i].low,
-                    Math.abs(data[i].high - prevClose),
-                    Math.abs(data[i].low - prevClose)
-                ));
+                ranges.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - prevClose), Math.abs(data[i].low - prevClose)));
             } else {
                 ranges.push(data[i].high - data[i].low);
             }
         }
 
-        if (ranges.length < period) {
-            return { 
-                atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
-                trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, 
-                isValid: true, isAnomaly: false, anomalyType: null 
-            };
-        }
+        if (ranges.length < period) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
 
         const rma = (src, len) => {
             const result = new Array(src.length).fill(0);
             let sum = 0;
-            for (let i = 0; i < len; i++) {
-                sum += src[i];
-            }
+            for (let i = 0; i < len; i++) sum += src[i];
             result[len - 1] = sum / len;
-            for (let i = len; i < src.length; i++) {
-                result[i] = (src[i] + (len - 1) * result[i - 1]) / len;
-            }
+            for (let i = len; i < src.length; i++) result[i] = (src[i] + (len - 1) * result[i - 1]) / len;
             return result;
         };
 
-        // Если фильтр выключен – простой расчёт
         if (!useFilter) {
             const atrArray = rma(ranges, period);
             const lastIdx = ranges.length - 1;
@@ -516,79 +468,38 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const lastCandle = data[lastIdx];
             const dist = Math.abs(lastCandle.close - lastCandle.open);
             const prog = atr > 0 ? (dist / atr) * 100 : 0;
-            return {
-                atr,
-                natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
-                progress: Math.min(prog, 100),
-                remaining: Math.max(0, 100 - prog),
-                remainingPoints: Math.max(0, atr - dist),
-                trueRange: ranges[lastIdx],
-                rangeRatio: (lastIdx > 0 && atrArray[lastIdx - 1] > 0) 
-                    ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100 
-                    : 0,
-                upperBound: 0,
-                lowerBound: 0,
-                isValid: true,
-                isAnomaly: false,
-                anomalyType: null
-            };
+            return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: Math.min(prog, 100), remaining: Math.max(0, 100 - prog), remainingPoints: Math.max(0, atr - dist), trueRange: ranges[lastIdx], rangeRatio: (lastIdx > 0 && atrArray[lastIdx - 1] > 0) ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100 : 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
         }
 
-        // === ИСПРАВЛЕНИЕ: ВСЕГДА ВЫЧИСЛЯЕМ ИСХОДНЫЙ RMA (как tfRobustATR) ===
         const rawRMA = rma(ranges, period);
-
         const filteredRanges = [...ranges];
         const filteredATR = new Array(ranges.length).fill(0);
         
-        // Инициализация первых period элементов
         for (let i = 0; i < period; i++) {
             filteredRanges[i] = ranges[i];
-            if (i === period - 1) {
-                let sum = 0;
-                for (let j = 0; j < period; j++) sum += ranges[j];
-                filteredATR[i] = sum / period;
-            } else if (i > 0) {
-                let sum = 0;
-                for (let j = 0; j <= i; j++) sum += ranges[j];
-                filteredATR[i] = sum / (i + 1);
-            } else {
-                filteredATR[i] = ranges[i];
-            }
+            if (i === period - 1) { let sum = 0; for (let j = 0; j < period; j++) sum += ranges[j]; filteredATR[i] = sum / period; }
+            else if (i > 0) { let sum = 0; for (let j = 0; j <= i; j++) sum += ranges[j]; filteredATR[i] = sum / (i + 1); }
+            else filteredATR[i] = ranges[i];
         }
         
-        let upperBound = 0;
-        let lowerBound = 0;
+        let upperBound = 0, lowerBound = 0;
         
         for (let i = period; i < ranges.length; i++) {
             const currentRange = ranges[i];
             const prevRawATR = rawRMA[i - 1];
-            
             if (filterType === 'Adaptive') {
                 const window = ranges.slice(Math.max(0, i - period), i);
                 const mean = window.reduce((a, b) => a + b, 0) / window.length;
                 const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
                 const stdDev = Math.sqrt(variance);
-                
-                // 🔥 ИСПРАВЛЕНО: множитель 3.0 как в Pine Script
                 upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 3.0);
                 lowerBound = Math.max(prevRawATR - stdDev * devFactor, prevRawATR * 0.3);
             } else {
                 upperBound = prevRawATR * fixedMult;
-                // 🔥 ИСПРАВЛЕНО: только /fixedMult, без искусственного *0.1
                 lowerBound = Math.max(prevRawATR / fixedMult, 0);
             }
             
-            const isLargeAnomaly = currentRange > upperBound;
-            const isSmallAnomaly = currentRange < lowerBound;
-            const isAnomaly = isLargeAnomaly || isSmallAnomaly;
-            
-            if (isAnomaly) {
-                // 🔥 ИСПРАВЛЕНО: подставляем значение из rawRMA
-                filteredRanges[i] = prevRawATR;
-            } else {
-                filteredRanges[i] = currentRange;
-            }
-            
+            filteredRanges[i] = (currentRange > upperBound || currentRange < lowerBound) ? prevRawATR : currentRange;
             filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
         }
         
@@ -597,73 +508,67 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const lastCandle = data[lastIdx];
         const lastRange = ranges[lastIdx];
         const prevATR = lastIdx > 0 ? filteredATR[lastIdx - 1] : atr;
-        
-        const isCurrentlyLarge = lastRange > upperBound;
-        const isCurrentlySmall = lastRange < lowerBound;
-        const isCurrentlyAnomaly = isCurrentlyLarge || isCurrentlySmall;
-        
+        const isCurrentlyAnomaly = lastRange > upperBound || lastRange < lowerBound;
         const distFromOpen = Math.abs(lastCandle.close - lastCandle.open);
         const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
         
-        return {
-            atr,
-            natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
-            progress: Math.min(progress, 100),
-            remaining: Math.max(0, 100 - progress),
-            remainingPoints: Math.max(0, atr - distFromOpen),
-            trueRange: lastRange,
-            rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0,
-            upperBound,
-            lowerBound,
-            isValid: !isCurrentlyAnomaly,
-            isAnomaly: isCurrentlyAnomaly,
-            anomalyType: isCurrentlyLarge ? 'LARGE' : (isCurrentlySmall ? 'SMALL' : null)
-        };
+        return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: Math.min(progress, 100), remaining: Math.max(0, 100 - progress), remainingPoints: Math.max(0, atr - distFromOpen), trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
     }
     
     async updateAllMetrics() {
         if (this._isUpdating) return;
         this._isUpdating = true;
-        
-        if (this._updateTimeout) {
-            clearTimeout(this._updateTimeout);
-        }
+        if (this._updateTimeout) clearTimeout(this._updateTimeout);
 
         try {
             const chartManager = this.manager?.chartManager;
-            if (!chartManager?.chartData?.length) {
-                console.warn('ATR Multi: нет данных графика');
-                return;
+            if (!chartManager?.chartData?.length) return;
+
+            const rawInterval = chartManager.currentInterval || '60';
+            this._currentApiInterval = this._normalizeInterval(rawInterval);
+
+            // 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Хранилище промисов, чтобы не делать 2 одинаковых запроса
+            const apiRequests = {};
+
+            // Функция: если запрос с такими параметрами уже есть — просто копирует результат
+            const fetchOnce = (reqKey, cacheKey, tf, period) => {
+                if (!apiRequests[reqKey]) {
+                    apiRequests[reqKey] = this._fetchAndCompute(cacheKey, tf, period);
+                } else {
+                    // Если ключ совпал (⭐ и 1H имеют одинаковые ТФ и период),
+                    // мы не делаем новый запрос, а просто копируем данные из первого
+                    apiRequests[reqKey] = apiRequests[reqKey].then(() => {
+                        if (cacheKey !== 'current') {
+                            this.cache[cacheKey] = { ...this.cache.current };
+                        }
+                    });
+                }
+            };
+
+            // 1. Строка ⭐ (текущий ТФ графика)
+            const starKey = `${this._currentApiInterval}_${this.settings.atrPeriod}`;
+            fetchOnce(starKey, 'current', this._currentApiInterval, this.settings.atrPeriod);
+            
+            // 2. Остальные строки
+            if (this.settings.showWeekTF) {
+                fetchOnce(`1w_${this.settings.weekATRPeriod}`, 'week', '1w', this.settings.weekATRPeriod);
+            }
+            if (this.settings.showDayTF) {
+                fetchOnce(`1d_${this.settings.dayATRPeriod}`, 'day', '1d', this.settings.dayATRPeriod);
+            }
+            if (this.settings.showHourTF) {
+                fetchOnce(`${this.settings.hourTF}h_${this.settings.hourATRPeriod}`, 'hour', this.settings.hourTF + 'h', this.settings.hourATRPeriod);
+            }
+            if (this.settings.showMinuteTF) {
+                const p = this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF);
+                fetchOnce(`${this.settings.minuteTF}m_${p}`, 'minute', this.settings.minuteTF + 'm', p);
+            }
+            if (this.settings.showMinute1TF) {
+                const p = this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF);
+                fetchOnce(`${this.settings.minute1TF}m_${p}`, 'minute1', this.settings.minute1TF + 'm', p);
             }
 
-            // 🔥 ИСПРАВЛЕНО: для текущего графика всегда используем основной период atrPeriod (как в Pine Script)
-            const currentPeriod = this.settings.atrPeriod;
-            this._currentPeriod = currentPeriod;
-            
-            // 🔥 ИСПРАВЛЕНО: удаляем последний (незакрытый) бар, чтобы считать только по закрытым свечам
-            const currentData = chartManager.chartData;
-            const closedData = currentData.length > 1 ? currentData.slice(0, -1) : currentData;
-            
-            this.cache.current = this.computeATRMetrics(
-                closedData,
-                currentPeriod,
-                this.settings.rangeMode,
-                this.settings.useFilter,
-                this.settings.filterType,
-                this.settings.devFactor,
-                this.settings.fixedMult
-            );
-
-            const tasks = [];
-            if (this.settings.showWeekTF) tasks.push(this._fetchAndCompute('week', '1w', this.settings.weekATRPeriod));
-            if (this.settings.showDayTF) tasks.push(this._fetchAndCompute('day', '1d', this.settings.dayATRPeriod));
-            if (this.settings.showHourTF) tasks.push(this._fetchAndCompute('hour', this.settings.hourTF + 'h', this.settings.hourATRPeriod));
-            if (this.settings.showMinuteTF) tasks.push(this._fetchAndCompute('minute', this.settings.minuteTF + 'm', 
-                this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF)));
-            if (this.settings.showMinute1TF) tasks.push(this._fetchAndCompute('minute1', this.settings.minute1TF + 'm', 
-                this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF)));
-
-            await Promise.allSettled(tasks);
+            await Promise.allSettled(Object.values(apiRequests));
             this.renderFullTable();
         } catch (e) {
             console.error('ATR Multi error:', e);
@@ -677,19 +582,13 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         try {
             const data = await this.fetchDataForTF(tf, limit);
             if (data && data.length >= period + 1) {
-                // Данные из API уже закрытые свечи
-                const m = this.computeATRMetrics(
-                    data, period, this.settings.rangeMode, 
-                    this.settings.useFilter, this.settings.filterType, 
-                    this.settings.devFactor, this.settings.fixedMult
-                );
-                this.cache[cacheKey] = { 
-                    atr: m.atr, natr: m.natr, 
-                    progress: m.progress, remaining: m.remaining, 
-                    remainingPoints: m.remainingPoints 
-                };
-            } else {
-                console.warn(`ATR Multi: недостаточно данных для ${tf} (получено ${data?.length || 0}, нужно ${period + 1})`);
+                const m = this.computeATRMetrics(data, period, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
+                
+                if (cacheKey === 'current') {
+                    this.cache[cacheKey] = m;
+                } else {
+                    this.cache[cacheKey] = { atr: m.atr, natr: m.natr, progress: m.progress, remaining: m.remaining, remainingPoints: m.remainingPoints };
+                }
             }
         } catch (e) {
             console.error(`ATR Multi: ошибка загрузки ${tf}:`, e);
@@ -699,13 +598,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     _setupEventHandlers() {
         const chartManager = this.manager?.chartManager;
         if (!chartManager) return;
-        
-        if (chartManager._subscribeToSymbolChange) {
-            chartManager._subscribeToSymbolChange(() => {
-                setTimeout(() => this.updateAllMetrics(), 500);
-            });
-        }
-        
+        if (chartManager._subscribeToSymbolChange) chartManager._subscribeToSymbolChange(() => setTimeout(() => this.updateAllMetrics(), 500));
         if (chartManager.on && typeof chartManager.on === 'function') {
             chartManager.on('dataUpdate', () => this._onChartDataUpdate());
         } else {
@@ -714,49 +607,29 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
     
     _onChartDataUpdate() {
-        if (this._updateTimeout) {
-            clearTimeout(this._updateTimeout);
-        }
-        
+        if (this._updateTimeout) clearTimeout(this._updateTimeout);
         this._updateTimeout = setTimeout(() => {
             const data = this.manager?.chartManager?.chartData;
             if (!data?.length) return;
-            
             const lastTime = data[data.length - 1].time;
-            if (lastTime !== this._lastCandleTime) {
-                this._lastCandleTime = lastTime;
-                this.updateAllMetrics();
-            }
+            if (lastTime !== this._lastCandleTime) { this._lastCandleTime = lastTime; this.updateAllMetrics(); }
         }, 100);
     }
     
     _startFallbackTimer() {
         if (this._fallbackTimer) return;
-        
         let lastTime = 0;
         this._fallbackTimer = setInterval(() => {
             const data = this.manager?.chartManager?.chartData;
-            if (data?.length && data[data.length - 1].time !== lastTime) {
-                lastTime = data[data.length - 1].time;
-                this.updateAllMetrics();
-            }
+            if (data?.length && data[data.length - 1].time !== lastTime) { lastTime = data[data.length - 1].time; this.updateAllMetrics(); }
         }, 5000);
     }
 
-      destroy() {
-        if (this._fallbackTimer) {
-            clearInterval(this._fallbackTimer);
-            this._fallbackTimer = null;
-        }
-        if (this._updateTimeout) {
-            clearTimeout(this._updateTimeout);
-            this._updateTimeout = null;
-        }
-        
-        // ✅ Удаляем глобальные слушатели перетаскивания
+    destroy() {
+        if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
+        if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
         if (this._dragMoveHandler) document.removeEventListener('mousemove', this._dragMoveHandler);
         if (this._dragUpHandler) document.removeEventListener('mouseup', this._dragUpHandler);
-        
         const table = document.getElementById('multiatr-full-table');
         if (table) table.remove();
         this._removeAllSeries();
@@ -766,14 +639,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     async fetchDataForTF(tf, limit) {
         const chartManager = this.manager?.chartManager;
         if (!chartManager) return [];
-        
         const { currentSymbol: symbol, currentExchange: exchange, currentMarketType: marketType } = chartManager;
-        
-        const bybitIntervalMap = { 
-            '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', 
-            '1h': '60', '2h': '120', '4h': '240', '6h': '360', '8h': '480', '12h': '720', 
-            '1d': 'D', '1w': 'W' 
-        };
+        const bybitIntervalMap = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '2h': '120', '4h': '240', '6h': '360', '8h': '480', '12h': '720', '1d': 'D', '1w': 'W' };
         
         let url;
         if (exchange === 'binance') {
@@ -787,57 +654,29 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
-            
             const response = await fetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
-            
             if (!response.ok) return [];
-            
             const data = await response.json();
             
             if (exchange === 'binance') {
-                return Array.isArray(data) ? data.map(item => ({
-                    time: Math.floor(item[0] / 1000), 
-                    open: parseFloat(item[1]), 
-                    high: parseFloat(item[2]),
-                    low: parseFloat(item[3]), 
-                    close: parseFloat(item[4]),
-                    volume: parseFloat(item[5])
-                })) : [];
+                return Array.isArray(data) ? data.map(item => ({ time: Math.floor(item[0] / 1000), open: parseFloat(item[1]), high: parseFloat(item[2]), low: parseFloat(item[3]), close: parseFloat(item[4]), volume: parseFloat(item[5]) })) : [];
             } else {
                 if (data.retCode !== 0 || !data.result?.list) return [];
-                return data.result.list.reverse().map(item => ({
-                    time: Math.floor(parseInt(item[0]) / 1000), 
-                    open: parseFloat(item[1]),
-                    high: parseFloat(item[2]), 
-                    low: parseFloat(item[3]), 
-                    close: parseFloat(item[4]),
-                    volume: parseFloat(item[5] || 0)
-                }));
+                return data.result.list.reverse().map(item => ({ time: Math.floor(parseInt(item[0]) / 1000), open: parseFloat(item[1]), high: parseFloat(item[2]), low: parseFloat(item[3]), close: parseFloat(item[4]), volume: parseFloat(item[5] || 0) }));
             }
-        } catch (e) {
-            if (e.name === 'AbortError') {
-                console.warn(`ATR Multi: таймаут запроса для ${tf}`);
-            }
-            return [];
-        }
+        } catch (e) { return []; }
     }
     
     renderFullTable() {
         const wrapper = document.getElementById('multiatr-full-table');
         const body = document.getElementById('multiatr-body');
         if (!wrapper || !body) return;
-        
-        if (!this.visible || !this.settings.showTable) {
-            wrapper.style.display = 'none';
-            return;
-        }
+        if (!this.visible || !this.settings.showTable) { wrapper.style.display = 'none'; return; }
         wrapper.style.display = 'block';
 
         const c = this.cache;
         const current = c.current;
-        const currentChartTF = this.manager?.chartManager?.currentInterval || '1h';
-        
         let decimals = 2;
         try {
             const chartData = this.manager?.chartManager?.chartData;
@@ -845,35 +684,24 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 const last = chartData[chartData.length - 1];
                 [last.open, last.high, last.low, last.close].forEach(p => {
                     const s = p.toString();
-                    if (s.includes('.')) {
-                        const d = s.split('.')[1].replace(/0+$/, '').length;
-                        if (d > decimals) decimals = d;
-                    }
+                    if (s.includes('.')) { const d = s.split('.')[1].replace(/0+$/, '').length; if (d > decimals) decimals = d; }
                 });
             }
         } catch(e) {}
         
         const formatATR = (v) => (!v || v === 0) ? '—' : v.toFixed(decimals);
-        const formatPercent = (v) => {
-            if (v === undefined || v === null || isNaN(v)) return '—%';
-            return v.toFixed(1) + '%';
-        };
+        const formatPercent = (v) => (v === undefined || v === null || isNaN(v)) ? '—%' : v.toFixed(1) + '%';
         const progressColor = (p) => p > 80 ? '#FF4444' : p > 50 ? '#FFA500' : '#FFFFFF';
         const remainingColor = (r) => r < 20 ? '#FF4444' : r < 50 ? '#FFA500' : '#FFFFFF';
         
         const modeText = this.settings.rangeMode === 'True Range' ? 'TR' : 'HL';
-        const filterText = this.settings.useFilter ? 
-            (this.settings.filterType === 'Adaptive' ? `A${this.settings.devFactor}` : `F${this.settings.fixedMult}`) : 'Off';
-        
+        const filterText = this.settings.useFilter ? (this.settings.filterType === 'Adaptive' ? `A${this.settings.devFactor}` : `F${this.settings.fixedMult}`) : 'Off';
         const headerTitle = wrapper.querySelector('#multiatr-header span:first-child');
-        if(headerTitle) headerTitle.innerText = `📊 ATR MULTI [ ${modeText} | ${filterText} | P: ${this.settings.atrPeriod} ]`;
+        if(headerTitle) headerTitle.innerText = `📊 ATR MULTI [ ${modeText} | ${filterText} ]`;
 
         const addRow = (label, color, atrValue, natr, progress, remaining) => {
             const atrFormatted = formatATR(atrValue);
-            const copyBtn = atrFormatted !== '—' ? 
-                `<button class="copy-atr-btn" data-value="${atrFormatted}" style="background:none;border:none;color:#888;cursor:pointer;font-size:10px;padding:0 2px;margin-left:4px;line-height:1;" title="Скопировать ATR">📋</button>` 
-                : '';
-                
+            const copyBtn = atrFormatted !== '—' ? `<button class="copy-atr-btn" data-value="${atrFormatted}" style="background:none;border:none;color:#888;cursor:pointer;font-size:10px;padding:0 2px;margin-left:4px;line-height:1;" title="Скопировать ATR">📋</button>` : '';
             return `<tr>
                 <td style="padding:3px 4px; color:${color}; white-space:nowrap;">${label}</td>
                 <td style="text-align:right; padding:3px 4px; color:#FFFFFF; font-weight: bold;">${atrFormatted}${copyBtn}</td>
@@ -900,8 +728,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         if (this.settings.showMinuteTF) rowsHTML += addRow(`${this.settings.minuteTF}M (${this.settings.minuteATRPeriod}ч)`, '#22E00F', c.minute.atr, c.minute.natr, c.minute.progress, c.minute.remaining);
         if (this.settings.showMinute1TF) rowsHTML += addRow(`${this.settings.minute1TF}M (${this.settings.minute1ATRPeriod}ч)`, '#00FFFF', c.minute1.atr, c.minute1.natr, c.minute1.progress, c.minute1.remaining);
         
+        const displayTF = this._displayInterval(this._currentApiInterval || '1h');
         rowsHTML += `<tr style="border-top:1px solid #2A2A4A;">`;
-        rowsHTML += addRow(`⭐ ${currentChartTF} (${this._currentPeriod})`, '#FFD700', current.atr, current.natr, current.progress, current.remaining);
+        rowsHTML += addRow(`⭐ ${displayTF} (${this.settings.atrPeriod})`, '#FFD700', current.atr, current.natr, current.progress, current.remaining);
         
         rowsHTML += `
             <tr style="border-top:1px solid #2A2A4A;">
@@ -912,10 +741,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             </tr>
         `;
         
-        if (this.settings.useFilter && current.upperBound > 0) {
-            rowsHTML += `<tr><td style="padding:2px 4px; color:#555; font-size:9px;" colspan="5">Фильтр: [ ${formatATR(current.lowerBound)} — ${formatATR(current.upperBound)} ]</td></tr>`;
-        }
-        
+        if (this.settings.useFilter && current.upperBound > 0) rowsHTML += `<tr><td style="padding:2px 4px; color:#555; font-size:9px;" colspan="5">Фильтр: [ ${formatATR(current.lowerBound)} — ${formatATR(current.upperBound)} ]</td></tr>`;
         if (current.isAnomaly) {
             const anomalyColor = current.anomalyType === 'LARGE' ? '#FF4444' : '#4488FF';
             const anomalyText = current.anomalyType === 'LARGE' ? 'БОЛЬШАЯ АНОМАЛИЯ' : 'МАЛЕНЬКАЯ АНОМАЛИЯ';
@@ -1021,22 +847,16 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this.settings.minute1ATRPeriod = parseInt(document.getElementById('minute1ATRPeriod')?.value || 1);
         
         this._saveSettings();
-        
         this.updateAllMetrics();
         super.applySettingsFromForm();
     }
     
-    _createEmptySeries() {
-        this._removeAllSeries();
-    }
+    _createEmptySeries() { this._removeAllSeries(); }
     
     updateSeriesData(data) {
         if (data && data.length) {
             const lastTime = data[data.length - 1].time;
-            if (lastTime !== this._lastCandleTime) {
-                this._lastCandleTime = lastTime;
-                this.updateAllMetrics();
-            }
+            if (lastTime !== this._lastCandleTime) { this._lastCandleTime = lastTime; this.updateAllMetrics(); }
         }
     }
 }
