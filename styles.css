@@ -2851,8 +2851,17 @@ input:checked + .slider:before { transform: translateX(22px); }
     cursor: default !important;
 }
 
+/* ✅ ПРАВИЛЬНО: Отключаем скролл самой страницы, но не трогаем канвас */
+body {
+    overflow: hidden;
+    touch-action: none;
+    /* Отключаем pull-to-refresh на мобильных */
+    overscroll-behavior: none;
+}
+
+/* Если у графика есть свой фоновый контейнер, оставляем его пустым, 
+   LWC сам управляет скроллом внутри своего canvas */
 #chart-container {
-    touch-action: none; /* Отключаем системный скролл на тачпадах, передаем контроль графику */
-    will-change: transform; /* Говорим видеокарте выделить память под этот блок */
-    overflow: hidden; /* Гарантируем, что ничего не вылезет за края при резких движениях */
+    position: relative;
+    /* Больше никаких will-change или overflow! */
 }
