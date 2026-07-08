@@ -2720,5 +2720,76 @@ setTimeout(function() {
     }
 }, 1000);
 </script>
+
+<script>
+(function() {
+    // Адаптация цвета текста OHLC под фон графика (БЕЗ изменения подложки)
+    function updateOHLCContrast() {
+        const bgColor = localStorage.getItem('chartBgColor') || '#000000';
+        const overlay = document.getElementById('candleStatsOverlay');
+        if (!overlay) return;
+        
+        // Определяем яркость фона (0 = чёрный, 255 = белый)
+        const hex = bgColor.replace('#', '');
+        const r = parseInt(hex.substr(0, 2), 16);
+        const g = parseInt(hex.substr(2, 2), 16);
+        const b = parseInt(hex.substr(4, 2), 16);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        
+        const isLight = brightness > 128;
+        
+        // Цвета для подписей (OTKP, MAKC, МИН, ЗАКР, VOL)
+        const labelColor = isLight ? '#333333' : '#B0B0B0';
+        
+        // Тень — универсальная, работает с любым цветом букв
+        const shadow = isLight 
+            ? '0 0 3px rgba(255,255,255,0.9), 1px 1px 2px rgba(255,255,255,0.7)'
+            : '0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8)';
+        
+        // Применяем к подписям (меняем цвет)
+        overlay.querySelectorAll('.stat-label').forEach(el => {
+            el.style.color = labelColor;
+            el.style.textShadow = shadow;
+        });
+        
+        // Применяем тень к значениям (цвет остаётся бычий/медвежий из _applyCrosshairDOM)
+        overlay.querySelectorAll('.stat-value, .change-value').forEach(el => {
+            el.style.textShadow = shadow;
+        });
+    }
+    
+    // Запуск при загрузке
+    setTimeout(updateOHLCContrast, 500);
+    
+    // Перехват смены фона
+    const originalApply = window.applyColorsToChart;
+    if (typeof originalApply === 'function') {
+        window.applyColorsToChart = function(bg, bullish, bearish) {
+            originalApply(bg, bullish, bearish);
+            setTimeout(updateOHLCContrast, 50);
+        };
+    }
+    
+    // Запуск при изменении color picker'а фона
+    const bgPicker = document.getElementById('bgColorPicker');
+    if (bgPicker) {
+        bgPicker.addEventListener('input', () => setTimeout(updateOHLCContrast, 50));
+    }
+    
+    // Запуск при клике на квадраты палитры фона
+    const bgGrid = document.getElementById('bgColorsGrid');
+    if (bgGrid) {
+        bgGrid.addEventListener('click', () => setTimeout(updateOHLCContrast, 50));
+    }
+    
+    // Запуск при сбросе настроек
+    const resetBtn = document.getElementById('resetChartColors');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
+    }
+    
+    console.log('✅ Адаптация цвета текста OHLC под фон активирована');
+})();
+</script>
 </body>
 </html>
