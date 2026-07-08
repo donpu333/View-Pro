@@ -317,53 +317,51 @@ class ChartManager {
     // ==========================================
     // 🔥 ОПТИМИЗАЦИЯ: Адаптивный throttle для рисунков
     // ==========================================
-   scheduleDrawingsUpdate(forceHighPriority = false) {
-    const now = performance.now();
-    let delay;
-    
-    if (forceHighPriority || this._isScrollingFast) {
-        delay = 16;
-    } else if (this._isScrolling) {
-        delay = 32;
-    } else {
-        delay = 100;
-    }
-
-    if (now - (this._lastDrawingsCall || 0) < delay) {
-        if (!this._drawingsFinalUpdateTimeout) {
-            this._drawingsFinalUpdateTimeout = setTimeout(() => {
-                this._drawingsFinalUpdateTimeout = null;
-                if (window.renderDrawings) window.renderDrawings();
-                this.requestDrawingsRedraw(); // <--- ДОБАВЛЕНО
-            }, delay);
+      scheduleDrawingsUpdate(forceHighPriority = false) {
+        const now = performance.now();
+        let delay;
+        
+        if (forceHighPriority || this._isScrollingFast) {
+            delay = 16;
+        } else if (this._isScrolling) {
+            delay = 32;
+        } else {
+            delay = 100;
         }
-        return;
-    }
-    this._lastDrawingsCall = now;
 
-    if (this._drawingsUpdateRafId === null && window.renderDrawings) {
-        this._drawingsUpdateRafId = requestAnimationFrame(() => {
-            window.renderDrawings();
-            this._drawingsUpdateRafId = null;
-            this.requestDrawingsRedraw(); // <--- ДОБАВЛЕНО
+        if (now - (this._lastDrawingsCall || 0) < delay) {
+            if (!this._drawingsFinalUpdateTimeout) {
+                this._drawingsFinalUpdateTimeout = setTimeout(() => {
+                    this._drawingsFinalUpdateTimeout = null;
+                    if (window.renderDrawings) window.renderDrawings();
+                }, delay);
+            }
+            return;
+        }
+        this._lastDrawingsCall = now;
+
+        if (this._drawingsUpdateRafId === null && window.renderDrawings) {
+            this._drawingsUpdateRafId = requestAnimationFrame(() => {
+                window.renderDrawings();
+                this._drawingsUpdateRafId = null;
+            });
+        }
+    }
+     requestDrawingsRedraw() {
+        // ✅ Если идет скролл — вообще не трогаем перерисовку линий, LWC сам всё сделает
+        if (this._isScrolling || this._isScrollingFast) return;
+        
+        if (this._drawingsRafId !== null) return;
+        this._drawingsRafId = requestAnimationFrame(() => {
+            this._drawingsRafId = null;
+            
+            if (this.rayManager?._applyRedrawIfNeeded) this.rayManager._applyRedrawIfNeeded();
+            if (this.trendLineManager?._requestRedraw) this.trendLineManager._requestRedraw();
+            if (this.rulerLineManager?._requestRedraw) this.rulerLineManager._requestRedraw();
+            if (this.alertLineManager?._applyRedrawsIfNeeded) this.alertLineManager._applyRedrawsIfNeeded();
+            if (this.textManager?._requestRedraw) this.textManager._requestRedraw();
         });
     }
-}
-
-   requestDrawingsRedraw() {
-    if (this._drawingsRafId !== null) return;
-    this._drawingsRafId = requestAnimationFrame(() => {
-        this._drawingsRafId = null;
-        if (this.rayManager?._applyRedrawIfNeeded) this.rayManager._applyRedrawIfNeeded();
-        if (this.trendLineManager?._applyRedrawIfNeeded) this.trendLineManager._applyRedrawIfNeeded();
-        if (this.rulerLineManager?._applyRedrawIfNeeded) this.rulerLineManager._applyRedrawIfNeeded();
-        if (this.alertLineManager?._applyRedrawIfNeeded) this.alertLineManager._applyRedrawIfNeeded();
-        if (this.timerManager?._primitive?.requestRedraw) {
-            this.timerManager._primitive.requestRedraw();
-        }
-    });
-}
-
     _startNewCandleChecker() {
         const check = () => {
             if (!this.chartData.length || !this.currentInterval) {
@@ -1195,7 +1193,65 @@ class ChartManager {
             }
         }
     }
-
+manualAutoScale() {
+    if (!this.chart || this.chartData.length === 0) return;
+    
+    const timeScale = this.chart.timeScale();
+    const priceScale = this.chart.priceScale('right');
+    
+    if (!timeScale || !priceScale) return;
+    
+    // Получаем видимый диапазон свечей
+    const visibleRange = timeScale.getVisibleLogicalRange();
+    
+    if (!visibleRange) {
+        // Если нет видимого диапазона, просто включаем autoScale
+        priceScale.applyOptions({ autoScale: true });
+        return;
+    }
+    
+    // Находим min/max цены в видимом диапазоне
+    const fromIndex = Math.max(0, Math.floor(visibleRange.from));
+    const toIndex = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
+    
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    
+    for (let i = fromIndex; i <= toIndex; i++) {
+        const candle = this.chartData[i];
+        if (candle) {
+            if (candle.low < minPrice) minPrice = candle.low;
+            if (candle.high > maxPrice) maxPrice = candle.high;
+        }
+    }
+    
+    // Если не нашли валидных цен
+    if (minPrice === Infinity || maxPrice === -Infinity) {
+        priceScale.applyOptions({ autoScale: true });
+        return;
+    }
+    
+    // Вычисляем диапазон с отступами (как в TradingView)
+    const priceRange = maxPrice - minPrice;
+    const padding = priceRange * 0.1; // 10% отступ сверху и снизу
+    
+    // Выключаем autoScale и устанавливаем фиксированный диапазон
+    priceScale.applyOptions({ 
+        autoScale: false,
+        scaleMargins: {
+            top: 0.1,
+            bottom: 0.1
+        }
+    });
+    
+    // Устанавливаем видимый диапазон цен
+    priceScale.setVisibleRange({
+        minValue: minPrice - padding,
+        maxValue: maxPrice + padding
+    });
+    
+    console.log('✅ Автовыравнивание применено (как в TradingView)');
+}
     getLastCandle() {
         return this.lastCandle;
     }
@@ -2277,12 +2333,13 @@ class ChartManager {
         }
     }
 
-    onVisibleLogicalRangeChange(range) {
+        onVisibleLogicalRangeChange(range) {
         if (!range || this.isLoadingMore || !this.hasMoreData || !this.chartData.length) return;
         
         const fromIndex = Math.max(0, Math.floor(range.from));
         
-        if (fromIndex < 70 && this.hasMoreData && !this.isLoadingMore) {
+        // ✅ Блокируем загрузку истории во время быстрого скролла
+        if (fromIndex < 70 && this.hasMoreData && !this.isLoadingMore && !this._isScrollingFast) {
             this.loadMoreHistoricalData();
         }
     }
@@ -2313,24 +2370,27 @@ class ChartManager {
                 );
                 
                 if (uniqueOlder.length > 0) {
-                    this.chartData = [...uniqueOlder, ...this.chartData];
-                    this._rebuildTimeMap(); // 🔥 Перестраиваем карту
-                    
-                    this.candleSeries.setData(this.chartData);
-                    this.barSeries.setData(this.chartData);
-                    
-                    if (this.volumeSeries) {
-                        const volumeData = this.chartData.map(c => ({
-                            time: c.time,
-                            value: c.volume || 0,
-                            color: c.close >= c.open ? this.bullishColor : this.bearishColor
-                        }));
-                        this.volumeSeries.setData(volumeData);
-                    }
-                    
-                    if (this.indicatorManager) {
-                        this.indicatorManager.updateAllIndicators();
-                    }
+                              this.chartData = [...uniqueOlder, ...this.chartData];
+            this._rebuildTimeMap();
+            
+            // ✅ Выносим тяжелую отрисовку в RAF, чтобы не блокировать скролл
+            requestAnimationFrame(() => {
+                this.candleSeries.setData(this.chartData);
+                this.barSeries.setData(this.chartData);
+                
+                if (this.volumeSeries) {
+                    const volumeData = this.chartData.map(c => ({
+                        time: c.time,
+                        value: c.volume || 0,
+                        color: c.close >= c.open ? this.bullishColor : this.brightness < 118 ? '#FFFFFF' : '#000000'
+                    }));
+                    this.volumeSeries.setData(volumeData);
+                }
+                
+                if (this.indicatorManager) {
+                    this.indicatorManager.updateAllIndicators();
+                }
+            });
                 }
                 
                 if (olderCandles.length < 1000) {
