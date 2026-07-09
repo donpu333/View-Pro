@@ -2724,6 +2724,7 @@ setTimeout(function() {
 <script>
 (function() {
     // Адаптация цвета текста OHLC И ПЕРЕКРЕСТИЯ под фон графика
+    // БЕЗ изменения подложки оверлея
     function updateOHLCContrast() {
         const bgColor = localStorage.getItem('chartBgColor') || '#000000';
         const overlay = document.getElementById('candleStatsOverlay');
@@ -2737,37 +2738,35 @@ setTimeout(function() {
         
         const isLight = brightness > 128;
         
-        // ====== 1. АДАПТАЦИЯ OVERLAY (OHLC) ======
+        // ====== 1. АДАПТАЦИЯ OVERLAY (только цвет текста) ======
         if (overlay) {
             const labelColor = isLight ? '#333333' : '#B0B0B0';
             const shadow = isLight 
                 ? '0 0 3px rgba(255,255,255,0.9), 1px 1px 2px rgba(255,255,255,0.7)'
                 : '0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8)';
             
+            // Подписи (OTKP, MAKC, МИН, ЗАКР, VOL)
             overlay.querySelectorAll('.stat-label').forEach(el => {
                 el.style.color = labelColor;
                 el.style.textShadow = shadow;
             });
             
+            // Значения (тень для читаемости, цвет бычий/медвежий из _applyCrosshairDOM)
             overlay.querySelectorAll('.stat-value, .change-value').forEach(el => {
                 el.style.textShadow = shadow;
             });
             
-            overlay.style.background = isLight 
-                ? 'rgba(255, 255, 255, 0.85)' 
-                : 'rgba(20, 20, 20, 0.75)';
-            overlay.style.backdropFilter = 'blur(4px)';
+            // ❌ ФОН ОВЕРЛЕЯ НЕ ТРОГАЕМ — оставляем как было
         }
         
         // ====== 2. АДАПТАЦИЯ ПЕРЕКРЕСТИЯ (CROSSHAIR) ======
         if (window.chartManagerInstance && window.chartManagerInstance.chart) {
             const chart = window.chartManagerInstance.chart;
             
-            // Цвета для перекрестия
-            const crosshairColor = isLight ? '#333333' : '#9598A1';      // Линии
-            const crosshairLabelBg = isLight ? '#FFFFFF' : '#333333';     // Фон меток
-            const crosshairLabelColor = isLight ? '#000000' : '#FFFFFF';  // Текст меток
-            const borderColor = isLight ? '#888888' : '#333333';          // Границы шкал
+            const crosshairColor = isLight ? '#333333' : '#9598A1';
+            const crosshairLabelBg = isLight ? '#FFFFFF' : '#333333';
+            const borderColor = isLight ? '#888888' : '#333333';
+            const textColor = isLight ? '#333333' : '#808080';
             
             chart.applyOptions({
                 crosshair: {
@@ -2786,23 +2785,20 @@ setTimeout(function() {
                 },
                 timeScale: {
                     borderColor: borderColor,
-                    tickColor: isLight ? '#333333' : '#808080'
+                    tickColor: textColor
                 },
                 rightPriceScale: {
                     borderColor: borderColor,
-                    borderColor: borderColor,
-                    textColor: isLight ? '#333333' : '#808080'
+                    textColor: textColor
                 }
             });
-            
-            console.log('🎯 Crosshair адаптирован под фон:', isLight ? 'светлый' : 'тёмный');
         }
     }
     
     // Запуск при загрузке
     setTimeout(updateOHLCContrast, 500);
     
-    // Запуск при смене фона (перехватываем applyColorsToChart)
+    // Перехват смены фона
     const originalApply = window.applyColorsToChart;
     if (typeof originalApply === 'function') {
         window.applyColorsToChart = function(bg, bullish, bearish) {
@@ -2811,25 +2807,25 @@ setTimeout(function() {
         };
     }
     
-    // Запуск при клике на color picker фона
+    // Color picker фона
     const bgPicker = document.getElementById('bgColorPicker');
     if (bgPicker) {
         bgPicker.addEventListener('input', () => setTimeout(updateOHLCContrast, 50));
     }
     
-    // Запуск при клике на квадраты палитры фона
+    // Палитра фона
     const bgGrid = document.getElementById('bgColorsGrid');
     if (bgGrid) {
         bgGrid.addEventListener('click', () => setTimeout(updateOHLCContrast, 50));
     }
     
-    // Запуск при сбросе настроек
+    // Сброс настроек
     const resetBtn = document.getElementById('resetChartColors');
     if (resetBtn) {
         resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
     }
     
-    console.log('✅ Адаптация OHLC + Crosshair под фон активирована');
+    console.log('✅ Адаптация текста OHLC + Crosshair под фон активирована');
 })();
 </script>
 </body>
