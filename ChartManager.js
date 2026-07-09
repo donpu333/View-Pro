@@ -1224,38 +1224,15 @@ this._debouncedSetData = this._debouncedSatData.bind(this);
         }
     }
 
-    autoScale() {
-        if (this.chart && this.chartData.length > 0) {
-            const timeScale = this.chart.timeScale();
-            const visibleRange = timeScale.getVisibleLogicalRange();
-            
-            if (visibleRange) {
-                const fromIndex = Math.max(0, Math.floor(visibleRange.from));
-                const toIndex = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
-                
-                if (fromIndex < toIndex && fromIndex >= 0 && toIndex < this.chartData.length) {
-                    const priceScale = this.chart.priceScale('right');
-                    if (priceScale) {
-                        priceScale.applyOptions({ autoScale: true });
-                        setTimeout(() => {
-                            priceScale.applyOptions({ autoScale: true });
-                        }, 10);
-                    }
-                    
-                    setTimeout(() => {
-                        if (this.timerManager && this.timerManager._primitive) {
-                            this.timerManager._primitive.requestRedraw();
-                        }
-                    }, 50);
-                }
-            } else {
-                const priceScale = this.chart.priceScale('right');
-                if (priceScale) {
-                    priceScale.applyOptions({ autoScale: true });
-                }
-            }
-        }
+  autoScale() {
+    if (!this.chart || this.chartData.length === 0) return;
+
+    const priceScale = this.chart.priceScale('right');
+    if (priceScale) {
+        // Достаточно одного вызова. Библиотека сама пересчитает видимый диапазон.
+        priceScale.applyOptions({ autoScale: true });
     }
+}
 manualAutoScale() {
     if (!this.chart || this.chartData.length === 0) return;
     
