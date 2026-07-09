@@ -925,9 +925,7 @@ _syncPriceLine(price) {
     console.log('🔵 setDataQuick: получено свечей', data.length);
     
     if (data.length > 0) {
-        if (this.candleSeries) this.candleSeries.setData([]);
-        if (this.barSeries) this.barSeries.setData([]);
-        if (this.volumeSeries) this.volumeSeries.setData([]);
+        
         
         const seenTimes = new Set();
         let noDupes = data.filter(c => {
@@ -1013,14 +1011,14 @@ _syncPriceLine(price) {
         this._updatePageTitle();
         // 🔥 КОНЕЦ НОВОЙ ОТРИСОВКИ
         
-        getPrecisionFromExchange(symbol, exchange, marketType)
-            .then(precision => {
-                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                this.applyPriceFormat(precision);
-                console.log(`✅ Precision applied for ${symbol}: ${precision} decimals`);
-            })
-            .catch(() => {});
-        
+      getPrecisionFromExchange(symbol, exchange, marketType)
+    .then(precision => {
+        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+        // ✅ Только сохраняем в localStorage, НЕ применяем сразу
+        // Формат применится при следующем тике цены через _syncPriceLine
+    })
+    .catch(() => {});
+       
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
         });
@@ -1205,25 +1203,22 @@ _syncPriceLine(price) {
         }
     }, 100);
 }
-    clearChart() {
-        if (this.candleSeries) {
-            this.candleSeries.setData([]);
-        }
-        if (this.barSeries) {
-            this.barSeries.setData([]);
-        }
-        if (this.volumeSeries) {
-            this.volumeSeries.setData([]);
-        }
-        
-        this.chartData = [];
-        this.lastCandle = null;
-        
-        const priceScale = this.chart.priceScale('right');
-        if (priceScale) {
-            priceScale.applyOptions({ autoScale: true });
-        }
+   clearChart() {
+    if (this.candleSeries) {
+        this.candleSeries.setData([]);
     }
+    if (this.barSeries) {
+        this.barSeries.setData([]);
+    }
+    if (this.volumeSeries) {
+        this.volumeSeries.setData([]);
+    }
+    
+    this.chartData = [];
+    this.lastCandle = null;
+    this._candleTimeMap.clear();  // 🔥 Очищаем карту свечей
+    
+}
 
   autoScale() {
     if (!this.chart || this.chartData.length === 0) return;
