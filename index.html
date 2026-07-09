@@ -2708,11 +2708,11 @@ setTimeout(function() {
     var btn = document.getElementById('autoScaleButton');
     if (btn && window.chartManagerInstance) {
         btn.onclick = function() {
-            // Вызываем НОВУЮ функцию вместо autoScale()
             window.chartManagerInstance.manualAutoScale();
             
             // Визуальная обратная связь
-            btn.classList.toggle('active');
+            btn.classList.add('active');
+            setTimeout(() => btn.classList.remove('active'), 300);
         };
         console.log('✅ Кнопка A прикручена к manualAutoScale()');
     } else {
@@ -2723,13 +2723,10 @@ setTimeout(function() {
 
 <script>
 (function() {
-    // Адаптация цвета текста OHLC И ПЕРЕКРЕСТИЯ под фон графика
-    // БЕЗ изменения подложки оверлея
     function updateOHLCContrast() {
         const bgColor = localStorage.getItem('chartBgColor') || '#000000';
         const overlay = document.getElementById('candleStatsOverlay');
         
-        // Определяем яркость фона (0 = чёрный, 255 = белый)
         const hex = bgColor.replace('#', '');
         const r = parseInt(hex.substr(0, 2), 16);
         const g = parseInt(hex.substr(2, 2), 16);
@@ -2738,28 +2735,24 @@ setTimeout(function() {
         
         const isLight = brightness > 128;
         
-        // ====== 1. АДАПТАЦИЯ OVERLAY (только цвет текста) ======
+        // ====== 1. OVERLAY ======
         if (overlay) {
             const labelColor = isLight ? '#333333' : '#B0B0B0';
             const shadow = isLight 
                 ? '0 0 3px rgba(255,255,255,0.9), 1px 1px 2px rgba(255,255,255,0.7)'
                 : '0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8)';
             
-            // Подписи (OTKP, MAKC, МИН, ЗАКР, VOL)
             overlay.querySelectorAll('.stat-label').forEach(el => {
                 el.style.color = labelColor;
                 el.style.textShadow = shadow;
             });
             
-            // Значения (тень для читаемости, цвет бычий/медвежий из _applyCrosshairDOM)
             overlay.querySelectorAll('.stat-value, .change-value').forEach(el => {
                 el.style.textShadow = shadow;
             });
-            
-            // ❌ ФОН ОВЕРЛЕЯ НЕ ТРОГАЕМ — оставляем как было
         }
         
-        // ====== 2. АДАПТАЦИЯ ПЕРЕКРЕСТИЯ (CROSSHAIR) ======
+        // ====== 2. CROSSHAIR — ПУНКТИР ======
         if (window.chartManagerInstance && window.chartManagerInstance.chart) {
             const chart = window.chartManagerInstance.chart;
             
@@ -2768,37 +2761,35 @@ setTimeout(function() {
             const borderColor = isLight ? '#888888' : '#333333';
             const textColor = isLight ? '#333333' : '#808080';
             
-            chart.applyOptions({
-                crosshair: {
-                    vertLine: {
-                        color: crosshairColor,
-                        width: 1,
-                        style: LightweightCharts.LineStyle.Dashed,
-                        labelBackgroundColor: crosshairLabelBg
-                    },
-                    horzLine: {
-                        color: crosshairColor,
-                        width: 1,
-                        style: LightweightCharts.LineStyle.Dashed,
-                        labelBackgroundColor: crosshairLabelBg
-                    }
-                },
-                timeScale: {
-                    borderColor: borderColor,
-                    tickColor: textColor
-                },
-                rightPriceScale: {
-                    borderColor: borderColor,
-                    textColor: textColor
-                }
-            });
+           chart.applyOptions({
+    crosshair: {
+        vertLine: {
+            color: crosshairColor,
+            width: 1,
+            style: LightweightCharts.LineStyle.LargeDashed,  // 🔥 КРУПНЫЙ пунктир как в TradingView
+            labelBackgroundColor: crosshairLabelBg
+        },
+        horzLine: {
+            color: crosshairColor,
+            width: 1,
+            style: LightweightCharts.LineStyle.LargeDashed,  // 🔥 КРУПНЫЙ пунктир как в TradingView
+            labelBackgroundColor: crosshairLabelBg
+        }
+    },
+    timeScale: {
+        borderColor: borderColor,
+        tickColor: textColor
+    },
+    rightPriceScale: {
+        borderColor: borderColor,
+        textColor: textColor
+    }
+});
         }
     }
     
-    // Запуск при загрузке
     setTimeout(updateOHLCContrast, 500);
     
-    // Перехват смены фона
     const originalApply = window.applyColorsToChart;
     if (typeof originalApply === 'function') {
         window.applyColorsToChart = function(bg, bullish, bearish) {
@@ -2807,25 +2798,16 @@ setTimeout(function() {
         };
     }
     
-    // Color picker фона
     const bgPicker = document.getElementById('bgColorPicker');
-    if (bgPicker) {
-        bgPicker.addEventListener('input', () => setTimeout(updateOHLCContrast, 50));
-    }
+    if (bgPicker) bgPicker.addEventListener('input', () => setTimeout(updateOHLCContrast, 50));
     
-    // Палитра фона
     const bgGrid = document.getElementById('bgColorsGrid');
-    if (bgGrid) {
-        bgGrid.addEventListener('click', () => setTimeout(updateOHLCContrast, 50));
-    }
+    if (bgGrid) bgGrid.addEventListener('click', () => setTimeout(updateOHLCContrast, 50));
     
-    // Сброс настроек
     const resetBtn = document.getElementById('resetChartColors');
-    if (resetBtn) {
-        resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
-    }
+    if (resetBtn) resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
     
-    console.log('✅ Адаптация текста OHLC + Crosshair под фон активирована');
+    console.log('✅ Адаптация OHLC + Crosshair (пунктир) активирована');
 })();
 </script>
 </body>
