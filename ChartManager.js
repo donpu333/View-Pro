@@ -772,7 +772,6 @@ _syncPriceLine(price) {
     if (price > lastCandle.high) lastCandle.high = price;
     if (price < lastCandle.low) lastCandle.low = price;
     
-    // Определяем цвет
     const isBullish = price >= lastCandle.open;
     const lineColor = isBullish 
         ? (this.bullishColor || CONFIG.colors.bullish)
@@ -795,15 +794,11 @@ _syncPriceLine(price) {
         priceLineColor: lineColor
     });
     
-    // 🔥🔥🔥 ВОТ ЭТО ГЛАВНОЕ ИСПРАВЛЕНИЕ 🔥🔥🔥
-    // Обновляем таймер НЕМЕДЛЕННО, а не ждём тика
+    // 🔥 Таймер обновляется мгновенно
     const prim = this.timerManager?._primitive;
     if (prim) {
-        // Передаём актуальную цену и цвет
         if (prim.setPrice) prim.setPrice(price);
         if (prim.setColor) prim.setColor(lineColor);
-        
-        // И СРАЗУ ЖЕ вызываем перерисовку
         if (prim.isEnabled()) {
             prim.requestRedraw();
         }
@@ -811,8 +806,11 @@ _syncPriceLine(price) {
     
     this.scheduleUpdatePosition();
     this._updatePageTitle();
+    
+    // 🔥 ВАЖНО: перерисовка рисунков (лучи, тренды, алерты)
+    // Без этой строки они не будут двигаться вместе с ценой
+    this.requestDrawingsRedraw();
 }
-
     updateLastCandle(candle) {
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) {
             console.warn('⚠️ Пропущена свеча с некорректным временем:', candle);
