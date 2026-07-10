@@ -918,10 +918,21 @@ _syncPriceLine(price) {
         });
         await new Promise(r => setTimeout(r, 50));
     }
-    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
+       setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
         console.log('🔵 setDataQuick: получено свечей', data.length);
 
         if (data.length > 0) {
+            
+            // ==========================================
+            // 🔥 ШАГ 1: Разблокируем шкалу ДО очистки и setData
+            // Это заставляет библиотеку сбросить старый диапазон (который прижимал свечи к низу)
+            // ==========================================
+            clearTimeout(this._autoScaleLockTimeout);
+            const priceScale = this.chart.priceScale('right');
+            if (priceScale) {
+                priceScale.applyOptions({ autoScale: true });
+            }
+
             if (this.candleSeries) this.candleSeries.setData([]);
             if (this.barSeries) this.barSeries.setData([]);
             if (this.volumeSeries) this.volumeSeries.setData([]);
@@ -972,6 +983,9 @@ _syncPriceLine(price) {
                 localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
             }
 
+            // ==========================================
+            // 🔥 ШАГ 2: Заливаем новые данные (при autoScale: true они сразу встанут по центру)
+            // ==========================================
             this.candleSeries.setData(this.chartData);
             this.barSeries.setData(this.chartData);
 
@@ -1005,21 +1019,34 @@ _syncPriceLine(price) {
                 this.timerManager.start(this.currentInterval);
             }
 
-            // 🔥 ФИКС: сбрасываем ценовую шкалу под новый тикер
-            // clearTimeout защищает от гонки состояний при быстром переключении стрелками
-            clearTimeout(this._autoScaleLockTimeout);
-            const priceScale = this.chart.priceScale('right');
+            // ==========================================
+            // 🔥 ШАГ 3: Событийная заморозка шкалы
+            // Мы не угадываем время (setTimeout), мы слушаем событие от самого графика.
+            // Как только график физически сдвинет оси под новые цены — мы его замораживаем.
+            // ==========================================
             if (priceScale) {
-                // 1. Включаем автоскейл, чтобы библиотека подстроила шкалу под новые цены
-                priceScale.applyOptions({ autoScale: true });
+                const lockScaleOnNextRender = (range) => {
+                    if (range !== null) {
+                        // График отрисовал новые цены по центру -> замораживаем
+                        priceScale.applyOptions({ autoScale: false });
+                        // Сразу отписываемся, чтобы не сломать ручной скролл мышкой потом
+                        this.chart.timeScale().unsubscribeVisibleLogicalRangeChange(lockScaleOnNextRender);
+                    }
+                };
                 
-                // 2. Даём LWC 50мс на пересчёт, затем жестко фиксируем шкалу
+                // Вешаем слушатель
+                this.chart.timeScale().subscribeVisibleLogicalRangeChange(lockScaleOnNextRender);
+                
+                // Страховка на случай если событие не стрельнет (очень редко)
                 this._autoScaleLockTimeout = setTimeout(() => {
+                    this.chart.timeScale().unsubscribeVisibleLogicalRangeChange(lockScaleOnNextRender);
                     priceScale.applyOptions({ autoScale: false });
-                }, 50);
+                }, 1000);
             }
+            // ==========================================
 
-            // 🔥 ФИКС: скролл к последним свечам
+            // Скролл к концу. Этот вызов заставляет график сдвинуться, что триггерит 
+            // функцию lockScaleOnNextRender выше, и шкала замораживается в идеальном состоянии.
             this.scrollToLast();
 
             this.scheduleUpdatePosition();
@@ -1166,34 +1193,11 @@ _syncPriceLine(price) {
     updateRealPrice(price) {
         this._syncPriceLine(price);
     }
-
     scrollToLast() {
         if (this.chart && this.chartData.length > 0) {
-            const timeScale = this.chart.timeScale();
-            const currentRange = timeScale.getVisibleLogicalRange();
-            
-            if (currentRange) {
-                const visibleBarsCount = currentRange.to - currentRange.from;
-                const newFrom = Math.max(0, this.chartData.length - visibleBarsCount + 10);
-                
-                timeScale.setVisibleLogicalRange({
-                    from: newFrom,
-                    to: newFrom + visibleBarsCount
-                });
-            } else {
-                timeScale.scrollToRealTime();
-                
-                setTimeout(() => {
-                    const newRange = timeScale.getVisibleLogicalRange();
-                    if (newRange) {
-                        const visibleBars = newRange.to - newRange.from;
-                        timeScale.setVisibleLogicalRange({
-                            from: this.chartData.length - visibleBars + 10,
-                            to: this.chartData.length + 10
-                        });
-                    }
-                }, 50);
-            }
+            // scrollToRealTime идеально работает с autoScale: true
+            // Он скроллит к концу, СОХРАНЯЯ текущий зум (barSpacing) пользователя
+            this.chart.timeScale().scrollToRealTime();
         }
     }
    _debouncedSetData() {  // ✅ Исправлено имя (было Sat → Set)
