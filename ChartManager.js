@@ -2384,7 +2384,7 @@ if (priceScale) {
         }
     }
     
-   async loadMoreHistoricalData() {
+  async loadMoreHistoricalData() {
     if (this.isLoadingMore || !this.hasMoreData || !this.chartData.length) return;
     
     this.isLoadingMore = true;
@@ -2396,30 +2396,25 @@ if (priceScale) {
             return;
         }
         
-        // ✅ Используем существующий метод fetchKlines
-        const olderCandles = await this.fetchKlines(
-            this.currentSymbol,
-            this.currentExchange,
-            this.currentMarketType,
-            this.currentInterval,
-            1000
+        const endTime = (oldestCandle.time * 1000) - 1;
+        
+        const olderCandles = await DataFetcher.loadMoreKlines(
+            this.currentSymbol, 
+            this.currentInterval, 
+            endTime
         );
         
-        // ✅ Фильтруем только те свечи, которые старше oldestCandle
-        const filteredCandles = olderCandles.filter(c => c.time < oldestCandle.time);
-        
-        if (filteredCandles && filteredCandles.length > 0) {
-            // ✅ Убираем дубликаты (на всякий случай)
-            const uniqueOlder = filteredCandles.filter(newCandle => 
+        // 🔥 ИСПРАВЛЕНО: добавлена проверка olderCandles и определение uniqueOlder
+        if (olderCandles && olderCandles.length > 0) {
+            const uniqueOlder = olderCandles.filter(newCandle => 
                 !this._candleTimeMap.has(newCandle.time)
             );
             
             if (uniqueOlder.length > 0) {
-                // ✅ Добавляем в начало массива
                 this.chartData = [...uniqueOlder, ...this.chartData];
-                this._rebuildTimeMap();
+                this._rebuildTimeMap(); // 🔥 Перестраиваем карту
                 
-                // ✅ Выносим тяжелую отрисовку в RAF
+                // ✅ Выносим тяжелую отрисовку в RAF, чтобы не блокировать скролл
                 requestAnimationFrame(() => {
                     this.candleSeries.setData(this.chartData);
                     this.barSeries.setData(this.chartData);
@@ -2439,20 +2434,20 @@ if (priceScale) {
                 });
             }
             
-            // ✅ Если получили меньше 1000 свечей, значит больше нет
-            if (filteredCandles.length < 1000) {
+            // 🔥 ИСПРАВЛЕНО: эта проверка должна быть ВНУТРИ if (olderCandles.length > 0)
+            if (olderCandles.length < 1000) {
                 this.hasMoreData = false;
             }
         } else {
             this.hasMoreData = false;
         }
     } catch (e) {
-        console.error('❌ Ошибка загрузки истории:', e);
-        this.hasMoreData = false;
+        console.error('Ошибка загрузки истории:', e);
     } finally {
         this.isLoadingMore = false;
     }
 }
+ 
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         try {
             const bybitIntervalMap = {
