@@ -1227,8 +1227,7 @@ _syncPriceLine(price) {
         priceScale.applyOptions({ autoScale: true });
     }
 }
-
- manualAutoScale() {
+manualAutoScale() {
     if (!this.chart || this.chartData.length === 0) return;
     
     const priceScale = this.chart.priceScale('right');
@@ -1236,25 +1235,61 @@ _syncPriceLine(price) {
     
     if (!priceScale || !timeScale) return;
     
-    // 🔥 СОХРАНЯЕМ горизонтальный диапазон
     const visibleRange = timeScale.getVisibleLogicalRange();
-    if (!visibleRange) {
-        priceScale.applyOptions({ autoScale: true });
-        return;
+    if (!visibleRange) return;
+    
+    const from = Math.max(0, Math.floor(visibleRange.from));
+    const to = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
+    
+    // 🔥 СОХРАНЯЕМ полные данные и индикаторы
+    const fullCandleData = this.candleSeries.data ? [...this.chartData] : null;
+    const fullBarData = this.barSeries.data ? [...this.chartData] : null;
+    
+    // 🔥 Временно скрываем индикаторы на шкале right (они искажают диапазон)
+    const hiddenSeries = [];
+    if (this.indicatorManager?.activeIndicators) {
+        this.indicatorManager.activeIndicators.forEach(ind => {
+            if (ind.series && ind.series.priceScale?.()?.options?.()?.id === 'right') {
+                try {
+                    ind.series.applyOptions({ visible: false });
+                    hiddenSeries.push(ind);
+                } catch(e) {}
+            }
+        });
     }
     
-    // 🔥 Просто включаем autoScale — LWC сам подгонит вертикаль
+    // 🔥 КЛЮЧЕВОЙ ТРЮК: подменяем данные серии ТОЛЬКО видимыми свечами
+    const visibleData = this.chartData.slice(from, to + 1);
+    this.candleSeries.setData(visibleData);
+    this.barSeries.setData(visibleData);
+    
+    // Включаем autoScale — теперь он посчитает диапазон ТОЛЬКО по видимым свечам
     priceScale.applyOptions({ autoScale: true });
     
-    // 🔥 ВОССТАНАВЛИВАЕМ горизонтальный диапазон (чтобы не отдаляло)
+    // Ждём 2 кадра чтобы LWC гарантированно пересчитал масштаб
     requestAnimationFrame(() => {
-        timeScale.setVisibleLogicalRange({
-            from: visibleRange.from,
-            to: visibleRange.to
+        requestAnimationFrame(() => {
+            // 🔥 Восстанавливаем ПОЛНЫЕ данные
+            this.candleSeries.setData(this.chartData);
+            this.barSeries.setData(this.chartData);
+            
+            // Восстанавливаем видимый диапазон времени
+            timeScale.setVisibleLogicalRange({
+                from: visibleRange.from,
+                to: visibleRange.to
+            });
+            
+            // 🔥 Выключаем autoScale чтобы зафиксировать результат
+            priceScale.applyOptions({ autoScale: false });
+            
+            // Возвращаем индикаторы
+            hiddenSeries.forEach(ind => {
+                try { ind.series.applyOptions({ visible: true }); } catch(e) {}
+            });
         });
     });
     
-    console.log('✅ Ручное автовыравнивание применено');
+    console.log('✅ Автовыравнивание по видимым свечам применено');
 }
     getLastCandle() {
         return this.lastCandle;
