@@ -2865,3 +2865,61 @@ body {
     position: relative;
     /* Больше никаких will-change или overflow! */
 }
+/* 1. Запрещаем выделение текста синим цветом при любых кликах по строке */
+.ticker-item {
+    user-select: none; 
+    -webkit-user-select: none; /* Для мобильных Safari */
+}
+
+/* 2. Делаем зону клика по звезде больше и удобнее */
+.star {
+    /* Центрируем иконку внутри невидимого квадрата */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    
+    /* Увеличиваем невидимую область клика (можешь поставить 26px или 30px по желанию) */
+    width: 28px;  
+    height: 28px;
+    
+    cursor: pointer;
+    
+    /* Запрет выделения для самой звезды */
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* 3. Если твоя звезда отрисовывается как SVG иконка, 
+   это не даст клику "проваливаться" в прозрачные углы самой картинки */
+.star svg {
+    pointer-events: none; 
+}
+/* Превью флагов в под-вкладках (цвета как в контекстном меню) */
+.flag-preview-small {
+    display: inline-block;
+    position: relative;
+    width: 24px;
+    height: 24px;
+}
+
+.flag-preview-small::after {
+    content: '';
+    position: absolute;
+    width: 24px;
+    height: 16px;
+    left: 0;
+    top: 4px;
+    clip-path: polygon(0% 0%, 100% 0%, 75% 50%, 100% 100%, 0% 100%);
+    z-index: 2;
+}
+
+/* Точные цвета как в контекстном меню */
+.flag-red-small::after    { background: linear-gradient(145deg, #F6465D, #b3404f); box-shadow: 0 2px 4px rgba(246,70,93,0.3); }
+.flag-yellow-small::after  { background: linear-gradient(145deg, #F0B90B, #d4a10a); box-shadow: 0 2px 4px rgba(240,185,11,0.3); }
+.flag-green-small::after   { background: linear-gradient(145deg, #0ECB81, #0a9c6a); box-shadow: 0 2px 4px rgba(14,203,129,0.3); }
+.flag-blue-small::after    { background: linear-gradient(145deg, #5096FF, #3a6cb0); box-shadow: 0 2px 4px rgba(80,150,255,0.3); }
+
+/* Эти три используют переменные, как в контекстном меню */
+.flag-lime-small::after    { background: linear-gradient(145deg, var(--accent-lime), var(--accent-lime-dark)); }
+.flag-purple-small::after  { background: linear-gradient(145deg, var(--accent-purple), var(--accent-purple-dark)); }
+.flag-cyan-small::after    { background: linear-gradient(145deg, var(--accent-cyan), var(--accent-cyan-dark)); }
