@@ -923,7 +923,9 @@ _syncPriceLine(price) {
     console.log('🔵 setDataQuick: получено свечей', data.length);
     
     if (data.length > 0) {
-        
+        if (this.candleSeries) this.candleSeries.setData([]);
+        if (this.barSeries) this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
         
         const seenTimes = new Set();
         let noDupes = data.filter(c => {
@@ -1009,14 +1011,14 @@ _syncPriceLine(price) {
         this._updatePageTitle();
         // 🔥 КОНЕЦ НОВОЙ ОТРИСОВКИ
         
-      getPrecisionFromExchange(symbol, exchange, marketType)
-    .then(precision => {
-        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-        // ✅ Только сохраняем в localStorage, НЕ применяем сразу
-        // Формат применится при следующем тике цены через _syncPriceLine
-    })
-    .catch(() => {});
-       
+        getPrecisionFromExchange(symbol, exchange, marketType)
+            .then(precision => {
+                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                this.applyPriceFormat(precision);
+                console.log(`✅ Precision applied for ${symbol}: ${precision} decimals`);
+            })
+            .catch(() => {});
+        
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
         });
@@ -1201,22 +1203,25 @@ _syncPriceLine(price) {
         }
     }, 100);
 }
-   clearChart() {
-    if (this.candleSeries) {
-        this.candleSeries.setData([]);
+    clearChart() {
+        if (this.candleSeries) {
+            this.candleSeries.setData([]);
+        }
+        if (this.barSeries) {
+            this.barSeries.setData([]);
+        }
+        if (this.volumeSeries) {
+            this.volumeSeries.setData([]);
+        }
+        
+        this.chartData = [];
+        this.lastCandle = null;
+        
+        const priceScale = this.chart.priceScale('right');
+        if (priceScale) {
+            priceScale.applyOptions({ autoScale: true });
+        }
     }
-    if (this.barSeries) {
-        this.barSeries.setData([]);
-    }
-    if (this.volumeSeries) {
-        this.volumeSeries.setData([]);
-    }
-    
-    this.chartData = [];
-    this.lastCandle = null;
-    this._candleTimeMap.clear();  // 🔥 Очищаем карту свечей
-    
-}
 
   autoScale() {
     if (!this.chart || this.chartData.length === 0) return;
@@ -1227,69 +1232,63 @@ _syncPriceLine(price) {
         priceScale.applyOptions({ autoScale: true });
     }
 }
-manualAutoScale() {
+
+ manualAutoScale() {
     if (!this.chart || this.chartData.length === 0) return;
     
-    const priceScale = this.chart.priceScale('right');
     const timeScale = this.chart.timeScale();
+    const priceScale = this.chart.priceScale('right');
     
     if (!priceScale || !timeScale) return;
     
     const visibleRange = timeScale.getVisibleLogicalRange();
     if (!visibleRange) return;
     
+    // 🔥 Считаем min/max ТОЛЬКО по видимым свечам
     const from = Math.max(0, Math.floor(visibleRange.from));
     const to = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
     
-    // 🔥 СОХРАНЯЕМ полные данные и индикаторы
-    const fullCandleData = this.candleSeries.data ? [...this.chartData] : null;
-    const fullBarData = this.barSeries.data ? [...this.chartData] : null;
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
     
-    // 🔥 Временно скрываем индикаторы на шкале right (они искажают диапазон)
-    const hiddenSeries = [];
-    if (this.indicatorManager?.activeIndicators) {
-        this.indicatorManager.activeIndicators.forEach(ind => {
-            if (ind.series && ind.series.priceScale?.()?.options?.()?.id === 'right') {
-                try {
-                    ind.series.applyOptions({ visible: false });
-                    hiddenSeries.push(ind);
-                } catch(e) {}
-            }
-        });
+    for (let i = from; i <= to; i++) {
+        const candle = this.chartData[i];
+        if (!candle) continue;
+        if (candle.low < minPrice) minPrice = candle.low;
+        if (candle.high > maxPrice) maxPrice = candle.high;
     }
     
-    // 🔥 КЛЮЧЕВОЙ ТРЮК: подменяем данные серии ТОЛЬКО видимыми свечами
-    const visibleData = this.chartData.slice(from, to + 1);
-    this.candleSeries.setData(visibleData);
-    this.barSeries.setData(visibleData);
+    if (minPrice === Infinity || maxPrice === -Infinity) return;
     
-    // Включаем autoScale — теперь он посчитает диапазон ТОЛЬКО по видимым свечам
+    // 🔥 Добавляем отступы 5% сверху и снизу (чтобы свечи не прилипали к краям)
+    const range = maxPrice - minPrice;
+    const padding = range * 0.05;
+    minPrice -= padding;
+    maxPrice += padding;
+    
+    // 🔥 Включаем autoScale, чтобы LWC принял наш диапазон
     priceScale.applyOptions({ autoScale: true });
     
-    // Ждём 2 кадра чтобы LWC гарантированно пересчитал масштаб
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            // 🔥 Восстанавливаем ПОЛНЫЕ данные
-            this.candleSeries.setData(this.chartData);
-            this.barSeries.setData(this.chartData);
-            
-            // Восстанавливаем видимый диапазон времени
-            timeScale.setVisibleLogicalRange({
-                from: visibleRange.from,
-                to: visibleRange.to
-            });
-            
-            // 🔥 Выключаем autoScale чтобы зафиксировать результат
-            priceScale.applyOptions({ autoScale: false });
-            
-            // Возвращаем индикаторы
-            hiddenSeries.forEach(ind => {
-                try { ind.series.applyOptions({ visible: true }); } catch(e) {}
-            });
-        });
+    // 🔥 Устанавливаем видимый диапазон цен вручную
+    priceScale.applyOptions({
+        scaleMargins: {
+            top: 0,
+            bottom: 0
+        }
     });
     
-    console.log('✅ Автовыравнивание по видимым свечам применено');
+    // Фиксируем горизонтальный диапазон
+    timeScale.setVisibleLogicalRange({
+        from: visibleRange.from,
+        to: visibleRange.to
+    });
+    
+    // 🔥 СРАЗУ выключаем autoScale — иначе при следующем тике всё поедет
+    requestAnimationFrame(() => {
+        priceScale.applyOptions({ autoScale: false });
+    });
+    
+    console.log('✅ Автовыравнивание по видимым свечам:', minPrice.toFixed(2), '-', maxPrice.toFixed(2));
 }
     getLastCandle() {
         return this.lastCandle;
