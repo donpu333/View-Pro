@@ -1045,9 +1045,6 @@ _syncPriceLine(price) {
             });
 
             console.log('✅ Все данные загружены, масштаб зафиксирован');
-            
-            // 🔥 ВЫЗОВ ЦЕНТРИРОВАНИЯ ЦЕНЫ (как в кнопке "А")
-            this.manualAutoScale();
         }, 100);
 
         this.scheduleUpdatePosition();
@@ -1241,33 +1238,95 @@ _syncPriceLine(price) {
             priceScale.applyOptions({ autoScale: true });
         }
     }
-autoScale() {
+
+     autoScale() {
+        if (!this.chart || this.chartData.length === 0) return;
+
+        const priceScale = this.chart.priceScale('right');
+        if (!priceScale) return;
+
+        // Включаем авто-масштаб ровно на 1 кадр
+        priceScale.applyOptions({ autoScale: true });
+        clearTimeout(this._autoScaleLockTimeout);
+
+        // На следующем кадре забираем готовый результат и замораживаем
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                const vr = this.chart.timeScale().getVisibleLogicalRange();
+                let minP = Infinity, maxP = -Infinity;
+                if (vr) {
+                    const from = Math.max(0, Math.floor(vr.from));
+                    const to = Math.min(this.chartData.length - 1, Math.ceil(vr.to));
+                    for (let i = from; i <= to; i++) {
+                        if (this.chartData[i].high > maxP) maxP = this.chartData[i].high;
+                        if (this.chartData[i].low < minP) minP = this.chartData[i].low;
+                    }
+                }
+                if (minP !== Infinity && maxP !== -Infinity) {
+                    try {
+                        priceScale.setVisiblePriceRange({ from: minP, to: maxP });
+                    } catch(e) {}
+                }
+            });
+        });
+    }
+
+ manualAutoScale() {
     if (!this.chart || this.chartData.length === 0) return;
     
+    const timeScale = this.chart.timeScale();
     const priceScale = this.chart.priceScale('right');
-    if (priceScale) {
-        priceScale.applyOptions({ autoScale: true });
+    
+    if (!priceScale || !timeScale) return;
+    
+    const visibleRange = timeScale.getVisibleLogicalRange();
+    if (!visibleRange) return;
+    
+    // 🔥 Считаем min/max ТОЛЬКО по видимым свечам
+    const from = Math.max(0, Math.floor(visibleRange.from));
+    const to = Math.min(this.chartData.length - 1, Math.ceil(visibleRange.to));
+    
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    
+    for (let i = from; i <= to; i++) {
+        const candle = this.chartData[i];
+        if (!candle) continue;
+        if (candle.low < minPrice) minPrice = candle.low;
+        if (candle.high > maxPrice) maxPrice = candle.high;
     }
-}
-
-manualAutoScale() {
-    if (!this.chart || this.chartData.length === 0) return;
-
-    const priceScale = this.chart.priceScale('right');
-    if (!priceScale) return;
-
-    // Временно включаем автоскейл, чтобы LWC подстроил шкалу под видимые свечи
-    priceScale.applyOptions({ 
-        autoScale: true,
-        scaleMargins: { top: 0.1, bottom: 0.1 }  // 10% отступа
+    
+    if (minPrice === Infinity || maxPrice === -Infinity) return;
+    
+    // 🔥 Добавляем отступы 5% сверху и снизу (чтобы свечи не прилипали к краям)
+    const range = maxPrice - minPrice;
+    const padding = range * 0.05;
+    minPrice -= padding;
+    maxPrice += padding;
+    
+    // 🔥 Включаем autoScale, чтобы LWC принял наш диапазон
+    priceScale.applyOptions({ autoScale: true });
+    
+    // 🔥 Устанавливаем видимый диапазон цен вручную
+    priceScale.applyOptions({
+        scaleMargins: {
+            top: 0,
+            bottom: 0
+        }
     });
-
-    // Через 2 кадра выключаем автоскейл, чтобы зафиксировать шкалу
+    
+    // Фиксируем горизонтальный диапазон
+    timeScale.setVisibleLogicalRange({
+        from: visibleRange.from,
+        to: visibleRange.to
+    });
+    
+    // 🔥 СРАЗУ выключаем autoScale — иначе при следующем тике всё поедет
     requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            priceScale.applyOptions({ autoScale: false });
-        });
+        priceScale.applyOptions({ autoScale: false });
     });
+    
+    console.log('✅ Автовыравнивание по видимым свечам:', minPrice.toFixed(2), '-', maxPrice.toFixed(2));
 }
     getLastCandle() {
         return this.lastCandle;
