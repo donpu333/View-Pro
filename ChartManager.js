@@ -1080,9 +1080,10 @@ _syncPriceLine(price) {
         });
 
         // ✅ Центрируем цену
-        if (typeof this.manualAutoScale === 'function') {
-            this.manualAutoScale();
-        }
+       // ✅ Заменяем manualAutoScale на autoScale
+if (typeof this.autoScale === 'function') {
+    this.autoScale();
+}
 
         console.log('✅ Все данные загружены, масштаб зафиксирован');
     }, 100);
@@ -1278,32 +1279,32 @@ _syncPriceLine(price) {
             priceScale.applyOptions({ autoScale: true });
         }
     }
-
-   
-// Добавьте этот метод в класс ChartManager
-manualAutoScale() {
+autoScale() {
     if (!this.chart || this.chartData.length === 0) return;
-    
-    // Защита от множественных вызовов
+
+    const priceScale = this.chart.priceScale('right');
+    if (!priceScale) return;
+
+    // ✅ Защита от множественных вызовов
     if (this._autoScalePending) return;
     this._autoScalePending = true;
-    
-    const priceScale = this.chart.priceScale('right');
-    if (!priceScale) {
-        this._autoScalePending = false;
-        return;
-    }
 
+    // Включаем авто-масштаб
     priceScale.applyOptions({ 
         autoScale: true,
         scaleMargins: { top: 0.1, bottom: 0.1 }
     });
 
+    // Через 2 кадра выключаем, чтобы зафиксировать
     requestAnimationFrame(() => {
-        priceScale.applyOptions({ autoScale: false });
-        this._autoScalePending = false;
+        requestAnimationFrame(() => {
+            priceScale.applyOptions({ autoScale: false });
+            this._autoScalePending = false;
+        });
     });
 }
+   
+
     getLastCandle() {
         return this.lastCandle;
     }
