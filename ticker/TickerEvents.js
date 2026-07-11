@@ -128,26 +128,27 @@ class TickerEvents {
         });
 
         // Кнопка обновления кэша
-        const refreshBtn = document.getElementById('refreshCacheBtn');
-        if (refreshBtn && !refreshBtn.dataset.initialized) {
-            refreshBtn.dataset.initialized = 'true';
-            refreshBtn.addEventListener('click', async () => {
-                const originalHTML = refreshBtn.innerHTML;
-                const originalOpacity = refreshBtn.style.opacity;
-                refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#848e9c"><path d="..."/></svg>`;
-                refreshBtn.style.opacity = '0.6';
-                try {
-                    await this.parent.refreshSymbolCache(TickerEvents.REFRESH_TIMEOUT);
-                    this.parent.updateModalCount();
-                } catch (error) {
-                    console.error('Ошибка обновления кэша:', error);
-                    this._showNotification('⚠️ Ошибка обновления кэша', 'error');
-                } finally {
-                    refreshBtn.innerHTML = originalHTML;
-                    refreshBtn.style.opacity = originalOpacity || '1';
-                }
-            });
+     const refreshBtn = document.getElementById('refreshCacheBtn');
+if (refreshBtn && !refreshBtn.dataset.initialized) {
+    refreshBtn.dataset.initialized = 'true';
+    refreshBtn.addEventListener('click', async () => {
+        const originalHTML = refreshBtn.innerHTML;
+        const originalOpacity = refreshBtn.style.opacity;
+        // ✅ Правильная иконка загрузки (Font Awesome spinner)
+        refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        refreshBtn.style.opacity = '0.6';
+        try {
+            await this.parent.refreshSymbolCache(15000);
+            this.parent.updateModalCount();
+        } catch (error) {
+            console.error('Ошибка обновления кэша:', error);
+            this._showNotification?.('⚠️ Ошибка обновления кэша', 'error');
+        } finally {
+            refreshBtn.innerHTML = originalHTML;
+            refreshBtn.style.opacity = originalOpacity || '1';
         }
+    });
+}
 
         // Подвкладки цветов флагов
         document.querySelectorAll('.tab[data-flag]').forEach(tab => {
