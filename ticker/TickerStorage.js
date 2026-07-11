@@ -2,7 +2,7 @@ class TickerStorage {
     constructor() {
         this.state = {
             favorites: [],
-            customSymbols: [],          // теперь всегда синхронизируется с активным вотчлистом
+            customSymbols: [],
             flags: {},
             activeTab: 'all',
             activeFlagTab: 'red',
@@ -21,24 +21,28 @@ class TickerStorage {
             isAddingAllInProgress: false,
             addingAllOffset: 0,
             addingAllBatchSize: 50,
+        };
+
+        // Свойства WebSocket и подключений теперь живут отдельно от сохраняемого состояния
+        this.wsState = {
             binanceHasConnection: { futures: false, spot: false },
             bybitHasConnection: { futures: false, spot: false },
             maxReconnectAttempts: 10,
-            wsReconnectAttempts: { 
-                binanceFutures: 0, 
-                binanceSpot: 0, 
-                bybitFutures: 0, 
-                bybitSpot: 0 
+            wsReconnectAttempts: {
+                binanceFutures: 0,
+                binanceSpot: 0,
+                bybitFutures: 0,
+                bybitSpot: 0
             },
             wsConnected: {
                 binanceFutures: false,
                 binanceSpot: false,
                 bybitFutures: false,
-                bybitSpot: false    
+                bybitSpot: false
             },
             isSettingUpWebSockets: false
         };
-        
+
         this.tickers = [];
         this.tickersMap = new Map();
         this.allSymbolsCache = [];
@@ -48,7 +52,7 @@ class TickerStorage {
         this.allBinanceSpot = [];
         this.allBybitFutures = [];
         this.allBybitSpot = [];
-        
+
         this.formatCache = {
             prices: new Map(),
             volumes: new Map(),
@@ -61,46 +65,40 @@ class TickerStorage {
         this.saveTimeout = null;
         this._isRefreshing = false;
         this._eventsInitialized = false;
+
+        // O(1) индекс популярности
+        this._popularityIndex = this._buildPopularityIndex();
     }
-    
-    // Геттеры
+
     getState() { return this.state; }
     getTickers() { return this.tickers; }
     getTickersMap() { return this.tickersMap; }
     getBinanceSymbolsCache() { return this.binanceSymbolsCache; }
     getBybitSymbolsCache() { return this.bybitSymbolsCache; }
-    
-    // ===== ЗАГРУЗКА ДАННЫХ =====
-    
+
+    // ---------------------------------------------------------------------------
+    // Загрузка данных
+    // ---------------------------------------------------------------------------
     async loadUserData() {
         console.log('📦 Загрузка пользовательских данных...');
-        
-        // Сначала быстро грузим из localStorage
-        const loadedFromLocal = this.loadFromLocalStorage();
-        
-        // Пытаемся IndexedDB (может перезаписать localStorage если данные свежее)
+
+        const loadedFromLocal = this.loadFromLocalStorage(); // теперь возвращает корректный флаг
+
         if (window.db && window.dbReady) {
             try {
                 const favorites = await window.db.get('settings', 'favorites');
-                if (favorites && favorites.value) {
-                    this.state.favorites = favorites.value;
-                }
-                
-                // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не загружаем из IndexedDB
-                // Управление символами полностью передано WatchlistManager
-                
+                if (favorites?.value) this.state.favorites = favorites.value;
+
                 const flags = await window.db.get('settings', 'flags');
-                if (flags && flags.value) {
-                    this.state.flags = flags.value;
-                }
-                
+                if (flags?.value) this.state.flags = flags.value;
+
                 const currentSymbol = await window.db.get('settings', 'currentSymbol');
-                if (currentSymbol && currentSymbol.value) {
+                if (currentSymbol?.value) {
                     this.state.currentSymbol = currentSymbol.value.symbol || 'BTCUSDT';
                     this.state.currentExchange = currentSymbol.value.exchange || 'binance';
                     this.state.currentMarketType = currentSymbol.value.marketType || 'futures';
                 }
-                
+
                 console.log('✅ Данные загружены из IndexedDB');
             } catch (error) {
                 console.warn('❌ Ошибка IndexedDB, используем localStorage:', error);
@@ -111,95 +109,92 @@ class TickerStorage {
             console.warn('⚠️ Нет сохранённых данных');
         }
     }
-    
+
     loadFromLocalStorage() {
         try {
             let loaded = false;
-            
-            // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не загружаем из localStorage
-            // Управление символами полностью передано WatchlistManager
-            
+
             const favorites = localStorage.getItem('favorites');
             if (favorites) {
                 const parsed = JSON.parse(favorites);
                 if (Array.isArray(parsed)) {
                     this.state.favorites = parsed;
+                    loaded = true;
                 }
             }
-            
+
             const flags = localStorage.getItem('flags');
             if (flags) {
                 const parsed = JSON.parse(flags);
                 if (typeof parsed === 'object') {
                     this.state.flags = parsed;
+                    loaded = true;
                 }
             }
-            
+
             const currentSymbol = localStorage.getItem('currentSymbol');
             if (currentSymbol) {
                 const parsed = JSON.parse(currentSymbol);
                 this.state.currentSymbol = parsed.symbol || 'BTCUSDT';
                 this.state.currentExchange = parsed.exchange || 'binance';
                 this.state.currentMarketType = parsed.marketType || 'futures';
+                loaded = true;
             }
-            
-            return loaded;
-            
+
+            return loaded; // ✅ теперь честно возвращает true/false
         } catch (e) {
             console.warn('❌ Ошибка загрузки из localStorage:', e);
             return false;
         }
     }
-    
+
     async loadFromIndexedDB() {
         console.log('📦 Загрузка инструментов из IndexedDB...');
-        
         if (!window.db || !window.dbReady) {
             console.warn('📦 IndexedDB не доступна');
             return false;
         }
-        
+
         try {
             const binanceCache = await window.db.get('symbolCaches', 'binance');
-            if (binanceCache && binanceCache.data && binanceCache.data.length > 0) {
-                this.binanceSymbolsCache = binanceCache.data;
-                this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
+            if (binanceCache?.data?.length > 0) {
+                this.binanceSymbolsCache = this.sortByPopularity(binanceCache.data);
                 this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures');
                 this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot');
                 console.log(`✅ Binance из IndexedDB: ${this.binanceSymbolsCache.length}`);
             }
-            
+
             const bybitCache = await window.db.get('symbolCaches', 'bybit');
-            if (bybitCache && bybitCache.data && bybitCache.data.length > 0) {
-                this.bybitSymbolsCache = bybitCache.data;
-                this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
+            if (bybitCache?.data?.length > 0) {
+                this.bybitSymbolsCache = this.sortByPopularity(bybitCache.data);
                 this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures');
                 this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot');
                 console.log(`✅ Bybit из IndexedDB: ${this.bybitSymbolsCache.length}`);
             }
-            
+
             this.allSymbolsCache = [...this.binanceSymbolsCache, ...this.bybitSymbolsCache];
-            
             return this.binanceSymbolsCache.length > 0 || this.bybitSymbolsCache.length > 0;
-            
         } catch (error) {
             console.warn('❌ Ошибка загрузки из IndexedDB:', error);
             return false;
         }
     }
-    
-    // ===== СОХРАНЕНИЕ =====
-    
-   async saveState() {
-    if (this.saveTimeout) clearTimeout(this.saveTimeout);
-    
-    this.saveTimeout = setTimeout(async () => {
-        // ✅ Синхронизируем customSymbols с активным вотчлистом перед сохранением
+
+    // ---------------------------------------------------------------------------
+    // Сохранение
+    // ---------------------------------------------------------------------------
+    saveState() {
+        if (this.saveTimeout) clearTimeout(this.saveTimeout);
+        this.saveTimeout = setTimeout(() => this._doSaveState(), 500);
+    }
+
+    async _doSaveState() {
+        // Синхронизация с активным вотчлистом
         if (window.tickerPanelInstance?.syncWithActiveWatchlist) {
             window.tickerPanelInstance.syncWithActiveWatchlist();
         }
-        
-        // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в localStorage
+
+        // localStorage (синхронно, быстро)
         try {
             localStorage.setItem('favorites', JSON.stringify(this.state.favorites));
             localStorage.setItem('flags', JSON.stringify(this.state.flags));
@@ -211,121 +206,73 @@ class TickerStorage {
         } catch (e) {
             console.warn('Ошибка сохранения в localStorage:', e);
         }
-        
-        // ✅ ИСПРАВЛЕНИЕ: customSymbols больше не сохраняем в IndexedDB
+
+        // IndexedDB (асинхронно)
         if (window.db && window.dbReady) {
             try {
-                await window.db.put('settings', {
-                    key: 'favorites',
-                    value: this.state.favorites,
-                    timestamp: Date.now()
-                });
-                
-                await window.db.put('settings', {
-                    key: 'flags',
-                    value: this.state.flags,
-                    timestamp: Date.now()
-                });
-                
+                await window.db.put('settings', { key: 'favorites', value: this.state.favorites, timestamp: Date.now() });
+                await window.db.put('settings', { key: 'flags', value: this.state.flags, timestamp: Date.now() });
                 console.log('✅ Состояние сохранено');
-                
             } catch (error) {
                 console.warn('❌ Ошибка сохранения в IndexedDB:', error);
             }
         }
-    }, 500);
-}
-    
+    }
+
     async saveCurrentSymbol(symbol, exchange, marketType) {
-        // localStorage
         try {
             localStorage.setItem('currentSymbol', JSON.stringify({ symbol, exchange, marketType }));
         } catch (e) {}
-        
-        // IndexedDB
-        if (!window.db || !window.dbReady) return;
-        
-        try {
-            await window.db.put('settings', {
-                key: 'currentSymbol',
-                value: { symbol, exchange, marketType },
-                timestamp: Date.now()
-            });
-        } catch (error) {
-            console.warn('❌ Ошибка сохранения currentSymbol:', error);
+
+        if (window.db && window.dbReady) {
+            try {
+                await window.db.put('settings', {
+                    key: 'currentSymbol',
+                    value: { symbol, exchange, marketType },
+                    timestamp: Date.now()
+                });
+            } catch (error) {
+                console.warn('❌ Ошибка сохранения currentSymbol:', error);
+            }
         }
     }
-    
+
     async saveSymbolsToIndexedDB() {
-        // localStorage (резерв)
         try {
             localStorage.setItem('binanceSymbolsCache', JSON.stringify(this.binanceSymbolsCache));
             localStorage.setItem('bybitSymbolsCache', JSON.stringify(this.bybitSymbolsCache));
         } catch (e) {
             console.warn('localStorage переполнен, кэш символов не сохранён');
         }
-        
-        // IndexedDB
+
         if (!window.db || !window.dbReady) return;
-        
+
         try {
             const now = Date.now();
-            
-            if (this.binanceSymbolsCache && this.binanceSymbolsCache.length > 0) {
-                const sortedBinance = this.sortByPopularity(this.binanceSymbolsCache);
+            if (this.binanceSymbolsCache?.length > 0) {
                 await window.db.put('symbolCaches', {
                     exchange: 'binance',
-                    data: sortedBinance,
+                    data: this.sortByPopularity(this.binanceSymbolsCache),
                     timestamp: now
                 });
             }
-            
-            if (this.bybitSymbolsCache && this.bybitSymbolsCache.length > 0) {
-                const sortedBybit = this.sortByPopularity(this.bybitSymbolsCache);
+            if (this.bybitSymbolsCache?.length > 0) {
                 await window.db.put('symbolCaches', {
                     exchange: 'bybit',
-                    data: sortedBybit,
+                    data: this.sortByPopularity(this.bybitSymbolsCache),
                     timestamp: now
                 });
             }
-            
             console.log('✅ Кэш символов сохранён в IndexedDB');
-            
         } catch (error) {
             console.warn('❌ Ошибка сохранения кэша:', error);
         }
     }
-    
-    // ===== ВОТЧЛИСТЫ =====
-    
-    async loadWatchlists() {
-        if (window.db && window.dbReady) {
-            try {
-                const data = await window.db.get('settings', 'watchlists');
-                if (data?.value) return data.value;
-            } catch (e) {}
-        }
-        const saved = localStorage.getItem('watchlists');
-        return saved ? JSON.parse(saved) : null;
-    }
 
-    async saveWatchlists(data) {
-        if (window.db && window.dbReady) {
-            try {
-                await window.db.put('settings', { key: 'watchlists', value: data, timestamp: Date.now() });
-                console.log('📋 Вотчлисты сохранены в IndexedDB');
-                localStorage.removeItem('watchlists'); // чистим localStorage, теперь всё в IndexedDB
-                return;
-            } catch (e) {
-                console.error('Ошибка сохранения в IndexedDB:', e);
-            }
-        }
-        localStorage.setItem('watchlists', JSON.stringify(data));
-    }
-    
-    // ===== УТИЛИТЫ =====
-    
-    sortByPopularity(symbols) {
+    // ---------------------------------------------------------------------------
+    // Вспомогательные методы
+    // ---------------------------------------------------------------------------
+    _buildPopularityIndex() {
         const popularityOrder = [
             'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
             'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT',
@@ -334,87 +281,60 @@ class TickerStorage {
             'INJUSDT', 'SUIUSDT', 'SEIUSDT', 'WIFUSDT', 'PEPEUSDT',
             'SHIBUSDT', 'BONKUSDT', 'FLOKIUSDT'
         ];
-        
+        const index = new Map();
+        popularityOrder.forEach((sym, idx) => index.set(sym, idx));
+        return index;
+    }
+
+    sortByPopularity(symbols) {
+        const popIdx = this._popularityIndex;
         return [...symbols].sort((a, b) => {
-            const aSymbol = a.symbol || '';
-            const bSymbol = b.symbol || '';
-            const aIndex = popularityOrder.indexOf(aSymbol);
-            const bIndex = popularityOrder.indexOf(bSymbol);
-            
-            if (aIndex !== -1 && bIndex !== -1) {
-                if (aIndex === bIndex) {
+            const aSym = a.symbol || '';
+            const bSym = b.symbol || '';
+            const aIdx = popIdx.get(aSym);
+            const bIdx = popIdx.get(bSym);
+
+            if (aIdx !== undefined && bIdx !== undefined) {
+                if (aIdx === bIdx) {
                     if (a.exchange === 'binance' && b.exchange !== 'binance') return -1;
                     if (a.exchange !== 'binance' && b.exchange === 'binance') return 1;
                     return 0;
                 }
-                return aIndex - bIndex;
+                return aIdx - bIdx;
             }
-            if (aIndex !== -1) return -1;
-            if (bIndex !== -1) return 1;
-            
-            return aSymbol.localeCompare(bSymbol);
+            if (aIdx !== undefined) return -1;
+            if (bIdx !== undefined) return 1;
+            return aSym.localeCompare(bSym);
         });
     }
-    
+
+    // ✅ Удалён дублирующийся код
     getFilteredCount(exchange, marketType, query) {
+        let source;
         if (exchange === 'binance') {
-            const source = marketType === 'futures' ? this.allBinanceFutures : this.allBinanceSpot;
-            if (!source) return 0;
-            let filtered = source;
-            if (query) {
-                filtered = filtered.filter(s => s.symbol.includes(query.toUpperCase()));
-            }
-            return filtered.length;
+            source = marketType === 'futures' ? this.allBinanceFutures : this.allBinanceSpot;
         } else {
-            const source = marketType === 'futures' ? this.allBybitFutures : this.allBybitSpot;
-            if (!source) return 0;
-            let filtered = source;
-            if (query) {
-                filtered = filtered.filter(s => s.symbol.includes(query.toUpperCase()));
-            }
-            return filtered.length;
+            source = marketType === 'futures' ? this.allBybitFutures : this.allBybitSpot;
+        }
+        if (!source) return 0;
+        if (!query) return source.length;
+        return source.filter(s => s.symbol.includes(query.toUpperCase())).length;
+    }
+
+    // Заглушка для обратной совместимости – реальное обновление теперь в TickerModal
+    updateModalCount() {
+        // Рекомендуется вызывать TickerModal.updateCount() напрямую
+        if (window.tickerPanelInstance?.modal?.updateCount) {
+            window.tickerPanelInstance.modal.updateCount();
         }
     }
-    
-updateModalCount() {
-    const foundSpan = document.getElementById('modalFoundCount');
-    if (!foundSpan) return;
-    
-    // Проверяем существует ли this.state
-    if (!this.state) {
-        console.warn('updateModalCount: this.state не определен');
-        foundSpan.textContent = '0';
-        return;
-    }
-    
-    let source;
-    if (this.state.modalExchange === 'binance') {
-        source = this.state.modalMarketType === 'futures' 
-            ? this.allBinanceFutures 
-            : this.allBinanceSpot;
-    } else {
-        source = this.state.modalMarketType === 'futures' 
-            ? this.allBybitFutures 
-            : this.allBybitSpot;
-    }
-    
-    let count = source ? source.length : 0;
-    const query = this.state.modalSearchQuery;
-    if (query && source) {
-        count = source.filter(s => s.symbol.includes(query.toUpperCase())).length;
-    }
-    
-    foundSpan.textContent = count;
-}
-    removeDuplicates(arr, key) {
-        const seen = new Map();
-        return arr.filter(item => {
-            if (!item || !item[key]) return false;
-            const value = item[key];
-            if (seen.has(value)) return false;
-            seen.set(value, true);
-            return true;
-        });
+
+    // ✅ Метод очистки таймера
+    destroy() {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
     }
 }
 
