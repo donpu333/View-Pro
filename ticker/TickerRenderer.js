@@ -11,14 +11,17 @@ class TickerRenderer {
         this._renderRafId = null;
         this._firstRender = true;
         this._updatePriceRaf = null;
-        
-        // Инжектим CSS для мигания
+        this._cleanupIntervalId = null;
+        this._cleanupStarted = false;
+        this._escapeDiv = document.createElement('div');
+
         this._injectFlashCSS();
+
+        this.SCROLL_BUFFER = 10;
+        this.CACHE_MAX_SIZE = 500;
+        this.CACHE_CLEANUP_INTERVAL = 30000;
     }
-    
-    // =========================================================================
-    // 💫 CSS для мигания цены
-    // =========================================================================
+
     _injectFlashCSS() {
         if (document.getElementById('tickerFlashCSS')) return;
         const style = document.createElement('style');
@@ -43,52 +46,48 @@ class TickerRenderer {
         `;
         document.head.appendChild(style);
     }
-    
+
+    _escapeHtml(str) {
+        this._escapeDiv.textContent = str;
+        return this._escapeDiv.innerHTML;
+    }
+
     // =========================================================================
     // 💫 УНИВЕРСАЛЬНЫЙ МЕТОД ОБНОВЛЕНИЯ ЦЕНЫ С АНИМАЦИЕЙ
     // =========================================================================
     _updatePriceWithAnimation(priceEl, ticker) {
         if (!priceEl || !ticker) return false;
-        
+
         const newPrice = this.formatPrice(ticker.price);
-        
-        // Если цена не изменилась - просто выходим
         if (priceEl.textContent === newPrice) return false;
-        
-        // Обновляем текст
+
         priceEl.textContent = newPrice;
-        
-        // Обновляем цвет
+
         const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
-        
-        // Определяем flash-класс
+
         let flashClass = null;
         if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
             flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
         }
-        
-        // Собираем все классы
+
         const classes = ['ticker-price', colorClass];
         if (flashClass) classes.push(flashClass);
-        
-        // Применяем классы
         priceEl.className = classes.join(' ');
-        
-        // Если была анимация - сбрасываем и перезапускаем
-              if (flashClass) {
+
+        // ✅ Исправлено: сброс анимации через getAnimations() вместо offsetWidth
+        if (flashClass) {
             priceEl.classList.remove('flash-up', 'flash-down');
-            
-            // ✅ ЗАМЕНА: убираем блокировку потока, откладываем на 1 кадр
-            requestAnimationFrame(() => {
-                priceEl.classList.add(flashClass);
-            });
-            
-            ticker.prevPrice = ticker.price;
+            if (priceEl.getAnimations) {
+                priceEl.getAnimations().forEach(anim => anim.cancel());
+            } else {
+                void priceEl.offsetWidth; // fallback для старых браузеров
+            }
+            priceEl.classList.add(flashClass);
         }
-        
+
         return true;
     }
-    
+
     // =========================================================================
     // ⚡ RAF-троттлинг — DOM обновляется строго 1 раз за кадр (60fps)
     // =========================================================================
@@ -99,260 +98,173 @@ class TickerRenderer {
             this._doUpdatePriceElements();
         });
     }
-    
+
     _doUpdatePriceElements() {
         let domUpdates = 0;
-        
-        // Итерируемся по ВСЕМ созданным элементам
+        const formatCache = this.parent?.formatCache;
+
         for (const [key, el] of this.tickerElements.entries()) {
-            if (!el || !el.isConnected) continue; // Элемент удален из DOM - пропускаем
-            
-            const ticker = this.parent.tickersMap.get(key);
+            if (!el || !el.isConnected) continue;
+
+            const ticker = this.parent.tickersMap?.get(key);
             if (!ticker) continue;
-            
-                        const els = el._cachedEls || {};
+
+            const els = el._cachedEls || {};
             const priceEl = els.price;
             const changeEl = els.change;
             const volumeEl = els.volume;
             const tradesEl = els.trades;
-            
-            // ✅ Используем универсальный метод с анимацией
+
             if (priceEl) {
                 const updated = this._updatePriceWithAnimation(priceEl, ticker);
                 if (updated) domUpdates++;
             }
-            
+
             const newChange = this.formatChange(ticker.change) + '%';
             if (changeEl && changeEl.textContent !== newChange) {
                 changeEl.textContent = newChange;
                 changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                 domUpdates++;
             }
-            
+
             const newVolume = this.formatVolume(ticker.volume);
             if (volumeEl && volumeEl.textContent !== newVolume) {
                 volumeEl.textContent = newVolume;
                 domUpdates++;
             }
-            
-            const newTrades = this.formatTrades(ticker);
+
+            // ✅ Унифицированный вызов: теперь передаём ticker.trades
+            const newTrades = this.formatTrades(ticker.trades);
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
                 domUpdates++;
             }
         }
-        
+
         if (this.parent?.debugMode && domUpdates > 0) {
             console.log(`🔄 Обновлено ${domUpdates} DOM-элементов`);
         }
     }
-    
+
     // =========================================================================
-    // 🔄 СОРТИРОВКА ТИКЕРОВ
+    // 🔄 СОРТИРОВКА ТИКЕРОВ (ВОЗВРАЩАЕТ НОВЫЙ МАССИВ)
     // =========================================================================
-   // =========================================================================
-// 🔄 СОРТИРОВКА ТИКЕРОВ (ВОЗВРАЩАЕТ НОВЫЙ МАССИВ)
-// =========================================================================
-sortTickers(tickers) {
-    const arrayToSort = tickers || this.parent.tickers;
-    
-    if (!arrayToSort || !Array.isArray(arrayToSort)) {
-        if (this.parent?.debugMode) {
-            console.warn('⚠️ sortTickers: нет данных для сортировки');
+    sortTickers(tickers) {
+        const arrayToSort = tickers || this.parent?.tickers;
+        if (!arrayToSort || !Array.isArray(arrayToSort)) {
+            if (this.parent?.debugMode) console.warn('⚠️ sortTickers: нет данных');
+            return [];
         }
-        return [];
+        if (!this.parent?.state?.sortBy) return [...arrayToSort];
+
+        const sortBy = this.parent.state.sortBy;
+        const direction = this.parent.state.sortDirection === 'asc' ? 1 : -1;
+        return [...arrayToSort].sort((a, b) => this._compareTickers(a, b, sortBy, direction));
     }
-    
-    if (!this.parent?.state?.sortBy) {
-        return [...arrayToSort];
+
+    // =========================================================================
+    // 📋 ПОЛУЧИТЬ ОТФИЛЬТРОВАННЫЕ И ОТСОРТИРОВАННЫЕ ТИКЕРЫ
+    // (теперь не изменяет displayedTickers, только возвращает результат)
+    // =========================================================================
+    getFilteredTickers() {
+        const state = this.parent?.state;
+        if (!state) return [];
+
+        const cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
+        if (this.parent.filterCache?.key === cacheKey) {
+            return this.parent.filterCache.result;
+        }
+
+        let result = [];
+        try {
+            const map = this.parent.tickersMap;
+            if (!map) return [];
+
+            switch (state.activeTab) {
+                case 'favorites': {
+                    const favSet = new Set(state.favorites || []);
+                    result = Array.from(map.values()).filter(t => favSet.has(t.symbol));
+                    break;
+                }
+                case 'flags': {
+                    const flags = state.flags || {};
+                    const flagTab = state.activeFlagTab;
+                    result = Object.entries(flags)
+                        .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
+                        .map(([key]) => map.get(key))
+                        .filter(t => t !== undefined);
+                    break;
+                }
+                default: {
+                    const sourceKeys = state.customSymbols || [];
+                    if (sourceKeys.length === 0) {
+                        result = Array.from(map.values());
+                    } else {
+                        let filteredKeys = [...sourceKeys];
+                        if (state.marketFilter && state.marketFilter !== 'all') {
+                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                        }
+                        if (state.exchangeFilter && state.exchangeFilter !== 'all') {
+                            filteredKeys = filteredKeys.filter(k => {
+                                const parts = k.split(':');
+                                return parts[1] === state.exchangeFilter;
+                            });
+                        }
+                        result = filteredKeys.map(key => map.get(key)).filter(t => t !== undefined);
+                    }
+                    break;
+                }
+            }
+
+            const sortBy = state.sortBy || 'volume';
+            const direction = state.sortDirection === 'asc' ? 1 : -1;
+            result.sort((a, b) => this._compareTickers(a, b, sortBy, direction));
+
+        } catch (error) {
+            console.error('❌ getFilteredTickers error:', error);
+            result = Array.from(this.parent.tickersMap?.values() || []);
+        }
+
+        this.parent.filterCache = { key: cacheKey, result };
+        return result;
     }
-    
-    const sortBy = this.parent.state.sortBy;
-    const direction = this.parent.state.sortDirection === 'asc' ? 1 : -1;
-    
-    // ✅ Приоритет флагов (обновлён с учётом lime и cyan)
-    const flagPriority = {
-        'red': 1,      // 🔴 Красный
-        'yellow': 2,   // 🟡 Жёлтый
-        'green': 3,    // 🟢 Зелёный
-        'lime': 4,     // 🟢💚 Лайм
-        'blue': 5,     // 🔵 Синий
-        'cyan': 6,     // 💙 Бирюзовый
-        'purple': 7,   // 🟣 Фиолетовый
-        null: 999      // Без флага
-    };
-    
-    const sorted = [...arrayToSort].sort((a, b) => {
+
+    _compareTickers(a, b, sortBy, direction) {
         if (!a || !b) return 0;
-        
-        let result = 0;
-        
+        const flagPriority = {
+            red: 1, yellow: 2, green: 3, lime: 4,
+            blue: 5, cyan: 6, purple: 7, null: 999
+        };
+        let res = 0;
         switch (sortBy) {
             case 'flag':
-                // ✅ Сортировка по флагам
-                const aFlag = a.flag || null;
-                const bFlag = b.flag || null;
-                const aPriority = flagPriority[aFlag];
-                const bPriority = flagPriority[bFlag];
-                result = aPriority - bPriority;
+                res = (flagPriority[a.flag] || 999) - (flagPriority[b.flag] || 999);
                 break;
-                
             case 'price':
-                result = (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
+                res = (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
                 break;
-                
             case 'change':
-                result = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
+                res = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
                 break;
-                
             case 'volume':
-                const aVol = parseFloat(a.volume) || 0;
-                const bVol = parseFloat(b.volume) || 0;
-                result = aVol - bVol;
+                res = (parseFloat(a.volume) || 0) - (parseFloat(b.volume) || 0);
                 break;
-                
             case 'trades':
-                result = (parseInt(a.trades) || 0) - (parseInt(b.trades) || 0);
+                res = (parseInt(a.trades) || 0) - (parseInt(b.trades) || 0);
                 break;
-                
             default:
-                result = 0;
+                res = 0;
         }
-        
-        return direction * result;
-    });
-    
-    if (this.parent?.debugMode && sortBy === 'flag' && sorted.length > 0) {
-        console.log('🏁 Сортировка по флагам:', 
-            sorted.slice(0, 5).map(t => `${t.symbol}: ${t.flag || 'нет'}`)
-        );
+        return direction * res;
     }
-    
-    return sorted;
-}
-    
-    // =========================================================================
-    // 📋 ПОЛУЧИТЬ ОТФИЛЬТРОВАННЫЕ (И ОТСОРТИРОВАННЫЕ!) ТИКЕРЫ
-    // =========================================================================
-   getFilteredTickers() {
-    const cacheKey = `${this.parent.state?.marketFilter || 'all'}:${this.parent.state?.exchangeFilter || 'all'}:${this.parent.state?.activeTab || 'all'}:${this.parent.state?.sortBy || 'volume'}:${this.parent.state?.sortDirection || 'desc'}`;
-    
-    if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
-        return this.parent.filterCache.result;
-    }
-    
-    let result = [];
-    const state = this.parent.state;
-    
-    try {
-        switch (state?.activeTab) {
-            case 'favorites':
-                const favSet = new Set(state.favorites || []);
-                result = Array.from(this.parent.tickersMap.values()).filter(t => 
-                    favSet.has(t.symbol)
-                );
-                break;
-                
-            case 'flags':
-                const flags = state.flags || {};
-                const flagTab = state.activeFlagTab;
-                
-                result = Object.entries(flags)
-                    .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
-                    .map(([key]) => this.parent.tickersMap.get(key))
-                    .filter(t => t !== undefined);
-                break;
-                
-            default:
-                const sourceKeys = state.customSymbols || [];
-                
-                if (sourceKeys.length === 0) {
-                    console.warn('⚠️ customSymbols пустой! Используем tickersMap');
-                    result = Array.from(this.parent.tickersMap.values());
-                } else {
-                    let filteredKeys = [...sourceKeys];
-                    
-                    if (state.marketFilter && state.marketFilter !== 'all') {
-                        filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
-                    }
-                    
-                    if (state.exchangeFilter && state.exchangeFilter !== 'all') {
-                        filteredKeys = filteredKeys.filter(k => {
-                            const parts = k.split(':');
-                            return parts[1] === state.exchangeFilter;
-                        });
-                    }
-                    
-                    result = filteredKeys
-                        .map(key => this.parent.tickersMap.get(key))
-                        .filter(t => t !== undefined);
-                }
-                break;
-        }
-        
-        const sortBy = state.sortBy || 'volume';
-        const direction = state.sortDirection === 'asc' ? 1 : -1;
-        
-        // ✅ Приоритет флагов (обновлён)
-        const flagPriority = {
-            'red': 1,
-            'yellow': 2,
-            'green': 3,
-            'lime': 4,
-            'blue': 5,
-            'cyan': 6,
-            'purple': 7,
-            null: 999
-        };
-        
-        result.sort((a, b) => {
-            if (!a || !b) return 0;
-            
-            let res = 0;
-            switch (sortBy) {
-                case 'flag':
-                    const aFlag = a.flag || null;
-                    const bFlag = b.flag || null;
-                    res = (flagPriority[aFlag] || 999) - (flagPriority[bFlag] || 999);
-                    break;
-                case 'price':
-                    res = (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
-                    break;
-                case 'change':
-                    res = (parseFloat(a.change) || 0) - (parseFloat(b.change) || 0);
-                    break;
-                case 'volume':
-                    res = (parseFloat(a.volume) || 0) - (parseFloat(b.volume || 0));
-                    break;
-                case 'trades':
-                    res = (parseInt(a.trades) || 0) - (parseInt(b.trades) || 0);
-                    break;
-                default:
-                    res = 0;
-            }
-            
-            return direction * res;
-        });
-        
-    } catch (error) {
-        console.error('❌ Ошибка getFilteredTickers:', error);
-        result = Array.from(this.parent.tickersMap.values());
-    }
-    
-    this.displayedTickers = result;
-    this.totalItems = result.length;
-    
-    this.parent.filterCache = { key: cacheKey, result };
-    
-    return result;
-}
+
     // =========================================================================
     // 🎨 ГЛАВНЫЙ МЕТОД РЕНДЕРИНГА СПИСКА
     // =========================================================================
     renderTickerList() {
         const flagTabs = document.getElementById('flagTabs');
         if (flagTabs) {
-            flagTabs.classList.toggle('show', this.parent.state.activeTab === 'flags');
+            flagTabs.classList.toggle('show', this.parent?.state?.activeTab === 'flags');
         }
 
         const container = document.getElementById('tickerListContainer');
@@ -364,134 +276,137 @@ sortTickers(tickers) {
 
         if (this._scrollHandler) {
             container.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
         }
-        
-        const spacer = container.querySelector('.ticker-spacer');
-        if (spacer) spacer.remove();
-        
-        const itemsContainer = container.querySelector('.ticker-items-container');
-        if (itemsContainer) itemsContainer.remove();
-        
+
+        container.innerHTML = '';
+
+        if (this.parent?._rowDomCache) {
+            this.parent._rowDomCache.clear();
+        }
         this.tickerElements.clear();
-if (window.tickerPanelInstance?._rowDomCache) {
-    window.tickerPanelInstance._rowDomCache.clear();
-}
+
         container.style.position = 'relative';
         container.style.overflowY = 'auto';
-        
+
         const newSpacer = document.createElement('div');
         newSpacer.className = 'ticker-spacer';
         newSpacer.style.height = (this.totalItems * this.rowHeight) + 'px';
         newSpacer.style.width = '100%';
         newSpacer.style.pointerEvents = 'none';
         container.appendChild(newSpacer);
-        
-        const newItemsContainer = document.createElement('div');
-        newItemsContainer.className = 'ticker-items-container';
-        newItemsContainer.style.position = 'absolute';
-        newItemsContainer.style.top = '0';
-        newItemsContainer.style.left = '0';
-        newItemsContainer.style.right = '0';
-        container.appendChild(newItemsContainer);
-        
+
+        const itemsContainer = document.createElement('div');
+        itemsContainer.className = 'ticker-items-container';
+        itemsContainer.style.position = 'absolute';
+        itemsContainer.style.top = '0';
+        itemsContainer.style.left = '0';
+        itemsContainer.style.right = '0';
+        container.appendChild(itemsContainer);
+
         this.renderVisibleTickers();
 
+        let ticking = false;
         this._scrollHandler = () => {
-            this.renderVisibleTickers();
+            if (!ticking) {
+                requestAnimationFrame(() => {
+                    this.renderVisibleTickers();
+                    ticking = false;
+                });
+                ticking = true;
+            }
         };
         container.addEventListener('scroll', this._scrollHandler);
     }
-    
+
     // =========================================================================
     // 📜 РЕНДЕРИНГ ВИДИМЫХ ЭЛЕМЕНТОВ (виртуальный скроллинг)
     // =========================================================================
     renderVisibleTickers() {
         const container = document.getElementById('tickerListContainer');
         if (!container || !this.displayedTickers || this.totalItems === 0) return;
-        
+
         const itemsContainer = container.querySelector('.ticker-items-container');
         if (!itemsContainer) return;
-        
+
         const scrollTop = container.scrollTop;
         const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight));
-        const endIndex = Math.min(startIndex + this.visibleCount + 10, this.totalItems);
-        
+        const endIndex = Math.min(startIndex + this.visibleCount + this.SCROLL_BUFFER, this.totalItems);
         if (startIndex >= endIndex) return;
-        
+
         const visibleKeys = new Set();
         const fragment = document.createDocumentFragment();
-        
+
         for (let i = startIndex; i < endIndex; i++) {
             const ticker = this.displayedTickers[i];
             if (!ticker) continue;
-            
+
             const key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
             visibleKeys.add(key);
-            
+
             let el = this.tickerElements.get(key);
             const isNewElement = !el;
-            
-            // Создаём новый элемент если нужно
-            if (isNewElement) {
-                el = this.createTickerElement(ticker, i);
-                this.tickerElements.set(key, el);
-            }
-            
-            // Позиционируем элемент
-            el.style.position = 'absolute';
-            el.style.top = (i * this.rowHeight) + 'px';
-            el.style.left = '0';
-            el.style.right = '0';
-            el.style.width = '100%';
-            el.style.display = '';
-            
-            // ✅ Обновляем данные в существующем элементе С АНИМАЦИЕЙ
-            if (!isNewElement) {
-                const priceEl = el.querySelector('.ticker-price');
-                const changeEl = el.querySelector('.ticker-change');
-                const volumeEl = el.querySelector('.ticker-volume');
-                const tradesEl = el.querySelector('.ticker-trades');
-                
-                // ✅ ИСПОЛЬЗУЕМ УНИВЕРСАЛЬНЫЙ МЕТОД С АНИМАЦИЕЙ
-                if (priceEl) {
-                    this._updatePriceWithAnimation(priceEl, ticker);
+
+            try {
+                if (isNewElement) {
+                    el = this.createTickerElement(ticker, i);
+                    if (!el) continue;
+                    this.tickerElements.set(key, el);
                 }
-                
-                if (changeEl) {
-                    changeEl.textContent = this.formatChange(ticker.change) + '%';
-                    changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
+
+                el.style.position = 'absolute';
+                el.style.top = (i * this.rowHeight) + 'px';
+                el.style.left = '0';
+                el.style.right = '0';
+                el.style.width = '100%';
+                el.style.display = '';
+
+                if (!isNewElement) {
+                    const priceEl = el._cachedEls?.price;
+                    const changeEl = el._cachedEls?.change;
+                    const volumeEl = el._cachedEls?.volume;
+                    const tradesEl = el._cachedEls?.trades;
+
+                    if (priceEl) this._updatePriceWithAnimation(priceEl, ticker);
+                    if (changeEl) {
+                        changeEl.textContent = this.formatChange(ticker.change) + '%';
+                        changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
+                    }
+                    if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
+                    // ✅ Унифицированный вызов formatTrades
+                    if (tradesEl) tradesEl.textContent = this.formatTrades(ticker.trades);
                 }
-                if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
-                if (tradesEl) tradesEl.textContent = this.formatTrades(ticker);
-            }
-            
-            // Добавляем в DOM если ещё не добавлен
-            if (!el.parentNode) {
-                fragment.appendChild(el);
+
+                if (!el.parentNode) {
+                    fragment.appendChild(el);
+                }
+            } catch (error) {
+                console.error(`❌ Ошибка рендера тикера ${ticker.symbol}:`, error);
             }
         }
-        
-        // Batch DOM update
+
         if (fragment.hasChildNodes()) {
             itemsContainer.appendChild(fragment);
         }
-        
-        // Скрываем невидимые элементы (для быстрого скролла)
+
         for (const [key, el] of this.tickerElements.entries()) {
             if (!visibleKeys.has(key)) {
                 el.style.display = 'none';
             }
         }
     }
-    
+
     // =========================================================================
     // 📦 СОЗДАНИЕ DOM-ЭЛЕМЕНТА ТИКЕРА
     // =========================================================================
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
-        div.className = `ticker-item ${ticker.symbol === this.parent.state.currentSymbol && 
-            ticker.exchange === this.parent.state.currentExchange && 
-            ticker.marketType === this.parent.state.currentMarketType ? 'active' : ''}`;
+        div.className = 'ticker-item';
+        if (ticker.symbol === this.parent?.state?.currentSymbol &&
+            ticker.exchange === this.parent?.state?.currentExchange &&
+            ticker.marketType === this.parent?.state?.currentMarketType) {
+            div.classList.add('active');
+        }
         div.dataset.symbol = ticker.symbol;
         div.dataset.exchange = ticker.exchange;
         div.dataset.marketType = ticker.marketType;
@@ -503,285 +418,273 @@ if (window.tickerPanelInstance?._rowDomCache) {
         div.style.minHeight = '36px';
         div.style.borderBottom = '1px solid #2B3139';
 
-        // ✅ Инициализируем prevPrice при создании
         if (!ticker.prevPrice && ticker.price > 0) {
             ticker.prevPrice = ticker.price;
         }
 
-        // Ручка для перетаскивания
-        const dragHandle = document.createElement('div');
-        dragHandle.className = 'drag-handle';
-        dragHandle.title = 'ПКМ → перетащить';
-        div.appendChild(dragHandle);
+        const flagKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
+        const flag = this.parent?.state?.flags?.[flagKey] || null;
+        const flagHTML = flag ? `<div class="flag flag-${flag}"></div>` : '<div class="flag-placeholder"></div>';
 
-        // Флаг
-        const flag = this.parent.state.flags[`${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`] || null;
-        const flagHTML = flag ? 
-            `<div class="flag flag-${flag}"></div>` : 
-            '<div class="flag-placeholder"></div>';
-
-        // Избранное и маркер рынка
-        const isFavorite = this.parent.state.favorites.includes(ticker.symbol) ? 'favorite' : '';
+        const isFavorite = this.parent?.state?.favorites?.includes(ticker.symbol) ? 'favorite' : '';
         const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
         const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
-        
-        // Отображаемое имя
-        let displayName = ticker.symbol.replace('USDT', '');
-        const match = displayName.match(/^(\d+)([A-Z]+)$/);
-        if (match) displayName = '1' + match[2];
-        else if (displayName.length > 8) displayName = displayName.substring(0, 7) + '…';
 
-        // Цвет цены
+        let rawName = ticker.symbol.replace('USDT', '');
+        const match = rawName.match(/^(\d+)([A-Z]+)$/);
+        if (match) rawName = '1' + match[2];
+        else if (rawName.length > 8) rawName = rawName.substring(0, 7) + '…';
+        const displayName = this._escapeHtml(rawName);
+
         const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
 
-        // HTML содержимое
+        // ✅ Унифицированный вызов formatTrades с числом
         div.innerHTML = `
-            <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;" data-ctx="symbol">
+            <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;">
                 ${flagHTML}
-                <sup class="market-sup ${markerClass}" style="font-size:7px;font-weight:bold;margin-right:2px;flex-shrink:0;" data-ctx="block">${markerLetter}</sup>
-                <span class="symbol-text" title="${ticker.symbol}" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${displayName}</span>
-                <span class="star ${isFavorite}" data-symbol="${ticker.symbol}" title="Избранное" style="flex-shrink:0;margin-left:2px;" data-ctx="block">★</span>
+                <sup class="market-sup ${markerClass}" style="font-size:7px;font-weight:bold;margin-right:2px;flex-shrink:0;">${markerLetter}</sup>
+                <span class="symbol-text" title="${this._escapeHtml(ticker.symbol)}" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${displayName}</span>
+                <span class="star ${isFavorite}" data-symbol="${this._escapeHtml(ticker.symbol)}" title="Избранное" style="flex-shrink:0;margin-left:2px;">★</span>
             </div>
-            <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatPrice(ticker.price)}</div>
-            <div class="ticker-change ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatChange(ticker.change)}%</div>
-            <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatVolume(ticker.volume)}</div>
-            <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;" data-ctx="block">${this.formatTrades(ticker)}</div>
+            <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatPrice(ticker.price)}</div>
+            <div class="ticker-change ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatChange(ticker.change)}%</div>
+            <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatVolume(ticker.volume)}</div>
+            <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatTrades(ticker.trades)}</div>
         `;
-const cacheKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
-if (window.tickerPanelInstance?._rowDomCache) {
-    window.tickerPanelInstance._rowDomCache.set(cacheKey, div);
-}
-div._cachedEls = {
-    price: div.querySelector('.ticker-price'),
-    change: div.querySelector('.ticker-change'),
-    volume: div.querySelector('.ticker-volume'),
-    trades: div.querySelector('.ticker-trades')
-};
+
+        div._cachedEls = {
+            price: div.querySelector('.ticker-price'),
+            change: div.querySelector('.ticker-change'),
+            volume: div.querySelector('.ticker-volume'),
+            trades: div.querySelector('.ticker-trades')
+        };
+
+        const cacheKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
+        if (this.parent?._rowDomCache) {
+            this.parent._rowDomCache.set(cacheKey, div);
+        }
+
         return div;
     }
-    
+
     // =========================================================================
-    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ
+    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ (с защитой от floating point)
     // =========================================================================
     formatPrice(price) {
         if (!price || price <= 0) return '...';
-        
         const now = Date.now();
-        const cached = this.parent.formatCache.prices.get(price);
-        if (cached && (now - cached.timestamp) < this.parent.cacheMaxAge) {
-            return cached.value;
-        }
-        
-        let result;
-        
-        if (price < 0.001) {
-            const priceStr = price.toFixed(10);
-            const match = priceStr.match(/^0\.(0+)(.+)$/);
-            if (match && match[1].length >= 3) {
-                const zeros = match[1].length;
-                const digits = match[2].replace(/0+$/, '');
-                if (digits.length === 0) {
-                    result = price.toFixed(zeros + 2);
-                } else {
-                    const subScript = '₀₁₂₃₄₅₆₇₈₉';
-                    const zeroSub = String(zeros).split('').map(d => subScript[parseInt(d)]).join('');
-                    result = `0.0${zeroSub}${digits}`;
-                }
-            } else {
-                result = this._formatAsIs(price);
+        const cache = this.parent?.formatCache?.prices;
+        // ✅ Строковый ключ для избежания проблем с плавающей точкой
+        const key = price.toFixed(8);
+        if (cache) {
+            const cached = cache.get(key);
+            if (cached && (now - cached.timestamp) < (this.parent?.cacheMaxAge || 5000)) {
+                return cached.value;
             }
-        } else {
-            result = this._formatAsIs(price);
         }
-        
-        this.parent.formatCache.prices.set(price, { value: result, timestamp: now });
-        if (this.parent.formatCache.prices.size > 500) {
-            const oldestKey = this.parent.formatCache.prices.keys().next().value;
-            this.parent.formatCache.prices.delete(oldestKey);
+        const result = this._formatAsIs(price);
+        if (cache) {
+            cache.set(key, { value: result, timestamp: now });
+            if (cache.size > this.CACHE_MAX_SIZE) {
+                const oldestKey = cache.keys().next().value;
+                cache.delete(oldestKey);
+            }
         }
-        
         return result;
     }
 
     _formatAsIs(price) {
         let str = price.toFixed(8);
         str = str.replace(/\.?0+$/, '');
-        if (!str.includes('.')) {
-            str += '.00';
-        } else {
+        if (!str.includes('.')) str += '.00';
+        else {
             const parts = str.split('.');
-            if (parts[1].length < 2) {
-                str = str.padEnd(str.length + (2 - parts[1].length), '0');
-            }
+            if (parts[1].length < 2) str = str.padEnd(str.length + (2 - parts[1].length), '0');
         }
         return str;
     }
-    
+
     // =========================================================================
-    // 📈 ФОРМАТИРОВАНИЕ ИЗМЕНЕНИЯ %
+    // 📈 ФОРМАТИРОВАНИЕ ИЗМЕНЕНИЯ % (строковый ключ)
     // =========================================================================
     formatChange(change) {
         if (change === undefined || change === null) return '0.00';
-        
         const now = Date.now();
-        const cached = this.parent.formatCache.changes.get(change);
-        
-        if (cached && (now - cached.timestamp) < this.parent.cacheMaxAge) {
-            return cached.value;
+        const cache = this.parent?.formatCache?.changes;
+        const key = change.toFixed(2);
+        if (cache) {
+            const cached = cache.get(key);
+            if (cached && (now - cached.timestamp) < (this.parent?.cacheMaxAge || 5000)) return cached.value;
         }
-        
         const result = (change > 0 ? '+' : '') + change.toFixed(2);
-        
-        this.parent.formatCache.changes.set(change, { value: result, timestamp: now });
-        
-        if (this.parent.formatCache.changes.size > 500) {
-            const oldestKey = this.parent.formatCache.changes.keys().next().value;
-            this.parent.formatCache.changes.delete(oldestKey);
+        if (cache) {
+            cache.set(key, { value: result, timestamp: now });
+            if (cache.size > this.CACHE_MAX_SIZE) {
+                const oldestKey = cache.keys().next().value;
+                cache.delete(oldestKey);
+            }
         }
-        
         return result;
     }
-    
+
     // =========================================================================
-    // 📊 ФОРМАТИРОВАНИЕ ОБЪЁМА
+    // 📊 ФОРМАТИРОВАНИЕ ОБЪЁМА (строковый ключ)
     // =========================================================================
     formatVolume(volume) {
         if (!volume || volume === 0) return '0';
-        
         const now = Date.now();
-        const cached = this.parent.formatCache.volumes.get(volume);
-        
-        if (cached && (now - cached.timestamp) < this.parent.cacheMaxAge) {
-            return cached.value;
+        const cache = this.parent?.formatCache?.volumes;
+        const key = volume.toFixed(4);
+        if (cache) {
+            const cached = cache.get(key);
+            if (cached && (now - cached.timestamp) < (this.parent?.cacheMaxAge || 5000)) return cached.value;
         }
-        
         let result;
         if (volume >= 1e9) result = (volume / 1e9).toFixed(2) + 'B';
         else if (volume >= 1e6) result = (volume / 1e6).toFixed(2) + 'M';
         else if (volume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
         else if (volume < 1) result = volume.toFixed(4);
         else result = volume.toFixed(2);
-        
-        this.parent.formatCache.volumes.set(volume, { value: result, timestamp: now });
-        
-        if (this.parent.formatCache.volumes.size > 500) {
-            const oldestKey = this.parent.formatCache.volumes.keys().next().value;
-            this.parent.formatCache.volumes.delete(oldestKey);
+        if (cache) {
+            cache.set(key, { value: result, timestamp: now });
+            if (cache.size > this.CACHE_MAX_SIZE) {
+                const oldestKey = cache.keys().next().value;
+                cache.delete(oldestKey);
+            }
         }
-        
         return result;
     }
-    
+
     // =========================================================================
-    // 🔢 ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА СДЕЛОК
+    // 🔢 ФОРМАТИРОВАНИЕ СДЕЛОК (унифицированный: принимает число)
     // =========================================================================
-    formatTrades(ticker) {
-        if (ticker.exchange !== 'binance' || !ticker.trades || ticker.trades <= 0) return '—';
-        if (ticker.trades > 1e9) return (ticker.trades / 1e9).toFixed(1) + 'B';
-        if (ticker.trades > 1e6) return (ticker.trades / 1e6).toFixed(1) + 'M';
-        if (ticker.trades > 1e3) return (ticker.trades / 1e3).toFixed(1) + 'K';
-        return ticker.trades.toString();
+    formatTrades(trades) {
+        if (!trades || trades <= 0) return '—';
+        if (trades > 1e9) return (trades / 1e9).toFixed(1) + 'B';
+        if (trades > 1e6) return (trades / 1e6).toFixed(1) + 'M';
+        if (trades > 1e3) return (trades / 1e3).toFixed(1) + 'K';
+        return trades.toString();
     }
-    
+
     // =========================================================================
     // 🧹 ОЧИСТКА КЭША ФОРМАТИРОВАНИЯ
     // =========================================================================
     startCacheCleanup() {
-        setInterval(() => {
+        if (this._cleanupStarted) return;
+        this._cleanupStarted = true;
+
+        this._cleanupIntervalId = setInterval(() => {
             const now = Date.now();
-            
-            for (const cache of [this.parent.formatCache.prices, this.parent.formatCache.changes, this.parent.formatCache.volumes]) {
+            const maxAge = this.parent?.cacheMaxAge || 5000;
+            const caches = this.parent?.formatCache;
+            if (!caches) return;
+
+            for (const cache of [caches.prices, caches.changes, caches.volumes]) {
+                if (!cache) continue;
                 for (const [key, value] of cache) {
-                    if (now - value.timestamp > this.parent.cacheMaxAge) {
+                    if (now - value.timestamp > maxAge) {
                         cache.delete(key);
                     }
                 }
             }
-        }, 30000);
+        }, this.CACHE_CLEANUP_INTERVAL);
     }
-    
+
+    stopCacheCleanup() {
+        if (this._cleanupIntervalId) {
+            clearInterval(this._cleanupIntervalId);
+            this._cleanupIntervalId = null;
+            this._cleanupStarted = false;
+        }
+    }
+
     // =========================================================================
     // ⬆️⬇️ НАСТРОЙКА СОРТИРОВКИ ПО ЗАГОЛОВКАМ
     // =========================================================================
-  // В методе setupHeaderSorting() - убираем смену направления
-setupHeaderSorting() {
-    if (this.parent._sortClickHandler) {
-        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.removeEventListener('click', this.parent._sortClickHandler);
-        });
-    }
-    
-    const savedSortBy = localStorage.getItem('tickerSortBy');
-    const savedSortDir = localStorage.getItem('tickerSortDir');
-    
-    // ✅ ЗДЕСЬ - убрал 'name', добавил 'flag'
-    const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
-    const VALID_DIRECTIONS = ['asc', 'desc'];
-    
-    this.parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) 
-        ? savedSortBy 
-        : 'volume';
-    
-    this.parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) 
-        ? savedSortDir 
-        : 'desc';
-    
-   this.parent._sortClickHandler = (e) => {
-    e.stopPropagation();
-    
-    const header = e.currentTarget;
-    const sortBy = header.dataset.sort;
-    
-    if (this.parent.state.sortBy === sortBy) {
-        this.parent.state.sortDirection = this.parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-        this.parent.state.sortBy = sortBy;
-        // ✅ ЗДЕСЬ - вместо 'name' теперь 'flag'
-        this.parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
-    }
-    
-    localStorage.setItem('tickerSortBy', this.parent.state.sortBy);
-    localStorage.setItem('tickerSortDir', this.parent.state.sortDirection);
-    
-    // ✅ ИСПРАВЛЕННАЯ СТРОКА - сохраняем через watchlistManager
-    if (this.parent.watchlistManager) {
-        this.parent.watchlistManager._saveSortForList(this.parent.watchlistManager.activeListId);
-    }
-    
-    document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-        icon.className = 'fas fa-sort';
-    });
-    
-    const icon = header.querySelector('i');
-    if (icon) {
-        icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-    }
-    
-    this.parent.filterCache = null;
-    this.parent.renderTickerList();
-};
-    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-        header.addEventListener('click', this.parent._sortClickHandler);
-        
-        // Скрываем иконку у заголовка "Флаг"
-        if (header.dataset.sort === 'flag') {
-            const icon = header.querySelector('i');
-            if (icon) icon.style.display = 'none';
+    setupHeaderSorting() {
+        const parent = this.parent;
+        if (!parent) return;
+
+        if (parent._sortClickHandler) {
+            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+                header.removeEventListener('click', parent._sortClickHandler);
+            });
         }
-    });
-    
-    const activeHeader = document.querySelector(`.table-header span[data-sort="${this.parent.state.sortBy}"]`);
-    if (activeHeader) {
-        const icon = activeHeader.querySelector('i');
-        if (icon) {
-            icon.className = this.parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            // Скрываем иконку у флага если он активный
-            if (this.parent.state.sortBy === 'flag') {
-                icon.style.display = 'none';
+
+        const savedSortBy = localStorage.getItem('tickerSortBy');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
+        const VALID_DIRECTIONS = ['asc', 'desc'];
+
+        parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : 'volume';
+        parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) ? savedSortDir : 'desc';
+
+        parent._sortClickHandler = (e) => {
+            e.stopPropagation();
+            const header = e.currentTarget;
+            const sortBy = header.dataset.sort;
+
+            if (parent.state.sortBy === sortBy) {
+                parent.state.sortDirection = parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                parent.state.sortBy = sortBy;
+                parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
+            }
+
+            localStorage.setItem('tickerSortBy', parent.state.sortBy);
+            localStorage.setItem('tickerSortDir', parent.state.sortDirection);
+
+            if (parent.watchlistManager?._saveSortForList) {
+                parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
+            }
+
+            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+                icon.className = 'fas fa-sort';
+            });
+            const icon = header.querySelector('i');
+            if (icon) {
+                icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+            }
+
+            parent.filterCache = null;
+            parent.renderTickerList();
+        };
+
+        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+            header.addEventListener('click', parent._sortClickHandler);
+            if (header.dataset.sort === 'flag') {
+                const icon = header.querySelector('i');
+                if (icon) icon.style.display = 'none';
+            }
+        });
+
+        const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
+        if (activeHeader) {
+            const icon = activeHeader.querySelector('i');
+            if (icon) {
+                icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                if (parent.state.sortBy === 'flag') icon.style.display = 'none';
             }
         }
     }
-}
+
+    // =========================================================================
+    // ♻️ Уничтожение рендерера (освобождение ресурсов)
+    // =========================================================================
+    destroy() {
+        this.stopCacheCleanup();
+        if (this._scrollHandler) {
+            const container = document.getElementById('tickerListContainer');
+            container?.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
+        }
+        this.tickerElements.clear();
+        if (this.parent?._rowDomCache) {
+            this.parent._rowDomCache.clear();
+        }
+        if (this._updatePriceRaf) cancelAnimationFrame(this._updatePriceRaf);
+        if (this._renderRafId) cancelAnimationFrame(this._renderRafId);
+    }
 }
 
 // Экспорт
