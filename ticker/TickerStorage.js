@@ -1,5 +1,6 @@
 class TickerStorage {
     constructor() {
+        // ✅ ВОЗВРАЩАЕМ БЕЗ АРГУМЕНТОВ — совместимость со старым TickerPanel
         this.state = {
             favorites: [],
             customSymbols: [],
@@ -21,28 +22,21 @@ class TickerStorage {
             isAddingAllInProgress: false,
             addingAllOffset: 0,
             addingAllBatchSize: 50,
-        };
-
-        // Свойства WebSocket и подключений теперь живут отдельно от сохраняемого состояния
-        this.wsState = {
+            // ✅ ВОЗВРАЩАЕМ WS-состояния обратно в state (для совместимости)
             binanceHasConnection: { futures: false, spot: false },
             bybitHasConnection: { futures: false, spot: false },
             maxReconnectAttempts: 10,
-            wsReconnectAttempts: {
-                binanceFutures: 0,
-                binanceSpot: 0,
-                bybitFutures: 0,
-                bybitSpot: 0
+            wsReconnectAttempts: { 
+                binanceFutures: 0, binanceSpot: 0, 
+                bybitFutures: 0, bybitSpot: 0 
             },
             wsConnected: {
-                binanceFutures: false,
-                binanceSpot: false,
-                bybitFutures: false,
-                bybitSpot: false
+                binanceFutures: false, binanceSpot: false,
+                bybitFutures: false, bybitSpot: false    
             },
             isSettingUpWebSockets: false
         };
-
+        
         this.tickers = [];
         this.tickersMap = new Map();
         this.allSymbolsCache = [];
@@ -52,7 +46,7 @@ class TickerStorage {
         this.allBinanceSpot = [];
         this.allBybitFutures = [];
         this.allBybitSpot = [];
-
+        
         this.formatCache = {
             prices: new Map(),
             volumes: new Map(),
@@ -66,39 +60,43 @@ class TickerStorage {
         this._isRefreshing = false;
         this._eventsInitialized = false;
 
-        // O(1) индекс популярности
+        // ✅ УЛУЧШЕНИЕ: Map для O(1) поиска популярности
         this._popularityIndex = this._buildPopularityIndex();
     }
-
+    
+    // ✅ ВОЗВРАЩАЕМ ВСЕ ГЕТТЕРЫ (для совместимости)
     getState() { return this.state; }
     getTickers() { return this.tickers; }
     getTickersMap() { return this.tickersMap; }
     getBinanceSymbolsCache() { return this.binanceSymbolsCache; }
     getBybitSymbolsCache() { return this.bybitSymbolsCache; }
-
-    // ---------------------------------------------------------------------------
-    // Загрузка данных
-    // ---------------------------------------------------------------------------
+    
+    // ===== ЗАГРУЗКА ДАННЫХ =====
+    
     async loadUserData() {
         console.log('📦 Загрузка пользовательских данных...');
-
-        const loadedFromLocal = this.loadFromLocalStorage(); // теперь возвращает корректный флаг
-
+        
+        const loadedFromLocal = this.loadFromLocalStorage();
+        
         if (window.db && window.dbReady) {
             try {
                 const favorites = await window.db.get('settings', 'favorites');
-                if (favorites?.value) this.state.favorites = favorites.value;
-
+                if (favorites && favorites.value) {
+                    this.state.favorites = favorites.value;
+                }
+                
                 const flags = await window.db.get('settings', 'flags');
-                if (flags?.value) this.state.flags = flags.value;
-
+                if (flags && flags.value) {
+                    this.state.flags = flags.value;
+                }
+                
                 const currentSymbol = await window.db.get('settings', 'currentSymbol');
-                if (currentSymbol?.value) {
+                if (currentSymbol && currentSymbol.value) {
                     this.state.currentSymbol = currentSymbol.value.symbol || 'BTCUSDT';
                     this.state.currentExchange = currentSymbol.value.exchange || 'binance';
                     this.state.currentMarketType = currentSymbol.value.marketType || 'futures';
                 }
-
+                
                 console.log('✅ Данные загружены из IndexedDB');
             } catch (error) {
                 console.warn('❌ Ошибка IndexedDB, используем localStorage:', error);
@@ -109,92 +107,97 @@ class TickerStorage {
             console.warn('⚠️ Нет сохранённых данных');
         }
     }
-
+    
+    // ✅ ИСПРАВЛЕНИЕ: теперь корректно возвращает true при загрузке
     loadFromLocalStorage() {
         try {
             let loaded = false;
-
+            
             const favorites = localStorage.getItem('favorites');
             if (favorites) {
                 const parsed = JSON.parse(favorites);
                 if (Array.isArray(parsed)) {
                     this.state.favorites = parsed;
-                    loaded = true;
+                    loaded = true;  // ✅ ДОБАВЛЕНО
                 }
             }
-
+            
             const flags = localStorage.getItem('flags');
             if (flags) {
                 const parsed = JSON.parse(flags);
                 if (typeof parsed === 'object') {
                     this.state.flags = parsed;
-                    loaded = true;
+                    loaded = true;  // ✅ ДОБАВЛЕНО
                 }
             }
-
+            
             const currentSymbol = localStorage.getItem('currentSymbol');
             if (currentSymbol) {
                 const parsed = JSON.parse(currentSymbol);
                 this.state.currentSymbol = parsed.symbol || 'BTCUSDT';
                 this.state.currentExchange = parsed.exchange || 'binance';
                 this.state.currentMarketType = parsed.marketType || 'futures';
-                loaded = true;
+                loaded = true;  // ✅ ДОБАВЛЕНО
             }
-
-            return loaded; // ✅ теперь честно возвращает true/false
+            
+            return loaded;
+            
         } catch (e) {
             console.warn('❌ Ошибка загрузки из localStorage:', e);
             return false;
         }
     }
-
+    
     async loadFromIndexedDB() {
         console.log('📦 Загрузка инструментов из IndexedDB...');
+        
         if (!window.db || !window.dbReady) {
             console.warn('📦 IndexedDB не доступна');
             return false;
         }
-
+        
         try {
             const binanceCache = await window.db.get('symbolCaches', 'binance');
-            if (binanceCache?.data?.length > 0) {
-                this.binanceSymbolsCache = this.sortByPopularity(binanceCache.data);
+            if (binanceCache && binanceCache.data && binanceCache.data.length > 0) {
+                this.binanceSymbolsCache = binanceCache.data;
+                this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
                 this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures');
                 this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot');
                 console.log(`✅ Binance из IndexedDB: ${this.binanceSymbolsCache.length}`);
             }
-
+            
             const bybitCache = await window.db.get('symbolCaches', 'bybit');
-            if (bybitCache?.data?.length > 0) {
-                this.bybitSymbolsCache = this.sortByPopularity(bybitCache.data);
+            if (bybitCache && bybitCache.data && bybitCache.data.length > 0) {
+                this.bybitSymbolsCache = bybitCache.data;
+                this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
                 this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures');
                 this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot');
                 console.log(`✅ Bybit из IndexedDB: ${this.bybitSymbolsCache.length}`);
             }
-
+            
             this.allSymbolsCache = [...this.binanceSymbolsCache, ...this.bybitSymbolsCache];
+            
             return this.binanceSymbolsCache.length > 0 || this.bybitSymbolsCache.length > 0;
+            
         } catch (error) {
             console.warn('❌ Ошибка загрузки из IndexedDB:', error);
             return false;
         }
     }
-
-    // ---------------------------------------------------------------------------
-    // Сохранение
-    // ---------------------------------------------------------------------------
+    
+    // ===== СОХРАНЕНИЕ =====
+    
+    // ✅ ИСПРАВЛЕНИЕ: async вынесен в отдельный метод
     saveState() {
         if (this.saveTimeout) clearTimeout(this.saveTimeout);
         this.saveTimeout = setTimeout(() => this._doSaveState(), 500);
     }
 
     async _doSaveState() {
-        // Синхронизация с активным вотчлистом
         if (window.tickerPanelInstance?.syncWithActiveWatchlist) {
             window.tickerPanelInstance.syncWithActiveWatchlist();
         }
-
-        // localStorage (синхронно, быстро)
+        
         try {
             localStorage.setItem('favorites', JSON.stringify(this.state.favorites));
             localStorage.setItem('flags', JSON.stringify(this.state.flags));
@@ -206,37 +209,46 @@ class TickerStorage {
         } catch (e) {
             console.warn('Ошибка сохранения в localStorage:', e);
         }
-
-        // IndexedDB (асинхронно)
+        
         if (window.db && window.dbReady) {
             try {
-                await window.db.put('settings', { key: 'favorites', value: this.state.favorites, timestamp: Date.now() });
-                await window.db.put('settings', { key: 'flags', value: this.state.flags, timestamp: Date.now() });
+                await window.db.put('settings', {
+                    key: 'favorites',
+                    value: this.state.favorites,
+                    timestamp: Date.now()
+                });
+                
+                await window.db.put('settings', {
+                    key: 'flags',
+                    value: this.state.flags,
+                    timestamp: Date.now()
+                });
+                
                 console.log('✅ Состояние сохранено');
             } catch (error) {
                 console.warn('❌ Ошибка сохранения в IndexedDB:', error);
             }
         }
     }
-
+    
     async saveCurrentSymbol(symbol, exchange, marketType) {
         try {
             localStorage.setItem('currentSymbol', JSON.stringify({ symbol, exchange, marketType }));
         } catch (e) {}
-
-        if (window.db && window.dbReady) {
-            try {
-                await window.db.put('settings', {
-                    key: 'currentSymbol',
-                    value: { symbol, exchange, marketType },
-                    timestamp: Date.now()
-                });
-            } catch (error) {
-                console.warn('❌ Ошибка сохранения currentSymbol:', error);
-            }
+        
+        if (!window.db || !window.dbReady) return;
+        
+        try {
+            await window.db.put('settings', {
+                key: 'currentSymbol',
+                value: { symbol, exchange, marketType },
+                timestamp: Date.now()
+            });
+        } catch (error) {
+            console.warn('❌ Ошибка сохранения currentSymbol:', error);
         }
     }
-
+    
     async saveSymbolsToIndexedDB() {
         try {
             localStorage.setItem('binanceSymbolsCache', JSON.stringify(this.binanceSymbolsCache));
@@ -244,34 +256,67 @@ class TickerStorage {
         } catch (e) {
             console.warn('localStorage переполнен, кэш символов не сохранён');
         }
-
+        
         if (!window.db || !window.dbReady) return;
-
+        
         try {
             const now = Date.now();
-            if (this.binanceSymbolsCache?.length > 0) {
+            
+            if (this.binanceSymbolsCache && this.binanceSymbolsCache.length > 0) {
+                const sortedBinance = this.sortByPopularity(this.binanceSymbolsCache);
                 await window.db.put('symbolCaches', {
                     exchange: 'binance',
-                    data: this.sortByPopularity(this.binanceSymbolsCache),
+                    data: sortedBinance,
                     timestamp: now
                 });
             }
-            if (this.bybitSymbolsCache?.length > 0) {
+            
+            if (this.bybitSymbolsCache && this.bybitSymbolsCache.length > 0) {
+                const sortedBybit = this.sortByPopularity(this.bybitSymbolsCache);
                 await window.db.put('symbolCaches', {
                     exchange: 'bybit',
-                    data: this.sortByPopularity(this.bybitSymbolsCache),
+                    data: sortedBybit,
                     timestamp: now
                 });
             }
+            
             console.log('✅ Кэш символов сохранён в IndexedDB');
+            
         } catch (error) {
             console.warn('❌ Ошибка сохранения кэша:', error);
         }
     }
+    
+    // ===== ВОТЧЛИСТЫ (ВОЗВРАЩЕНЫ для совместимости) =====
+    
+    async loadWatchlists() {
+        if (window.db && window.dbReady) {
+            try {
+                const data = await window.db.get('settings', 'watchlists');
+                if (data?.value) return data.value;
+            } catch (e) {}
+        }
+        const saved = localStorage.getItem('watchlists');
+        return saved ? JSON.parse(saved) : null;
+    }
 
-    // ---------------------------------------------------------------------------
-    // Вспомогательные методы
-    // ---------------------------------------------------------------------------
+    async saveWatchlists(data) {
+        if (window.db && window.dbReady) {
+            try {
+                await window.db.put('settings', { key: 'watchlists', value: data, timestamp: Date.now() });
+                console.log('📋 Вотчлисты сохранены в IndexedDB');
+                localStorage.removeItem('watchlists');
+                return;
+            } catch (e) {
+                console.error('Ошибка сохранения в IndexedDB:', e);
+            }
+        }
+        localStorage.setItem('watchlists', JSON.stringify(data));
+    }
+    
+    // ===== УТИЛИТЫ =====
+    
+    // ✅ УЛУЧШЕНИЕ: O(1) поиск вместо O(n)
     _buildPopularityIndex() {
         const popularityOrder = [
             'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
@@ -287,13 +332,13 @@ class TickerStorage {
     }
 
     sortByPopularity(symbols) {
-        const popIdx = this._popularityIndex;
+        const popularityIndex = this._popularityIndex;
         return [...symbols].sort((a, b) => {
-            const aSym = a.symbol || '';
-            const bSym = b.symbol || '';
-            const aIdx = popIdx.get(aSym);
-            const bIdx = popIdx.get(bSym);
-
+            const aSymbol = a.symbol || '';
+            const bSymbol = b.symbol || '';
+            const aIdx = popularityIndex.get(aSymbol);
+            const bIdx = popularityIndex.get(bSymbol);
+            
             if (aIdx !== undefined && bIdx !== undefined) {
                 if (aIdx === bIdx) {
                     if (a.exchange === 'binance' && b.exchange !== 'binance') return -1;
@@ -304,37 +349,85 @@ class TickerStorage {
             }
             if (aIdx !== undefined) return -1;
             if (bIdx !== undefined) return 1;
-            return aSym.localeCompare(bSym);
+            
+            return aSymbol.localeCompare(bSymbol);
         });
     }
-
-    // ✅ Удалён дублирующийся код
+    
     getFilteredCount(exchange, marketType, query) {
-        let source;
         if (exchange === 'binance') {
-            source = marketType === 'futures' ? this.allBinanceFutures : this.allBinanceSpot;
+            const source = marketType === 'futures' ? this.allBinanceFutures : this.allBinanceSpot;
+            if (!source) return 0;
+            let filtered = source;
+            if (query) {
+                filtered = filtered.filter(s => s.symbol.includes(query.toUpperCase()));
+            }
+            return filtered.length;
         } else {
-            source = marketType === 'futures' ? this.allBybitFutures : this.allBybitSpot;
+            const source = marketType === 'futures' ? this.allBybitFutures : this.allBybitSpot;
+            if (!source) return 0;
+            let filtered = source;
+            if (query) {
+                filtered = filtered.filter(s => s.symbol.includes(query.toUpperCase()));
+            }
+            return filtered.length;
         }
-        if (!source) return 0;
-        if (!query) return source.length;
-        return source.filter(s => s.symbol.includes(query.toUpperCase())).length;
     }
-
-    // Заглушка для обратной совместимости – реальное обновление теперь в TickerModal
+    
+    // ✅ ВОЗВРАЩАЕМ updateModalCount (критично для TickerPanel!)
     updateModalCount() {
-        // Рекомендуется вызывать TickerModal.updateCount() напрямую
-        if (window.tickerPanelInstance?.modal?.updateCount) {
-            window.tickerPanelInstance.modal.updateCount();
+        const foundSpan = document.getElementById('modalFoundCount');
+        if (!foundSpan) return;
+        
+        if (!this.state) {
+            console.warn('updateModalCount: this.state не определен');
+            foundSpan.textContent = '0';
+            return;
         }
+        
+        let source;
+        if (this.state.modalExchange === 'binance') {
+            source = this.state.modalMarketType === 'futures' 
+                ? this.allBinanceFutures 
+                : this.allBinanceSpot;
+        } else {
+            source = this.state.modalMarketType === 'futures' 
+                ? this.allBybitFutures 
+                : this.allBybitSpot;
+        }
+        
+        let count = source ? source.length : 0;
+        const query = this.state.modalSearchQuery;
+        if (query && source) {
+            count = source.filter(s => s.symbol.includes(query.toUpperCase())).length;
+        }
+        
+        foundSpan.textContent = count;
     }
 
-    // ✅ Метод очистки таймера
+    // ✅ ВОЗВРАЩАЕМ removeDuplicates (для совместимости)
+    removeDuplicates(arr, key) {
+        const seen = new Map();
+        return arr.filter(item => {
+            if (!item || !item[key]) return false;
+            const value = item[key];
+            if (seen.has(value)) return false;
+            seen.set(value, true);
+            return true;
+        });
+    }
+    
+    // ✅ УЛУЧШЕНИЕ: метод destroy для очистки ресурсов
     destroy() {
         if (this.saveTimeout) {
             clearTimeout(this.saveTimeout);
             this.saveTimeout = null;
         }
+        this.formatCache.prices.clear();
+        this.formatCache.volumes.clear();
+        this.formatCache.changes.clear();
+        this.tickersMap.clear();
+        this.filterCache = null;
     }
 }
 
