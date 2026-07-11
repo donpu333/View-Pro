@@ -1,29 +1,47 @@
 class TickerEvents {
+    // Константы вместо магических чисел
+    static REFRESH_TIMEOUT = 15000;   // таймаут обновления кэша (мс)
+
     constructor(parent) {
         this.parent = parent;
+        this._delegatedEventsSet = false;
+        this._documentKeyHandler = null;
+        this._documentCloseHandler = null;
     }
-    
+
+    // ---------------------------------------------------------------
+    // ✅ Делегированные события на контейнере тикеров
+    // ---------------------------------------------------------------
     setupDelegatedEvents() {
+        if (this._delegatedEventsSet) return;
+        this._delegatedEventsSet = true;
+
         const container = document.getElementById('tickerListContainer');
         if (!container) return;
-        
+
         container.removeEventListener('click', this.parent.handleTickerClick);
         container.removeEventListener('contextmenu', this.parent.handleContextMenu);
         container.removeEventListener('dblclick', this.parent.handleDoubleClick);
-        
+
         container.addEventListener('click', this.parent.handleTickerClick);
         container.addEventListener('contextmenu', this.parent.handleContextMenu);
         container.addEventListener('dblclick', this.parent.handleDoubleClick);
-        
-        document.removeEventListener('keydown', this.parent.handleKeyDelete);
-        document.addEventListener('keydown', this.parent.handleKeyDelete);
+
+        if (this._documentKeyHandler) {
+            document.removeEventListener('keydown', this._documentKeyHandler);
+        }
+        this._documentKeyHandler = this.parent.handleKeyDelete;
+        document.addEventListener('keydown', this._documentKeyHandler);
     }
-    
+
+    // ---------------------------------------------------------------
+    // ✅ Фильтры (рынок / биржа)
+    // ---------------------------------------------------------------
     setupFilters() {
         document.querySelectorAll('[data-filter="market"]').forEach(btn => {
-            if (btn.dataset.initialized) return; // ЗАЩИТА: не вешаем повторно
+            if (btn.dataset.initialized) return;
             btn.dataset.initialized = 'true';
-            
+
             btn.addEventListener('click', () => {
                 document.querySelectorAll('[data-filter="market"]').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
@@ -32,11 +50,11 @@ class TickerEvents {
                 this.parent.renderTickerList();
             });
         });
-        
+
         document.querySelectorAll('[data-filter="exchange"]').forEach(btn => {
-            if (btn.dataset.initialized) return; // ЗАЩИТА
+            if (btn.dataset.initialized) return;
             btn.dataset.initialized = 'true';
-            
+
             btn.addEventListener('click', () => {
                 document.querySelectorAll('[data-filter="exchange"]').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
@@ -46,137 +64,209 @@ class TickerEvents {
             });
         });
     }
-    
-setupClearAllButton() {
-    const clearBtn = document.getElementById('clearAllBtn');
-    if (!clearBtn) {
-        console.warn('⚠️ Кнопка #clearAllBtn не найдена в DOM!');
-        return;
-    }
-    
-    if (clearBtn.dataset.initialized) return; // Уже инициализировано
-    clearBtn.dataset.initialized = 'true';
-    
-    // ✅ Одинарный клик с подтверждением
-    clearBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const count = this.parent.tickers?.length || 0;
-        if (count === 0) {
-            alert('Список уже пуст!');
-            return;
-        }
-        
-        if (confirm(`Удалить все ${count} символов из списка?\n\nЭто действие нельзя отменить.`)) {
-            this.parent.clearAllSymbols();
-            
-            // Показываем уведомление
-            const notif = document.getElementById('alertNotification');
-            if (notif) {
-                notif.innerHTML = `
-                    <div class="alert-title">🗑️ Очищено</div>
-                    <div class="alert-price">Удалено: ${count} символов</div>
-                `;
-                notif.style.display = 'block';
-                notif.style.borderLeftColor = '#f23645';
-                setTimeout(() => notif.style.display = 'none', 2500);
+
+    // ---------------------------------------------------------------
+    // ✅ Кнопка очистки (кастомное подтверждение)
+    // ---------------------------------------------------------------
+    setupClearAllButton() {
+        const clearBtn = document.getElementById('clearAllBtn');
+        if (!clearBtn || clearBtn.dataset.initialized) return;
+        clearBtn.dataset.initialized = 'true';
+
+        clearBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const count = this.parent.tickers?.length || 0;
+            if (count === 0) {
+                this._showNotification('⚠️ Список уже пуст', 'info');
+                return;
             }
-        }
-    });
-    
-    console.log('✅ Кнопка очистки инициализирована (одинарный клик)');
-}
+
+            const confirmed = await this._confirmDialog(
+                `Удалить все ${count} символов из списка?\nЭто действие нельзя отменить.`
+            );
+            if (!confirmed) return;
+
+            this.parent.clearAllSymbols();
+            this._showNotification(`🗑️ Удалено: ${count} символов`, 'error');
+        });
+    }
+
+    // ---------------------------------------------------------------
+    // ✅ Контекстное меню флагов
+    // ---------------------------------------------------------------
     setupFlagContextMenu() {
         const contextMenu = document.getElementById('flagContextMenu');
         if (!contextMenu) return;
-        
+
         contextMenu.querySelectorAll('.context-menu-item').forEach(menuItem => {
-            if (menuItem.dataset.initialized) return; // ЗАЩИТА
+            if (menuItem.dataset.initialized) return;
             menuItem.dataset.initialized = 'true';
             menuItem.addEventListener('click', this.parent.handleFlagSelect);
         });
-        
-        // ИСПРАВЛЕНИЕ: Убираем анонимную функцию, используем метод из parent, 
-        // чтобы removeEventListener сработал корректно!
-        document.removeEventListener('click', this.parent.closeContextMenu);
-        document.addEventListener('click', this.parent.closeContextMenu);
+
+        if (this._documentCloseHandler) {
+            document.removeEventListener('click', this._documentCloseHandler);
+        }
+        this._documentCloseHandler = this.parent.closeContextMenu;
+        document.addEventListener('click', this._documentCloseHandler);
     }
-    
+
+    // ---------------------------------------------------------------
+    // ✅ Вкладки (Все / Избранное / Флаги) и кнопка обновления кэша
+    // ---------------------------------------------------------------
     setupUIEventListeners() {
+        // Вкладки "Все", "Избранное", "Флаги"
         document.querySelectorAll('.tab[data-tab]').forEach(tab => {
-            if (tab.dataset.initialized) return; // ЗАЩИТА
+            if (tab.dataset.initialized) return;
             tab.dataset.initialized = 'true';
-            
+
             tab.addEventListener('click', () => {
-                document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                this.parent.state.activeTab = tab.dataset.tab;
-                
-                const flagTabs = document.getElementById('flagTabs');
-                if (flagTabs) {
-                    if (this.parent.state.activeTab === 'flags') {
-                        flagTabs.style.display = 'flex';
-                        this.parent.state.activeFlagTab = null;
-                        document.querySelectorAll('.tab[data-flag]').forEach(t => t.classList.remove('active'));
-                    } else {
-                        flagTabs.style.display = 'none';
-                        this.parent.state.activeFlagTab = null;
-                    }
-                }
-                
-                this.parent.filterCache = null;
-                this.parent.renderTickerList();
+                this._switchToMainTab(tab.dataset.tab, tab);
             });
         });
-       const refreshBtn = document.getElementById('refreshCacheBtn');
-if (refreshBtn && !refreshBtn.dataset.initialized) {
-    refreshBtn.dataset.initialized = 'true';
-    refreshBtn.addEventListener('click', async () => {
-        const svg = refreshBtn.querySelector('svg');
-        const originalSVG = svg ? svg.outerHTML : '';
-refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#848e9c"><path d="m24,3h-4.091c2.601,2.281,4.091,5.51,4.091,9,0,6.617-5.383,12-12,12-3.676,0-7.099-1.651-9.391-4.529l.782-.623c2.102,2.639,5.239,4.152,8.609,4.152,6.065,0,11-4.935,11-11,0-3.31-1.461-6.366-4-8.465v4.465h-1V3.5c0-.827.673-1.5,1.5-1.5h4.5v1ZM12,1V0c-1.15,0-2.288.163-3.381.483l.284.966c.983-.288,2.021-.45,3.097-.45Zm-5.943,1.753l-.546-.848c-.962.62-1.83,1.372-2.58,2.238l.762.661c.686-.791,1.48-1.482,2.364-2.051ZM2.001,7.434l-.919-.42c-.477,1.042-.8,2.146-.961,3.28l1.003.143c.151-1.057.449-2.065.878-3.003Zm8.732,4.94l.468-.374-.468-.375c-.556-.444-2.393-2.082-2.688-4.48-.035-.281.053-.556.246-.773.209-.236.513-.372.834-.372h5.752c.321,0,.625.136.834.372.193.218.28.493.245.774-.296,2.386-2.137,4.033-2.693,4.48l-.464.374.464.373c1.243,1,2.725,2.67,2.725,4.952l.034.675h-7.992l-.033-.649c0-2.308,1.488-3.978,2.736-4.977Zm.625-1.529l.642.514.636-.512c.483-.388,2.078-1.812,2.328-3.824l-.087-.023h-5.752c.162,2.046,1.752,3.46,2.233,3.845Zm-2.349,6.155h5.965c-.145-1.736-1.332-3.039-2.338-3.848l-.636-.511-.642.514c-1.015.812-2.212,2.121-2.349,3.845ZM.121,13.707c.162,1.135.485,2.239.962,3.281l.919-.421c-.429-.938-.727-1.946-.878-3.003l-1.003.143Z"/></svg>`;
-        refreshBtn.style.opacity = '0.6';
-        
-        await this.parent.refreshSymbolCache(15000);
-        this.parent.updateModalCount();
-        
-        // Возвращаем иконку обновления
-        refreshBtn.innerHTML = originalSVG;
-        refreshBtn.style.opacity = '1';
-    });
-}
 
+        // Кнопка обновления кэша
+        const refreshBtn = document.getElementById('refreshCacheBtn');
+        if (refreshBtn && !refreshBtn.dataset.initialized) {
+            refreshBtn.dataset.initialized = 'true';
+            refreshBtn.addEventListener('click', async () => {
+                const originalHTML = refreshBtn.innerHTML;
+                const originalOpacity = refreshBtn.style.opacity;
+                refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#848e9c"><path d="..."/></svg>`;
+                refreshBtn.style.opacity = '0.6';
+                try {
+                    await this.parent.refreshSymbolCache(TickerEvents.REFRESH_TIMEOUT);
+                    this.parent.updateModalCount();
+                } catch (error) {
+                    console.error('Ошибка обновления кэша:', error);
+                    this._showNotification('⚠️ Ошибка обновления кэша', 'error');
+                } finally {
+                    refreshBtn.innerHTML = originalHTML;
+                    refreshBtn.style.opacity = originalOpacity || '1';
+                }
+            });
+        }
+
+        // Подвкладки цветов флагов
         document.querySelectorAll('.tab[data-flag]').forEach(tab => {
-            if (tab.dataset.initialized) return; // ЗАЩИТА
+            if (tab.dataset.initialized) return;
             tab.dataset.initialized = 'true';
-            
+
             tab.addEventListener('click', (e) => {
                 e.stopPropagation();
-                
-                if (this.parent.state.activeTab !== 'flags') {
-                    document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
-                    document.querySelector('.tab[data-tab="flags"]').classList.add('active');
-                    this.parent.state.activeTab = 'flags';
-                    
-                    const flagTabs = document.getElementById('flagTabs');
-                    if (flagTabs) {
-                        flagTabs.style.display = 'flex';
-                    }
-                }
-                
-                document.querySelectorAll('.tab[data-flag]').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                this.parent.state.activeFlagTab = tab.dataset.flag;
-                
-                this.parent.filterCache = null;
-                this.parent.renderTickerList();
+                this._switchToFlagTab(tab.dataset.flag, tab);
             });
         });
     }
 
-    
-    
+    // ---------------------------------------------------------------
+    // ✅ Вспомогательные методы для переключения вкладок
+    // ---------------------------------------------------------------
+    _switchToMainTab(tabId, clickedTab) {
+        // Убираем активность со всех главных вкладок
+        document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
+        if (clickedTab) clickedTab.classList.add('active');
+        this.parent.state.activeTab = tabId;
+
+        const flagTabs = document.getElementById('flagTabs');
+        if (flagTabs) {
+            if (tabId === 'flags') {
+                flagTabs.style.display = 'flex';
+                this.parent.state.activeFlagTab = null;
+                document.querySelectorAll('.tab[data-flag]').forEach(t => t.classList.remove('active'));
+            } else {
+                flagTabs.style.display = 'none';
+                this.parent.state.activeFlagTab = null;
+            }
+        }
+
+        this.parent.filterCache = null;
+        this.parent.renderTickerList();
+    }
+
+    _switchToFlagTab(flag, clickedTab) {
+        // Если не на вкладке "Флаги", переключаемся на неё
+        if (this.parent.state.activeTab !== 'flags') {
+            this._switchToMainTab('flags', document.querySelector('.tab[data-tab="flags"]'));
+        }
+
+        document.querySelectorAll('.tab[data-flag]').forEach(t => t.classList.remove('active'));
+        if (clickedTab) clickedTab.classList.add('active');
+        this.parent.state.activeFlagTab = flag;
+
+        this.parent.filterCache = null;
+        this.parent.renderTickerList();
+    }
+
+    // ---------------------------------------------------------------
+    // ✅ Вспомогательные методы для кастомных уведомлений
+    // ---------------------------------------------------------------
+    _showNotification(message, type = 'info') {
+        const notif = document.getElementById('alertNotification');
+        if (!notif) return;
+        notif.innerHTML = `<div class="alert-title">${message}</div>`;
+        notif.style.display = 'block';
+        notif.style.borderLeftColor = type === 'error' ? '#f23645' : '#4caf50';
+        setTimeout(() => { notif.style.display = 'none'; }, 2500);
+    }
+
+    _confirmDialog(message) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay confirm-overlay';
+            overlay.innerHTML = `
+                <div class="modal-content confirm-dialog">
+                    <div class="modal-header">${message}</div>
+                    <div class="modal-body" style="display:flex; gap:10px; justify-content:center; padding:12px;">
+                        <button class="confirm-yes" style="background:var(--accent-red-bright); color:white; border:none; padding:8px 20px; border-radius:4px; cursor:pointer;">Да, удалить</button>
+                        <button class="confirm-no" style="background:var(--bg-ticker); color:var(--text-white); border:1px solid var(--border-light); padding:8px 20px; border-radius:4px; cursor:pointer;">Отмена</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            const close = (result) => {
+                document.body.removeChild(overlay);
+                resolve(result);
+            };
+
+            overlay.querySelector('.confirm-yes').onclick = () => close(true);
+            overlay.querySelector('.confirm-no').onclick = () => close(false);
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) close(false);
+            });
+        });
+    }
+
+    // ---------------------------------------------------------------
+    // ✅ Уничтожение всех обработчиков (destroy)
+    // ---------------------------------------------------------------
+    destroy() {
+        const container = document.getElementById('tickerListContainer');
+        if (container) {
+            container.removeEventListener('click', this.parent.handleTickerClick);
+            container.removeEventListener('contextmenu', this.parent.handleContextMenu);
+            container.removeEventListener('dblclick', this.parent.handleDoubleClick);
+        }
+
+        if (this._documentKeyHandler) {
+            document.removeEventListener('keydown', this._documentKeyHandler);
+            this._documentKeyHandler = null;
+        }
+
+        if (this._documentCloseHandler) {
+            document.removeEventListener('click', this._documentCloseHandler);
+            this._documentCloseHandler = null;
+        }
+
+        document.querySelectorAll('[data-initialized]').forEach(el => {
+            delete el.dataset.initialized;
+        });
+
+        this._delegatedEventsSet = false;
+    }
 }
 
 if (typeof window !== 'undefined') {
