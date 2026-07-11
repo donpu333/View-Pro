@@ -13,12 +13,12 @@ class WatchlistManager {
         this._initPromise = this._waitForDBAndLoad();
         this._switchCooldown = false;
         this._priceLoadTimer = null;
-        this._isActivating = false;
         this._destroyed = false;
+        this._outsideClickListener = null;
+        this._escapeDiv = document.createElement('div');
     }
 
     async _waitForDBAndLoad() {
-        if (this._destroyed) return;
         if (!window.db || !window.dbReady) {
             console.log('⏳ WatchlistManager: жду IndexedDB...');
             await new Promise((resolve) => {
@@ -29,14 +29,12 @@ class WatchlistManager {
                 setTimeout(() => { clearInterval(check); resolve(); }, 10000);
             });
         }
-        if (this._destroyed) return;
         this._dbReady = !!(window.db && window.dbReady);
         console.log('📋 WatchlistManager: IndexedDB ' + (this._dbReady ? 'готова' : 'недоступна'));
         await this._loadFromStorage();
     }
 
     async _loadFromStorage() {
-        if (this._destroyed) return;
         try {
             let saved = null;
             if (this._dbReady) {
@@ -74,7 +72,6 @@ class WatchlistManager {
     }
 
     async _saveToDB(data) {
-        if (this._destroyed) return false;
         if (this._dbReady && window.db) {
             try {
                 await window.db.put('settings', { key: 'watchlists', value: data, timestamp: Date.now() });
@@ -98,7 +95,7 @@ class WatchlistManager {
     }
 
     async _saveNow() {
-        if (this._destroyed || !this._loaded) return;
+        if (!this._loaded || this._destroyed) return;
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
@@ -111,7 +108,6 @@ class WatchlistManager {
     }
 
     async syncActiveListFromPanel() {
-        if (this._destroyed) return;
         await this._initPromise;
         if (this._switchCooldown) return;
         const list = this.lists.get(this.activeListId);
@@ -125,7 +121,6 @@ class WatchlistManager {
     }
 
     async createList(name) {
-        if (this._destroyed) return null;
         await this._initPromise;
         const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         this.lists.set(id, { name: name || `Список ${this.lists.size}`, symbols: [], isDefault: false });
@@ -138,7 +133,6 @@ class WatchlistManager {
     }
 
     async deleteList(listId) {
-        if (this._destroyed) return false;
         await this._initPromise;
         if (listId === 'default' || !this.lists.has(listId)) return false;
         this.lists.delete(listId);
@@ -151,7 +145,6 @@ class WatchlistManager {
     }
 
     async renameList(listId, newName) {
-        if (this._destroyed) return false;
         await this._initPromise;
         const list = this.lists.get(listId);
         if (!list) return false;
@@ -162,19 +155,19 @@ class WatchlistManager {
         return true;
     }
 
-   async activateList(listId) {
-    if (this._destroyed) return;
-    if (this._isActivating) return;
-    if (this.tickerPanel?._suppressWatchlistLoad) return;
+    async activateList(listId) {
+        if (this.tickerPanel?._suppressWatchlistLoad) {
+            console.log('⏸️ activateList(): ПРОПУЩЕНО — идёт массовое добавление');
+            return;
+        }
 
-    await this._initPromise;
-    if (!this.lists.has(listId)) return;
-    if (this.activeListId === listId) { this.closeDropdown(); return; }
+        await this._initPromise;
+        if (!this.lists.has(listId)) return;
+        if (this.activeListId === listId) { this.closeDropdown(); return; }
 
-    this._isActivating = true;
-
-    try {
-        if (this.activeListId) this._saveSortForList(this.activeListId);
+        if (this.activeListId) {
+            this._saveSortForList(this.activeListId);
+        }
 
         const oldList = this.lists.get(this.activeListId);
         if (oldList) {
@@ -184,92 +177,42 @@ class WatchlistManager {
 
         this.activeListId = listId;
         this._switchCooldown = true;
-        setTimeout(() => this._switchCooldown = false, 500);
+        setTimeout(() => { this._switchCooldown = false; }, 500);
 
-        const newList = this.lists.get(listId);
-        if (!newList) return;
+        // Загрузка символов (без рендера)
+        await this.loadSymbolsFromList(listId);
 
-        console.log(`🔄 → "${newList.name}" (${newList.symbols.length} шт.)`);
-
-        // Очищаем БЕЗ разрыва ссылок
-        this.tickerPanel.tickers.length = 0;
-        this.tickerPanel.tickersMap.clear();
-        this.tickerPanel.tickerElements?.clear();
-        this.tickerPanel.filterCache = null;
-        this.tickerPanel.state.customSymbols = [...newList.symbols];
-
-        const container = document.getElementById('tickerListContainer');
-        if (container) {
-            container.innerHTML = '';
-            container.scrollTop = 0;
-        }
-
-        // Создаём тикеры
-        for (const symbolKey of newList.symbols) {
-            const parts = symbolKey.split(':');
-            if (parts.length !== 3) continue;
-            const [symbol, exchange, marketType] = parts;
-
-            const t = {
-                symbol, price: 0, change: 0, volume: 0,
-                trades: null, custom: true, prevPrice: 0,
-                exchange, marketType,
-                flag: this.tickerPanel.state.flags[symbolKey] || null
-            };
-
-            this.tickerPanel.tickers.push(t);
-            this.tickerPanel.tickersMap.set(symbolKey, t);
-
-            // Подписка на цены
-            if (window.priceManagerInstance) {
-                window.priceManagerInstance.subscribe(symbol, (price) => {
-                    this.tickerPanel._onPriceUpdate?.(symbol, price, exchange, marketType);
-                }, exchange, marketType);
-            }
-        }
-
+        // Восстановление сортировки – единственный рендер
         this._restoreSortForList(listId);
-        this.tickerPanel.renderTickerList();
 
+        this.tickerPanel.updateModalCount();
         this.renderDropdown();
         this.closeDropdown();
         this.saveToStorageImmediate();
 
-        // ✅ БЫСТРАЯ загрузка: не ждём, запускаем и уходим
-        this._quickLoadPrices();
+        const loader = document.getElementById('tickerLoader');
+        if (loader) loader.style.display = 'none';
 
-        // Фокус на первый символ
-        if (newList.symbols.length > 0) {
-            const [symbol, exchange, marketType] = newList.symbols[0].split(':');
-            if (this.tickerPanel.coordinator?.chartManager) {
-                this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
+        const newList = this.lists.get(listId);
+        if (newList && newList.symbols.length > 0) {
+            const firstKey = newList.symbols[0];
+            const parts = firstKey.split(':');
+            if (parts.length === 3) {
+                const [symbol, exchange, marketType] = parts;
+                if (this.tickerPanel.coordinator?.chartManager) {
+                    this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
+                }
+                setTimeout(() => {
+                    this.tickerPanel.focusOnSymbol?.(symbol, exchange, marketType);
+                }, 100);
             }
-            setTimeout(() => {
-                this.tickerPanel.focusOnSymbol?.(symbol, exchange, marketType);
-            }, 100);
         }
 
-    } finally {
-        this._isActivating = false;
-    }
-}
-
-// ✅ БЫСТРЫЙ метод: запускает загрузку, но не ждёт
-_quickLoadPrices() {
-    // Сразу запускаем REST (не ждём WebSocket)
-    if (this.tickerPanel?.pollRestData && !this.tickerPanel._isRestRunning) {
-        this.tickerPanel.pollRestData().then(() => {
-            // После загрузки — перерисовка
-            this.tickerPanel.filterCache = null;
-            this.tickerPanel.renderTickerList();
-        }).catch(e => console.warn('pollRestData:', e));
+        // Без setTimeout – сразу запрос цен
+        this.fetchPricesForActiveList();
     }
 
-    // Если WebSocket уже открыт — цены придут сами
-    // Если нет — REST подгрузит через ~1-3 секунды
-}
     _saveSortForList(listId) {
-        if (this._destroyed) return;
         if (!this._listSorts) this._listSorts = new Map();
         this._listSorts.set(listId, {
             sortBy: this.tickerPanel.state.sortBy,
@@ -279,17 +222,14 @@ _quickLoadPrices() {
     }
 
     _restoreSortForList(listId) {
-        if (this._destroyed) return;
         if (!this._listSorts) this._listSorts = new Map();
         const saved = this._listSorts.get(listId);
         console.log('🔄 Восстановление для', listId, 'найдено:', saved);
         if (saved) {
             this.tickerPanel.state.sortBy = saved.sortBy;
             this.tickerPanel.state.sortDirection = saved.sortDirection;
-        } else {
-            this.tickerPanel.state.sortBy = 'volume';
-            this.tickerPanel.state.sortDirection = 'desc';
         }
+        // Иначе оставляем текущую сортировку без изменений
         this.tickerPanel.filterCache = null;
         this._updateHeaderIcons();
         this.tickerPanel.renderTickerList();
@@ -297,7 +237,6 @@ _quickLoadPrices() {
     }
 
     _updateHeaderIcons() {
-        if (this._destroyed) return;
         const sortBy = this.tickerPanel.state.sortBy;
         const sortDirection = this.tickerPanel.state.sortDirection;
         document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
@@ -317,11 +256,9 @@ _quickLoadPrices() {
     }
 
     _schedulePriceLoadForList(symbols) {
-        if (this._destroyed) return;
         if (!symbols || symbols.length === 0) return;
         if (this._priceLoadTimer) clearTimeout(this._priceLoadTimer);
         this._priceLoadTimer = setTimeout(async () => {
-            if (this._destroyed) return;
             this._priceLoadTimer = null;
             if (this.tickerPanel._isRestRunning) {
                 console.log('⏳ REST уже работает, не запускаем повторно');
@@ -329,45 +266,69 @@ _quickLoadPrices() {
             }
             console.log(`⚡ Планирую загрузку цен (${symbols.length} шт.)...`);
             await this.fetchPricesForActiveList();
-            if (this._destroyed) return;
             this.tickerPanel.filterCache = null;
             this.tickerPanel.renderTickerList();
         }, 1000);
     }
 
     async fetchPricesForActiveList() {
-        if (this._destroyed) return false;
         if (this.tickerPanel?._suppressWatchlistLoad) {
             console.log('⏸️ fetchPricesForActiveList(): ПРОПУЩЕНО');
             return false;
         }
-
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
-
         console.log(`📊 Watchlist: использую TickerPanel для загрузки цен`);
-
         if (this.tickerPanel?.pollRestData && !this.tickerPanel._isRestRunning) {
-            await this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
-            return true;
+            this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
         }
-        return false;
+        return true;
+    }
+
+    loadSymbolsFromList(listId) {
+        const list = this.lists.get(listId);
+        if (!list) return;
+        console.log(`📋 Загрузка списка: ${list.name}`);
+
+        this.tickerPanel.tickers = [];
+        this.tickerPanel.tickersMap.clear();
+        this.tickerPanel.tickerElements?.clear();
+        this.tickerPanel.renderer.displayedTickers = [];
+        this.tickerPanel.renderer.totalItems = list.symbols.length;
+        this.tickerPanel.filterCache = null;
+        this.tickerPanel.state.customSymbols = [...list.symbols];
+
+        const container = document.getElementById('tickerListContainer');
+        if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+
+        for (const symbolKey of list.symbols) {
+            const parts = symbolKey.split(':');
+            if (parts.length !== 3) continue;
+            const [symbol, exchange, marketType] = parts;
+            const flag = this.tickerPanel.state.flags[symbolKey] || null;
+            const t = {
+                symbol, price: 0, change: 0, volume: 0,
+                trades: null, custom: true, prevPrice: 0,
+                exchange, marketType, flag
+            };
+            this.tickerPanel.tickers.push(t);
+            this.tickerPanel.tickersMap.set(symbolKey, t);
+        }
+
+        // Рендер здесь не вызывается! Только подготовка данных.
+        this.tickerPanel.updateModalCount();
     }
 
     async addSymbolToList(listId, symbol, exchange, marketType) {
-        if (this._destroyed) return false;
         await this._initPromise;
         const list = this.lists.get(listId);
         if (!list) return false;
-
         const key = `${symbol}:${exchange}:${marketType}`;
         if (list.symbols.includes(key)) return false;
-
         list.symbols.push(key);
         this.renderCache.delete(listId);
         this.saveToStorage();
         this.renderDropdown();
-
         if (listId === this.activeListId) {
             if (!this.tickerPanel.tickersMap.has(key)) {
                 this.tickerPanel.addSymbol(symbol, true, exchange, marketType, true, false, true);
@@ -377,20 +338,16 @@ _quickLoadPrices() {
     }
 
     async addSymbolToActiveList(symbol, exchange, marketType) {
-        if (this._destroyed) return false;
         return this.addSymbolToList(this.activeListId, symbol, exchange, marketType);
     }
 
     async removeSymbolFromActiveList(symbol, exchange, marketType) {
-        if (this._destroyed) return;
         await this._initPromise;
         const list = this.lists.get(this.activeListId);
         if (!list) return;
-
         const key = `${symbol}:${exchange}:${marketType}`;
         const before = list.symbols.length;
         list.symbols = list.symbols.filter(s => s !== key);
-
         if (list.symbols.length !== before) {
             this.renderCache.delete(this.activeListId);
             this.saveToStorage();
@@ -400,11 +357,9 @@ _quickLoadPrices() {
     }
 
     async clearActiveList() {
-        if (this._destroyed) return;
         await this._initPromise;
         const list = this.lists.get(this.activeListId);
         if (!list) return;
-
         list.symbols = [];
         this.renderCache.delete(this.activeListId);
         this.saveToStorage();
@@ -413,7 +368,6 @@ _quickLoadPrices() {
     }
 
     async initializeWithPriority() {
-        if (this._destroyed) return;
         await this._initPromise;
         this.renderDropdown();
         const activeList = this.lists.get(this.activeListId);
@@ -422,7 +376,9 @@ _quickLoadPrices() {
         if (activeList && activeList.symbols.length > 0) {
             if (!panelHasTickers || this.tickerPanel.tickers.length !== activeList.symbols.length) {
                 console.log('📦 Загружаем символы из списка...');
-                await this.activateList(this.activeListId);
+                await this.loadSymbolsFromList(this.activeListId);
+                // Единственный рендер с обновлением иконок сортировки
+                this._restoreSortForList(this.activeListId);
             } else {
                 console.log('✅ Тикеры уже загружены, пропускаем');
                 this._schedulePriceLoadForList(activeList.symbols);
@@ -431,7 +387,6 @@ _quickLoadPrices() {
     }
 
     renderDropdown() {
-        if (this._destroyed) return;
         const container = document.getElementById('watchlistDropdown');
         if (!container) { this.createDropdownContainer(); return; }
 
@@ -486,14 +441,7 @@ _quickLoadPrices() {
     }
 
     createDropdownContainer() {
-        if (this._destroyed) return;
         const tickerPanel = document.getElementById('tickerPanel');
-        if (!tickerPanel) {
-            console.error('❌ tickerPanel не найден в DOM, откладываем создание...');
-            requestAnimationFrame(() => this.createDropdownContainer());
-            return;
-        }
-        
         let container = document.getElementById('watchlistDropdown');
         if (!container) {
             container = document.createElement('div');
@@ -509,31 +457,26 @@ _quickLoadPrices() {
                 </div>
                 <div class="wl-dropdown-menu"></div>
             `;
-            const tabsContainer = tickerPanel.querySelector('.tabs-container');
-            if (tabsContainer && tabsContainer.parentNode) {
-                tabsContainer.parentNode.insertBefore(container, tabsContainer);
-            } else {
-                tickerPanel.insertBefore(container, tickerPanel.firstChild);
-            }
+            const tabsContainer = tickerPanel?.querySelector('.tabs-container');
+            if (tabsContainer) tabsContainer.parentNode.insertBefore(container, tabsContainer);
+            else tickerPanel?.insertBefore(container, tickerPanel.firstChild);
             this.bindDropdownEvents(container);
         }
         this.renderDropdown();
     }
 
     bindDropdownEvents(container) {
-        if (this._destroyed) return;
-        const btn = container.querySelector('.wl-dropdown-btn');
-        if (btn) {
-            btn.addEventListener('click', (e) => { e.stopPropagation(); this.toggleDropdown(); });
+        container.querySelector('.wl-dropdown-btn').addEventListener('click', (e) => { e.stopPropagation(); this.toggleDropdown(); });
+        if (this._outsideClickListener) {
+            document.removeEventListener('click', this._outsideClickListener);
         }
-        this._globalClickHandler = (e) => { 
-            if (!container.contains(e.target)) this.closeDropdown(); 
+        this._outsideClickListener = (e) => {
+            if (!container.contains(e.target)) this.closeDropdown();
         };
-        document.addEventListener('click', this._globalClickHandler);
+        document.addEventListener('click', this._outsideClickListener);
     }
 
     toggleDropdown() {
-        if (this._destroyed) return;
         const container = document.getElementById('watchlistDropdown');
         if (!container) return;
         this._dropdownOpen = !this._dropdownOpen;
@@ -542,22 +485,16 @@ _quickLoadPrices() {
     }
 
     closeDropdown() {
-        if (this._destroyed) return;
         const container = document.getElementById('watchlistDropdown');
-        if (container) { 
-            container.classList.remove('open'); 
-            this._dropdownOpen = false; 
-        }
+        if (container) { container.classList.remove('open'); this._dropdownOpen = false; }
     }
 
     createListPrompt() {
-        if (this._destroyed) return;
         const name = prompt('Название нового списка:');
         if (name && name.trim()) this.createList(name.trim()).then(newId => this.activateList(newId));
     }
 
     editListPrompt(listId) {
-        if (this._destroyed) return;
         const list = this.lists.get(listId);
         if (!list) return;
         const newName = prompt('Новое название:', list.name);
@@ -565,50 +502,25 @@ _quickLoadPrices() {
     }
 
     deleteListPrompt(listId) {
-        if (this._destroyed) return;
         const list = this.lists.get(listId);
         if (!list) return;
         if (confirm(`Удалить список «${list.name}»?`)) this.deleteList(listId);
     }
 
     escapeHtml(text) {
-        if (typeof text !== 'string') return '';
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return text.replace(/[&<>"']/g, m => map[m]);
+        this._escapeDiv.textContent = text;
+        return this._escapeDiv.innerHTML;
     }
 
-    // ✅ НОВЫЙ: Метод уничтожения — очистка всех таймеров и подписок
     destroy() {
-        console.log('🗑️ WatchlistManager: уничтожение...');
         this._destroyed = true;
-
-        if (this._saveDebounceTimer) {
-            clearTimeout(this._saveDebounceTimer);
-            this._saveDebounceTimer = null;
+        if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
+        if (this._priceLoadTimer) clearTimeout(this._priceLoadTimer);
+        if (this._outsideClickListener) {
+            document.removeEventListener('click', this._outsideClickListener);
+            this._outsideClickListener = null;
         }
-        if (this._priceLoadTimer) {
-            clearTimeout(this._priceLoadTimer);
-            this._priceLoadTimer = null;
-        }
-
-        if (this._globalClickHandler) {
-            document.removeEventListener('click', this._globalClickHandler);
-            this._globalClickHandler = null;
-        }
-
-        this.lists.clear();
-        this.renderCache.clear();
-        this._listSorts.clear();
-        this.listOrder = [];
-        this.activeListId = null;
-
-        console.log('✅ WatchlistManager: уничтожен');
+        this.closeDropdown();
     }
 }
 
