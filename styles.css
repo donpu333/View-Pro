@@ -2336,13 +2336,13 @@ svg, svg * { font-family: none !important; }
 }
 
 .modal-result-item.added { 
-    opacity: 0.5; 
+    opacity: 0.6; 
     cursor: default; 
-    background: var(--bg-header); 
+    background: var(--bg-dark);  /* ← #14171C (тёмный) */
 }
 
 .modal-result-item.added:hover { 
-    background: var(--bg-header); 
+    background: var(--bg-dark); 
 }
 
 .modal-exchange-icon {
@@ -2433,7 +2433,7 @@ svg, svg * { font-family: none !important; }
 .search-highlight {
     color: #0bf050;
     font-weight: bold;
-    background: rgba(11, 240, 80, 0.15);
+    background: rgba(3, 3, 3, 0.15);
     padding: 1px 2px;
     border-radius: 2px;
     -webkit-font-smoothing: antialiased;
@@ -3183,11 +3183,4 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-}
-.search-highlight {
-    color: #0bf050;
-    font-weight: bold;
-    background: rgba(240, 185, 11, 0.1);
-    padding: 1px 2px;
-    border-radius: 2px;
 }
