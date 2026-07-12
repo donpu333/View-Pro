@@ -458,7 +458,6 @@ updateModalResults(reset = false) {
     
     if (reset) {
         this.parent.state.modalPage = 0;
-        // Сбрасываем скролл в начало при новом поиске
         resultsContainer.scrollTop = 0;
     }
     
@@ -479,39 +478,45 @@ updateModalResults(reset = false) {
         return;
     }
     
-    // Фильтруем по поиску - ТОЛЬКО С НАЧАЛА ТИКЕРА!
     let filteredResults = [...source];
-  if (this.parent.state.modalSearchQuery) {
-    const query = this.parent.state.modalSearchQuery.toUpperCase();
-    filteredResults = filteredResults.filter(s => s.symbol.startsWith(query));
     
-    // ✅ Сортируем по объёму (популярные сверху), затем по алфавиту
+    if (this.parent.state.modalSearchQuery) {
+        const query = this.parent.state.modalSearchQuery.toUpperCase();
+        filteredResults = filteredResults.filter(s => s.symbol.startsWith(query));
+    }
+    
+    // ✅ СОРТИРОВКА: приоритет популярным тикерам, остальные по алфавиту
+    const priorityPrefixes = [
+        'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 
+        'DOT', 'MATIC', 'LINK', 'LTC', 'TRX', 'ATOM', 'NEAR', 
+        'APT', 'ARB', 'OP', 'SUI', 'SEI', 'TIA', 'INJ', 'FET',
+        'PEPE', 'SHIB', 'FLOKI', 'WIF', 'BONK', 'MEME'
+    ];
+    
     filteredResults.sort((a, b) => {
-        const volA = parseFloat(a.quoteVolume || a.volume || 0);
-        const volB = parseFloat(b.quoteVolume || b.volume || 0);
-        if (volB !== volA) return volB - volA;
+        const getPriority = (symbol) => {
+            for (let i = 0; i < priorityPrefixes.length; i++) {
+                if (symbol.startsWith(priorityPrefixes[i])) return i;
+            }
+            // Тикеры с числами в начале — в самый конец
+            if (/^\d/.test(symbol)) return 1000;
+            return 100;
+        };
+        
+        const priorityA = getPriority(a.symbol);
+        const priorityB = getPriority(b.symbol);
+        
+        if (priorityA !== priorityB) return priorityA - priorityB;
         return a.symbol.localeCompare(b.symbol);
     });
-} else {
-    // ✅ Если запрос пустой - тоже по объёму
-    filteredResults.sort((a, b) => {
-        const volA = parseFloat(a.quoteVolume || a.volume || 0);
-        const volB = parseFloat(b.quoteVolume || b.volume || 0);
-        if (volB !== volA) return volB - volA;
-        return a.symbol.localeCompare(b.symbol);
-    });
-}
     
-    // Сохраняем все результаты
     this.modalAllResults = filteredResults;
     
-    // Обновляем счётчик
     const foundSpan = document.getElementById('modalFoundCount');
     if (foundSpan) {
         foundSpan.textContent = this.modalAllResults.length;
     }
     
-    // Пагинация
     const pageSize = this.parent.state.modalPageSize || 50;
     const startIndex = reset ? 0 : this.parent.state.modalPage * pageSize;
     const endIndex = Math.min(startIndex + pageSize, this.modalAllResults.length);
