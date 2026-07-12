@@ -525,141 +525,144 @@ updateModalResults(reset = false) {
     // =========================================================================
     // 🎨 РЕНДЕРИНГ РЕЗУЛЬТАТОВ ПОИСКА
     // =========================================================================
-    renderModalResults(results, append = false) {
-        const resultsContainer = document.getElementById('modalResults');
+ renderModalResults(results, append = false) {
+    const resultsContainer = document.getElementById('modalResults');
+    
+    if (!resultsContainer) return;
+    
+    if (results.length === 0 && !append) { 
+        resultsContainer.innerHTML = '<div class="no-results">Инструменты не найдены</div>'; 
+        return; 
+    }
+    
+    let html = append ? resultsContainer.innerHTML : '';
+    
+    for (const symbolData of results) {
+        if (!symbolData || !symbolData.symbol) continue;
         
-        if (!resultsContainer) return;
+        // Проверяем добавлен ли уже
+        const isAdded = this.parent.tickers.some(t => 
+            t.symbol === symbolData.symbol && 
+            t.exchange === symbolData.exchange && 
+            t.marketType === symbolData.marketType
+        );
         
-        if (results.length === 0 && !append) { 
-            resultsContainer.innerHTML = '<div class="no-results">Инструменты не найдены</div>'; 
-            return; 
+        const addedClass = isAdded ? 'added' : '';
+        
+        // ✅ ИСПРАВЛЕНО: Подсветка для ВСЕХ результатов
+        let displaySymbol = symbolData.symbol;
+        if (this.parent.state.modalSearchQuery) {
+            const query = this.parent.state.modalSearchQuery.toUpperCase();
+            const upperSymbol = symbolData.symbol.toUpperCase();
+            const index = upperSymbol.indexOf(query);
+            if (index >= 0) {
+                displaySymbol = 
+                    symbolData.symbol.substring(0, index) + 
+                    '<span class="search-highlight">' + 
+                    symbolData.symbol.substring(index, index + query.length) + 
+                    '</span>' + 
+                    symbolData.symbol.substring(index + query.length);
+            }
         }
         
-        let html = append ? resultsContainer.innerHTML : '';
+        // HTML иконки биржи (оставляем как у вас)
+        let exchangeIconHtml = '';
+        if (symbolData.exchange === 'binance') {
+            exchangeIconHtml = `
+                <div class="modal-exchange-icon binance-icon">
+                    <svg width="20" height="20" viewBox="0 0 40 40" style="display:block;">
+                        <circle cx="20" cy="20" r="19" fill="none" stroke="#F0B90B" stroke-width="1.5"/>
+                        <g transform="translate(20, 20) scale(0.03)">
+                            <g transform="translate(-500, -500)">
+                                <path fill="#F0B90B" d="M500,612.7l112.7-112.7L500,387.3L387.3,500L500,612.7z M500,774.6L306.4,581L193.6,693.7L500,1000l306.4-306.3L693.7,581L500,774.6z M887.3,387.3L774.6,500l112.7,112.7L1000,500L887.3,387.3z M500,225.4l193.7,193.7L806.4,306.4L500,0L193.6,306.4l112.7,112.7L500,225.4z M225.4,500L112.7,612.7L0,500l112.7-112.7L225.4,500z"/>
+                            </g>
+                        </g>
+                    </svg>
+                </div>
+            `;
+        } else {
+            exchangeIconHtml = `
+                <div class="modal-exchange-icon bybit-icon">
+                   <svg width="25" height="25" viewBox="0 0 40 40">
+                      <circle cx="20" cy="20" r="19" fill="none" stroke="#FFFFFF" stroke-width="1.2"/>
+                      <g transform="translate(20, 20) scale(0.012)">
+                        <g transform="translate(-1300, -420)">
+                          <polygon fill="#F7A600" points="1781.6,642.2 1781.6,0 1910.7,0 1910.7,642.2"/>
+                          <path fill="#FFFFFF" d="M277.3,832.9H0.6V190.8h265.6c129,0,204.3,70.4,204.3,180.4c0,71.3-48.3,117.2-81.8,132.6c39.9,18,91,58.6,91,144.3 C479.7,767.9,395.2,832.9,277.3,832.9L277.3,832.9z M256,302.7H129.6v147.9H256c54.8,0,85.5-29.8,85.5-74S310.8,302.7,256,302.7 L256,302.7z M264.3,563.3H129.6v157.8h134.6c58.6,0,86.4-36.1,86.4-79.4C350.6,598.4,322.7,563.3,264.3,563.3z"/>
+                          <polygon fill="#FFFFFF" points="873.4,569.5 873.4,832.9 745.2,832.9 745.2,569.5 546.5,190.8 686.8,190.8 810.2,449.6 931.9,190.8 1072.1,190.8"/>
+                          <path fill="#FFFFFF" d="M1438,832.9h-276.7V190.8h265.6c129,0,204.3,70.4,204.3,180.4c0,71.3-48.3,117.2-81.8,132.6c39.9,18,91,58.6,91,144.3 C1640.4,767.9,1556,832.9,1438,832.9L1438,832.9z M1416.7,302.7h-126.3v147.9h126.3c54.8,0,85.5-29.8,85.5-74 C1502.1,332.4,1471.4,302.7,1416.7,302.7L1416.7,302.7z M1425,563.3h-134.6v157.8H1425c58.6,0,86.4-36.1,86.4-79.4 C1511.4,598.4,1483.5,563.3,1425,563.3L1425,563.3z"/>
+                          <polygon fill="#FFFFFF" points="2326.7,302.7 2326.7,833 2197.6,833 2197.6,302.7 2024.9,302.7 2024.9,190.8 2499.4,190.8 2499.4,302.7"/>
+                        </g>
+                      </g>
+                    </svg>
+                </div>
+            `;
+        }
         
-        for (const symbolData of results) {
-            if (!symbolData || !symbolData.symbol) continue;
-            
-            // Проверяем добавлен ли уже
-            const isAdded = this.parent.tickers.some(t => 
-                t.symbol === symbolData.symbol && 
-                t.exchange === symbolData.exchange && 
-                t.marketType === symbolData.marketType
-            );
-            
-            const addedClass = isAdded ? 'added' : '';
-            
-            // Подсветка совпадения в символе
-       // Подсветка совпадения в символе (без учёта регистра)
-let displaySymbol = symbolData.symbol;
-if (this.parent.state.modalSearchQuery && !isAdded) {
-    const query = this.parent.state.modalSearchQuery.toUpperCase();
-    const upperSymbol = symbolData.symbol.toUpperCase();
-    const index = upperSymbol.indexOf(query);
-    if (index >= 0) {
-        displaySymbol = 
-            symbolData.symbol.substring(0, index) + 
-            '<span class="search-highlight">' + 
-            symbolData.symbol.substring(index, index + query.length) + 
-            '</span>' + 
-            symbolData.symbol.substring(index + query.length);
+        // HTML элемента результата
+        const exchangeLabel = symbolData.exchange === 'binance' ? 'Binance' : 'Bybit';
+        const marketLabel = symbolData.marketType === 'futures' ? 'Futures' : 'Spot';
+        
+        if (isAdded) {
+            html += `
+                <div class="modal-result-item ${addedClass}" 
+                     data-symbol="${symbolData.symbol}" 
+                     data-exchange="${symbolData.exchange}" 
+                     data-market-type="${symbolData.marketType}">
+                    ${exchangeIconHtml}
+                    <span class="modal-result-symbol">${displaySymbol}</span>
+                    <div class="modal-result-exchange">
+                        <span>${exchangeLabel} - ${marketLabel}</span>
+                    </div>
+                    <div class="modal-result-actions">
+                        <span class="modal-check-icon"><i class="fas fa-check-circle"></i></span>
+                        <span class="modal-target-btn" 
+                              data-symbol="${symbolData.symbol}" 
+                              data-exchange="${symbolData.exchange}" 
+                              data-market-type="${symbolData.marketType}" 
+                              title="Прицелиться">
+                            <i class="fas fa-crosshairs"></i>
+                        </span>
+                    </div>
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="modal-result-item ${addedClass}" 
+                     data-symbol="${symbolData.symbol}" 
+                     data-exchange="${symbolData.exchange}" 
+                     data-market-type="${symbolData.marketType}">
+                    ${exchangeIconHtml}
+                    <span class="modal-result-symbol">${displaySymbol}</span>
+                    <div class="modal-result-exchange">
+                        <span>${exchangeLabel} - ${marketLabel}</span>
+                    </div>
+                    <span class="modal-add-icon"><i class="fas fa-plus-circle"></i></span>
+                </div>
+            `;
+        }
+    }
+    
+    // Вставляем HTML
+    resultsContainer.innerHTML = html;
+    
+    // Обработчики кликов на элементы
+    this.attachResultHandlers();
+    
+    // Infinite scroll
+    if (!resultsContainer._scrollHandler) {
+        resultsContainer._scrollHandler = () => {
+            const { scrollTop, scrollHeight, clientHeight } = resultsContainer;
+            if (scrollHeight - scrollTop - clientHeight < 100) {
+                if (this.modalAllResults && 
+                    this.parent.state.modalPage * (this.parent.state.modalPageSize || 50) < this.modalAllResults.length) {
+                    this.updateModalResults(false);
+                }
+            }
+        };
+        resultsContainer.addEventListener('scroll', resultsContainer._scrollHandler);
     }
 }
-            
-            // HTML иконки биржи
-        let exchangeIconHtml = '';
-if (symbolData.exchange === 'binance') {
-    exchangeIconHtml = `
-        <div class="modal-exchange-icon binance-icon">
-           
-                </g>
-            </svg>
-        </div>
-    `;
-} else {
-                exchangeIconHtml = `
-                    <div class="modal-exchange-icon bybit-icon">
-                       <svg width="25" height="25" viewBox="0 0 40 40">
-                          <circle cx="20" cy="20" r="19" fill="none" stroke="#FFFFFF" stroke-width="1.2"/>
-                          <g transform="translate(20, 20) scale(0.012)">
-                            <g transform="translate(-1300, -420)">
-                              <polygon fill="#F7A600" points="1781.6,642.2 1781.6,0 1910.7,0 1910.7,642.2"/>
-                              <path fill="#FFFFFF" d="M277.3,832.9H0.6V190.8h265.6c129,0,204.3,70.4,204.3,180.4c0,71.3-48.3,117.2-81.8,132.6c39.9,18,91,58.6,91,144.3 C479.7,767.9,395.2,832.9,277.3,832.9L277.3,832.9z M256,302.7H129.6v147.9H256c54.8,0,85.5-29.8,85.5-74S310.8,302.7,256,302.7 L256,302.7z M264.3,563.3H129.6v157.8h134.6c58.6,0,86.4-36.1,86.4-79.4C350.6,598.4,322.7,563.3,264.3,563.3z"/>
-                              <polygon fill="#FFFFFF" points="873.4,569.5 873.4,832.9 745.2,832.9 745.2,569.5 546.5,190.8 686.8,190.8 810.2,449.6 931.9,190.8 1072.1,190.8"/>
-                              <path fill="#FFFFFF" d="M1438,832.9h-276.7V190.8h265.6c129,0,204.3,70.4,204.3,180.4c0,71.3-48.3,117.2-81.8,132.6c39.9,18,91,58.6,91,144.3 C1640.4,767.9,1556,832.9,1438,832.9L1438,832.9z M1416.7,302.7h-126.3v147.9h126.3c54.8,0,85.5-29.8,85.5-74 C1502.1,332.4,1471.4,302.7,1416.7,302.7L1416.7,302.7z M1425,563.3h-134.6v157.8H1425c58.6,0,86.4-36.1,86.4-79.4 C1511.4,598.4,1483.5,563.3,1425,563.3L1425,563.3z"/>
-                              <polygon fill="#FFFFFF" points="2326.7,302.7 2326.7,833 2197.6,833 2197.6,302.7 2024.9,302.7 2024.9,190.8 2499.4,190.8 2499.4,302.7"/>
-                            </g>
-                          </g>
-                        </svg>
-                    </div>
-                `;
-            }
-            
-            // HTML элемента результата
-            const exchangeLabel = symbolData.exchange === 'binance' ? 'Binance' : 'Bybit';
-            const marketLabel = symbolData.marketType === 'futures' ? 'Futures' : 'Spot';
-            
-            if (isAdded) {
-                html += `
-                    <div class="modal-result-item ${addedClass}" 
-                         data-symbol="${symbolData.symbol}" 
-                         data-exchange="${symbolData.exchange}" 
-                         data-market-type="${symbolData.marketType}">
-                        ${exchangeIconHtml}
-                        <span class="modal-result-symbol">${displaySymbol}</span>
-                        <div class="modal-result-exchange">
-                            <span>${exchangeLabel} - ${marketLabel}</span>
-                        </div>
-                        <div class="modal-result-actions">
-                            <span class="modal-check-icon"><i class="fas fa-check-circle"></i></span>
-                            <span class="modal-target-btn" 
-                                  data-symbol="${symbolData.symbol}" 
-                                  data-exchange="${symbolData.exchange}" 
-                                  data-market-type="${symbolData.marketType}" 
-                                  title="Прицелиться">
-                                <i class="fas fa-crosshairs"></i>
-                            </span>
-                        </div>
-                    </div>
-                `;
-            } else {
-                html += `
-                    <div class="modal-result-item ${addedClass}" 
-                         data-symbol="${symbolData.symbol}" 
-                         data-exchange="${symbolData.exchange}" 
-                         data-market-type="${symbolData.marketType}">
-                        ${exchangeIconHtml}
-                        <span class="modal-result-symbol">${displaySymbol}</span>
-                        <div class="modal-result-exchange">
-                            <span>${exchangeLabel} - ${marketLabel}</span>
-                        </div>
-                        <span class="modal-add-icon"><i class="fas fa-plus-circle"></i></span>
-                    </div>
-                `;
-            }
-        }
-        
-        // Вставляем HTML
-        resultsContainer.innerHTML = html;
-        
-        // Обработчики кликов на элементы
-        this.attachResultHandlers();
-        
-        // Infinite scroll
-        if (!resultsContainer._scrollHandler) {
-            resultsContainer._scrollHandler = () => {
-                const { scrollTop, scrollHeight, clientHeight } = resultsContainer;
-                if (scrollHeight - scrollTop - clientHeight < 100) {
-                    if (this.modalAllResults && 
-                        this.parent.state.modalPage * (this.parent.state.modalPageSize || 50) < this.modalAllResults.length) {
-                        this.updateModalResults(false);
-                    }
-                }
-            };
-            resultsContainer.addEventListener('scroll', resultsContainer._scrollHandler);
-        }
-    }
-
     // =========================================================================
     // 🔗 ПРИВЯЗКА ОБРАБОТЧИКОВ К РЕЗУЛЬТАТАМ
     // =========================================================================
