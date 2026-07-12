@@ -567,21 +567,21 @@ if (this.parent.state.modalSearchQuery && !isAdded) {
 }
             
             // HTML иконки биржи
-            let exchangeIconHtml = '';
-            if (symbolData.exchange === 'binance') {
-                exchangeIconHtml = `
-                    <div class="modal-exchange-icon binance-icon">
-                       <svg width="25" height="25" viewBox="0 0 32 32">
-                          <circle cx="16" cy="16" r="15" fill="none" stroke="#FFA500" stroke-width="1.2"/>
-                          <g transform="translate(16, 16) scale(0.025)">
-                            <g transform="translate(-500, -500)">
-                              <path fill="#F0B90B" d="M500,612.7l112.7-112.7L500,387.3L387.3,500L500,612.7z M500,774.6L306.4,581L193.6,693.7L500,1000l306.4-306.3L693.7,581L500,774.6z M887.3,387.3L774.6,500l112.7,112.7L1000,500L887.3,387.3z M500,225.4l193.7,193.7L806.4,306.4L500,0L193.6,306.4l112.7,112.7L500,225.4z M225.4,500L112.7,612.7L0,500l112.7-112.7L225.4,500z"/>
-                            </g>
-                          </g>
-                        </svg>
-                    </div>
-                `;
-            } else {
+        let exchangeIconHtml = '';
+if (symbolData.exchange === 'binance') {
+    exchangeIconHtml = `
+        <div class="modal-exchange-icon binance-icon">
+            <svg width="20" height="20" viewBox="0 0 40 40" style="display:block;">
+                <circle cx="20" cy="20" r="19" fill="none" stroke="#F0B90B" stroke-width="1.5"/>
+                <g transform="translate(20, 20) scale(0.03)">
+                    <g transform="translate(-500, -500)">
+                        <path fill="#F0B90B" d="M500,612.7l112.7-112.7L500,387.3L387.3,500L500,612.7z M500,774.6L306.4,581L193.6,693.7L500,1000l306.4-306.3L693.7,581L500,774.6z M887.3,387.3L774.6,500l112.7,112.7L1000,500L887.3,387.3z M500,225.4l193.7,193.7L806.4,306.4L500,0L193.6,306.4l112.7,112.7L500,225.4z M225.4,500L112.7,612.7L0,500l112.7-112.7L225.4,500z"/>
+                    </g>
+                </g>
+            </svg>
+        </div>
+    `;
+} else {
                 exchangeIconHtml = `
                     <div class="modal-exchange-icon bybit-icon">
                        <svg width="25" height="25" viewBox="0 0 40 40">
