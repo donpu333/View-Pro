@@ -69,30 +69,62 @@ class TickerEvents {
     // ✅ Кнопка очистки (кастомное подтверждение)
     // ---------------------------------------------------------------
     setupClearAllButton() {
-        const clearBtn = document.getElementById('clearAllBtn');
-        if (!clearBtn || clearBtn.dataset.initialized) return;
-        clearBtn.dataset.initialized = 'true';
+    const clearBtn = document.getElementById('clearAllBtn');
+    
+    // ✅ Подробная диагностика
+    console.log('🔍 setupClearAllButton:');
+    console.log('  Кнопка найдена:', !!clearBtn);
+    console.log('  dataset.initialized:', clearBtn?.dataset?.initialized);
+    console.log('  this.parent:', !!this.parent);
+    console.log('  clearAllSymbols:', typeof this.parent?.clearAllSymbols);
+    
+    if (!clearBtn) {
+        console.error('❌ Кнопка #clearAllBtn не найдена в DOM!');
+        return;
+    }
+    
+    if (clearBtn.dataset.initialized) {
+        console.warn('⚠️ Кнопка уже инициализирована, пропускаем');
+        return;
+    }
+    
+    clearBtn.dataset.initialized = 'true';
 
-        clearBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+    clearBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        console.log('🖱️ Клик по корзине');
 
-            const count = this.parent.tickers?.length || 0;
-            if (count === 0) {
-                this._showNotification('⚠️ Список уже пуст', 'info');
-                return;
-            }
+        const count = this.parent.tickers?.length || 0;
+        console.log('  Количество тикеров:', count);
+        
+        if (count === 0) {
+            this._showNotification('⚠️ Список уже пуст', 'info');
+            return;
+        }
 
-            const confirmed = await this._confirmDialog(
-                `Удалить все ${count} символов из списка?\nЭто действие нельзя отменить.`
-            );
-            if (!confirmed) return;
+        // ✅ ВРЕМЕННО: используем обычный confirm вместо кастомной модалки
+        const confirmed = confirm(`Удалить все ${count} символов из списка?\n\nЭто действие нельзя отменить.`);
+        
+        console.log('  Подтверждено:', confirmed);
+        
+        if (!confirmed) return;
 
+        console.log('🗑️ Вызываем clearAllSymbols...');
+        
+        try {
             this.parent.clearAllSymbols();
             this._showNotification(`🗑️ Удалено: ${count} символов`, 'error');
-        });
-    }
-
+            console.log('✅ clearAllSymbols выполнен успешно');
+        } catch (error) {
+            console.error('❌ Ошибка в clearAllSymbols:', error);
+            this._showNotification('❌ Ошибка при очистке', 'error');
+        }
+    });
+    
+    console.log('✅ Обработчик навешен на корзину');
+}
     // ---------------------------------------------------------------
     // ✅ Контекстное меню флагов
     // ---------------------------------------------------------------
