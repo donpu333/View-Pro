@@ -2944,7 +2944,7 @@ body {
     text-rendering: optimizeLegibility;
 }
 .search-highlight {
-    color: #f0b90b;
+    color: #0bf050;
     font-weight: bold;
     background: rgba(240, 185, 11, 0.1);
     padding: 1px 2px;
