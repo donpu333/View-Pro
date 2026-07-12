@@ -2970,3 +2970,14 @@ input:checked + .slider:before { transform: translateX(22px); }
     from { opacity: 0; transform: translateY(-8px); }
     to { opacity: 1; transform: translateY(0); }
 }
+.modal-exchange-icon {
+    width: 24px !important;
+    height: 24px !important;
+    flex: 0 0 24px !important;
+    overflow: hidden;
+}
+
+.modal-exchange-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+}
