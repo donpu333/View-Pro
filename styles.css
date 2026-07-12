@@ -2923,3 +2923,30 @@ body {
 .flag-lime-small::after    { background: linear-gradient(145deg, var(--accent-lime), var(--accent-lime-dark)); }
 .flag-purple-small::after  { background: linear-gradient(145deg, var(--accent-purple), var(--accent-purple-dark)); }
 .flag-cyan-small::after    { background: linear-gradient(145deg, var(--accent-cyan), var(--accent-cyan-dark)); }
+/* ✅ Исправление мыла в модальном окне */
+.modal-overlay {
+    /* Если есть backdrop-filter — перенесите на ::before */
+}
+
+.modal-content,
+.modal-search-wrapper,
+#modalSearchInput {
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+/* Если текст всё ещё мутный */
+#modalSearchInput {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+.search-highlight {
+    color: #f0b90b;
+    font-weight: bold;
+    background: rgba(240, 185, 11, 0.1);
+    padding: 1px 2px;
+    border-radius: 2px;
+}
