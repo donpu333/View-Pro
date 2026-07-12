@@ -1,15 +1,17 @@
-// ✅ Константы вместо магических чисел
 const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
-    CACHE_REFRESH_INTERVAL: 4 * 60 * 60 * 1000, // 4 часа
-    HEALTH_CHECK_INTERVAL: 30 * 1000,            // 30 сек
-    REST_POLL_INTERVAL: 5 * 60 * 1000,           // 5 мин
-    FINAL_RERENDER_DELAY: 3000,                  // 3 сек
-    WS_RECONNECT_DELAY: 5000,                    // 5 сек
-    FETCH_TIMEOUT: 15000,                        // 15 сек
-    BATCH_DELAY: 800,                            // 0.8 сек
-    FLASH_DURATION: 400,                         // 0.4 сек
-    MAX_WS_MESSAGE_SIZE: 1024 * 1024,            // 1 MB
+    CACHE_REFRESH_INTERVAL: 4 * 60 * 60 * 1000,
+    HEALTH_CHECK_INTERVAL: 30 * 1000,
+    REST_POLL_INTERVAL: 5 * 60 * 1000,
+    FINAL_RERENDER_DELAY: 3000,
+    WS_RECONNECT_DELAY: 5000,
+    FETCH_TIMEOUT: 15000,
+    BATCH_DELAY: 800,
+    FLASH_DURATION: 400,
+    MAX_WS_MESSAGE_SIZE: 1024 * 1024,
+    // ✅ Новые константы для оптимизации загрузки
+    REST_QUEUE_DELAY: 300,           // ← Было 1000, стало 300мс
+    BINANCE_BATCH_SIZE: 100,         // ← Было 80, стало 100 (максимум Binance)
 };
 
 const QUOTE_ASSETS = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH'];
@@ -28,7 +30,6 @@ class TickerPanel {
             console.error('❌ PriceManager не найден!');
         }
         
-        // Пробрасываем ссылки
         this.state = this.storage.state;
         this.tickers = this.storage.tickers;
         this.tickersMap = this.storage.tickersMap;
@@ -51,11 +52,9 @@ class TickerPanel {
         this._isBulkAdding = false;
         this._suppressWatchlistLoad = false;
         
-        // Инициализация кэша DOM-элементов и подписок
         this._rowDomCache = new Map();
         this._subscribedSymbols = new Set();
         
-        // Instance-флаги вместо статических (нет race condition)
         this._fetchBatchInProgress = false;
         this._restInProgress = false;
         
@@ -72,7 +71,6 @@ class TickerPanel {
         this._firstRender = this.renderer._firstRender;
         this._blockDOMUpdates = true;
         
-        // Пробрасываем методы
         this.loadUserData = this.storage.loadUserData.bind(this.storage);
         this.saveCurrentSymbol = this.storage.saveCurrentSymbol.bind(this.storage);
         this.loadFromLocalStorage = this.storage.loadFromLocalStorage.bind(this.storage);
@@ -133,7 +131,6 @@ class TickerPanel {
         this.init();
     }  
     
-    // Вспомогательный метод для экранирования HTML
     _escapeHtml(str) {
         if (!str) return '';
         const div = document.createElement('div');
@@ -141,12 +138,10 @@ class TickerPanel {
         return div.innerHTML;
     }
 
-    // Проверка, что символ оканчивается на одну из разрешённых квот
     _isValidSymbol(symbol) {
         return QUOTE_ASSETS.some(quote => symbol.endsWith(quote));
     }
 
-    // Эффективное сравнение двух массивов
     _arraysEqual(arr1, arr2) {
         if (arr1.length !== arr2.length) return false;
         for (let i = 0; i < arr1.length; i++) {
@@ -320,7 +315,6 @@ class TickerPanel {
         }
     }
 
-    // Обновление цены из PriceManager – теперь с поддержкой flash-анимации
     _onPriceUpdate(symbol, price, exchange, marketType) {
         const compositeKey = `${symbol}:${exchange}:${marketType}`;
         const ticker = this.tickersMap.get(compositeKey);
@@ -429,14 +423,6 @@ class TickerPanel {
                     this.renderTickerList();
                     
                     console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
-                    
-                    if (this.displayedTickers?.length > 0) {
-                        console.log('🏆 Топ-3 по объёму:', 
-                            this.displayedTickers.slice(0, 3).map(t => 
-                                `${t.symbol}: $${(t.volume / 1e9).toFixed(2)}B`
-                            )
-                        );
-                    }
                 }
             }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
         });
@@ -452,7 +438,6 @@ class TickerPanel {
         this._isRestRunning = false;    
         this._wsUpdateRafId = null;
 
-        // Безопасный fetch без зависимости от ChartManager
         this._safeFetch = async (url, retries = 3) => {
             for (let i = 0; i < retries; i++) {
                 try {
@@ -471,6 +456,7 @@ class TickerPanel {
             return null;
         };
 
+        // ✅ ИСПРАВЛЕНИЕ: задержка уменьшена с 1000мс до 300мс
         this._processRestQueue = async () => {
             if (this._isRestRunning) return;
             this._isRestRunning = true;
@@ -482,7 +468,10 @@ class TickerPanel {
                     const task = this._restQueue.shift();
                     count++;
                     await task();
-                    await new Promise(r => setTimeout(r, 1000));
+                    // ✅ Минимальная задержка 300мс вместо 1000мс
+                    if (this._restQueue.length > 0) {
+                        await new Promise(r => setTimeout(r, TICKER_TIMINGS.REST_QUEUE_DELAY));
+                    }
                 }
             } finally {
                 this._isRestRunning = false;
@@ -497,18 +486,19 @@ class TickerPanel {
             }
         };
 
+        // ✅ ИСПРАВЛЕНИЕ: BINANCE_BATCH_SIZE увеличен с 80 до 100
         const loadAllData = async () => {
             if (this.tickersMap.size === 0) return;
 
             const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
-            for (const [k, t] of this.tickersMap.entries()) {
+            for (const [, t] of this.tickersMap.entries()) {
                 if (t.exchange === 'binance' && t.marketType === 'futures') groups.bnFut.push(t.symbol);
                 if (t.exchange === 'binance' && t.marketType === 'spot') groups.bnSpot.push(t.symbol);
                 if (t.exchange === 'bybit' && t.marketType === 'futures') groups.byFut.push(t.symbol);
                 if (t.exchange === 'bybit' && t.marketType === 'spot') groups.bySpot.push(t.symbol);
             }
 
-            const BINANCE_BATCH_SIZE = 80;
+            const BINANCE_BATCH_SIZE = TICKER_TIMINGS.BINANCE_BATCH_SIZE;
             this._restQueue = [];
 
             const createBinanceTask = (symbols, marketType) => {
@@ -616,7 +606,7 @@ class TickerPanel {
                                 tk.price = newPrice;
                                 tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
                                 tk._lastUpdateTime = now;
-                                tk._flashTime = now;   // ✅ для анимации
+                                tk._flashTime = now;
                             }
                         }
                     }
@@ -678,7 +668,7 @@ class TickerPanel {
                         tk.price = newPrice;
                         tk._flashDir = newPrice > tk.prevPrice ? 'up' : 'down';
                         tk._lastUpdateTime = now;
-                        tk._flashTime = now;   // ✅ для анимации
+                        tk._flashTime = now;
                         
                         if (!this._blockDOMUpdates) {
                             if (!this._wsUpdateRafId) {
@@ -704,7 +694,7 @@ class TickerPanel {
             
             const now = Date.now();
             let staleCount = 0;
-            for (const [key, ticker] of this.tickersMap.entries()) {
+            for (const [, ticker] of this.tickersMap.entries()) {
                 if (ticker._lastUpdateTime && (now - ticker._lastUpdateTime) > 60000) {
                     staleCount++;
                 }
@@ -759,7 +749,6 @@ class TickerPanel {
         this._rowDomCache.clear();
     }
 
-    // Исправленная анимация подсветки: работает через _flashTime
     _flashUpdatedRows(flashTime) {
         if (!this._rowDomCache || this._rowDomCache.size === 0) return;
         
@@ -790,74 +779,90 @@ class TickerPanel {
         }
     }
 
-    clearAllSymbols() {
-        console.log('🗑️ Начало очистки всех символов...');
-        
-        this.tickers = []; 
-        this.tickersMap.clear(); 
-        this.state.customSymbols = []; 
-        this.state.favorites = []; 
-        this.state.flags = {};
-        
-        this.tickerElements.clear();
-        this._rowDomCache.clear();
-        this._subscribedSymbols.clear();   // ✅ очищаем подписки
-        
-        if (this.renderer) {
-            this.renderer._displayedTickers = [];
-            this.renderer._totalItems = 0;
-            this.renderer._filteredTickersCache = null;
-        }
-        
-        this.filterCache = null; 
-        this.formatCache = { 
-            prices: new Map(), 
-            volumes: new Map(), 
-            changes: new Map() 
-        };
-        
-        const container = document.getElementById('tickerListContainer');
-        if (container) { 
-            container.innerHTML = ''; 
-            container.style.height = 'auto'; 
-            container.scrollTop = 0; 
-            container.classList.remove('ready');
-            
-            requestAnimationFrame(() => {
-                this.renderTickerList();
-                setTimeout(() => {
-                    if (container) container.classList.add('ready');
-                }, 50);
-            });
-        }
-        
-        if (this.watchlistManager) {
-            const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
-            if (list) {
-                list.symbols = [];
-                this.watchlistManager._saveNow(); 
-                this.watchlistManager.renderCache.delete(this.watchlistManager.activeListId);
-            }
-            
-            const btnCount = document.querySelector('.wl-btn-count');
-            if (btnCount) btnCount.textContent = '0';
-            
-            this.watchlistManager.renderDropdown?.();
-        }
-        
-        this.saveState();
-        this.updateModalCount?.();
-        
-        console.log('✅ Очистка завершена! Тикеров:', this.tickersMap.size);
+    // ✅ ИСПРАВЛЕНИЕ: теперь очищает и вотчлист
+   clearAllSymbols() {
+    console.log('🗑️ Начало очистки всех символов...');
+    
+    // ✅ ПРАВИЛЬНЫЙ ПОРЯДОК: сначала очищаем state, потом сохраняем
+    
+    // 1. СНАЧАЛА очищаем state панели
+    this.tickers = []; 
+    this.tickersMap.clear(); 
+    this.state.customSymbols = []; 
+    this.state.favorites = [];   // ← СНАЧАЛА state
+    this.state.flags = {};       // ← СНАЧАЛА state
+    
+    this.tickerElements.clear();
+    this._rowDomCache.clear();
+    this._subscribedSymbols.clear();
+    
+    if (this.renderer) {
+        this.renderer._displayedTickers = [];
+        this.renderer._totalItems = 0;
+        this.renderer._filteredTickersCache = null;
     }
-
+    
+    this.filterCache = null; 
+    this.formatCache = { 
+        prices: new Map(), 
+        volumes: new Map(), 
+        changes: new Map() 
+    };
+    
+    // 2. ПОТОМ очищаем watchlistManager и сохраняем
+    if (this.watchlistManager) {
+        const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
+        if (list) {
+            list.symbols = [];
+            list.flags = {};
+            list.favorites = [];
+            
+            // ✅ Теперь saveToStorageImmediate() запишет пустые значения
+            this.watchlistManager.saveToStorageImmediate();
+            this.watchlistManager.renderCache.delete(this.watchlistManager.activeListId);
+        }
+        
+        const btnCount = document.querySelector('.wl-btn-count');
+        if (btnCount) btnCount.textContent = '0';
+        
+        this.watchlistManager.renderDropdown?.();
+    }
+    
+    // 3. Очищаем DOM
+    const container = document.getElementById('tickerListContainer');
+    if (container) { 
+        container.innerHTML = ''; 
+        container.style.height = 'auto'; 
+        container.scrollTop = 0; 
+        container.classList.remove('ready');
+        
+        requestAnimationFrame(() => {
+            this.renderTickerList();
+            setTimeout(() => {
+                if (container) container.classList.add('ready');
+            }, 50);
+        });
+    }
+    
+    // 4. Сохраняем и обновляем UI
+    this.saveState();
+    this.updateModalCount?.();
+    
+    console.log('✅ Очистка завершена! Тикеров:', this.tickersMap.size);
+}
+    // ✅ ИСПРАВЛЕНИЕ: теперь синхронизирует flags и favorites обратно в watchlistManager
     syncWithActiveWatchlist() {
         if (!this.watchlistManager) return;
         const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
         if (activeList) {
+            // Синхронизируем символы
             if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
-                this.state.customSymbols = [...activeList.symbols];
+                activeList.symbols = [...this.state.customSymbols];
             }
+            // ✅ Синхронизируем флаги
+            activeList.flags = { ...this.state.flags };
+            // ✅ Синхронизируем звёзды
+            activeList.favorites = [...this.state.favorites];
         }
     }
 
@@ -1365,11 +1370,10 @@ class TickerPanel {
         if (flagMenu) flagMenu.style.display = 'none';
     }
     
-    // Улучшенная обработка двойного клика — теперь флаг снимается мгновенно и без побочных эффектов
     handleDoubleClick(e) {
         const flag = e.target.closest('.flag'); 
         if (!flag) return; 
-        e.preventDefault();   // чтобы не выделялся текст
+        e.preventDefault();
         e.stopPropagation();
         const item = flag.closest('.ticker-item'); 
         if (!item || !item.dataset.symbol) return;
