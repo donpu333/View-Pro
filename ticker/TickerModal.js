@@ -1,6 +1,5 @@
 class TickerModal {
-    // ✅ Константы вместо магических чисел
-    static DEBOUNCE_DELAY = 300;
+    static DEBOUNCE_DELAY = 150;  // ✅ Уменьшено с 300 до 150ms
     static BATCH_SIZE = 20;
     static BATCH_INTERVAL = 80;
     static FETCH_TIMEOUT_BINANCE = 15000;
@@ -10,13 +9,13 @@ class TickerModal {
     static DELAY_AFTER_BINANCE = 3000;
     static SUPPRESS_WATCHLIST_DELAY = 3000;
     static NOTIFICATION_HIDE_DELAY = 3000;
+    static POPULAR_SYMBOLS_COUNT = 20;  // ✅ Сколько популярных показывать при пустом поиске
 
     constructor(parent) {
         this.parent = parent;
         this.searchTimeout = null;
         this.modalAllResults = [];
         
-        // 🇷🇺→🇬🇧 Карта раскладки (русская → английская)
         this.layoutMap = {
             'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u',
             'ш': 'i', 'щ': 'o', 'з': 'p', 'х': '[', 'ъ': ']',
@@ -41,7 +40,6 @@ class TickerModal {
         const modalSpotBtn = document.getElementById('modalSpotBtn');
         const modalAddAllBtn = document.getElementById('modalAddAllBtn');
 
-        // 1. Чистим инпут от старых listeners
         if (modalSearch) {
             const oldInput = modalSearch;
             const newInput = oldInput.cloneNode(true);
@@ -49,13 +47,9 @@ class TickerModal {
             modalSearch = document.getElementById('modalSearchInput');
         }
 
-        // 2. Создаём кнопку очистки
         this.createClearButton(modalSearch);
-
-        // 3. Вешаем слушатели поиска
         this.setupSearchListeners(modalSearch);
 
-        // 4. Открытие модального окна
         if (openBtn) {
             openBtn.addEventListener('click', () => {
                 this.parent.state.modalExchange = 'binance';
@@ -75,7 +69,6 @@ class TickerModal {
             });
         }
 
-        // 5. Закрытие модального окна
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 this.closeModal(modal, modalAddAllBtn);
@@ -90,7 +83,6 @@ class TickerModal {
             });
         }
 
-        // Escape + Enter обработчики
         document.addEventListener('keydown', (e) => {
             if (!modal || !modal.classList.contains('show')) return;
 
@@ -131,7 +123,6 @@ class TickerModal {
             }
         });
 
-        // 6. Переключение бирж
         if (modalBinanceBtn) {
             modalBinanceBtn.addEventListener('click', () => { 
                 this.parent.state.modalExchange = 'binance'; 
@@ -152,7 +143,6 @@ class TickerModal {
             });
         }
 
-        // 7. Переключение типа рынка
         if (modalFuturesBtn) {
             modalFuturesBtn.addEventListener('click', () => { 
                 this.parent.state.modalMarketType = 'futures'; 
@@ -173,7 +163,6 @@ class TickerModal {
             });
         }
 
-        // 8. Кнопка "Добавить все"
         if (modalAddAllBtn) {
             modalAddAllBtn.addEventListener('click', async () => {
                 if (this.parent.state.isAddingAllInProgress) return;
@@ -384,7 +373,6 @@ class TickerModal {
     // 🔒 ЗАКРЫТИЕ МОДАЛЬНОГО ОКНА
     // =========================================================================
     closeModal(modal, modalAddAllBtn) {
-        // ✅ Очищаем таймер поиска
         if (this.searchTimeout) {
             clearTimeout(this.searchTimeout);
             this.searchTimeout = null;
@@ -426,7 +414,7 @@ class TickerModal {
         
         if (this.parent.state.modalSearchQuery) {
             const query = this.parent.state.modalSearchQuery.toUpperCase();
-            allPairs = allPairs.filter(s => s.symbol.includes(query));
+            allPairs = this._filterSymbols(allPairs, query);
         }
         
         console.log(`📊 Добавление всех: найдено ${allPairs.length} символов`);
@@ -791,6 +779,46 @@ class TickerModal {
     }
 
     // =========================================================================
+    // 🔍 УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ СИМВОЛОВ
+    // =========================================================================
+    _filterSymbols(symbols, query) {
+        if (!query) return symbols;
+        
+        const upperQuery = query.toUpperCase();
+        
+        // Приоритет 1: точное совпадение начала (startsWith)
+        const startsWith = symbols.filter(s => s.symbol.startsWith(upperQuery));
+        
+        // Приоритет 2: содержит подстроку (но не начинается с неё)
+        const contains = symbols.filter(s => 
+            !s.symbol.startsWith(upperQuery) && 
+            s.symbol.includes(upperQuery)
+        );
+        
+        // Объединяем с приоритетом
+        return [...startsWith, ...contains];
+    }
+
+    // =========================================================================
+    // 🎨 ПОДСВЕТКА СОВПАДЕНИЙ
+    // =========================================================================
+    _highlightMatch(symbol, query) {
+        if (!query) return symbol;
+        
+        const upperSymbol = symbol.toUpperCase();
+        const upperQuery = query.toUpperCase();
+        const index = upperSymbol.indexOf(upperQuery);
+        
+        if (index === -1) return symbol;
+        
+        const before = symbol.substring(0, index);
+        const match = symbol.substring(index, index + query.length);
+        const after = symbol.substring(index + query.length);
+        
+        return `${before}<mark style="background:#ffa500;color:#000;padding:0 2px;border-radius:2px;">${match}</mark>${after}`;
+    }
+
+    // =========================================================================
     // 📋 ОБНОВЛЕНИЕ РЕЗУЛЬТАТОВ ПОИСКА
     // =========================================================================
     updateModalResults(reset = false) {
@@ -818,11 +846,14 @@ class TickerModal {
             return;
         }
         
-        let filteredResults = [...source];
-        
+        // ✅ УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ
+        let filteredResults;
         if (this.parent.state.modalSearchQuery) {
             const query = this.parent.state.modalSearchQuery.toUpperCase();
-            filteredResults = filteredResults.filter(s => s.symbol.includes(query));
+            filteredResults = this._filterSymbols(source, query);
+        } else {
+            // ✅ При пустом поиске показываем популярные символы
+            filteredResults = source.slice(0, TickerModal.POPULAR_SYMBOLS_COUNT);
         }
         
         this.modalAllResults = filteredResults;
@@ -851,7 +882,7 @@ class TickerModal {
     }
 
     // =========================================================================
-    // 🎨 РЕНДЕРИНГ РЕЗУЛЬТАТОВ ПОИСКА
+    // 🎨 РЕНДЕРИНГ РЕЗУЛЬТАТОВ ПОИСКА С ПОДСВЕТКОЙ
     // =========================================================================
     renderModalResults(results, append = false) {
         const resultsContainer = document.getElementById('modalResults');
@@ -864,6 +895,7 @@ class TickerModal {
         }
         
         let html = append ? resultsContainer.innerHTML : '';
+        const query = this.parent.state.modalSearchQuery;
         
         for (const symbolData of results) {
             if (!symbolData || !symbolData.symbol) continue;
@@ -909,6 +941,9 @@ class TickerModal {
                 `;
             }
             
+            // ✅ ПОДСВЕТКА СОВПАДЕНИЙ
+            const highlightedSymbol = this._highlightMatch(symbolData.symbol, query);
+            
             if (isAdded) {
                 html += `
                     <div class="modal-result-item ${addedClass}" 
@@ -916,7 +951,7 @@ class TickerModal {
                          data-exchange="${symbolData.exchange}" 
                          data-market-type="${symbolData.marketType}">
                         ${exchangeIconHtml}
-                        <span class="modal-result-symbol">${symbolData.symbol}</span>
+                        <span class="modal-result-symbol">${highlightedSymbol}</span>
                         <div class="modal-result-exchange">
                             <span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span>
                         </div>
@@ -939,7 +974,7 @@ class TickerModal {
                          data-exchange="${symbolData.exchange}" 
                          data-market-type="${symbolData.marketType}">
                         ${exchangeIconHtml}
-                        <span class="modal-result-symbol">${symbolData.symbol}</span>
+                        <span class="modal-result-symbol">${highlightedSymbol}</span>
                         <div class="modal-result-exchange">
                             <span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span>
                         </div>
@@ -1001,9 +1036,6 @@ class TickerModal {
         }
     }
 
-    // =========================================================================
-    // ♻️ Уничтожение (очистка ресурсов)
-    // =========================================================================
     destroy() {
         if (this.searchTimeout) {
             clearTimeout(this.searchTimeout);
