@@ -481,19 +481,26 @@ updateModalResults(reset = false) {
     
     // Фильтруем по поиску - ТОЛЬКО С НАЧАЛА ТИКЕРА!
     let filteredResults = [...source];
+  if (this.parent.state.modalSearchQuery) {
+    const query = this.parent.state.modalSearchQuery.toUpperCase();
+    filteredResults = filteredResults.filter(s => s.symbol.startsWith(query));
     
-    if (this.parent.state.modalSearchQuery) {
-        const query = this.parent.state.modalSearchQuery.toUpperCase();
-        
-        // ✅ ИСПРАВЛЕНО: ищем только тикеры, НАЧИНАЮЩИЕСЯ с запроса
-        filteredResults = filteredResults.filter(s => s.symbol.startsWith(query));
-        
-        // Сортируем по алфавиту
-        filteredResults.sort((a, b) => a.symbol.localeCompare(b.symbol));
-    } else {
-        // Если запрос пустой - тоже сортируем по алфавиту
-        filteredResults.sort((a, b) => a.symbol.localeCompare(b.symbol));
-    }
+    // ✅ Сортируем по объёму (популярные сверху), затем по алфавиту
+    filteredResults.sort((a, b) => {
+        const volA = parseFloat(a.quoteVolume || a.volume || 0);
+        const volB = parseFloat(b.quoteVolume || b.volume || 0);
+        if (volB !== volA) return volB - volA;
+        return a.symbol.localeCompare(b.symbol);
+    });
+} else {
+    // ✅ Если запрос пустой - тоже по объёму
+    filteredResults.sort((a, b) => {
+        const volA = parseFloat(a.quoteVolume || a.volume || 0);
+        const volB = parseFloat(b.quoteVolume || b.volume || 0);
+        if (volB !== volA) return volB - volA;
+        return a.symbol.localeCompare(b.symbol);
+    });
+}
     
     // Сохраняем все результаты
     this.modalAllResults = filteredResults;
