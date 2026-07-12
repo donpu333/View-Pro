@@ -1,28 +1,23 @@
 class TickerModal {
-    static DEBOUNCE_DELAY = 150;  // ✅ Уменьшено с 300 до 150ms
-    static BATCH_SIZE = 20;
-    static BATCH_INTERVAL = 80;
-    static FETCH_TIMEOUT_BINANCE = 15000;
-    static FETCH_TIMEOUT_BYBIT = 20000;
-    static BINANCE_BATCH_SIZE = 80;
-    static DELAY_BETWEEN_BATCHES = 2000;
-    static DELAY_AFTER_BINANCE = 3000;
-    static SUPPRESS_WATCHLIST_DELAY = 3000;
-    static NOTIFICATION_HIDE_DELAY = 3000;
-    static POPULAR_SYMBOLS_COUNT = 20;  // ✅ Сколько популярных показывать при пустом поиске
-
     constructor(parent) {
         this.parent = parent;
         this.searchTimeout = null;
         this.modalAllResults = [];
         
+        // 🇷🇺→🇬🇧 Карта раскладки (русская → английская)
         this.layoutMap = {
             'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u',
             'ш': 'i', 'щ': 'o', 'з': 'p', 'х': '[', 'ъ': ']',
             'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h',
             'о': 'j', 'л': 'k', 'д': 'l', 'ж': ';', 'э': "'",
             'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n',
-            'ь': 'm', 'б': ',', 'ю': '.', 'ё': '`'
+            'ь': 'm', 'б': ',', 'ю': '.', 'ё': '`',
+            'Й': 'Q', 'Ц': 'W', 'У': 'E', 'К': 'R', 'Е': 'T', 'Н': 'Y', 'Г': 'U',
+            'Ш': 'I', 'Щ': 'O', 'З': 'P', 'Х': '[', 'Ъ': ']',
+            'Ф': 'A', 'Ы': 'S', 'В': 'D', 'А': 'F', 'П': 'G', 'Р': 'H',
+            'О': 'J', 'Л': 'K', 'Д': 'L', 'Ж': ';', 'Э': "'",
+            'Я': 'Z', 'Ч': 'X', 'С': 'C', 'М': 'V', 'И': 'B', 'Т': 'N',
+            'Ь': 'M', 'Б': ',', 'Ю': '.', 'Ё': '`'
         };
     }
     
@@ -40,6 +35,9 @@ class TickerModal {
         const modalSpotBtn = document.getElementById('modalSpotBtn');
         const modalAddAllBtn = document.getElementById('modalAddAllBtn');
 
+        // =========================================================================
+        // 1. 🔥 ЧИСТИМ ИНПУТ ОТ СТАРЫХ LISTENERS
+        // =========================================================================
         if (modalSearch) {
             const oldInput = modalSearch;
             const newInput = oldInput.cloneNode(true);
@@ -47,9 +45,19 @@ class TickerModal {
             modalSearch = document.getElementById('modalSearchInput');
         }
 
+        // =========================================================================
+        // 2. ✕ СОЗДАЁМ КНОПКУ ОЧИСТКИ ПОИСКА
+        // =========================================================================
         this.createClearButton(modalSearch);
+
+        // =========================================================================
+        // 3. ⌨️ ВЕШАЕМ ЛИСТЕНЕРЫ ПОИСКА
+        // =========================================================================
         this.setupSearchListeners(modalSearch);
 
+        // =========================================================================
+        // 4. 📂 ОТКРЫТИЕ МОДАЛЬНОГО ОКНА
+        // =========================================================================
         if (openBtn) {
             openBtn.addEventListener('click', () => {
                 this.parent.state.modalExchange = 'binance';
@@ -63,12 +71,15 @@ class TickerModal {
                 this.toggleClearBtn();
                 this.updateModalButtons();
                 modal.classList.add('show');
-                input?.focus();
+                setTimeout(() => input?.focus(), 100);
                 this.parent.updateModalCount();
                 this.updateModalResults(true);
             });
         }
 
+        // =========================================================================
+        // 5. ❌ ЗАКРЫТИЕ МОДАЛЬНОГО ОКНА
+        // =========================================================================
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 this.closeModal(modal, modalAddAllBtn);
@@ -83,6 +94,7 @@ class TickerModal {
             });
         }
 
+        // Глобальные обработчики клавиш
         document.addEventListener('keydown', (e) => {
             if (!modal || !modal.classList.contains('show')) return;
 
@@ -101,7 +113,7 @@ class TickerModal {
                 this.closeModal(modal, modalAddAllBtn);
             }
 
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && document.activeElement?.id === 'modalSearchInput') {
                 e.preventDefault();
                 const firstItem = document.querySelector('.modal-result-item:not(.added)');
                 if (firstItem) {
@@ -123,6 +135,9 @@ class TickerModal {
             }
         });
 
+        // =========================================================================
+        // 6. 🏦 ПЕРЕКЛЮЧЕНИЕ БИРЖ (Binance / Bybit)
+        // =========================================================================
         if (modalBinanceBtn) {
             modalBinanceBtn.addEventListener('click', () => { 
                 this.parent.state.modalExchange = 'binance'; 
@@ -143,6 +158,9 @@ class TickerModal {
             });
         }
 
+        // =========================================================================
+        // 7. 📊 ПЕРЕКЛЮЧЕНИЕ ТИПА РЫНКА (Futures / Spot)
+        // =========================================================================
         if (modalFuturesBtn) {
             modalFuturesBtn.addEventListener('click', () => { 
                 this.parent.state.modalMarketType = 'futures'; 
@@ -163,6 +181,9 @@ class TickerModal {
             });
         }
 
+        // =========================================================================
+        // 8. ➕ КНОПКА "ДОБАВИТЬ ВСЕ"
+        // =========================================================================
         if (modalAddAllBtn) {
             modalAddAllBtn.addEventListener('click', async () => {
                 if (this.parent.state.isAddingAllInProgress) return;
@@ -218,16 +239,16 @@ class TickerModal {
             right: 32px;
             top: 50%;
             transform: translateY(-50%);
-            width: 16px;
-            height: 16px;
+            width: 20px;
+            height: 20px;
             border: none;
             background: #666;
             color: #fff;
             border-radius: 50%;
             cursor: pointer;
             display: none;
-            font-size: 10px;
-            line-height: 16px;
+            font-size: 11px;
+            line-height: 20px;
             padding: 0;
             text-align: center;
             transition: all 0.15s ease;
@@ -266,95 +287,112 @@ class TickerModal {
     }
 
     // =========================================================================
-    // ⌨️ ЛИСТЕНЕРЫ ПОИСКА
+    // ⌨️ ЛИСТЕНЕРЫ ПОИСКА - ИСПРАВЛЕННАЯ ВЕРСИЯ
     // =========================================================================
     setupSearchListeners(modalSearch) {
         if (!modalSearch) return;
 
-        let isManualUpdate = false;
+        // Удаляем старые обработчики (на всякий случай)
+        const newSearch = modalSearch.cloneNode(true);
+        modalSearch.parentNode.replaceChild(newSearch, modalSearch);
+        modalSearch = document.getElementById('modalSearchInput');
+        
+        if (!modalSearch) return;
 
-        modalSearch.addEventListener('keydown', (e) => {
-            const specialKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 
-                                 'Home', 'End', 'Tab', 'Enter', 'Escape'];
+        // === ЕДИНСТВЕННЫЙ ОБРАБОТЧИК - input ===
+        // Он срабатывает на ВСЕ изменения: ввод с клавиатуры, paste, drag-drop, авто-замена
+        modalSearch.addEventListener('input', (e) => {
+            const input = e.target;
+            let val = input.value;
             
-            if (specialKeys.includes(e.key)) {
-                if (e.key === 'Backspace' || e.key === 'Delete') {
-                    setTimeout(() => this.toggleClearBtn(), 0);
-                }
+            // Конвертируем каждый символ: русский → английский
+            let converted = '';
+            for (let i = 0; i < val.length; i++) {
+                const char = val[i];
+                converted += this.layoutMap[char] || char.toUpperCase();
+            }
+            
+            // Применяем конвертированное значение, если оно изменилось
+            if (converted !== val) {
+                const cursorPos = input.selectionStart;
+                input.value = converted;
+                
+                // Восстанавливаем позицию курсора
+                const newCursor = Math.min(cursorPos, converted.length);
+                input.setSelectionRange(newCursor, newCursor);
+            }
+            
+            // Обновляем UI
+            this.toggleClearBtn();
+            this.triggerSearch(input.value);
+        });
+
+        // === ОБРАБОТЧИК keydown - только для специальных клавиш ===
+        modalSearch.addEventListener('keydown', (e) => {
+            // Backspace и Delete уже обрабатываются через input
+            // Здесь только предотвращаем стандартное поведение для навигации
+            const specialKeys = ['ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Escape', 'Enter'];
+            
+            if (e.key === 'Escape') {
+                // Очистка или закрытие - обрабатывается в глобальном обработчике
                 return;
             }
             
-            if (e.ctrlKey || e.altKey || e.metaKey) return;
-
-            if (e.key.length === 1) {
-                e.preventDefault();
-                
-                let char = e.key;
-                
-                const lowerChar = char.toLowerCase();
-                if (this.layoutMap[lowerChar]) {
-                    char = this.layoutMap[lowerChar];
-                }
-                
-                char = char.toUpperCase();
-
-                const input = e.target;
-                const start = input.selectionStart;
-                const end = input.selectionEnd;
-                const value = input.value;
-                
-                isManualUpdate = true;
-                input.value = value.substring(0, start) + char + value.substring(end);
-                input.selectionStart = input.selectionEnd = start + 1;
-                isManualUpdate = false;
-                
-                this.toggleClearBtn();
-                this.triggerSearch(input.value);
+            if (e.key === 'Enter') {
+                // Выбор первого элемента - обрабатывается в глобальном обработчике
+                return;
             }
         });
 
-        modalSearch.addEventListener('input', (e) => {
-            if (isManualUpdate) return;
-
-            const input = e.target;
-            const cursorPos = input.selectionStart;
-            
-            let val = input.value;
-            
-            let converted = '';
-            for (const c of val) {
-                const lowerC = c.toLowerCase();
-                if (this.layoutMap[lowerC]) {
-                    converted += this.layoutMap[lowerC].toUpperCase();
-                } else {
-                    converted += c.toUpperCase();
+        // === ОБРАБОТЧИК paste - на всякий случай, хотя input уже покрывает ===
+        modalSearch.addEventListener('paste', (e) => {
+            // Небольшая задержка, чтобы сработал input после вставки
+            setTimeout(() => {
+                const input = e.target;
+                let val = input.value;
+                
+                let converted = '';
+                for (let i = 0; i < val.length; i++) {
+                    const char = val[i];
+                    converted += this.layoutMap[char] || char.toUpperCase();
                 }
-            }
-            
-            input.value = converted;
-            
-            const newCursor = Math.min(cursorPos, converted.length);
-            input.setSelectionRange(newCursor, newCursor);
-            
-            this.toggleClearBtn();
-            this.triggerSearch(converted);
+                
+                if (converted !== val) {
+                    input.value = converted;
+                }
+                
+                this.toggleClearBtn();
+                this.triggerSearch(input.value);
+            }, 10);
         });
     }
 
     // =========================================================================
-    // 🔍 ТРИГГЕР ПОИСКА
+    // 🔍 ТРИГГЕР ПОИСКА (с debounce и немедленным первым срабатыванием)
     // =========================================================================
     triggerSearch(query) {
         this.parent.state.modalSearchQuery = query;
         this.parent.state.modalPage = 0;
         
+        // Очищаем предыдущий таймаут
         if (this.searchTimeout) {
             clearTimeout(this.searchTimeout);
+            this.searchTimeout = null;
         }
+        
+        // Если запрос пустой - показываем результаты немедленно
+        if (!query || query.length === 0) {
+            this.updateModalResults(true);
+            return;
+        }
+        
+        // Для первой буквы - показываем быстрее (150ms вместо 300ms)
+        const delay = query.length === 1 ? 150 : 300;
         
         this.searchTimeout = setTimeout(() => {
             this.updateModalResults(true);
-        }, TickerModal.DEBOUNCE_DELAY);
+            this.searchTimeout = null;
+        }, delay);
     }
 
     // =========================================================================
@@ -365,7 +403,7 @@ class TickerModal {
         const btn = document.getElementById('searchClearBtn');
         
         if (input && btn) {
-            btn.style.display = input.value.length > 0 ? 'block' : 'none';
+            btn.style.display = input.value.length > 0 ? 'flex' : 'none';
         }
     }
 
@@ -373,11 +411,6 @@ class TickerModal {
     // 🔒 ЗАКРЫТИЕ МОДАЛЬНОГО ОКНА
     // =========================================================================
     closeModal(modal, modalAddAllBtn) {
-        if (this.searchTimeout) {
-            clearTimeout(this.searchTimeout);
-            this.searchTimeout = null;
-        }
-        
         if (modal) {
             modal.classList.remove('show');
         }
@@ -389,382 +422,16 @@ class TickerModal {
             modalAddAllBtn.classList.remove('loading');
             modalAddAllBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
         }
-    }
-
-    // =========================================================================
-    // 🚀 ДОБАВЛЕНИЕ ВСЕХ ИНСТРУМЕНТОВ
-    // =========================================================================
-    async addNextBatch() {
-        if (!this.parent.state.isAddingAllInProgress) return;
         
-        const modalAddAllBtn = document.getElementById('modalAddAllBtn');
-        
-        let source;
-        if (this.parent.state.modalExchange === 'binance') {
-            source = this.parent.state.modalMarketType === 'futures' 
-                ? this.parent.allBinanceFutures 
-                : this.parent.allBinanceSpot;
-        } else {
-            source = this.parent.state.modalMarketType === 'futures' 
-                ? this.parent.allBybitFutures 
-                : this.parent.allBybitSpot;
-        }
-        
-        let allPairs = [...source];
-        
-        if (this.parent.state.modalSearchQuery) {
-            const query = this.parent.state.modalSearchQuery.toUpperCase();
-            allPairs = this._filterSymbols(allPairs, query);
-        }
-        
-        console.log(`📊 Добавление всех: найдено ${allPairs.length} символов`);
-        
-        if (allPairs.length === 0) return;
-        
-        this.parent.state.isAddingAllInProgress = true;
-        this.parent.state.addingAllOffset = 0;
-        
-        if (modalAddAllBtn) {
-            modalAddAllBtn.classList.add('loading');
-            modalAddAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загрузка...';
-        }
-        
-        this._doAddNextBatch(allPairs);
-    }
-
-    async _doAddNextBatch(allPairs) {
-        if (!this.parent.state.isAddingAllInProgress) return;
-
-        const start = this.parent.state.addingAllOffset;
-        const end = Math.min(start + TickerModal.BATCH_SIZE, allPairs.length);
-
-        if (start === 0) {
-            console.log('🛡️ ВКЛЮЧЕНА ЗАЩИТА от лишних запросов к API');
-            this.parent._isBulkAdding = true;
-            this.parent._suppressWatchlistLoad = true;
-            this._startTime = Date.now();
-        }
-
-        for (let i = start; i < end; i++) {
-            const item = allPairs[i];
-            if (item && item.symbol) {
-                this.parent.addSymbol(
-                    item.symbol, 
-                    true, 
-                    item.exchange, 
-                    item.marketType, 
-                    false,
-                    true,
-                    true
-                );
-            }
-        }
-
-        this.parent.state.addingAllOffset = end;
-        
-        const btn = document.getElementById('modalAddAllBtn');
-        if (btn) {
-            const progress = Math.round((end / allPairs.length) * 100);
-            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${end}/${allPairs.length} (${progress}%)`;
-        }
-
-        if (end < allPairs.length) {
-            setTimeout(() => this._doAddNextBatch(allPairs), TickerModal.BATCH_INTERVAL);
-        } else {
-            console.log(`📦 Все символы добавлены в память за ${Date.now() - this._startTime}ms`);
-            
-            this.parent._isBulkAdding = false;
-            
-            await this._finalizeAddAllFixed(allPairs);
-            
-            setTimeout(() => {
-                this.parent._suppressWatchlistLoad = false;
-                console.log('🛡️ Защита ОТКЛЮЧЕНА. WatchlistManager снова активен.');
-            }, TickerModal.SUPPRESS_WATCHLIST_DELAY);
-        }
-    }
-
-    async _finalizeAddAllFixed(allPairs) {
-        console.log(`✅ В памяти: ${this.parent.tickersMap.size} тикеров`);
-        
-        this.parent.state.isAddingAllInProgress = false;
-        
-        const btn = document.getElementById('modalAddAllBtn');
-        if (btn) {
-            btn.classList.remove('loading');
-            btn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
-        }
-
-        this.parent.filterCache = null;
-        this.parent.renderTickerList();
-        
-        this._showNotification(`⏳ Синхронизация...`, '#ffa500');
-
-        const wm = this.parent.watchlistManager;
-        if (wm) {
-            const activeList = wm.lists.get(wm.activeListId);
-            if (activeList) {
-                activeList.symbols = [];
-                
-                for (const [key] of this.parent.tickersMap.entries()) {
-                    activeList.symbols.push(key);
-                }
-                
-                this.parent.state.customSymbols = [...activeList.symbols];
-                
-                console.log(`📝 Вотчлист: ${activeList.symbols.length} символов (без дублей!)`);
-                
-                wm.saveToStorage();
-                wm.renderDropdown();
-            }
-        } else {
-            this.parent.state.customSymbols = [];
-            for (const [key] of this.parent.tickersMap.entries()) {
-                this.parent.state.customSymbols.push(key);
-            }
-        }
-        
-        this.parent.saveState();
-
-        const counterSpan = document.getElementById('modalFoundCount');
-        if (counterSpan) counterSpan.textContent = this.parent.tickersMap.size;
-
-        await new Promise(r => setTimeout(r, 1000));
-        await this._safeLoadPricesFixed();
-    }
-
-    // =========================================================================
-    // 💰 БЕЗОПАСНАЯ ЗАГРУЗКА ЦЕН
-    // =========================================================================
-    async _safeLoadPricesFixed() {
-        const total = this.parent.tickersMap.size;
-        
-        if (total === 0) {
-            console.log('⚠️ Нет тикеров для загрузки');
-            return;
-        }
-        
-        this._showNotification(`⏳ Загрузка цен для ${total} символов...`, '#ffa500');
-        console.log(`📊 Начинаем загрузку цен для ${total} тикеров...`);
-        
-        const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
-        
-        for (const [, ticker] of this.parent.tickersMap.entries()) {
-            if (ticker.exchange === 'binance' && ticker.marketType === 'futures') {
-                groups.bnFut.push(ticker.symbol);
-            } else if (ticker.exchange === 'binance' && ticker.marketType === 'spot') {
-                groups.bnSpot.push(ticker.symbol);
-            } else if (ticker.exchange === 'bybit' && ticker.marketType === 'futures') {
-                groups.byFut.push(ticker.symbol);
-            } else if (ticker.exchange === 'bybit' && ticker.marketType === 'spot') {
-                groups.bySpot.push(ticker.symbol);
-            }
-        }
-        
-        console.log('📦 Распределение:');
-        console.log(`   Binance Futures: ${groups.bnFut.length}`);
-        console.log(`   Binance Spot: ${groups.bnSpot.length}`);
-        console.log(`   Bybit Futures: ${groups.byFut.length}`);
-        console.log(`   Bybit Spot: ${groups.bySpot.length}`);
-        
-        let loaded = 0;
-        
-        try {
-            if (groups.bnFut.length > 0) {
-                console.log(`⚡ Загрузка Binance Futures (${groups.bnFut.length} шт.)...`);
-                
-                for (let i = 0; i < groups.bnFut.length; i += TickerModal.BINANCE_BATCH_SIZE) {
-                    const batch = groups.bnFut.slice(i, i + TickerModal.BINANCE_BATCH_SIZE);
-                    
-                    await this._fetchBinance24hSafe(batch, 'futures');
-                    loaded += batch.length;
-                    
-                    const pct = Math.round((loaded / total) * 100);
-                    this._showNotification(`⏳ ${loaded}/${total} (${pct}%)`, '#ffa500');
-                    
-                    if (i + TickerModal.BINANCE_BATCH_SIZE < groups.bnFut.length) {
-                        await new Promise(r => setTimeout(r, TickerModal.DELAY_BETWEEN_BATCHES));
-                    }
-                }
-                
-                console.log(`✅ Binance Futures загружено`);
-            }
-            
-            if (groups.bnFut.length > 0 && groups.bnSpot.length > 0) {
-                console.log('⏸️ Пауза 2 сек перед Binance Spot...');
-                await new Promise(r => setTimeout(r, TickerModal.DELAY_BETWEEN_BATCHES));
-            }
-            
-            if (groups.bnSpot.length > 0) {
-                console.log(`⚡ Загрузка Binance Spot (${groups.bnSpot.length} шт.)...`);
-                
-                for (let i = 0; i < groups.bnSpot.length; i += TickerModal.BINANCE_BATCH_SIZE) {
-                    const batch = groups.bnSpot.slice(i, i + TickerModal.BINANCE_BATCH_SIZE);
-                    
-                    await this._fetchBinance24hSafe(batch, 'spot');
-                    loaded += batch.length;
-                    
-                    const pct = Math.round((loaded / total) * 100);
-                    this._showNotification(`⏳ ${loaded}/${total} (${pct}%)`, '#ffa500');
-                    
-                    if (i + TickerModal.BINANCE_BATCH_SIZE < groups.bnSpot.length) {
-                        await new Promise(r => setTimeout(r, TickerModal.DELAY_BETWEEN_BATCHES));
-                    }
-                }
-                
-                console.log(`✅ Binance Spot загружено`);
-            }
-            
-            const hasBinanceData = groups.bnFut.length > 0 || groups.bnSpot.length > 0;
-            const hasBybitData = groups.byFut.length > 0 || groups.bySpot.length > 0;
-            
-            if (hasBinanceData && hasBybitData) {
-                console.log('⏸️ Пауза 3 сек перед Bybit...');
-                await new Promise(r => setTimeout(r, TickerModal.DELAY_AFTER_BINANCE));
-            }
-            
-            if (groups.byFut.length > 0) {
-                console.log(`⚡ Загрузка Bybit Futures (${groups.byFut.length} шт.)...`);
-                
-                await this._fetchBybit24hSafe(groups.byFut, 'futures');
-                loaded += groups.byFut.length;
-                
-                const pct = Math.round((loaded / total) * 100);
-                this._showNotification(`⏳ ${loaded}/${total} (${pct}%)`, '#ffa500');
-                
-                console.log(`✅ Bybit Futures загружено`);
-                
-                if (groups.bySpot.length > 0) {
-                    await new Promise(r => setTimeout(r, TickerModal.DELAY_BETWEEN_BATCHES));
-                }
-            }
-            
-            if (groups.bySpot.length > 0) {
-                console.log(`⚡ Загрузка Bybit Spot (${groups.bySpot.length} шт.)...`);
-                
-                await this._fetchBybit24hSafe(groups.bySpot, 'spot');
-                loaded += groups.bySpot.length;
-                
-                console.log(`✅ Bybit Spot загружено`);
-            }
-            
-            console.log(`💰 Обновление UI...`);
-            
-            this.parent.renderer?.updatePriceElements?.();
-            this.parent.renderTickerList();
-            
-            this._showNotification(`✅ Готово! Загружено ${loaded} символов`, '#4caf50');
-            console.log(`✅✅✅ ВСЁ ГОТОВО! Загружено ${loaded} из ${total} символов`);
-            
-            setTimeout(() => {
-                const notif = document.getElementById('alertNotification');
-                if (notif) notif.style.display = 'none';
-            }, TickerModal.NOTIFICATION_HIDE_DELAY);
-            
-        } catch (error) {
-            console.error('❌ Критическая ошибка при загрузке цен:', error);
-            this._showNotification(`❌ Ошибка: ${error.message}`, '#f23645');
+        // Очищаем таймаут поиска при закрытии
+        if (this.searchTimeout) {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = null;
         }
     }
 
     // =========================================================================
-    // 📡 Binance 24h (safe version)
-    // =========================================================================
-    async _fetchBinance24hSafe(symbols, marketType) {
-        if (!symbols || symbols.length === 0) return;
-        
-        const symbolsParam = symbols.map(s => `"${s}"`).join(',');
-        const url = marketType === 'futures'
-            ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]`
-            : `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`;
-        
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), TickerModal.FETCH_TIMEOUT_BINANCE);
-            
-            const response = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            
-            if (!response.ok) {
-                console.warn(`⚠️ Binance ${marketType} HTTP ${response.status}`);
-                return;
-            }
-            
-            const data = await response.json();
-            
-            if (Array.isArray(data)) {
-                data.forEach(t => {
-                    this.parent._updateTickerFromBinance(t, marketType);
-                });
-            }
-            
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.warn(`⏰ Binance ${marketType}: таймаут запроса`);
-            } else {
-                console.warn(`⚠️ Binance ${marketType} error:`, error.message);
-            }
-        }
-    }
-
-    // =========================================================================
-    // 📡 Bybit 24h (safe version)
-    // =========================================================================
-    async _fetchBybit24hSafe(symbols, marketType) {
-        if (!symbols || symbols.length === 0) return;
-        
-        const category = marketType === 'futures' ? 'linear' : 'spot';
-        const url = `https://api.bybit.com/v5/market/tickers?category=${category}`;
-        
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), TickerModal.FETCH_TIMEOUT_BYBIT);
-            
-            const response = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            
-            if (!response.ok) {
-                console.warn(`⚠️ Bybit ${marketType} HTTP ${response.status}`);
-                return;
-            }
-            
-            const data = await response.json();
-            
-            if (data.retCode === 0 && data.result?.list) {
-                const symbolSet = new Set(symbols);
-                
-                data.result.list.forEach(t => {
-                    if (symbolSet.has(t.symbol)) {
-                        this.parent._updateTickerFromBybit(t, marketType);
-                    }
-                });
-            } else {
-                console.warn(`⚠️ Bybit ${marketType} retCode:`, data.retCode);
-            }
-            
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.warn(`⏰ Bybit ${marketType}: таймаут запроса`);
-            } else {
-                console.warn(`⚠️ Bybit ${marketType} error:`, error.message);
-            }
-        }
-    }
-
-    // =========================================================================
-    // 🔔 Уведомления
-    // =========================================================================
-    _showNotification(message, color = '#666') {
-        const notif = document.getElementById('alertNotification');
-        if (notif) {
-            notif.innerHTML = `<div>${message}</div>`;
-            notif.style.display = 'block';
-            notif.style.borderLeftColor = color;
-        }
-    }
-
-    // =========================================================================
-    // 🔄 ОБНОВЛЕНИЕ АКТИВНЫХ КНОПОК
+    // 🔄 ОБНОВЛЕНИЕ АКТИВНЫХ КНОПОК БИРЖИ/РЫНКА
     // =========================================================================
     updateModalButtons() {
         const binanceBtn = document.getElementById('modalBinanceBtn');
@@ -779,110 +446,84 @@ class TickerModal {
     }
 
     // =========================================================================
-    // 🔍 УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ СИМВОЛОВ
-    // =========================================================================
-    _filterSymbols(symbols, query) {
-        if (!query) return symbols;
-        
-        const upperQuery = query.toUpperCase();
-        
-        // Приоритет 1: точное совпадение начала (startsWith)
-        const startsWith = symbols.filter(s => s.symbol.startsWith(upperQuery));
-        
-        // Приоритет 2: содержит подстроку (но не начинается с неё)
-        const contains = symbols.filter(s => 
-            !s.symbol.startsWith(upperQuery) && 
-            s.symbol.includes(upperQuery)
-        );
-        
-        // Объединяем с приоритетом
-        return [...startsWith, ...contains];
-    }
-
-    // =========================================================================
-    // 🎨 ПОДСВЕТКА СОВПАДЕНИЙ
-    // =========================================================================
-    _highlightMatch(symbol, query) {
-        if (!query) return symbol;
-        
-        const upperSymbol = symbol.toUpperCase();
-        const upperQuery = query.toUpperCase();
-        const index = upperSymbol.indexOf(upperQuery);
-        
-        if (index === -1) return symbol;
-        
-        const before = symbol.substring(0, index);
-        const match = symbol.substring(index, index + query.length);
-        const after = symbol.substring(index + query.length);
-        
-        return `${before}<mark style="background:#ffa500;color:#000;padding:0 2px;border-radius:2px;">${match}</mark>${after}`;
-    }
-
-    // =========================================================================
     // 📋 ОБНОВЛЕНИЕ РЕЗУЛЬТАТОВ ПОИСКА
     // =========================================================================
-    updateModalResults(reset = false) {
-        const resultsContainer = document.getElementById('modalResults');
-        
-        if (!resultsContainer) return;
-        
-        if (reset) {
-            this.parent.state.modalPage = 0;
-        }
-        
-        let source;
-        if (this.parent.state.modalExchange === 'binance') {
-            source = this.parent.state.modalMarketType === 'futures' 
-                ? this.parent.allBinanceFutures 
-                : this.parent.allBinanceSpot;
-        } else {
-            source = this.parent.state.modalMarketType === 'futures' 
-                ? this.parent.allBybitFutures 
-                : this.parent.allBybitSpot;
-        }
-        
-        if (!source || source.length === 0) {
-            resultsContainer.innerHTML = '<div class="no-results">Загрузка данных...</div>';
-            return;
-        }
-        
-        // ✅ УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ
-        let filteredResults;
-        if (this.parent.state.modalSearchQuery) {
-            const query = this.parent.state.modalSearchQuery.toUpperCase();
-            filteredResults = this._filterSymbols(source, query);
-        } else {
-            // ✅ При пустом поиске показываем популярные символы
-            filteredResults = source.slice(0, TickerModal.POPULAR_SYMBOLS_COUNT);
-        }
-        
-        this.modalAllResults = filteredResults;
-        
-        const foundSpan = document.getElementById('modalFoundCount');
-        if (foundSpan) {
-            foundSpan.textContent = this.modalAllResults.length;
-        }
-        
-        const pageSize = this.parent.state.modalPageSize || 50;
-        const startIndex = reset ? 0 : this.parent.state.modalPage * pageSize;
-        const endIndex = Math.min(startIndex + pageSize, this.modalAllResults.length);
-        
-        if (this.modalAllResults.length === 0) {
-            resultsContainer.innerHTML = '<div class="no-results">Инструменты не найдены</div>';
-            return;
-        }
-        
-        const pageResults = this.modalAllResults.slice(startIndex, endIndex);
-        
-        if (!reset && startIndex < this.modalAllResults.length) {
-            this.parent.state.modalPage++;
-        }
-        
-        this.renderModalResults(pageResults, !reset && startIndex > 0);
+   // =========================================================================
+// 📋 ОБНОВЛЕНИЕ РЕЗУЛЬТАТОВ ПОИСКА - ИСПРАВЛЕНО (поиск ТОЛЬКО с начала)
+// =========================================================================
+updateModalResults(reset = false) {
+    const resultsContainer = document.getElementById('modalResults');
+    
+    if (!resultsContainer) return;
+    
+    if (reset) {
+        this.parent.state.modalPage = 0;
+        // Сбрасываем скролл в начало при новом поиске
+        resultsContainer.scrollTop = 0;
     }
-
+    
+    // Выбираем источник данных
+    let source;
+    if (this.parent.state.modalExchange === 'binance') {
+        source = this.parent.state.modalMarketType === 'futures' 
+            ? this.parent.allBinanceFutures 
+            : this.parent.allBinanceSpot;
+    } else {
+        source = this.parent.state.modalMarketType === 'futures' 
+            ? this.parent.allBybitFutures 
+            : this.parent.allBybitSpot;
+    }
+    
+    if (!source || source.length === 0) {
+        resultsContainer.innerHTML = '<div class="no-results">Загрузка данных...</div>';
+        return;
+    }
+    
+    // Фильтруем по поиску - ТОЛЬКО С НАЧАЛА ТИКЕРА!
+    let filteredResults = [...source];
+    
+    if (this.parent.state.modalSearchQuery) {
+        const query = this.parent.state.modalSearchQuery.toUpperCase();
+        
+        // ✅ ИСПРАВЛЕНО: ищем только тикеры, НАЧИНАЮЩИЕСЯ с запроса
+        filteredResults = filteredResults.filter(s => s.symbol.startsWith(query));
+        
+        // Сортируем по алфавиту
+        filteredResults.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    } else {
+        // Если запрос пустой - тоже сортируем по алфавиту
+        filteredResults.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    }
+    
+    // Сохраняем все результаты
+    this.modalAllResults = filteredResults;
+    
+    // Обновляем счётчик
+    const foundSpan = document.getElementById('modalFoundCount');
+    if (foundSpan) {
+        foundSpan.textContent = this.modalAllResults.length;
+    }
+    
+    // Пагинация
+    const pageSize = this.parent.state.modalPageSize || 50;
+    const startIndex = reset ? 0 : this.parent.state.modalPage * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, this.modalAllResults.length);
+    
+    if (this.modalAllResults.length === 0) {
+        resultsContainer.innerHTML = '<div class="no-results">Инструменты не найдены</div>';
+        return;
+    }
+    
+    const pageResults = this.modalAllResults.slice(startIndex, endIndex);
+    
+    if (!reset && startIndex < this.modalAllResults.length) {
+        this.parent.state.modalPage++;
+    }
+    
+    this.renderModalResults(pageResults, !reset && startIndex > 0);
+}
     // =========================================================================
-    // 🎨 РЕНДЕРИНГ РЕЗУЛЬТАТОВ ПОИСКА С ПОДСВЕТКОЙ
+    // 🎨 РЕНДЕРИНГ РЕЗУЛЬТАТОВ ПОИСКА
     // =========================================================================
     renderModalResults(results, append = false) {
         const resultsContainer = document.getElementById('modalResults');
@@ -895,11 +536,11 @@ class TickerModal {
         }
         
         let html = append ? resultsContainer.innerHTML : '';
-        const query = this.parent.state.modalSearchQuery;
         
         for (const symbolData of results) {
             if (!symbolData || !symbolData.symbol) continue;
             
+            // Проверяем добавлен ли уже
             const isAdded = this.parent.tickers.some(t => 
                 t.symbol === symbolData.symbol && 
                 t.exchange === symbolData.exchange && 
@@ -908,6 +549,21 @@ class TickerModal {
             
             const addedClass = isAdded ? 'added' : '';
             
+            // Подсветка совпадения в символе
+            let displaySymbol = symbolData.symbol;
+            if (this.parent.state.modalSearchQuery && !isAdded) {
+                const query = this.parent.state.modalSearchQuery.toUpperCase();
+                const index = displaySymbol.indexOf(query);
+                if (index >= 0) {
+                    displaySymbol = displaySymbol.substring(0, index) + 
+                        '<span class="search-highlight">' + 
+                        displaySymbol.substring(index, index + query.length) + 
+                        '</span>' + 
+                        displaySymbol.substring(index + query.length);
+                }
+            }
+            
+            // HTML иконки биржи
             let exchangeIconHtml = '';
             if (symbolData.exchange === 'binance') {
                 exchangeIconHtml = `
@@ -941,8 +597,9 @@ class TickerModal {
                 `;
             }
             
-            // ✅ ПОДСВЕТКА СОВПАДЕНИЙ
-            const highlightedSymbol = this._highlightMatch(symbolData.symbol, query);
+            // HTML элемента результата
+            const exchangeLabel = symbolData.exchange === 'binance' ? 'Binance' : 'Bybit';
+            const marketLabel = symbolData.marketType === 'futures' ? 'Futures' : 'Spot';
             
             if (isAdded) {
                 html += `
@@ -951,9 +608,9 @@ class TickerModal {
                          data-exchange="${symbolData.exchange}" 
                          data-market-type="${symbolData.marketType}">
                         ${exchangeIconHtml}
-                        <span class="modal-result-symbol">${highlightedSymbol}</span>
+                        <span class="modal-result-symbol">${displaySymbol}</span>
                         <div class="modal-result-exchange">
-                            <span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span>
+                            <span>${exchangeLabel} - ${marketLabel}</span>
                         </div>
                         <div class="modal-result-actions">
                             <span class="modal-check-icon"><i class="fas fa-check-circle"></i></span>
@@ -974,9 +631,9 @@ class TickerModal {
                          data-exchange="${symbolData.exchange}" 
                          data-market-type="${symbolData.marketType}">
                         ${exchangeIconHtml}
-                        <span class="modal-result-symbol">${highlightedSymbol}</span>
+                        <span class="modal-result-symbol">${displaySymbol}</span>
                         <div class="modal-result-exchange">
-                            <span>${symbolData.exchange === 'binance' ? 'Binance' : 'Bybit'} - ${symbolData.marketType === 'futures' ? 'Futures' : 'Spot'}</span>
+                            <span>${exchangeLabel} - ${marketLabel}</span>
                         </div>
                         <span class="modal-add-icon"><i class="fas fa-plus-circle"></i></span>
                     </div>
@@ -984,10 +641,37 @@ class TickerModal {
             }
         }
         
+        // Вставляем HTML
         resultsContainer.innerHTML = html;
         
+        // Обработчики кликов на элементы
+        this.attachResultHandlers();
+        
+        // Infinite scroll
+        if (!resultsContainer._scrollHandler) {
+            resultsContainer._scrollHandler = () => {
+                const { scrollTop, scrollHeight, clientHeight } = resultsContainer;
+                if (scrollHeight - scrollTop - clientHeight < 100) {
+                    if (this.modalAllResults && 
+                        this.parent.state.modalPage * (this.parent.state.modalPageSize || 50) < this.modalAllResults.length) {
+                        this.updateModalResults(false);
+                    }
+                }
+            };
+            resultsContainer.addEventListener('scroll', resultsContainer._scrollHandler);
+        }
+    }
+
+    // =========================================================================
+    // 🔗 ПРИВЯЗКА ОБРАБОТЧИКОВ К РЕЗУЛЬТАТАМ
+    // =========================================================================
+    attachResultHandlers() {
+        // Обработчики кликов на элементы (не добавленные)
         document.querySelectorAll('.modal-result-item:not(.added)').forEach(item => {
             item.addEventListener('click', (e) => {
+                // Игнорируем клики по кнопке прицеливания
+                if (e.target.closest('.modal-target-btn')) return;
+                
                 const symbol = item.dataset.symbol;
                 const exchange = item.dataset.exchange;
                 const marketType = item.dataset.marketType;
@@ -1006,6 +690,7 @@ class TickerModal {
             });
         });
         
+        // Обработчики кнопок "прицелиться"
         document.querySelectorAll('.modal-target-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1021,29 +706,382 @@ class TickerModal {
                 }
             });
         });
+    }
+
+    // =========================================================================
+    // 🚀 ДОБАВЛЕНИЕ ВСЕХ ИНСТРУМЕНТОВ (batch add)
+    // =========================================================================
+    async addNextBatch() {
+        if (!this.parent.state.isAddingAllInProgress) return;
         
-        if (!resultsContainer._scrollHandler) {
-            resultsContainer._scrollHandler = () => {
-                const { scrollTop, scrollHeight, clientHeight } = resultsContainer;
-                if (scrollHeight - scrollTop - clientHeight < 100) {
-                    if (this.modalAllResults && 
-                        this.parent.state.modalPage * this.parent.state.modalPageSize < this.modalAllResults.length) {
-                        this.updateModalResults(false);
-                    }
-                }
-            };
-            resultsContainer.addEventListener('scroll', resultsContainer._scrollHandler);
+        const modalAddAllBtn = document.getElementById('modalAddAllBtn');
+        
+        // Берём данные из того же источника
+        let source;
+        if (this.parent.state.modalExchange === 'binance') {
+            source = this.parent.state.modalMarketType === 'futures' 
+                ? this.parent.allBinanceFutures 
+                : this.parent.allBinanceSpot;
+        } else {
+            source = this.parent.state.modalMarketType === 'futures' 
+                ? this.parent.allBybitFutures 
+                : this.parent.allBybitSpot;
+        }
+        
+        let allPairs = [...source];
+        
+        // Применяем фильтр поиска
+        if (this.parent.state.modalSearchQuery) {
+            const query = this.parent.state.modalSearchQuery.toUpperCase();
+            allPairs = allPairs.filter(s => s.symbol.includes(query));
+        }
+        
+        console.log(`📊 Добавление всех: найдено ${allPairs.length} символов`);
+        
+        if (allPairs.length === 0) return;
+        
+        this.parent.state.isAddingAllInProgress = true;
+        this.parent.state.addingAllOffset = 0;
+        
+        if (modalAddAllBtn) {
+            modalAddAllBtn.classList.add('loading');
+            modalAddAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загрузка...';
+        }
+        
+        this._doAddNextBatch(allPairs);
+    }
+
+    async _doAddNextBatch(allPairs) {
+        if (!this.parent.state.isAddingAllInProgress) return;
+
+        const batchSize = 20;
+        const start = this.parent.state.addingAllOffset;
+        const end = Math.min(start + batchSize, allPairs.length);
+
+        // Первый батч — включаем защиту
+        if (start === 0) {
+            console.log('🛡️ ВКЛЮЧЕНА ЗАЩИТА от лишних запросов к API');
+            this.parent._isBulkAdding = true;
+            this.parent._suppressWatchlistLoad = true;
+            this._startTime = Date.now();
+        }
+
+        // Добавляем текущую партию
+        for (let i = start; i < end; i++) {
+            const item = allPairs[i];
+            if (item && item.symbol) {
+                this.parent.addSymbol(
+                    item.symbol, 
+                    true, 
+                    item.exchange, 
+                    item.marketType, 
+                    false,   // render=false
+                    true,    // skipInitialFetch=true
+                    true     // skipWatchlistSync=true
+                );
+            }
+        }
+
+        this.parent.state.addingAllOffset = end;
+        
+        const btn = document.getElementById('modalAddAllBtn');
+        if (btn) {
+            const progress = Math.round((end / allPairs.length) * 100);
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${end}/${allPairs.length} (${progress}%)`;
+        }
+
+        if (end < allPairs.length) {
+            setTimeout(() => this._doAddNextBatch(allPairs), 80);
+        } else {
+            console.log(`📦 Все символы добавлены в память за ${Date.now() - this._startTime}ms`);
+            
+            this.parent._isBulkAdding = false;
+            
+            await this._finalizeAddAllFixed(allPairs);
+            
+            setTimeout(() => {
+                this.parent._suppressWatchlistLoad = false;
+                console.log('🛡️ Защита ОТКЛЮЧЕНА. WatchlistManager снова активен.');
+            }, 3000);
         }
     }
 
-    destroy() {
-        if (this.searchTimeout) {
-            clearTimeout(this.searchTimeout);
-            this.searchTimeout = null;
+    async _finalizeAddAllFixed(allPairs) {
+        console.log(`✅ В памяти: ${this.parent.tickersMap.size} тикеров`);
+        
+        this.parent.state.isAddingAllInProgress = false;
+        
+        const btn = document.getElementById('modalAddAllBtn');
+        if (btn) {
+            btn.classList.remove('loading');
+            btn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
+        }
+
+        // 1. Рендерим
+        this.parent.filterCache = null;
+        this.parent.renderTickerList();
+        
+        this._showNotification(`⏳ Синхронизация...`, '#ffa500');
+
+        // 2. Синхронизируем вотчлист
+        const wm = this.parent.watchlistManager;
+        if (wm) {
+            const activeList = wm.lists.get(wm.activeListId);
+            if (activeList) {
+                activeList.symbols = [];
+                
+                for (const [key] of this.parent.tickersMap.entries()) {
+                    activeList.symbols.push(key);
+                }
+                
+                this.parent.state.customSymbols = [...activeList.symbols];
+                
+                console.log(`📝 Вотчлист: ${activeList.symbols.length} символов (без дублей!)`);
+                
+                wm.saveToStorage();
+                wm.renderDropdown();
+            }
+        } else {
+            this.parent.state.customSymbols = [];
+            for (const [key] of this.parent.tickersMap.entries()) {
+                this.parent.state.customSymbols.push(key);
+            }
+        }
+        
+        // 3. Сохраняем
+        this.parent.saveState();
+
+        // 4. Обновляем счётчик модалки
+        const counterSpan = document.getElementById('modalFoundCount');
+        if (counterSpan) counterSpan.textContent = this.parent.tickersMap.size;
+
+        // 5. Загружаем цены
+        await new Promise(r => setTimeout(r, 1000));
+        await this._safeLoadPricesFixed();
+    }
+
+    async _safeLoadPricesFixed() {
+        const total = this.parent.tickersMap.size;
+        
+        if (total === 0) {
+            console.log('⚠️ Нет тикеров для загрузки');
+            return;
+        }
+        
+        this._showNotification(`⏳ Загрузка цен для ${total} символов...`, '#ffa500');
+        console.log(`📊 Начинаем загрузку цен для ${total} тикеров...`);
+        
+        const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
+        
+        for (const [, ticker] of this.parent.tickersMap.entries()) {
+            if (ticker.exchange === 'binance' && ticker.marketType === 'futures') {
+                groups.bnFut.push(ticker.symbol);
+            } else if (ticker.exchange === 'binance' && ticker.marketType === 'spot') {
+                groups.bnSpot.push(ticker.symbol);
+            } else if (ticker.exchange === 'bybit' && ticker.marketType === 'futures') {
+                groups.byFut.push(ticker.symbol);
+            } else if (ticker.exchange === 'bybit' && ticker.marketType === 'spot') {
+                groups.bySpot.push(ticker.symbol);
+            }
+        }
+        
+        console.log('📦 Распределение:');
+        console.log(`   Binance Futures: ${groups.bnFut.length}`);
+        console.log(`   Binance Spot: ${groups.bnSpot.length}`);
+        console.log(`   Bybit Futures: ${groups.byFut.length}`);
+        console.log(`   Bybit Spot: ${groups.bySpot.length}`);
+        
+        const BATCH_SIZE = 80;
+        const DELAY_BETWEEN_BATCHES = 2000;
+        let loaded = 0;
+        
+        try {
+            if (groups.bnFut.length > 0) {
+                console.log(`⚡ Загрузка Binance Futures (${groups.bnFut.length} шт.)...`);
+                
+                for (let i = 0; i < groups.bnFut.length; i += BATCH_SIZE) {
+                    const batch = groups.bnFut.slice(i, i + BATCH_SIZE);
+                    
+                    await this._fetchBinance24hSafe(batch, 'futures');
+                    loaded += batch.length;
+                    
+                    const pct = Math.round((loaded / total) * 100);
+                    this._showNotification(`⏳ ${loaded}/${total} (${pct}%)`, '#ffa500');
+                    
+                    if (i + BATCH_SIZE < groups.bnFut.length) {
+                        await new Promise(r => setTimeout(r, DELAY_BETWEEN_BATCHES));
+                    }
+                }
+                
+                console.log(`✅ Binance Futures загружено`);
+            }
+            
+            if (groups.bnFut.length > 0 && groups.bnSpot.length > 0) {
+                console.log('⏸️ Пауза 2 сек перед Binance Spot...');
+                await new Promise(r => setTimeout(r, 2000));
+            }
+            
+            if (groups.bnSpot.length > 0) {
+                console.log(`⚡ Загрузка Binance Spot (${groups.bnSpot.length} шт.)...`);
+                
+                for (let i = 0; i < groups.bnSpot.length; i += BATCH_SIZE) {
+                    const batch = groups.bnSpot.slice(i, i + BATCH_SIZE);
+                    
+                    await this._fetchBinance24hSafe(batch, 'spot');
+                    loaded += batch.length;
+                    
+                    const pct = Math.round((loaded / total) * 100);
+                    this._showNotification(`⏳ ${loaded}/${total} (${pct}%)`, '#ffa500');
+                    
+                    if (i + BATCH_SIZE < groups.bnSpot.length) {
+                        await new Promise(r => setTimeout(r, DELAY_BETWEEN_BATCHES));
+                    }
+                }
+                
+                console.log(`✅ Binance Spot загружено`);
+            }
+            
+            const hasBinanceData = groups.bnFut.length > 0 || groups.bnSpot.length > 0;
+            const hasBybitData = groups.byFut.length > 0 || groups.bySpot.length > 0;
+            
+            if (hasBinanceData && hasBybitData) {
+                console.log('⏸️ Пауза 3 сек перед Bybit...');
+                await new Promise(r => setTimeout(r, 3000));
+            }
+            
+            if (groups.byFut.length > 0) {
+                console.log(`⚡ Загрузка Bybit Futures (${groups.byFut.length} шт.)...`);
+                
+                await this._fetchBybit24hSafe(groups.byFut, 'futures');
+                loaded += groups.byFut.length;
+                
+                const pct = Math.round((loaded / total) * 100);
+                this._showNotification(`⏳ ${loaded}/${total} (${pct}%)`, '#ffa500');
+                
+                console.log(`✅ Bybit Futures загружено`);
+                
+                if (groups.bySpot.length > 0) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
+            
+            if (groups.bySpot.length > 0) {
+                console.log(`⚡ Загрузка Bybit Spot (${groups.bySpot.length} шт.)...`);
+                
+                await this._fetchBybit24hSafe(groups.bySpot, 'spot');
+                loaded += groups.bySpot.length;
+                
+                console.log(`✅ Bybit Spot загружено`);
+            }
+            
+            console.log(`💰 Обновление UI...`);
+            
+            this.parent.renderer?.updatePriceElements?.();
+            this.parent.renderTickerList();
+            
+            this._showNotification(`✅ Готово! Загружено ${loaded} символов`, '#4caf50');
+            console.log(`✅✅✅ ВСЁ ГОТОВО! Загружено ${loaded} из ${total} символов`);
+            
+            setTimeout(() => {
+                const notif = document.getElementById('alertNotification');
+                if (notif) notif.style.display = 'none';
+            }, 3000);
+            
+        } catch (error) {
+            console.error('❌ Критическая ошибка при загрузке цен:', error);
+            this._showNotification(`❌ Ошибка: ${error.message}`, '#f23645');
+        }
+    }
+
+    async _fetchBinance24hSafe(symbols, marketType) {
+        if (!symbols || symbols.length === 0) return;
+        
+        const symbolsParam = symbols.map(s => `"${s}"`).join(',');
+        const url = marketType === 'futures'
+            ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]`
+            : `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`;
+        
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                console.warn(`⚠️ Binance ${marketType} HTTP ${response.status}`);
+                return;
+            }
+            
+            const data = await response.json();
+            
+            if (Array.isArray(data)) {
+                data.forEach(t => {
+                    this.parent._updateTickerFromBinance(t, marketType);
+                });
+            }
+            
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.warn(`⏰ Binance ${marketType}: таймаут запроса`);
+            } else {
+                console.warn(`⚠️ Binance ${marketType} error:`, error.message);
+            }
+        }
+    }
+
+    async _fetchBybit24hSafe(symbols, marketType) {
+        if (!symbols || symbols.length === 0) return;
+        
+        const category = marketType === 'futures' ? 'linear' : 'spot';
+        const url = `https://api.bybit.com/v5/market/tickers?category=${category}`;
+        
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+            
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                console.warn(`⚠️ Bybit ${marketType} HTTP ${response.status}`);
+                return;
+            }
+            
+            const data = await response.json();
+            
+            if (data.retCode === 0 && data.result?.list) {
+                const symbolSet = new Set(symbols);
+                
+                data.result.list.forEach(t => {
+                    if (symbolSet.has(t.symbol)) {
+                        this.parent._updateTickerFromBybit(t, marketType);
+                    }
+                });
+            } else {
+                console.warn(`⚠️ Bybit ${marketType} retCode:`, data.retCode);
+            }
+            
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.warn(`⏰ Bybit ${marketType}: таймаут запроса`);
+            } else {
+                console.warn(`⚠️ Bybit ${marketType} error:`, error.message);
+            }
+        }
+    }
+
+    _showNotification(message, color = '#666') {
+        const notif = document.getElementById('alertNotification');
+        if (notif) {
+            notif.innerHTML = `<div>${message}</div>`;
+            notif.style.display = 'block';
+            notif.style.borderLeftColor = color;
         }
     }
 }
 
+// Экспорт
 if (typeof window !== 'undefined') {
     window.TickerModal = TickerModal;
 }
