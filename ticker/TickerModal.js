@@ -550,18 +550,21 @@ updateModalResults(reset = false) {
             const addedClass = isAdded ? 'added' : '';
             
             // Подсветка совпадения в символе
-            let displaySymbol = symbolData.symbol;
-            if (this.parent.state.modalSearchQuery && !isAdded) {
-                const query = this.parent.state.modalSearchQuery.toUpperCase();
-                const index = displaySymbol.indexOf(query);
-                if (index >= 0) {
-                    displaySymbol = displaySymbol.substring(0, index) + 
-                        '<span class="search-highlight">' + 
-                        displaySymbol.substring(index, index + query.length) + 
-                        '</span>' + 
-                        displaySymbol.substring(index + query.length);
-                }
-            }
+       // Подсветка совпадения в символе (без учёта регистра)
+let displaySymbol = symbolData.symbol;
+if (this.parent.state.modalSearchQuery && !isAdded) {
+    const query = this.parent.state.modalSearchQuery.toUpperCase();
+    const upperSymbol = symbolData.symbol.toUpperCase();
+    const index = upperSymbol.indexOf(query);
+    if (index >= 0) {
+        displaySymbol = 
+            symbolData.symbol.substring(0, index) + 
+            '<span class="search-highlight">' + 
+            symbolData.symbol.substring(index, index + query.length) + 
+            '</span>' + 
+            symbolData.symbol.substring(index + query.length);
+    }
+}
             
             // HTML иконки биржи
             let exchangeIconHtml = '';
