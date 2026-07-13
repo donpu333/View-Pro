@@ -1,314 +1,205 @@
-// alertWorker.js - Web Worker для алертов (Binance + Bybit) - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// alertWorker.js — ТОЛЬКО WebSocket подключения и отправка цены
 let wsConnections = new Map();
-let lastPrices = new Map();
-let activeAlerts = [];
-let restInterval = null;
 let pingIntervals = new Map();
-let isRestPollingActive = false; // ✅ Флаг защиты от race condition
 
-const EXCHANGE_WS = {
-    binance: {
-        futures: (symbol) => ({
-            url: `wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`,
-            subscribe: null,
-            needPing: false,
-            parse: (raw) => {
-                try { const d = JSON.parse(raw); return d.p ? parseFloat(d.p) : null; } catch { return null; }
-            }
-        }),
-        spot: (symbol) => ({
-            url: `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`,
-            subscribe: null,
-            needPing: false,
-            parse: (raw) => {
-                try { const d = JSON.parse(raw); return d.p ? parseFloat(d.p) : null; } catch { return null; }
-            }
-        })
-    },
-    bybit: {
-        futures: (symbol) => ({
-            url: `wss://stream.bybit.com/v5/public/linear`,
-            subscribe: JSON.stringify({ op: "subscribe", args: [`tickers.${symbol.toUpperCase()}`] }),
-            needPing: true,
-            pingMessage: JSON.stringify({ op: "ping" }),
-            parse: (raw) => {
-                try {
-                    const d = JSON.parse(raw);
-                    if (d.op === 'pong' || d.ret_msg === 'pong') return null;
-                    if (d.topic && d.data && d.data.lastPrice) {
-                        const price = parseFloat(d.data.lastPrice);
-                        return !isNaN(price) ? price : null;
-                    }
+const WS_CONFIGS = {
+    'binance:futures': (symbol) => ({
+        url: `wss://fstream.binance.com/ws/${symbol.toLowerCase()}@trade`,
+        parse: (raw) => { 
+            try { 
+                const d = JSON.parse(raw); 
+                return d.p ? parseFloat(d.p) : null; 
+            } catch { return null; } 
+        }
+    }),
+    'binance:spot': (symbol) => ({
+        url: `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`,
+        parse: (raw) => { 
+            try { 
+                const d = JSON.parse(raw); 
+                return d.p ? parseFloat(d.p) : null; 
+            } catch { return null; } 
+        }
+    }),
+    'bybit:futures': (symbol) => ({
+        url: `wss://stream.bybit.com/v5/public/linear`,
+        subscribe: JSON.stringify({ op: "subscribe", args: [`tickers.${symbol.toUpperCase()}`] }),
+        needPing: true,
+        pingMessage: JSON.stringify({ op: "ping" }),
+        parse: (raw) => {
+            try {
+                const d = JSON.parse(raw);
+                
+                // Bybit шлёт pong ответы
+                if (d.op === 'pong' || d.ret_msg === 'pong') return null;
+                
+                // Bybit шлёт ответ на подписку
+                if (d.op === 'subscribe' && d.success) {
+                    self.postMessage({ type: 'log', message: `[Worker] ✅ Subscribed to Bybit ${symbol}` });
                     return null;
-                } catch { return null; }
-            }
-        }),
-        spot: (symbol) => ({
-            url: `wss://stream.bybit.com/v5/public/spot`,
-            subscribe: JSON.stringify({ op: "subscribe", args: [`tickers.${symbol.toUpperCase()}`] }),
-            needPing: true,
-            pingMessage: JSON.stringify({ op: "ping" }),
-            parse: (raw) => {
-                try {
-                    const d = JSON.parse(raw);
-                    if (d.op === 'pong' || d.ret_msg === 'pong') return null;
-                    if (d.topic && d.data && d.data.lastPrice) {
-                        const price = parseFloat(d.data.lastPrice);
-                        return !isNaN(price) ? price : null;
-                    }
+                }
+                
+                // Bybit ticker данные
+                if (d.topic && d.data) {
+                    // Формат: { topic: "tickers.BTCUSDT", data: { lastPrice: "65123.00", ... } }
+                    const price = parseFloat(d.data.lastPrice);
+                    if (!isNaN(price)) return price;
+                }
+                
+                return null;
+            } catch { return null; }
+        }
+    }),
+    'bybit:spot': (symbol) => ({
+        url: `wss://stream.bybit.com/v5/public/spot`,
+        subscribe: JSON.stringify({ op: "subscribe", args: [`tickers.${symbol.toUpperCase()}`] }),
+        needPing: true,
+        pingMessage: JSON.stringify({ op: "ping" }),
+        parse: (raw) => {
+            try {
+                const d = JSON.parse(raw);
+                
+                if (d.op === 'pong' || d.ret_msg === 'pong') return null;
+                
+                if (d.op === 'subscribe' && d.success) {
+                    self.postMessage({ type: 'log', message: `[Worker] ✅ Subscribed to Bybit spot ${symbol}` });
                     return null;
-                } catch { return null; }
-            }
-        })
-    }
+                }
+                
+                if (d.topic && d.data) {
+                    const price = parseFloat(d.data.lastPrice);
+                    if (!isNaN(price)) return price;
+                }
+                
+                return null;
+            } catch { return null; }
+        }
+    })
 };
-
-const EXCHANGE_REST = {
-    binance: {
-        futures: (s) => `https://fapi.binance.com/fapi/v1/ticker/price?symbol=${s.toUpperCase()}`,
-        spot: (s) => `https://api.binance.com/api/v3/ticker/price?symbol=${s.toUpperCase()}`,
-        parse: (d) => parseFloat(d.price)
-    },
-    bybit: {
-        futures: (s) => `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${s.toUpperCase()}`,
-        spot: (s) => `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${s.toUpperCase()}`,
-        parse: (d) => d.result?.list?.[0] ? parseFloat(d.result.list[0].lastPrice) : null
-    }
-};
-
-function getWsConfig(exchange, marketType, symbol) {
-    const ex = EXCHANGE_WS[exchange?.toLowerCase()] || EXCHANGE_WS.binance;
-    const market = ex[marketType] || ex.futures;
-    return market(symbol);
-}
-
-function getRestConfig(exchange, marketType) {
-    const ex = EXCHANGE_REST[exchange?.toLowerCase()] || EXCHANGE_REST.binance;
-    return ex[marketType] || ex.futures;
-}
 
 self.onmessage = function(e) {
     const data = e.data;
+    
+    self.postMessage({ type: 'log', message: `[Worker] Received: ${data.type}` });
+    
     switch(data.type) {
-        case 'init':
-            activeAlerts = data.alerts || [];
-            subscribeToSymbols(activeAlerts);
-            startRestPolling();
-            self.postMessage({ type: 'ready', count: activeAlerts.length });
-            break;
-        case 'addAlert':
-            if (!activeAlerts.find(a => a.id === data.alert.id)) {
-                activeAlerts.push(data.alert);
-                subscribeToSymbol(data.alert.symbol, data.alert.exchange || 'binance', data.alert.marketType || 'futures');
-                self.postMessage({ type: 'alertAdded', id: data.alert.id });
-            }
+        case 'subscribe':
+            subscribeToSymbol(data.symbol, data.exchange, data.marketType);
             break;
             
-        // ✅ ИСПРАВЛЕНО: Безопасное удаление (ищет символ самостоятельно)
-        case 'removeAlert':
-            const alertToRemove = activeAlerts.find(a => a.id === data.alertId);
-            activeAlerts = activeAlerts.filter(a => a.id !== data.alertId);
-            const symbolToRemove = alertToRemove ? alertToRemove.symbol : data.symbol;
-            if (symbolToRemove) checkAndUnsubscribe(symbolToRemove);
+        case 'unsubscribe':
+            unsubscribeFromSymbol(data.symbol, data.exchange, data.marketType);
             break;
             
-        // ✅ НОВОЕ: Сброс состояния для повторяющихся алертов
-        case 'resetAlert':
-            const alertToReset = activeAlerts.find(a => a.id === data.alertId);
-            if (alertToReset) {
-                alertToReset.priceTriggered = false;
-                alertToReset.lastTriggerTime = data.lastTriggerTime || Date.now();
-            }
-            break;
-
-        case 'getStatus':
-            self.postMessage({
-                type: 'status',
-                data: {
-                    alerts: activeAlerts.length,
-                    subscriptions: wsConnections.size,
-                    symbols: Array.from(wsConnections.keys())
-                }
-            });
-            break;
         case 'destroy':
             destroy();
             break;
     }
 };
 
-function subscribeToSymbols(alerts) {
-    const symbolMap = new Map();
-    alerts.forEach(alert => {
-        if (!alert.triggered && alert.status !== 'completed' && alert.status !== 'paused' && !alert.isTimerMode) {
-            symbolMap.set(alert.symbol, { exchange: alert.exchange || 'binance', marketType: alert.marketType || 'futures' });
-        }
-    });
-    symbolMap.forEach((info, symbol) => subscribeToSymbol(symbol, info.exchange, info.marketType));
+function getKey(symbol, exchange, marketType) {
+    return `${symbol}:${exchange}:${marketType}`;
 }
 
 function subscribeToSymbol(symbol, exchange = 'binance', marketType = 'futures') {
-    const key = `${symbol}:${exchange}:${marketType}`;
-    if (wsConnections.has(key)) return;
+    const key = getKey(symbol, exchange, marketType);
     
-    const config = getWsConfig(exchange, marketType, symbol);
+    if (wsConnections.has(key)) {
+        self.postMessage({ type: 'log', message: `[Worker] Already subscribed to ${key}` });
+        return;
+    }
+    
+    const configKey = `${exchange}:${marketType}`;
+    const config = WS_CONFIGS[configKey];
+    
+    if (!config) {
+        self.postMessage({ type: 'log', message: `[Worker] ❌ No config for ${configKey}` });
+        return;
+    }
+    
+    const wsConfig = config(symbol);
+    self.postMessage({ type: 'log', message: `[Worker] Connecting to ${wsConfig.url}` });
     
     try {
-        const ws = new WebSocket(config.url);
+        const ws = new WebSocket(wsConfig.url);
         
         ws.onopen = () => {
-            if (config.subscribe) {
-                try { ws.send(config.subscribe); } catch (e) {}
+            self.postMessage({ type: 'log', message: `[Worker] ✅ Connected to ${key}` });
+            if (wsConfig.subscribe) {
+                ws.send(wsConfig.subscribe);
+                self.postMessage({ type: 'log', message: `[Worker] Sent subscribe: ${wsConfig.subscribe}` });
             }
-            if (config.needPing) {
+            if (wsConfig.needPing) {
                 const pingId = setInterval(() => {
                     if (ws.readyState === WebSocket.OPEN) {
-                        try { ws.send(config.pingMessage); } catch (e) {}
+                        ws.send(wsConfig.pingMessage);
                     }
                 }, 15000);
                 pingIntervals.set(key, pingId);
             }
-            self.postMessage({ type: 'subscribed', symbol, exchange });
         };
         
-        ws.onmessage = function(event) {
-            try {
-                const price = config.parse(event.data);
-                if (price && !isNaN(price)) {
-                    const lastPrice = lastPrices.get(symbol);
-                    lastPrices.set(symbol, price);
-                    
-                    const alerts = activeAlerts.filter(a => 
-                        a.symbol === symbol && !a.triggered && 
-                        a.status !== 'completed' && a.status !== 'paused' && !a.isTimerMode
-                    );
-                    
-                    if (alerts.length > 0 && lastPrice !== undefined) {
-                        checkAlerts(symbol, price, lastPrice, alerts);
-                    }
-                }
-            } catch (e) {}
+        ws.onmessage = (event) => {
+            const price = wsConfig.parse(event.data);
+            if (price && !isNaN(price)) {
+                self.postMessage({ type: 'log', message: `[Worker] 💰 ${symbol} = ${price}` });
+                self.postMessage({ 
+                    type: 'price', 
+                    symbol: symbol, 
+                    price: price 
+                });
+            }
         };
         
-        ws.onclose = function() {
-            const pingId = pingIntervals.get(key);
-            if (pingId) { clearInterval(pingId); pingIntervals.delete(key); }
-            wsConnections.delete(key);
+        ws.onclose = () => {
+            self.postMessage({ type: 'log', message: `[Worker] Connection closed: ${key}` });
+            cleanup(key);
             setTimeout(() => {
-                const hasAlerts = activeAlerts.some(a => 
-                    a.symbol === symbol && !a.triggered && 
-                    a.status !== 'completed' && a.status !== 'paused' && !a.isTimerMode
-                );
-                if (hasAlerts && !wsConnections.has(key)) {
+                if (wsConnections.has(key)) {
                     subscribeToSymbol(symbol, exchange, marketType);
                 }
             }, 5000);
         };
         
-        ws.onerror = function() { try { ws.close(); } catch(e) {} };
+        ws.onerror = (err) => {
+            self.postMessage({ type: 'log', message: `[Worker] ❌ WS error for ${key}` });
+            cleanup(key);
+            ws.close();
+        };
         
         wsConnections.set(key, ws);
-    } catch (e) {
-        self.postMessage({ type: 'error', message: `WS error ${symbol}: ${e.message}` });
+        
+    } catch(e) {
+        self.postMessage({ type: 'log', message: `[Worker] ❌ Failed to connect ${key}: ${e.message}` });
     }
 }
 
-function checkAlerts(symbol, price, lastPrice, alerts) {
-    const now = Date.now();
-    for (const alert of alerts) {
-        if (now - alert.createdAt < 2000) continue;
-        if (alert.priceTriggered) continue;
-        
-        let crossed = false;
-        if (alert.direction === 'above') {
-            crossed = lastPrice < alert.price && price >= alert.price;
-        } else if (alert.direction === 'below') {
-            crossed = lastPrice > alert.price && price <= alert.price;
-        } else {
-            crossed = (lastPrice < alert.price && price >= alert.price) ||
-                      (lastPrice > alert.price && price <= alert.price);
-        }
-        
-        if (crossed) {
-            alert.priceTriggered = true;
-            alert.active = true;
-            alert.lastTriggerTime = now;
-            alert.triggerCount = 1;
-            self.postMessage({ type: 'alert_triggered', alert, price });
-        }
+function unsubscribeFromSymbol(symbol, exchange, marketType) {
+    const key = getKey(symbol, exchange, marketType);
+    self.postMessage({ type: 'log', message: `[Worker] Unsubscribing from ${key}` });
+    cleanup(key);
+    const ws = wsConnections.get(key);
+    if (ws) {
+        ws.close();
+        wsConnections.delete(key);
     }
 }
 
-// ✅ ИСПРАВЛЕНО: Защита от накопления pendind fetch-запросов (Race Condition)
-function startRestPolling() {
-    if (restInterval) return;
-    
-    restInterval = setInterval(async () => {
-        // Если предыдущий цикл опроса еще не завершился, пропускаем этот такт
-        if (isRestPollingActive) return; 
-        isRestPollingActive = true;
-
-        const symbolMap = new Map();
-        activeAlerts.forEach(alert => {
-            if (!alert.triggered && alert.status !== 'completed' && alert.status !== 'paused' && !alert.isTimerMode) {
-                const key = `${alert.symbol}:${alert.exchange || 'binance'}:${alert.marketType || 'futures'}`;
-                if (!wsConnections.has(key)) {
-                    symbolMap.set(alert.symbol, { exchange: alert.exchange || 'binance', marketType: alert.marketType || 'futures' });
-                }
-            }
-        });
-        
-        // ✅ ИСПРАВЛЕНО: Используем for...of вместо forEach для корректной работы await
-        for (const [symbol, info] of symbolMap.entries()) {
-            try {
-                const config = getRestConfig(info.exchange, info.marketType);
-                const response = await fetch(config(symbol));
-                const data = await response.json();
-                const price = config.parse(data);
-                
-                if (price && !isNaN(price)) {
-                    const lastPrice = lastPrices.get(symbol);
-                    lastPrices.set(symbol, price);
-                    const alerts = activeAlerts.filter(a => 
-                        a.symbol === symbol && !a.triggered && 
-                        a.status !== 'completed' && a.status !== 'paused' && !a.isTimerMode
-                    );
-                    if (alerts.length > 0 && lastPrice !== undefined) {
-                        checkAlerts(symbol, price, lastPrice, alerts);
-                    }
-                }
-            } catch (e) {
-                // console.warn(`REST poll error for ${symbol}:`, e);
-            }
-        }
-        
-        isRestPollingActive = false; // Снимаем блокировку
-    }, 3000);
-}
-
-function checkAndUnsubscribe(symbol) {
-    const hasAlerts = activeAlerts.some(a => 
-        a.symbol === symbol && !a.triggered && 
-        a.status !== 'completed' && a.status !== 'paused' && !a.isTimerMode
-    );
-    if (!hasAlerts) {
-        for (const [key, ws] of wsConnections.entries()) {
-            if (key.startsWith(`${symbol}:`)) {
-                const pingId = pingIntervals.get(key);
-                if (pingId) { clearInterval(pingId); pingIntervals.delete(key); }
-                try { ws.close(); } catch(e) {}
-                wsConnections.delete(key);
-            }
-        }
+function cleanup(key) {
+    const pingId = pingIntervals.get(key);
+    if (pingId) {
+        clearInterval(pingId);
+        pingIntervals.delete(key);
     }
 }
 
 function destroy() {
-    if (restInterval) { clearInterval(restInterval); restInterval = null; }
-    for (const pingId of pingIntervals.values()) clearInterval(pingId);
-    pingIntervals.clear();
-    for (const ws of wsConnections.values()) try { ws.close(); } catch(e) {}
+    self.postMessage({ type: 'log', message: '[Worker] Destroying all connections' });
+    for (const key of wsConnections.keys()) {
+        cleanup(key);
+        const ws = wsConnections.get(key);
+        if (ws) ws.close();
+    }
     wsConnections.clear();
-    lastPrices.clear();
-    activeAlerts = [];
+    self.postMessage({ type: 'destroyed' });
 }
