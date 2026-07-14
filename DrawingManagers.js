@@ -5125,8 +5125,11 @@ class AlertLineManager {
         }
     }
 
-    _onWorkerPrice(symbol, price) {
+     _onWorkerPrice(symbol, price) {
         if (!symbol || !price || isNaN(price)) return;
+        
+        // 🚨 ФИКС 1: Binance присылает "ADAUSDT", а у вас может быть "adausdt". Приводим к верхнему!
+        symbol = symbol.toUpperCase();
         
         const lastPrice = this._lastPrices.get(symbol);
         this._lastPrices.set(symbol, price);
@@ -5140,7 +5143,10 @@ class AlertLineManager {
         
         for (const alert of alerts) {
             if (alert.triggered) continue;
-            if (alert.active) continue;
+            
+            // 🚨 ФИКС 2: ЭТУ СТРОКУ НУЖНО УДАЛИТЬ! Она навсегда блокирует повторный алерт!
+            // if (alert.active) continue; 
+            
             if (alert.status === 'paused') continue;
             if (alert.status === 'completed') continue;
             if (now - alert.createdAt < 2000) continue;
@@ -5151,7 +5157,7 @@ class AlertLineManager {
             if (crossedAbove || crossedBelow) {
                 console.log(`🔔 ALERT TRIGGERED: ${alert.symbol} at ${price} (alert: ${alert.price})`);
                 
-                alert.active = true;
+                // 🚨 ФИКС 3: НЕ ставим active = true! Иначе алерт зависнет.
                 alert.triggerCount = (alert.triggerCount || 0) + 1;
                 alert.lastTriggerTime = now;
                 
@@ -5166,7 +5172,6 @@ class AlertLineManager {
                 
                 if (!alert.canTriggerAgain()) {
                     alert.complete();
-                    alert.active = false;
                     this._stopHighlight(alert.id);
                     if (item && item.primitive && item.series) {
                         try { item.series.detachPrimitive(item.primitive); } catch(e) {}
@@ -5180,7 +5185,6 @@ class AlertLineManager {
             }
         }
     }
-
     // ==================== ТАЙМЕР АЛЕРТЫ ====================
     
     checkTimerAlerts() {
@@ -5228,22 +5232,25 @@ class AlertLineManager {
 
     // ==================== КЕШ АЛЕРТОВ ====================
     
-    _addToSymbolCache(alert) {
-        if (!this._alertsBySymbol.has(alert.symbol)) {
-            this._alertsBySymbol.set(alert.symbol, []);
+      _addToSymbolCache(alert) {
+        // 🚨 ФИКС 5: Сохраняем в кеш по верхнему регистру!
+        const key = (alert.symbol || '').toUpperCase();
+        if (!this._alertsBySymbol.has(key)) {
+            this._alertsBySymbol.set(key, []);
         }
-        const cache = this._alertsBySymbol.get(alert.symbol);
+        const cache = this._alertsBySymbol.get(key);
         if (!cache.includes(alert)) {
             cache.push(alert);
         }
     }
-
-    _removeFromSymbolCache(alert) {
-        const cache = this._alertsBySymbol.get(alert.symbol);
+     _removeFromSymbolCache(alert) {
+        // 🚨 ФИКС 4: Ищем тоже по верхнему регистру!
+        const key = (alert.symbol || '').toUpperCase();
+        const cache = this._alertsBySymbol.get(key);
         if (cache) {
             const index = cache.indexOf(alert);
             if (index !== -1) cache.splice(index, 1);
-            if (cache.length === 0) this._alertsBySymbol.delete(alert.symbol);
+            if (cache.length === 0) this._alertsBySymbol.delete(key);
         }
     }
 
