@@ -4866,7 +4866,7 @@ class AlertLineManager {
         this._lastMouseX = 0;
         this._lastMouseY = 0;
         this._isLoading = false;
-        this._lastPrices = new Map();
+       
         this._subscribedSymbols = new Set();
         this._potentialDrag = null;
         this._dragThreshold = 5;
@@ -4877,7 +4877,13 @@ class AlertLineManager {
         
         this._worker = null;
         this._initWorker();
-        
+        // === ДОБАВИТЬ ЭТО ===
+        if (this._worker) {
+            this._worker.postMessage({ 
+                type: 'setActiveSymbol', 
+                symbol: (this._chartManager.currentSymbol || '').toUpperCase() 
+            });
+        }
         this._handleContextMenu = this._handleContextMenu.bind(this);
         this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
         window.addEventListener('mouseup', this._handleGlobalMouseUp);
@@ -4887,7 +4893,7 @@ class AlertLineManager {
         this._setupSettingsListeners();
         this._needsRedraw = false;
         
-        this._timerInterval = window.setInterval(() => { this.checkTimerAlerts(); }, 1000);
+       
         
         if (window.drawingLoaderCoordinator) {
             window.drawingLoaderCoordinator.register(this, 'alert');
@@ -4913,170 +4919,213 @@ class AlertLineManager {
 
     // ==================== WORKER ====================
     
-   _initWorker() {
-    try {
-        const workerCode = `
-            self.onerror = function(message, source, lineno) {
-                self.postMessage({ type: 'log', message: 'WORKER CRASH: ' + message + ' at ' + lineno });
-            };
+         _initWorker() {
+        try {
+            const workerCode = `
+                self.onerror = function(e) { self.postMessage({ type: 'log', message: 'WORKER ERROR: ' + e.message }); };
 
-            class AlertWorker {
-                constructor() {
-                    this.sockets = new Map(); 
-                    this.subscriptions = new Map(); 
-                    this.endpoints = {
-                        binance: { futures: 'wss://fstream.binance.com/ws', spot: 'wss://stream.binance.com:9443/ws' },
-                        bybit: { futures: 'wss://stream.bybit.com/v5/public/linear', spot: 'wss://stream.bybit.com/v5/public/spot' }
-                    };
-                    self.postMessage({ type: 'log', message: '[Worker] Initialized' });
-                }
+                const alerts = new Map(); 
+                const lastPrices = new Map();
+                let activeSymbol = null; 
 
-                handleMessage(event) {
+                self.onmessage = async (event) => {
                     const data = event.data;
-                    if (data.type === 'subscribe') this.subscribe(data.symbol, data.exchange, data.marketType);
-                    else if (data.type === 'unsubscribe') this.unsubscribe(data.symbol, data.exchange, data.marketType);
-                    else if (data.type === 'status') {
-                        self.postMessage({ 
-                            type: 'status', 
-                            sockets: Array.from(this.sockets.entries()).map(([k, ws]) => ({ key: k, state: ws.readyState })),
-                            subscriptions: Object.fromEntries(Array.from(this.subscriptions.entries()).map(([k, v]) => [k, [...v]]))
-                        });
+
+                    if (data.type === 'addAlert') {
+                        if (!alerts.has(data.symbol)) alerts.set(data.symbol, []);
+                        alerts.get(data.symbol).push(data.alert);
+                        return;
                     }
-                }
 
-                subscribe(symbol, exchange = 'binance', marketType = 'futures') {
-                    const socketKey = \`\${exchange}:\${marketType}\`;
-                    if (!this.subscriptions.has(socketKey)) this.subscriptions.set(socketKey, new Set());
-                    const symbolSet = this.subscriptions.get(socketKey);
-                    if (symbolSet.has(symbol)) return;
-                    
-                    symbolSet.add(symbol);
-                    self.postMessage({ type: 'log', message: \`[Worker] Subscribing: \${symbol} (\${socketKey})\` });
-                    
-                    if (this.sockets.has(socketKey)) {
-                        const ws = this.sockets.get(socketKey);
-                        if (ws.readyState === 1) this._sendSub(ws, [symbol], exchange, marketType, true);
-                    } else {
-                        this._createSocket(socketKey, exchange, marketType);
-                    }
-                }
-
-                unsubscribe(symbol, exchange, marketType) {
-                    const socketKey = \`\${exchange}:\${marketType}\`;
-                    const symbolSet = this.subscriptions.get(socketKey);
-                    if (!symbolSet || !symbolSet.has(symbol)) return;
-                    symbolSet.delete(symbol);
-                    if (this.sockets.has(socketKey)) {
-                        const ws = this.sockets.get(socketKey);
-                        if (ws.readyState === 1) this._sendSub(ws, [symbol], exchange, marketType, false);
-                    }
-                    if (symbolSet.size === 0) this._closeSocket(socketKey);
-                }
-
-                _createSocket(socketKey, exchange, marketType) {
-                    const endpoint = this.endpoints[exchange]?.[marketType];
-                    if (!endpoint) return;
-
-                    const ws = new WebSocket(endpoint);
-                    ws.onopen = () => {
-                        self.postMessage({ type: 'log', message: \`[Worker] ✅ Connected \${socketKey}\` });
-                        const symbols = Array.from(this.subscriptions.get(socketKey) || []);
-                        if (symbols.length > 0) this._sendSub(ws, symbols, exchange, marketType, true);
-                    };
-                    
-                    ws.onmessage = (event) => {
-                        try {
-                            const msg = JSON.parse(event.data);
-                            
-                            // Игнорируем подтверждение подписки
-                            if (msg.result !== undefined && !msg.e && !msg.topic) return;
-                            
-                            // 🚨 НОВЫЙ ЛОГ: Показываем всё, что не является aggTrade или tickers
-                            if (exchange === 'binance' && msg.e !== 'aggTrade') {
-                                self.postMessage({ type: 'log', message: \`[Worker] ИГНОР (не aggTrade): \${JSON.stringify(msg).substring(0, 100)}\` });
-                            }
-
-                            this._processMessage(msg, exchange, marketType);
-                        } catch (e) {
-                            self.postMessage({ type: 'log', message: \`[Worker] Parse error: \${e.message}\` });
+                    if (data.type === 'removeAlert') {
+                        const list = alerts.get(data.symbol);
+                        if (list) {
+                            const idx = list.findIndex(a => a.id === data.id);
+                            if (idx !== -1) list.splice(idx, 1);
+                            if (list.length === 0) alerts.delete(data.symbol);
                         }
-                    };
-
-                    ws.onclose = () => {
-                        self.postMessage({ type: 'log', message: \`[Worker] Closed \${socketKey}\` });
-                        this.sockets.delete(socketKey);
-                        const symbols = this.subscriptions.get(socketKey);
-                        if (symbols && symbols.size > 0) setTimeout(() => this._createSocket(socketKey, exchange, marketType), 3000);
-                    };
-                    
-                    this.sockets.set(socketKey, ws);
-                }
-
-                _sendSub(ws, symbols, exchange, marketType, isSub) {
-                    if (ws.readyState !== 1) return;
-                    if (exchange === 'binance') {
-                        ws.send(JSON.stringify({
-                            method: isSub ? 'SUBSCRIBE' : 'UNSUBSCRIBE',
-                            params: symbols.map(s => \`\${s.toLowerCase()}@aggTrade\`),
-                            id: Date.now()
-                        }));
-                    } else if (exchange === 'bybit') {
-                        ws.send(JSON.stringify({
-                            op: isSub ? 'subscribe' : 'unsubscribe',
-                            args: symbols.map(s => \`tickers.\${s}\`)
-                        }));
+                        return;
                     }
-                }
 
-                _processMessage(msg, exchange, marketType) {
-                    let symbol = null, price = null;
-                    if (exchange === 'binance' && msg.e === 'aggTrade') {
-                        symbol = msg.s; 
-                        price = parseFloat(msg.p);
-                    } else if (exchange === 'bybit' && msg.topic?.startsWith('tickers.')) {
-                        symbol = msg.topic.split('.')[1];
-                        if (msg.data?.lastPrice) price = parseFloat(msg.data.lastPrice);
+                    if (data.type === 'setActiveSymbol') {
+                        activeSymbol = data.symbol;
+                        return;
                     }
-                    
-                    if (symbol && price && !isNaN(price)) {
-                        self.postMessage({ type: 'price', symbol, price });
-                    }
-                }
 
-                _closeSocket(socketKey) {
-                    const ws = this.sockets.get(socketKey);
-                    if (ws) ws.close();
-                    this.sockets.delete(socketKey);
-                    this.subscriptions.delete(socketKey);
+                    if (data.type === 'tick') {
+                        const symbol = data.symbol;
+                        const price = data.price;
+                        if (!price || isNaN(price)) return;
+
+                        checkAlerts(symbol, price);
+                    }
+                };
+
+             function checkAlerts(symbol, currentPrice) {
+    const lastPriceObj = lastPrices.get(symbol);
+    const lastPrice = lastPriceObj ? lastPriceObj.price : undefined;
+    
+    lastPrices.set(symbol, { price: currentPrice, time: Date.now() });
+
+    const alertsList = alerts.get(symbol);
+    if (!alertsList || alertsList.length === 0) return;
+
+    const now = Date.now();
+    for (let i = 0; i < alertsList.length; i++) {
+        const alert = alertsList[i];
+        if (alert.triggered || alert.status === 'paused' || alert.status === 'completed') continue;
+        if (now - alert.createdAt < 100) continue;
+
+        let shouldTrigger = false;
+        if (lastPrice === undefined) {
+            if (alert.direction === 'above' && currentPrice >= alert.price) shouldTrigger = true;
+            else if (alert.direction === 'below' && currentPrice <= alert.price) shouldTrigger = true;
+            else if (alert.direction === 'both' && Math.abs(currentPrice - alert.price) < 0.01) shouldTrigger = true;
+        } else {
+            const crossedUp = lastPrice <= alert.price && currentPrice >= alert.price;
+            const crossedDown = lastPrice >= alert.price && currentPrice <= alert.price;
+            if (alert.direction === 'above' && crossedUp) shouldTrigger = true;
+            else if (alert.direction === 'below' && crossedDown) shouldTrigger = true;
+            else if (alert.direction === 'both' && (crossedUp || crossedDown)) shouldTrigger = true;
+        }
+
+        if (shouldTrigger) {
+            // Первое срабатывание (пересечение)
+            alert.triggerCount = (alert.triggerCount || 0) + 1;
+            alert.lastTriggerTime = now;
+            alert.active = true;                       // ← активируем режим повторов
+
+            self.postMessage({
+                type: 'trigger',
+                alertId: alert.id,
+                currentPrice: currentPrice,
+                triggerCount: alert.triggerCount
+            });
+
+            const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
+            if (alert.triggerCount >= triggerLimit) {
+                alert.triggered = true;
+                alert.status = 'completed';
+                self.postMessage({ type: 'completed', id: alert.id });
+            }
+        } else if (alert.active) {
+            // Таймерные повторы (цена может быть где угодно)
+            if (!alert.lastTriggerTime) continue;
+            const minutesSinceLast = (now - alert.lastTriggerTime) / (60 * 1000);
+            if (minutesSinceLast >= (alert.repeatInterval || 1)) {
+                const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
+                if (alert.triggerCount < triggerLimit) {
+                    alert.triggerCount++;
+                    alert.lastTriggerTime = now;
+                    self.postMessage({
+                        type: 'trigger',
+                        alertId: alert.id,
+                        currentPrice: currentPrice,
+                        triggerCount: alert.triggerCount,
+                        isTimer: true
+                    });
+
+                    if (alert.triggerCount >= triggerLimit) {
+                        alert.triggered = true;
+                        alert.status = 'completed';
+                        self.postMessage({ type: 'completed', id: alert.id });
+                    }
+                    // 👉 НЕ сбрасываем active, повторы продолжатся по таймеру
+                } else {
+                    // Лимит исчерпан – гасим, чтобы не крутить цикл вхолостую
+                    alert.active = false;
                 }
             }
-
-            const worker = new AlertWorker();
-            self.onmessage = (e) => worker.handleMessage(e);
-        `;
-
-        const blob = new Blob([workerCode], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        this._worker = new Worker(url);
-        
-        this._worker.onmessage = (e) => {
-            const data = e.data;
-            if (data.type === 'price') {
-                this._onWorkerPrice(data.symbol, data.price);
-            } else if (data.type === 'log') {
-                console.log('%c[Worker]', 'color:#0ff', data.message);
-            } else if (data.type === 'status') {
-                console.table(data.sockets);
-                console.log('Subscriptions:', data.subscriptions);
-            }
-        };
-        
-        console.log('✅ Alert Worker initialized (Blob mode)');
-    } catch(e) {
-        console.warn('⚠️ Web Worker not available:', e);
-        this._worker = null;
+        }
     }
 }
+
+                // Фоновая проверка для неактивных символов
+                setInterval(async () => {
+                    const now = Date.now();
+                    for (const [symbol, alertsList] of alerts.entries()) {
+                        if (alertsList.length === 0) continue;
+                        if (symbol === activeSymbol) continue;
+                        
+                        const lastTick = lastPrices.get(symbol);
+                        if (!lastTick || (now - lastTick.time) > 2000) {
+                            try {
+                                const a = alertsList[0];
+                                const ex = a.exchange || 'binance';
+                                const mt = a.marketType || 'futures';
+                                let url = '';
+                                if (ex === 'binance') {
+                                    url = mt === 'spot' 
+                                        ? \`https://api.binance.com/api/v3/ticker/price?symbol=\${symbol}\`
+                                        : \`https://fapi.binance.com/fapi/v1/ticker/price?symbol=\${symbol}\`;
+                                } else if (ex === 'bybit') {
+                                    url = mt === 'spot'
+                                        ? \`https://api.bybit.com/v5/market/tickers?category=spot&symbol=\${symbol}\`
+                                        : \`https://api.bybit.com/v5/market/tickers?category=linear&symbol=\${symbol}\`;
+                                }
+                                
+                                if (url) {
+                                    const res = await fetch(url);
+                                    const data = await res.json();
+                                    let price = null;
+                                    if (ex === 'binance') price = parseFloat(data.price);
+                                    else if (ex === 'bybit' && data.result?.list?.[0]) price = parseFloat(data.result.list[0].lastPrice);
+                                    
+                                    if (price && !isNaN(price)) {
+                                        checkAlerts(symbol, price);
+                                    }
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                }, 3000);
+            `;
+
+            const blob = new Blob([workerCode], { type: 'application/javascript' });
+            const url = URL.createObjectURL(blob);
+            this._worker = new Worker(url);
+            URL.revokeObjectURL(url);
+
+            this._worker.onmessage = (e) => {
+                const data = e.data;
+                if (data.type === 'trigger') {
+                    const item = this._alerts.find(a => a.alert.id === data.alertId);
+                    if (item) {
+                        const alert = item.alert;
+                        alert.triggerCount = data.triggerCount;
+                        alert.lastTriggerTime = Date.now();
+                        alert.active = true;
+                        
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                        this._startInfiniteHighlight(alert.id);
+                        this._showAlertNotification(alert, data.currentPrice, alert.triggerCount > 1);
+                        this._sendTelegramAlert(alert, data.currentPrice, alert.triggerCount > 1);
+                        this._requestRedraw();
+                    }
+                } else if (data.type === 'completed') {
+                    const item = this._alerts.find(a => a.alert.id === data.id);
+                    if (item) {
+                        item.alert.complete();
+                        item.alert.active = false;
+                        this._stopHighlight(data.id);
+                        if (item.primitive && item.series) {
+                            try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+                            item.primitive = null;
+                            item.series = null;
+                        }
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                    }
+                }
+            };
+
+            console.log('✅ Alert Worker initialized (Hybrid Mode)');
+        } catch(e) {
+            console.warn('⚠️ Web Worker not available:', e);
+            this._worker = null;
+        }
+    }
     _subscribeToSymbol(symbol, exchange, marketType) {
         const key = `${symbol}:${exchange}:${marketType}`;
         if (this._subscribedSymbols.has(key)) return;
@@ -5122,59 +5171,72 @@ class AlertLineManager {
             });
         }
     }
-_onWorkerPrice(symbol, price) {
+    _onWorkerPrice(symbol, price) {
     if (!symbol || !price || isNaN(price)) return;
-
-    // Binance может присылать "ADAUSDT", приводим к верхнему регистру
-    symbol = symbol.toUpperCase();
-
+    
+    symbol = symbol.toUpperCase().replace('.P', '');
+    
     const lastPrice = this._lastPrices.get(symbol);
     this._lastPrices.set(symbol, price);
-
-    if (lastPrice === undefined) return; // нет предыдущей цены для сравнения
-
+    
     const alerts = this._alertsBySymbol.get(symbol);
+    
+    // 🔍 ДЕБАГ 1: Приходят ли цены с воркера ВООБЩЕ?
+    // Если в консоли НЕТ этих строк — значит воркер мертв, либо адблокер режет вебсокеты.
+    console.log(`💰 Тик: ${symbol} = ${price} (пред: ${lastPrice}) | Алертов в кеше: ${alerts?.length || 0}`);
+    
     if (!alerts || alerts.length === 0) return;
-
+    
     const now = Date.now();
-
+    
     for (const alert of alerts) {
+        // 🔍 ДЕБАГ 2: Какой алерт проверяется и его статус
+        console.log(`🔍 Проверка алерта: цена=${alert.price}, dir=${alert.direction}, triggered=${alert.triggered}, status=${alert.status}`);
+        
         if (alert.triggered) continue;
-        // Строка if (alert.active) continue; полностью удалена – иначе блокируются повторы
-        if (alert.status === 'paused') continue;
-        if (alert.status === 'completed') continue;
-        if (now - alert.createdAt < 2000) continue; // защита от ложного срабатывания при создании
-
-        const crossedUp = lastPrice <= alert.price && price >= alert.price;
-        const crossedDown = lastPrice >= alert.price && price <= alert.price;
-
+        if (alert.status === 'paused' || alert.status === 'completed') continue;
+        if (now - alert.createdAt < 100) continue;
+        
         let shouldTrigger = false;
-        if (alert.direction === 'above' && crossedUp) {
-            shouldTrigger = true;
-        } else if (alert.direction === 'below' && crossedDown) {
-            shouldTrigger = true;
-        } else if (alert.direction === 'both' && (crossedUp || crossedDown)) {
-            shouldTrigger = true;
+
+        if (lastPrice === undefined) {
+            // Первый тик после старта/подписки
+            if (alert.direction === 'above' && price >= alert.price) shouldTrigger = true;
+            else if (alert.direction === 'below' && price <= alert.price) shouldTrigger = true;
+            else if (alert.direction === 'both' && Math.abs(price - alert.price) < 0.01) shouldTrigger = true; 
+        } else {
+            const crossedUp = lastPrice <= alert.price && price >= alert.price;
+            const crossedDown = lastPrice >= alert.price && price <= alert.price;
+            
+            if (alert.direction === 'above' && crossedUp) shouldTrigger = true;
+            else if (alert.direction === 'below' && crossedDown) shouldTrigger = true;
+            else if (alert.direction === 'both' && (crossedUp || crossedDown)) shouldTrigger = true;
+        }
+        
+        // 🔍 ДЕБАГ 3: Почему логика отсекает алерт?
+        if (!shouldTrigger) {
+            console.warn(`❌ НЕ СРАБОТАЛ: цена=${price}, алерт=${alert.price}, напр=${alert.direction}, пред.цена=${lastPrice}`);
         }
 
-        // ВОТ ЭТО БЫЛО НЕПРАВИЛЬНО: if (crossedAbove || crossedBelow)  — таких переменных нет!
         if (shouldTrigger) {
-            console.log(`🔔 ALERT TRIGGERED: ${alert.symbol} at ${price} (alert: ${alert.price})`);
-
+            console.log(`🔥🔥🔥 ТРИГГЕР СРАБОТАЛ!!! ${alert.symbol} at ${price}`);
+            
             alert.triggerCount = (alert.triggerCount || 0) + 1;
             alert.lastTriggerTime = now;
-
+            alert.active = true;
+            
             const item = this._alerts.find(a => a.alert === alert);
-
+            
             this._saveAlerts();
             this._updateAlertsListUI();
             this._startInfiniteHighlight(alert.id);
             this._showAlertNotification(alert, price, alert.triggerCount > 1);
             this._sendTelegramAlert(alert, price, alert.triggerCount > 1);
             this._requestRedraw();
-
+            
             if (!alert.canTriggerAgain()) {
                 alert.complete();
+                alert.active = false;
                 this._stopHighlight(alert.id);
                 if (item && item.primitive && item.series) {
                     try { item.series.detachPrimitive(item.primitive); } catch(e) {}
@@ -5188,82 +5250,8 @@ _onWorkerPrice(symbol, price) {
         }
     }
 }
-    // ==================== ТАЙМЕР АЛЕРТЫ ====================
-    
-    checkTimerAlerts() {
-        const now = Date.now();
-        
-        this._alerts.forEach(item => {
-            const alert = item.alert;
-            
-            if (alert.triggered) return;
-            if (!alert.active) return;
-            if (alert.status === 'paused') return;
-            if (alert.status === 'completed') return;
-            if (!alert.canTriggerAgain()) return;
-            if (!alert.shouldTriggerByTimer(now)) return;
-            
-            console.log(`⏰ TIMER ALERT: ${alert.symbol} repeat ${alert.triggerCount + 1}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}`);
-            
-            alert.triggerCount++;
-            alert.lastTriggerTime = now;
-            
-            this._saveAlerts();
-            this._updateAlertsListUI();
-            this._startInfiniteHighlight(alert.id);
-            this._showAlertNotification(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._sendTelegramAlert(alert, this._lastPrices.get(alert.symbol) || alert.price, alert.triggerCount > 1);
-            this._requestRedraw();
-            
-            if (alert.canTriggerAgain()) {
-                alert.active = false;
-            } else {
-                alert.complete();
-                alert.active = false;
-                this._stopHighlight(alert.id);
-                if (item.primitive && item.series) {
-                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                    item.primitive = null;
-                    item.series = null;
-                }
-                this._saveAlerts();
-                this._updateAlertsListUI();
-                setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
-            }
-        });
-    }
-
-    // ==================== КЕШ АЛЕРТОВ ====================
-    
-      _addToSymbolCache(alert) {
-        // 🚨 ФИКС 5: Сохраняем в кеш по верхнему регистру!
-        const key = (alert.symbol || '').toUpperCase();
-        if (!this._alertsBySymbol.has(key)) {
-            this._alertsBySymbol.set(key, []);
-        }
-        const cache = this._alertsBySymbol.get(key);
-        if (!cache.includes(alert)) {
-            cache.push(alert);
-        }
-    }
-     _removeFromSymbolCache(alert) {
-        // 🚨 ФИКС 4: Ищем тоже по верхнему регистру!
-        const key = (alert.symbol || '').toUpperCase();
-        const cache = this._alertsBySymbol.get(key);
-        if (cache) {
-            const index = cache.indexOf(alert);
-            if (index !== -1) cache.splice(index, 1);
-            if (cache.length === 0) this._alertsBySymbol.delete(key);
-        }
-    }
-
-    _rebuildSymbolCache() {
-        this._alertsBySymbol.clear();
-        for (const item of this._alerts) {
-            this._addToSymbolCache(item.alert);
-        }
-    }
-
+       
+  
     // ==================== ЗАГРУЗКА ====================
     
     async loadFromData(symbolKey, alertRecords) {
@@ -5340,7 +5328,7 @@ _onWorkerPrice(symbol, price) {
                         existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
                         existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
                         
-                        this._addToSymbolCache(existing.alert);
+                     
                         
                         if (isCurrentSymbol && 
                             !existing.alert.triggered && 
@@ -5376,7 +5364,7 @@ _onWorkerPrice(symbol, price) {
                     alert.status = rec.data.status || 'active';
                     alert.anchorCandle = rec.data.anchorCandle || null;
 
-                    this._addToSymbolCache(alert);
+                   
 
                     if (isCurrentSymbol && 
                         !alert.triggered && 
@@ -5514,7 +5502,10 @@ _onWorkerPrice(symbol, price) {
             this._alerts.push({ alert, primitive: null, series: null });
         }
         
-        this._addToSymbolCache(alert);
+     
+         if (this._worker) {
+            this._worker.postMessage({ type: 'addAlert', symbol: alert.symbol, alert: alert });
+        }
         this._subscribeToSymbol(alert.symbol, alert.exchange, alert.marketType);
         this._saveAlerts();
         this._updateAlertsListUI();
@@ -5543,8 +5534,10 @@ _onWorkerPrice(symbol, price) {
             }
             
             this._alerts.splice(index, 1);
-            this._removeFromSymbolCache(alert);
-            
+          
+               if (this._worker) {
+                this._worker.postMessage({ type: 'removeAlert', symbol: symbol.toUpperCase(), id: alertId });
+            }
             this._unsubscribeFromSymbol(symbol, exchange, marketType);
             
             if (this._selectedAlert && this._selectedAlert.id === alertId) this._selectedAlert = null;
@@ -6688,7 +6681,7 @@ _onWorkerPrice(symbol, price) {
     // ==================== DESTROY ====================
     
     destroy() {
-        window.clearInterval(this._timerInterval);
+      
         window.removeEventListener('mouseup', this._handleGlobalMouseUp);
         
         if (document._alertSettingsCloseHandler) {
@@ -6707,7 +6700,7 @@ _onWorkerPrice(symbol, price) {
         }
         
         this._alerts = [];
-        this._alertsBySymbol.clear();
+      
         this._subscribedSymbols.clear();
         this._selectedAlert = null;
         this._hoveredAlert = null;
