@@ -4913,172 +4913,170 @@ class AlertLineManager {
 
     // ==================== WORKER ====================
     
-      _initWorker() {
-        try {
-            // Код воркера в виде строки
-            const workerCode = `
-                self.onerror = function(message, source, lineno, colno, error) {
-                    self.postMessage({ type: 'log', message: 'WORKER ERROR: ' + message + ' at ' + lineno });
-                };
+   _initWorker() {
+    try {
+        const workerCode = `
+            self.onerror = function(message, source, lineno) {
+                self.postMessage({ type: 'log', message: 'WORKER CRASH: ' + message + ' at ' + lineno });
+            };
 
-                class AlertWorker {
-                    constructor() {
-                        this.sockets = new Map(); 
-                        this.subscriptions = new Map(); 
-                        this.endpoints = {
-                            binance: { futures: 'wss://fstream.binance.com/stream', spot: 'wss://stream.binance.com:9443/stream' },
-                            bybit: { futures: 'wss://stream.bybit.com/v5/public/linear', spot: 'wss://stream.bybit.com/v5/public/spot' }
-                        };
-                        this.reconnectTimers = new Map();
-                        self.postMessage({ type: 'log', message: '[Worker] Initialized via Blob' });
+            class AlertWorker {
+                constructor() {
+                    this.sockets = new Map(); 
+                    this.subscriptions = new Map(); 
+                    this.endpoints = {
+                        binance: { futures: 'wss://fstream.binance.com/ws', spot: 'wss://stream.binance.com:9443/ws' },
+                        bybit: { futures: 'wss://stream.bybit.com/v5/public/linear', spot: 'wss://stream.bybit.com/v5/public/spot' }
+                    };
+                    self.postMessage({ type: 'log', message: '[Worker] Initialized' });
+                }
+
+                handleMessage(event) {
+                    const data = event.data;
+                    if (data.type === 'subscribe') this.subscribe(data.symbol, data.exchange, data.marketType);
+                    else if (data.type === 'unsubscribe') this.unsubscribe(data.symbol, data.exchange, data.marketType);
+                    else if (data.type === 'status') {
+                        self.postMessage({ 
+                            type: 'status', 
+                            sockets: Array.from(this.sockets.entries()).map(([k, ws]) => ({ key: k, state: ws.readyState })),
+                            subscriptions: Object.fromEntries(Array.from(this.subscriptions.entries()).map(([k, v]) => [k, [...v]]))
+                        });
                     }
+                }
 
-                    handleMessage(event) {
-                        const data = event.data;
-                        try {
-                            if (data.type === 'subscribe') this.subscribe(data.symbol, data.exchange, data.marketType);
-                            else if (data.type === 'unsubscribe') this.unsubscribe(data.symbol, data.exchange, data.marketType);
-                            else if (data.type === 'destroy') this.destroy();
-                        } catch (e) {
-                            self.postMessage({ type: 'log', message: 'Handler Error: ' + e.message });
-                        }
-                    }
-
-                    subscribe(symbol, exchange = 'binance', marketType = 'futures') {
-                        const socketKey = \`\${exchange}:\${marketType}\`;
-                        if (!this.subscriptions.has(socketKey)) this.subscriptions.set(socketKey, new Set());
-                        const symbolSet = this.subscriptions.get(socketKey);
-                        if (symbolSet.has(symbol)) return;
-                        
-                        symbolSet.add(symbol);
-                        
-                        if (this.sockets.has(socketKey)) {
-                            const ws = this.sockets.get(socketKey);
-                            if (ws.readyState === WebSocket.OPEN) {
-                                this._sendSub(ws, [symbol], exchange, marketType, true);
-                            }
-                        } else {
-                            this._createSocket(socketKey, exchange, marketType);
-                        }
-                    }
-
-                    unsubscribe(symbol, exchange = 'binance', marketType = 'futures') {
-                        const socketKey = \`\${exchange}:\${marketType}\`;
-                        const symbolSet = this.subscriptions.get(socketKey);
-                        if (!symbolSet || !symbolSet.has(symbol)) return;
-                        
-                        symbolSet.delete(symbol);
-                        if (this.sockets.has(socketKey)) {
-                            const ws = this.sockets.get(socketKey);
-                            if (ws.readyState === WebSocket.OPEN) {
-                                this._sendSub(ws, [symbol], exchange, marketType, false);
-                            }
-                        }
-                        if (symbolSet.size === 0) this._closeSocket(socketKey);
-                    }
-
-                    _createSocket(socketKey, exchange, marketType) {
-                        const endpoint = this.endpoints[exchange]?.[marketType];
-                        if (!endpoint) return;
-
-                        try {
-                            const ws = new WebSocket(endpoint);
-                            ws.onopen = () => {
-                                const symbols = Array.from(this.subscriptions.get(socketKey) || []);
-                                if (symbols.length > 0) this._sendSub(ws, symbols, exchange, marketType, true);
-                            };
-                            ws.onmessage = (event) => {
-                                try {
-                                    const msg = JSON.parse(event.data);
-                                    this._processMessage(msg, exchange, marketType);
-                                } catch (e) {}
-                            };
-                            ws.onclose = () => {
-                                this.sockets.delete(socketKey);
-                                const symbols = this.subscriptions.get(socketKey);
-                                if (symbols && symbols.size > 0) {
-                                    setTimeout(() => this._createSocket(socketKey, exchange, marketType), 3000);
-                                }
-                            };
-                            this.sockets.set(socketKey, ws);
-                        } catch (e) { console.error(e); }
-                    }
-
-                    _sendSub(ws, symbols, exchange, marketType, isSub) {
-                        if (ws.readyState !== WebSocket.OPEN) return;
-                        if (exchange === 'binance') {
-                            ws.send(JSON.stringify({
-                                method: isSub ? 'SUBSCRIBE' : 'UNSUBSCRIBE',
-                                params: symbols.map(s => \`\${s.toLowerCase()}@aggTrade\`),
-                                id: Date.now()
-                            }));
-                        } else if (exchange === 'bybit') {
-                            ws.send(JSON.stringify({
-                                op: isSub ? 'subscribe' : 'unsubscribe',
-                                args: symbols.map(s => \`tickers.\${s}\`)
-                            }));
-                        }
-                    }
-
-                    _processMessage(msg, exchange, marketType) {
-                        let symbol = null, price = null;
-                        if (exchange === 'binance' && msg.e === 'aggTrade') {
-                            symbol = msg.s; price = parseFloat(msg.p);
-                        } else if (exchange === 'bybit' && msg.topic?.startsWith('tickers.')) {
-                            symbol = msg.topic.split('.')[1];
-                            if (msg.data?.lastPrice) price = parseFloat(msg.data.lastPrice);
-                        }
-                        if (symbol && price && !isNaN(price)) {
-                            self.postMessage({ type: 'price', symbol, price });
-                        }
-                    }
-
-                    _closeSocket(socketKey) {
+                subscribe(symbol, exchange = 'binance', marketType = 'futures') {
+                    const socketKey = \`\${exchange}:\${marketType}\`;
+                    if (!this.subscriptions.has(socketKey)) this.subscriptions.set(socketKey, new Set());
+                    const symbolSet = this.subscriptions.get(socketKey);
+                    if (symbolSet.has(symbol)) return;
+                    
+                    symbolSet.add(symbol);
+                    self.postMessage({ type: 'log', message: \`[Worker] Subscribing: \${symbol} (\${socketKey})\` });
+                    
+                    if (this.sockets.has(socketKey)) {
                         const ws = this.sockets.get(socketKey);
-                        if (ws) ws.close();
+                        if (ws.readyState === 1) this._sendSub(ws, [symbol], exchange, marketType, true);
+                    } else {
+                        this._createSocket(socketKey, exchange, marketType);
+                    }
+                }
+
+                unsubscribe(symbol, exchange, marketType) {
+                    const socketKey = \`\${exchange}:\${marketType}\`;
+                    const symbolSet = this.subscriptions.get(socketKey);
+                    if (!symbolSet || !symbolSet.has(symbol)) return;
+                    symbolSet.delete(symbol);
+                    if (this.sockets.has(socketKey)) {
+                        const ws = this.sockets.get(socketKey);
+                        if (ws.readyState === 1) this._sendSub(ws, [symbol], exchange, marketType, false);
+                    }
+                    if (symbolSet.size === 0) this._closeSocket(socketKey);
+                }
+
+                _createSocket(socketKey, exchange, marketType) {
+                    const endpoint = this.endpoints[exchange]?.[marketType];
+                    if (!endpoint) return;
+
+                    const ws = new WebSocket(endpoint);
+                    ws.onopen = () => {
+                        self.postMessage({ type: 'log', message: \`[Worker] ✅ Connected \${socketKey}\` });
+                        const symbols = Array.from(this.subscriptions.get(socketKey) || []);
+                        if (symbols.length > 0) this._sendSub(ws, symbols, exchange, marketType, true);
+                    };
+                    
+                    ws.onmessage = (event) => {
+                        try {
+                            const msg = JSON.parse(event.data);
+                            
+                            // Игнорируем подтверждение подписки
+                            if (msg.result !== undefined && !msg.e && !msg.topic) return;
+                            
+                            // 🚨 НОВЫЙ ЛОГ: Показываем всё, что не является aggTrade или tickers
+                            if (exchange === 'binance' && msg.e !== 'aggTrade') {
+                                self.postMessage({ type: 'log', message: \`[Worker] ИГНОР (не aggTrade): \${JSON.stringify(msg).substring(0, 100)}\` });
+                            }
+
+                            this._processMessage(msg, exchange, marketType);
+                        } catch (e) {
+                            self.postMessage({ type: 'log', message: \`[Worker] Parse error: \${e.message}\` });
+                        }
+                    };
+
+                    ws.onclose = () => {
+                        self.postMessage({ type: 'log', message: \`[Worker] Closed \${socketKey}\` });
                         this.sockets.delete(socketKey);
-                        this.subscriptions.delete(socketKey);
-                    }
+                        const symbols = this.subscriptions.get(socketKey);
+                        if (symbols && symbols.size > 0) setTimeout(() => this._createSocket(socketKey, exchange, marketType), 3000);
+                    };
+                    
+                    this.sockets.set(socketKey, ws);
+                }
 
-                    destroy() {
-                        this.sockets.forEach(ws => ws.close());
-                        this.sockets.clear();
-                        this.subscriptions.clear();
-                        self.postMessage({ type: 'destroyed' });
+                _sendSub(ws, symbols, exchange, marketType, isSub) {
+                    if (ws.readyState !== 1) return;
+                    if (exchange === 'binance') {
+                        ws.send(JSON.stringify({
+                            method: isSub ? 'SUBSCRIBE' : 'UNSUBSCRIBE',
+                            params: symbols.map(s => \`\${s.toLowerCase()}@aggTrade\`),
+                            id: Date.now()
+                        }));
+                    } else if (exchange === 'bybit') {
+                        ws.send(JSON.stringify({
+                            op: isSub ? 'subscribe' : 'unsubscribe',
+                            args: symbols.map(s => \`tickers.\${s}\`)
+                        }));
                     }
                 }
 
-                const worker = new AlertWorker();
-                self.onmessage = (e) => worker.handleMessage(e);
-            `;
-
-            // Создаем Blob из строки кода
-            const blob = new Blob([workerCode], { type: 'application/javascript' });
-            const url = URL.createObjectURL(blob);
-            
-            this._worker = new Worker(url);
-            
-            this._worker.onmessage = (e) => {
-                const data = e.data;
-                if (data.type === 'price') {
-                    this._onWorkerPrice(data.symbol, data.price);
-                } else if (data.type === 'log') {
-                    console.log('[Worker Log]', data.message);
-                } else if (data.type === 'destroyed') {
-                    console.log('[Manager] Worker destroyed');
+                _processMessage(msg, exchange, marketType) {
+                    let symbol = null, price = null;
+                    if (exchange === 'binance' && msg.e === 'aggTrade') {
+                        symbol = msg.s; 
+                        price = parseFloat(msg.p);
+                    } else if (exchange === 'bybit' && msg.topic?.startsWith('tickers.')) {
+                        symbol = msg.topic.split('.')[1];
+                        if (msg.data?.lastPrice) price = parseFloat(msg.data.lastPrice);
+                    }
+                    
+                    if (symbol && price && !isNaN(price)) {
+                        self.postMessage({ type: 'price', symbol, price });
+                    }
                 }
-            };
-            
-            this._worker.onerror = (err) => {
-                console.error('[Manager] Worker error:', err);
-            };
-            
-            console.log('✅ Alert Worker initialized (Blob mode)');
-        } catch(e) {
-            console.warn('⚠️ Web Worker not available:', e);
-            this._worker = null;
-        }
+
+                _closeSocket(socketKey) {
+                    const ws = this.sockets.get(socketKey);
+                    if (ws) ws.close();
+                    this.sockets.delete(socketKey);
+                    this.subscriptions.delete(socketKey);
+                }
+            }
+
+            const worker = new AlertWorker();
+            self.onmessage = (e) => worker.handleMessage(e);
+        `;
+
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        this._worker = new Worker(url);
+        
+        this._worker.onmessage = (e) => {
+            const data = e.data;
+            if (data.type === 'price') {
+                this._onWorkerPrice(data.symbol, data.price);
+            } else if (data.type === 'log') {
+                console.log('%c[Worker]', 'color:#0ff', data.message);
+            } else if (data.type === 'status') {
+                console.table(data.sockets);
+                console.log('Subscriptions:', data.subscriptions);
+            }
+        };
+        
+        console.log('✅ Alert Worker initialized (Blob mode)');
+    } catch(e) {
+        console.warn('⚠️ Web Worker not available:', e);
+        this._worker = null;
     }
+}
     _subscribeToSymbol(symbol, exchange, marketType) {
         const key = `${symbol}:${exchange}:${marketType}`;
         if (this._subscribedSymbols.has(key)) return;
