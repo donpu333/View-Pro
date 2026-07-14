@@ -1,59 +1,48 @@
-// alertWorker.js — ПРОСТАЯ И РАБОЧАЯ ВЕРСИЯ
 let connections = {};
 
 self.onmessage = function(e) {
-    const msg = e.data;
+    var msg = e.data;
     
     if (msg.type === 'subscribe') {
-        const symbol = (msg.symbol || 'btcusdt').toLowerCase();
-        const key = symbol;
+        var symbol = (msg.symbol || 'btcusdt').toLowerCase();
         
-        if (connections[key]) {
-            self.postMessage({ type: 'log', message: '[Worker] Already connected: ' + key });
-            return;
-        }
+        if (connections[symbol]) return;
         
-        const url = 'wss://fstream.binance.com/ws/' + symbol + '@miniTicker';
-        self.postMessage({ type: 'log', message: '[Worker] Connecting to ' + url });
+        var url = 'wss://fstream.binance.com/ws/' + symbol + '@miniTicker';
         
         try {
-            const ws = new WebSocket(url);
+            var ws = new WebSocket(url);
             
             ws.onopen = function() {
-                self.postMessage({ type: 'log', message: '[Worker] ✅ Open: ' + key });
+                self.postMessage({ type: 'log', message: '[Worker] Open: ' + symbol });
             };
             
             ws.onmessage = function(event) {
                 try {
-                    const data = JSON.parse(event.data);
+                    var data = JSON.parse(event.data);
                     if (data.c) {
-                        const price = parseFloat(data.c);
-                        self.postMessage({ type: 'price', symbol: msg.symbol, price: price });
+                        self.postMessage({ type: 'price', symbol: msg.symbol, price: parseFloat(data.c) });
                     }
-                } catch(e) {}
+                } catch(err) {}
             };
             
             ws.onclose = function() {
-                self.postMessage({ type: 'log', message: '[Worker] Closed: ' + key });
-                delete connections[key];
+                delete connections[symbol];
                 setTimeout(function() {
                     self.postMessage(msg);
                 }, 5000);
             };
             
             ws.onerror = function() {
-                self.postMessage({ type: 'log', message: '[Worker] ❌ Error: ' + key });
                 ws.close();
             };
             
-            connections[key] = ws;
-        } catch(e) {
-            self.postMessage({ type: 'log', message: '[Worker] ❌ Exception: ' + e.message });
-        }
+            connections[symbol] = ws;
+        } catch(err) {}
     }
     
     if (msg.type === 'unsubscribe') {
-        const key = msg.symbol.toLowerCase();
+        var key = msg.symbol.toLowerCase();
         if (connections[key]) {
             connections[key].close();
             delete connections[key];
@@ -61,8 +50,8 @@ self.onmessage = function(e) {
     }
     
     if (msg.type === 'destroy') {
-        for (let key in connections) {
-            connections[key].close();
+        for (var k in connections) {
+            connections[k].close();
         }
         connections = {};
         self.postMessage({ type: 'destroyed' });
