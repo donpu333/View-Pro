@@ -4960,85 +4960,89 @@ class AlertLineManager {
                         checkAlerts(symbol, price);
                     }
                 };
+                function checkAlerts(symbol, currentPrice) {
+                    const lastPriceObj = lastPrices.get(symbol);
+                    const lastPrice = lastPriceObj ? lastPriceObj.price : undefined;
 
-             function checkAlerts(symbol, currentPrice) {
-    const lastPriceObj = lastPrices.get(symbol);
-    const lastPrice = lastPriceObj ? lastPriceObj.price : undefined;
-    
-    lastPrices.set(symbol, { price: currentPrice, time: Date.now() });
-
-    const alertsList = alerts.get(symbol);
-    if (!alertsList || alertsList.length === 0) return;
-
-    const now = Date.now();
-    for (let i = 0; i < alertsList.length; i++) {
-        const alert = alertsList[i];
-        if (alert.triggered || alert.status === 'paused' || alert.status === 'completed') continue;
-        if (now - alert.createdAt < 100) continue;
-
-        let shouldTrigger = false;
-        if (lastPrice === undefined) {
-            if (alert.direction === 'above' && currentPrice >= alert.price) shouldTrigger = true;
-            else if (alert.direction === 'below' && currentPrice <= alert.price) shouldTrigger = true;
-            else if (alert.direction === 'both' && Math.abs(currentPrice - alert.price) < 0.01) shouldTrigger = true;
-        } else {
-            const crossedUp = lastPrice <= alert.price && currentPrice >= alert.price;
-            const crossedDown = lastPrice >= alert.price && currentPrice <= alert.price;
-            if (alert.direction === 'above' && crossedUp) shouldTrigger = true;
-            else if (alert.direction === 'below' && crossedDown) shouldTrigger = true;
-            else if (alert.direction === 'both' && (crossedUp || crossedDown)) shouldTrigger = true;
-        }
-
-        if (shouldTrigger) {
-            // Первое срабатывание (пересечение)
-            alert.triggerCount = (alert.triggerCount || 0) + 1;
-            alert.lastTriggerTime = now;
-            alert.active = true;                       // ← активируем режим повторов
-
-            self.postMessage({
-                type: 'trigger',
-                alertId: alert.id,
-                currentPrice: currentPrice,
-                triggerCount: alert.triggerCount
-            });
-
-            const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
-            if (alert.triggerCount >= triggerLimit) {
-                alert.triggered = true;
-                alert.status = 'completed';
-                self.postMessage({ type: 'completed', id: alert.id });
-            }
-        } else if (alert.active) {
-            // Таймерные повторы (цена может быть где угодно)
-            if (!alert.lastTriggerTime) continue;
-            const minutesSinceLast = (now - alert.lastTriggerTime) / (60 * 1000);
-            if (minutesSinceLast >= (alert.repeatInterval || 1)) {
-                const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
-                if (alert.triggerCount < triggerLimit) {
-                    alert.triggerCount++;
-                    alert.lastTriggerTime = now;
-                    self.postMessage({
-                        type: 'trigger',
-                        alertId: alert.id,
-                        currentPrice: currentPrice,
-                        triggerCount: alert.triggerCount,
-                        isTimer: true
-                    });
-
-                    if (alert.triggerCount >= triggerLimit) {
-                        alert.triggered = true;
-                        alert.status = 'completed';
-                        self.postMessage({ type: 'completed', id: alert.id });
+                    // ЗАЩИТА: Если это самый первый тик - просто запоминаем цену и уходим.
+                    if (lastPrice === undefined) {
+                        lastPrices.set(symbol, { price: currentPrice, time: Date.now() });
+                        return; 
                     }
-                    // 👉 НЕ сбрасываем active, повторы продолжатся по таймеру
-                } else {
-                    // Лимит исчерпан – гасим, чтобы не крутить цикл вхолостую
-                    alert.active = false;
+
+                    lastPrices.set(symbol, { price: currentPrice, time: Date.now() });
+
+                    const alertsList = alerts.get(symbol);
+                    if (!alertsList || alertsList.length === 0) return;
+
+                    const now = Date.now();
+                    for (let i = 0; i < alertsList.length; i++) {
+                        const alert = alertsList[i];
+                        if (alert.triggered || alert.status === 'paused' || alert.status === 'completed') continue;
+                        if (now - alert.createdAt < 100) continue;
+
+                        const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
+                        if (alert.triggerCount >= triggerLimit) continue;
+
+                        let justCrossed = false;
+
+                        // Строгое неравенство < чтобы не стреляло дважды на одной цене
+                        const crossedUp = lastPrice < alert.price && currentPrice >= alert.price;
+                        const crossedDown = lastPrice > alert.price && currentPrice <= alert.price;
+
+                        if (alert.direction === 'above' && crossedUp) justCrossed = true;
+                        else if (alert.direction === 'below' && crossedDown) justCrossed = true;
+                        else if (alert.direction === 'both' && (crossedUp || crossedDown)) justCrossed = true;
+
+                        if (justCrossed) {
+                            alert.triggerCount++;
+                            alert.lastTriggerTime = now;
+                            alert.active = true;                      
+
+                            self.postMessage({
+                                type: 'trigger',
+                                alertId: alert.id,
+                                currentPrice: currentPrice,
+                                triggerCount: alert.triggerCount
+                            });
+
+                            if (alert.triggerCount >= triggerLimit) {
+                                alert.triggered = true;
+                                alert.status = 'completed';
+                                alert.active = false; // Сбрасываем, так как завершен
+                                self.postMessage({ type: 'completed', id: alert.id });
+                            }
+                        } else if (alert.active) {
+                            // Таймерные повторы
+                            if (!alert.lastTriggerTime) continue;
+                            const minutesSinceLast = (now - alert.lastTriggerTime) / (60 * 1000);
+                            if (minutesSinceLast >= (alert.repeatInterval || 1)) {
+                                if (alert.triggerCount < triggerLimit) {
+                                    alert.triggerCount++;
+                                    alert.lastTriggerTime = now;
+                                    self.postMessage({
+                                        type: 'trigger',
+                                        alertId: alert.id,
+                                        currentPrice: currentPrice,
+                                        triggerCount: alert.triggerCount,
+                                        isTimer: true
+                                    });
+
+                                    if (alert.triggerCount >= triggerLimit) {
+                                        alert.triggered = true;
+                                        alert.status = 'completed';
+                                        alert.active = false; // Сбрасываем, так как завершен
+                                        self.postMessage({ type: 'completed', id: alert.id });
+                                    }
+                                    // А ЗДЕСЬ active НЕ трогаем, повторы продолжатся!
+                                } else {
+                                    // Твоя отличная правка: Лимит исчерпан – гасим, чтобы не крутить цикл вхолостую
+                                    alert.active = false;
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-        }
-    }
-}
 
                 // Фоновая проверка для неактивных символов
                 setInterval(async () => {
@@ -5586,7 +5590,7 @@ class AlertLineManager {
         return false;
     }
 
-    deleteAllAlerts() {
+     deleteAllAlerts() {
         const currentSymbolKey = this._getCurrentSymbolKey();
         const currentSymbol = this._chartManager.currentSymbol;
         
@@ -5605,12 +5609,12 @@ class AlertLineManager {
             if (item.primitive && item.series) {
                 try { item.series.detachPrimitive(item.primitive); } catch(e) {}
             }
-            this._removeFromSymbolCache(item.alert);
-            this._unsubscribeFromSymbol(
-                item.alert.symbol, 
-                item.alert.exchange || 'binance', 
-                item.alert.marketType || 'futures'
-            );
+            
+            // Удаляем из воркера
+            if (this._worker) {
+                this._worker.postMessage({ type: 'removeAlert', symbol: item.alert.symbol.toUpperCase(), id: item.alert.id });
+            }
+            
             const index = this._alerts.indexOf(item);
             if (index !== -1) this._alerts.splice(index, 1);
         });
@@ -5628,9 +5632,27 @@ class AlertLineManager {
         if (completedAlerts.length === 0) return;
         if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
         
-        completedAlerts.forEach(item => this.deleteAlert(item.alert.id));
+        completedAlerts.forEach(item => {
+            if (window.db) {
+                window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
+            }
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+            
+            // Удаляем из воркера
+            if (this._worker) {
+                this._worker.postMessage({ type: 'removeAlert', symbol: item.alert.symbol.toUpperCase(), id: item.alert.id });
+            }
+            
+            const index = this._alerts.indexOf(item);
+            if (index !== -1) this._alerts.splice(index, 1);
+        });
+        
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
     }
-
     // ==================== HIT TEST ====================
     
     hitTest(x, y) {
