@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, maximum-scale=1.5">
+  <title>Фото Коллаж · полный экран</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #0a0a12;
+      color: #e0e0ff;
+      font-family: 'Roboto', sans-serif;
+      overflow-x: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* главная обёртка — растянута на всю высоту и ширину */
+    .collage-container {
+      flex: 1 1 auto;
+      width: 100%;
+      background-color: #12121a;
+      display: flex;
+      flex-direction: column;
+      padding: 1.2rem 1.5rem;
+      gap: 1.2rem;
+      max-width: 100%;
+    }
+
+    .collage-header {
+      text-align: center;
+      flex-shrink: 0;
+      border-bottom: 1px solid #2a2a3a;
+      padding-bottom: 0.8rem;
+    }
+
+    .collage-title {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 700;
+      background: linear-gradient(90deg, #4cc9f0, #7b68ee);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-family: 'Montserrat', sans-serif;
+      letter-spacing: 1px;
+    }
+
+    .collage-subtitle {
+      font-size: 1rem;
+      color: #aaa;
+      margin-top: 0.3rem;
+    }
+
+    /* переключатели режимов */
+    .collage-mode-selector {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .mode-btn {
+      background-color: #2a2a35;
+      color: #bbb;
+      border: 1px solid #3a3a4a;
+      padding: 0.7rem 1.8rem;
+      border-radius: 2rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.25s;
+      font-size: 0.95rem;
+      letter-spacing: 0.5px;
+    }
+
+    .mode-btn.active {
+      background-color: #4361ee;
+      color: white;
+      border-color: #4361ee;
+      box-shadow: 0 0 14px rgba(67, 97, 238, 0.6);
+    }
+
+    .mode-btn:hover:not(.active) {
+      border-color: #4cc9f0;
+      color: #4cc9f0;
+    }
+
+    /* динамические раскладки */
+    .collage-layout {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-height: 0;
+    }
+
+    .upload-top {
+      display: flex;
+      gap: 1rem;
+      flex: 1 1 auto;
+    }
+
+    .upload-bottom {
+      flex: 1 1 auto;
+      display: flex;
+    }
+
+    .four-images-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 1rem;
+      flex: 1 1 auto;
+    }
+
+    .two-images-layout {
+      display: flex;
+      gap: 1rem;
+      flex: 1 1 auto;
+    }
+
+    /* универсальная карточка загрузки */
+    .upload-box {
+      border: 2px dashed #3a3a4a;
+      border-radius: 16px;
+      background-color: #1a1a26;
+      padding: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      transition: border-color 0.2s;
+    }
+
+    .upload-box:hover {
+      border-color: #4cc9f0;
+    }
+
+    .upload-box h3 {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: #b0c7ff;
+      margin-bottom: 0.4rem;
+      white-space: nowrap;
+    }
+
+    .file-input-label {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-bottom: 0.2rem;
+    }
+
+    .collage-file-input {
+      width: 100%;
+      background-color: #2a2a35;
+      color: #f0f0f0;
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      border: 1px solid #444;
+      margin-bottom: 0.4rem;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .tf-select {
+      background-color: #2a2a35;
+      color: white;
+      border: 1px solid #444;
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      width: 100%;
+      font-size: 0.85rem;
+    }
+
+    .preview-container {
+      position: relative;
+      flex: 1 1 auto;
+      background: #0f0f17;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100px;
+    }
+
+    .preview-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+
+    .draggable-text {
+      position: absolute;
+      color: white;
+      font-size: clamp(1.2rem, 2.5vw, 2rem);
+      font-weight: bold;
+      cursor: move;
+      user-select: none;
+      z-index: 10;
+      text-shadow: 2px 2px 8px black;
+      padding: 0.3rem 1rem;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      backdrop-filter: blur(4px);
+    }
+
+    .collage-controls {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    .collage-btn {
+      background-color: #4361ee;
+      color: white;
+      padding: 0.8rem 2rem;
+      border: none;
+      border-radius: 2.5rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .collage-btn:hover:not(:disabled) {
+      background: #3f37c9;
+      transform: translateY(-1px);
+    }
+
+    .collage-btn:disabled {
+      background: #2e2e3a;
+      color: #666;
+      cursor: not-allowed;
+    }
+
+    .collage-result {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .collage-with-text {
+      display: flex;
+      gap: 1rem;
+      width: 100%;
+    }
+
+    .collage-column {
+      flex: 3;
+    }
+
+    .text-column {
+      flex: 1;
+      background: #1a1a26;
+      border-radius: 16px;
+      padding: 1rem;
+      border: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .text-column textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: #ddd;
+      font-size: 1rem;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      font-family: 'Roboto', sans-serif;
+    }
+
+    .clear-text-btn {
+      background: #ef4444;
+      color: white;
+      border: none;
+      padding: 0.5rem 1.2rem;
+      border-radius: 20px;
+      cursor: pointer;
+      align-self: flex-end;
+    }
+
+    #collageCanvas, #combinedCollageCanvas {
+      max-width: 100%;
+      height: auto;
+      display: none;
+      border-radius: 16px;
+      background: #1a1a26;
+    }
+
+    .combine-collage-section {
+      margin-top: 0.8rem;
+      background: #1a1a26;
+      border-radius: 20px;
+      padding: 1.2rem;
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 750px) {
+      .collage-container {
+        padding: 0.8rem;
+      }
+      .upload-top, .two-images-layout {
+        flex-direction: column;
+      }
+      .four-images-layout {
+        grid-template-columns: 1fr;
+      }
+      .collage-with-text {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="collage-container">
+  <header class="collage-header">
+    <h1 class="collage-title">Фото Коллаж 6000×4500</h1>
+    <p class="collage-subtitle">полноэкранный режим · перетаскивайте текст</p>
+  </header>
+
+  <div class="collage-mode-selector">
+    <button id="threeModeBtn" class="mode-btn active">3 изображения</button>
+    <button id="fourModeBtn" class="mode-btn">4 изображения</button>
+    <button id="twoModeBtn" class="mode-btn">2 изображения</button>
+  </div>
+
+  <!-- три фото -->
+  <div id="threeImagesLayout" class="collage-layout">
+    <div class="upload-top">
+      <div class="upload-box"><h3>↖️ Верхнее левое (1D)</h3><label class="file-input-label">файл</label><input type="file" id="topLeftImage" class="collage-file-input" accept="image/*"><select id="topLeftSelect" class="tf-select"><option value="1W">1W</option><option value="1D" selected>1D</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="topLeftPreviewContainer"><img id="topLeftPreview" class="preview-img"><div id="topLeftText" class="draggable-text">1D</div></div></div>
+      <div class="upload-box"><h3>↗️ Верхнее правое (1H)</h3><label class="file-input-label">файл</label><input type="file" id="topRightImage" class="collage-file-input" accept="image/*"><select id="topRightSelect" class="tf-select"><option value="1W">1W</option><option value="1D">1D</option><option value="4H">4H</option><option value="1H" selected>1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="topRightPreviewContainer"><img id="topRightPreview" class="preview-img"><div id="topRightText" class="draggable-text">1H</div></div></div>
+    </div>
+    <div class="upload-bottom">
+      <div class="upload-box"><h3>⬇️ Нижнее (5M)</h3><label class="file-input-label">файл</label><input type="file" id="bottomImage" class="collage-file-input" accept="image/*"><select id="bottomSelect" class="tf-select"><option value="1W">1W</option><option value="1D">1D</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M" selected>5M</option><option value="1M">1M</option></select><div class="preview-container" id="bottomPreviewContainer"><img id="bottomPreview" class="preview-img"><div id="bottomText" class="draggable-text">5M</div></div></div>
+    </div>
+  </div>
+
+  <!-- четыре фото -->
+  <div id="fourImagesLayout" class="collage-layout" style="display: none;">
+    <div class="four-images-layout">
+      <div class="upload-box"><h3>1D</h3><input type="file" id="topLeftImage4" class="collage-file-input" accept="image/*"><select id="topLeftSelect4" class="tf-select"><option value="1D" selected>1D</option><option value="1W">1W</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="topLeftPreviewContainer4"><img id="topLeftPreview4" class="preview-img"><div id="topLeftText4" class="draggable-text">1D</div></div></div>
+      <div class="upload-box"><h3>4H</h3><input type="file" id="topRightImage4" class="collage-file-input" accept="image/*"><select id="topRightSelect4" class="tf-select"><option value="4H" selected>4H</option><option value="1W">1W</option><option value="1D">1D</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="topRightPreviewContainer4"><img id="topRightPreview4" class="preview-img"><div id="topRightText4" class="draggable-text">4H</div></div></div>
+      <div class="upload-box"><h3>1H</h3><input type="file" id="bottomLeftImage4" class="collage-file-input" accept="image/*"><select id="bottomLeftSelect4" class="tf-select"><option value="1H" selected>1H</option><option value="1W">1W</option><option value="1D">1D</option><option value="4H">4H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="bottomLeftPreviewContainer4"><img id="bottomLeftPreview4" class="preview-img"><div id="bottomLeftText4" class="draggable-text">1H</div></div></div>
+      <div class="upload-box"><h3>5M</h3><input type="file" id="bottomRightImage4" class="collage-file-input" accept="image/*"><select id="bottomRightSelect4" class="tf-select"><option value="5M" selected>5M</option><option value="1W">1W</option><option value="1D">1D</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="1M">1M</option></select><div class="preview-container" id="bottomRightPreviewContainer4"><img id="bottomRightPreview4" class="preview-img"><div id="bottomRightText4" class="draggable-text">5M</div></div></div>
+    </div>
+  </div>
+
+  <!-- два фото -->
+  <div id="twoImagesLayout" class="collage-layout" style="display: none;">
+    <div class="two-images-layout">
+      <div class="upload-box"><h3>⬅️ Левое</h3><input type="file" id="leftImage2" class="collage-file-input" accept="image/*"><select id="leftSelect2" class="tf-select"><option value="1D" selected>1D</option><option value="1W">1W</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="leftPreviewContainer2"><img id="leftPreview2" class="preview-img"><div id="leftText2" class="draggable-text">1D</div></div></div>
+      <div class="upload-box"><h3>➡️ Правое</h3><input type="file" id="rightImage2" class="collage-file-input" accept="image/*"><select id="rightSelect2" class="tf-select"><option value="1H" selected>1H</option><option value="1W">1W</option><option value="1D">1D</option><option value="4H">4H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container" id="rightPreviewContainer2"><img id="rightPreview2" class="preview-img"><div id="rightText2" class="draggable-text">1H</div></div></div>
+    </div>
+  </div>
+
+  <div class="collage-controls">
+    <button id="generateBtn" class="collage-btn" disabled><i class="fas fa-magic"></i> Создать коллаж</button>
+    <button id="downloadBtn" class="collage-btn" disabled><i class="fas fa-download"></i> Скачать PNG</button>
+  </div>
+
+  <div class="collage-result">
+    <div class="collage-with-text">
+      <div class="collage-column">
+        <canvas id="collageCanvas"></canvas>
+      </div>
+      <div class="text-column">
+        <textarea id="collageText" placeholder="Добавьте текст..."></textarea>
+        <button id="clearTextBtn" class="clear-text-btn"><i class="fas fa-trash-alt"></i> Очистить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="combine-collage-section">
+    <h3 style="color:#4cc9f0; margin-bottom:0.8rem;">🔗 Объединить два коллажа</h3>
+    <div style="display: flex; gap:1rem; flex-wrap: wrap;">
+      <div class="upload-box" style="flex:1;"><h3>Первый коллаж</h3><input type="file" id="firstCollage" class="collage-file-input" accept="image/*"><div class="preview-container"><img id="firstCollagePreview" class="preview-img"></div></div>
+      <div class="upload-box" style="flex:1;"><h3>Второй коллаж</h3><input type="file" id="secondCollage" class="collage-file-input" accept="image/*"><div class="preview-container"><img id="secondCollagePreview" class="preview-img"></div></div>
+    </div>
+    <div class="collage-controls" style="margin-top:1rem;">
+      <button id="combineBtn" class="collage-btn" disabled><i class="fas fa-object-group"></i> Объединить</button>
+      <button id="downloadCombinedBtn" class="collage-btn" disabled><i class="fas fa-download"></i> Скачать объединённый</button>
+    </div>
+    <canvas id="combinedCollageCanvas" style="margin-top:1rem;"></canvas>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ---------- основные параметры ----------
+    const COLLAGE_WIDTH = 6000;
+    const COLLAGE_HEIGHT = 4500;
+    const TOP_PART_HEIGHT = 2250;
+    const BOTTOM_PART_HEIGHT = 2250;
+    const TEXT_COLUMN_WIDTH = 1200;
+
+    // состояние
+    let collageMode = 'three';
+    let topLeftFileName = '';
+
+    // DOM элементы
+    const threeModeBtn = document.getElementById('threeModeBtn');
+    const fourModeBtn = document.getElementById('fourModeBtn');
+    const twoModeBtn = document.getElementById('twoModeBtn');
+    const threeLayout = document.getElementById('threeImagesLayout');
+    const fourLayout = document.getElementById('fourImagesLayout');
+    const twoLayout = document.getElementById('twoImagesLayout');
+
+    const generateBtn = document.getElementById('generateBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const resultCanvas = document.getElementById('collageCanvas');
+    const collageText = document.getElementById('collageText');
+    const clearTextBtn = document.getElementById('clearTextBtn');
+
+    // ----- структуры данных для каждого режима -----
+    const collageData = {
+      topLeft: createSlot('topLeftText', 'topLeftPreviewContainer', 'topLeftPreview', 'topLeftSelect', '1D'),
+      topRight: createSlot('topRightText', 'topRightPreviewContainer', 'topRightPreview', 'topRightSelect', '1H'),
+      bottom: createSlot('bottomText', 'bottomPreviewContainer', 'bottomPreview', 'bottomSelect', '5M')
+    };
+
+    const collageData4 = {
+      topLeft: createSlot('topLeftText4', 'topLeftPreviewContainer4', 'topLeftPreview4', 'topLeftSelect4', '1D'),
+      topRight: createSlot('topRightText4', 'topRightPreviewContainer4', 'topRightPreview4', 'topRightSelect4', '4H'),
+      bottomLeft: createSlot('bottomLeftText4', 'bottomLeftPreviewContainer4', 'bottomLeftPreview4', 'bottomLeftSelect4', '1H'),
+      bottomRight: createSlot('bottomRightText4', 'bottomRightPreviewContainer4', 'bottomRightPreview4', 'bottomRightSelect4', '5M')
+    };
+
+    const collageData2 = {
+      left: createSlot('leftText2', 'leftPreviewContainer2', 'leftPreview2', 'leftSelect2', '1D'),
+      right: createSlot('rightText2', 'rightPreviewContainer2', 'rightPreview2', 'rightSelect2', '1H')
+    };
+
+    function createSlot(textId, containerId, imgId, selectId, defaultText) {
+      return {
+        element: document.getElementById(textId),
+        container: document.getElementById(containerId),
+        previewImg: document.getElementById(imgId),
+        select: document.getElementById(selectId),
+        image: null,
+        position: { x: 20, y: 20 },
+        containerSize: { width: 0, height: 0 },
+        imageSize: { width: 0, height: 0 },
+        defaultText: defaultText
+      };
+    }
+
+    // ----- переключение режимов -----
+    function setCollageMode(mode) {
+      collageMode = mode;
+      threeModeBtn.classList.toggle('active', mode === 'three');
+      fourModeBtn.classList.toggle('active', mode === 'four');
+      twoModeBtn.classList.toggle('active', mode === 'two');
+      threeLayout.style.display = mode === 'three' ? 'flex' : 'none';
+      fourLayout.style.display = mode === 'four' ? 'flex' : 'none';
+      twoLayout.style.display = mode === 'two' ? 'flex' : 'none';
+      generateBtn.disabled = true;
+      downloadBtn.disabled = true;
+    }
+
+    threeModeBtn.addEventListener('click', () => setCollageMode('three'));
+    fourModeBtn.addEventListener('click', () => setCollageMode('four'));
+    twoModeBtn.addEventListener('click', () => setCollageMode('two'));
+
+    // ----- перетаскивание текста -----
+    function initDragForData(dataObj) {
+      Object.keys(dataObj).forEach(section => {
+        const { element, container } = dataObj[section];
+        let offsetX, offsetY, dragging = false;
+
+        element.addEventListener('mousedown', (e) => {
+          dragging = true;
+          const rect = element.getBoundingClientRect();
+          offsetX = e.clientX - rect.left;
+          offsetY = e.clientY - rect.top;
+          e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', (e) => {
+          if (!dragging) return;
+          const containerRect = container.getBoundingClientRect();
+          let newX = e.clientX - containerRect.left - offsetX;
+          let newY = e.clientY - containerRect.top - offsetY;
+          newX = Math.max(0, Math.min(newX, containerRect.width - element.offsetWidth));
+          newY = Math.max(0, Math.min(newY, containerRect.height - element.offsetHeight));
+          element.style.left = newX + 'px';
+          element.style.top = newY + 'px';
+          dataObj[section].position = { x: newX, y: newY };
+        });
+
+        window.addEventListener('mouseup', () => {
+          if (dragging) {
+            dragging = false;
+            updateContainerSizes();
+          }
+        });
+      });
+    }
+
+    initDragForData(collageData);
+    initDragForData(collageData4);
+    initDragForData(collageData2);
+
+    // обновление размеров контейнеров
+    function updateContainerSizes() {
+      const activeData = getActiveData();
+      Object.keys(activeData).forEach(key => {
+        const slot = activeData[key];
+        if (slot.previewImg.style.display === 'block') {
+          slot.containerSize = { width: slot.container.offsetWidth, height: slot.container.offsetHeight };
+          slot.imageSize = { width: slot.previewImg.naturalWidth, height: slot.previewImg.naturalHeight };
+        }
+      });
+    }
+
+    function getActiveData() {
+      if (collageMode === 'three') return collageData;
+      if (collageMode === 'four') return collageData4;
+      return collageData2;
+    }
+
+    // синхронизация текста из select
+    function initSelectSync(dataObj) {
+      Object.keys(dataObj).forEach(section => {
+        const slot = dataObj[section];
+        slot.select.addEventListener('change', (e) => {
+          slot.element.textContent = e.target.value || slot.defaultText;
+        });
+        slot.element.textContent = slot.select.value;
+      });
+    }
+    initSelectSync(collageData);
+    initSelectSync(collageData4);
+    initSelectSync(collageData2);
+
+    // ----- загрузка изображений -----
+    function bindImageUpload(inputId, sectionKey, modeOverride) {
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (sectionKey === 'topLeft' || sectionKey === 'topLeft4' || sectionKey === 'left2') {
+          topLeftFileName = file.name.replace(/\.[^/.]+$/, "");
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            let targetData = null;
+            let actualSection = sectionKey;
+            if (modeOverride === 'three') {
+              targetData = collageData;
+            } else if (modeOverride === 'four') {
+              targetData = collageData4;
+              if (sectionKey === 'topLeft4') actualSection = 'topLeft';
+              else if (sectionKey === 'topRight4') actualSection = 'topRight';
+              else if (sectionKey === 'bottomLeft4') actualSection = 'bottomLeft';
+              else if (sectionKey === 'bottomRight4') actualSection = 'bottomRight';
+            } else if (modeOverride === 'two') {
+              targetData = collageData2;
+              if (sectionKey === 'left2') actualSection = 'left';
+              else if (sectionKey === 'right2') actualSection = 'right';
+            }
+            if (targetData && targetData[actualSection]) {
+              targetData[actualSection].image = img;
+              targetData[actualSection].previewImg.src = ev.target.result;
+              targetData[actualSection].previewImg.style.display = 'block';
+            }
+            setTimeout(() => {
+              updateContainerSizes();
+              checkImagesLoaded();
+            }, 80);
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    bindImageUpload('topLeftImage', 'topLeft', 'three');
+    bindImageUpload('topRightImage', 'topRight', 'three');
+    bindImageUpload('bottomImage', 'bottom', 'three');
+    bindImageUpload('topLeftImage4', 'topLeft4', 'four');
+    bindImageUpload('topRightImage4', 'topRight4', 'four');
+    bindImageUpload('bottomLeftImage4', 'bottomLeft4', 'four');
+    bindImageUpload('bottomRightImage4', 'bottomRight4', 'four');
+    bindImageUpload('leftImage2', 'left2', 'two');
+    bindImageUpload('rightImage2', 'right2', 'two');
+
+    function checkImagesLoaded() {
+      const data = getActiveData();
+      const allLoaded = Object.values(data).every(slot => slot.image !== null);
+      generateBtn.disabled = !allLoaded;
+    }
+
+    // ----- генерация коллажа -----
+    function drawTextOnCanvas(ctx, section, text, offsetX, offsetY, targetWidth, targetHeight, dataObj) {
+      const slot = dataObj[section];
+      if (!slot || slot.imageSize.width === 0) return;
+      const scaleX = targetWidth / slot.imageSize.width;
+      const scaleY = targetHeight / slot.imageSize.height;
+      const textX = offsetX + (slot.position.x / slot.containerSize.width) * slot.imageSize.width * scaleX;
+      const textY = offsetY + (slot.position.y / slot.containerSize.height) * slot.imageSize.height * scaleY;
+      ctx.font = 'bold 130px Montserrat, sans-serif';
+      ctx.fillStyle = 'white';
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = 10;
+      ctx.fillText(text, textX, textY + 120);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+    }
+
+    generateBtn.addEventListener('click', () => {
+      resultCanvas.width = COLLAGE_WIDTH;
+      resultCanvas.height = COLLAGE_HEIGHT;
+      const ctx = resultCanvas.getContext('2d');
+      ctx.fillStyle = '#1a1a26';
+      ctx.fillRect(0, 0, COLLAGE_WIDTH, COLLAGE_HEIGHT);
+
+      if (collageMode === 'three') {
+        const w2 = COLLAGE_WIDTH / 2;
+        ctx.drawImage(collageData.topLeft.image, 0, 0, w2, TOP_PART_HEIGHT);
+        drawTextOnCanvas(ctx, 'topLeft', collageData.topLeft.element.textContent, 0, 0, w2, TOP_PART_HEIGHT, collageData);
+        ctx.drawImage(collageData.topRight.image, w2, 0, w2, TOP_PART_HEIGHT);
+        drawTextOnCanvas(ctx, 'topRight', collageData.topRight.element.textContent, w2, 0, w2, TOP_PART_HEIGHT, collageData);
+        ctx.drawImage(collageData.bottom.image, 0, TOP_PART_HEIGHT, COLLAGE_WIDTH, BOTTOM_PART_HEIGHT);
+        drawTextOnCanvas(ctx, 'bottom', collageData.bottom.element.textContent, 0, TOP_PART_HEIGHT, COLLAGE_WIDTH, BOTTOM_PART_HEIGHT, collageData);
+      } else if (collageMode === 'four') {
+        const hw = COLLAGE_WIDTH / 2;
+        const hh = COLLAGE_HEIGHT / 2;
+        ctx.drawImage(collageData4.topLeft.image, 0, 0, hw, hh);
+        drawTextOnCanvas(ctx, 'topLeft', collageData4.topLeft.element.textContent, 0, 0, hw, hh, collageData4);
+        ctx.drawImage(collageData4.topRight.image, hw, 0, hw, hh);
+        drawTextOnCanvas(ctx, 'topRight', collageData4.topRight.element.textContent, hw, 0, hw, hh, collageData4);
+        ctx.drawImage(collageData4.bottomLeft.image, 0, hh, hw, hh);
+        drawTextOnCanvas(ctx, 'bottomLeft', collageData4.bottomLeft.element.textContent, 0, hh, hw, hh, collageData4);
+        ctx.drawImage(collageData4.bottomRight.image, hw, hh, hw, hh);
+        drawTextOnCanvas(ctx, 'bottomRight', collageData4.bottomRight.element.textContent, hw, hh, hw, hh, collageData4);
+      } else if (collageMode === 'two') {
+        const halfH = COLLAGE_HEIGHT / 2;
+        ctx.drawImage(collageData2.left.image, 0, 0, COLLAGE_WIDTH, halfH);
+        drawTextOnCanvas(ctx, 'left', collageData2.left.element.textContent, 0, 0, COLLAGE_WIDTH, halfH, collageData2);
+        ctx.drawImage(collageData2.right.image, 0, halfH, COLLAGE_WIDTH, halfH);
+        drawTextOnCanvas(ctx, 'right', collageData2.right.element.textContent, 0, halfH, COLLAGE_WIDTH, halfH, collageData2);
+      }
+
+      resultCanvas.style.display = 'block';
+      downloadBtn.disabled = false;
+    });
+
+    // скачивание с текстовой колонкой
+    downloadBtn.addEventListener('click', () => {
+      if (!resultCanvas.style.display || resultCanvas.style.display === 'none') return;
+      const text = collageText.value.trim();
+      const finalCanvas = document.createElement('canvas');
+      const finalWidth = text ? COLLAGE_WIDTH + TEXT_COLUMN_WIDTH : COLLAGE_WIDTH;
+      finalCanvas.width = finalWidth;
+      finalCanvas.height = COLLAGE_HEIGHT;
+      const ctx = finalCanvas.getContext('2d');
+      ctx.fillStyle = '#1a1a26';
+      ctx.fillRect(0, 0, finalWidth, COLLAGE_HEIGHT);
+      ctx.drawImage(resultCanvas, 0, 0);
+      if (text) {
+        ctx.fillStyle = '#1e1e2e';
+        ctx.fillRect(COLLAGE_WIDTH, 0, TEXT_COLUMN_WIDTH, COLLAGE_HEIGHT);
+        ctx.fillStyle = 'white';
+        ctx.font = '38px Roboto, sans-serif';
+        const lines = text.split('\n');
+        let y = 70;
+        lines.forEach(line => {
+          if (y > COLLAGE_HEIGHT - 60) return;
+          ctx.fillText(line, COLLAGE_WIDTH + 60, y);
+          y += 52;
+        });
+      }
+      const link = document.createElement('a');
+      link.download = topLeftFileName ? `${topLeftFileName}.png` : 'collage.png';
+      link.href = finalCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    clearTextBtn.addEventListener('click', () => { collageText.value = ''; });
+
+    // ----- объединение коллажей -----
+    const firstCollageInput = document.getElementById('firstCollage');
+    const secondCollageInput = document.getElementById('secondCollage');
+    const firstPreview = document.getElementById('firstCollagePreview');
+    const secondPreview = document.getElementById('secondCollagePreview');
+    const combineBtn = document.getElementById('combineBtn');
+    const downloadCombinedBtn = document.getElementById('downloadCombinedBtn');
+    const combinedCanvas = document.getElementById('combinedCollageCanvas');
+    let firstCollageImg = null, secondCollageImg = null, firstCollageFileName = '';
+
+    function loadCollageImage(input, preview, setImage) {
+      input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (input === firstCollageInput) firstCollageFileName = file.name.replace(/\.[^/.]+$/, "");
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            setImage(img);
+            preview.src = ev.target.result;
+            preview.style.display = 'block';
+            combineBtn.disabled = !(firstCollageImg && secondCollageImg);
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    loadCollageImage(firstCollageInput, firstPreview, (img) => { firstCollageImg = img; });
+    loadCollageImage(secondCollageInput, secondPreview, (img) => { secondCollageImg = img; });
+
+    combineBtn.addEventListener('click', () => {
+      if (!firstCollageImg || !secondCollageImg) return;
+      combinedCanvas.width = COLLAGE_WIDTH;
+      combinedCanvas.height = COLLAGE_HEIGHT * 2;
+      const ctx = combinedCanvas.getContext('2d');
+      ctx.fillStyle = '#1a1a26';
+      ctx.fillRect(0, 0, COLLAGE_WIDTH, COLLAGE_HEIGHT * 2);
+      ctx.drawImage(firstCollageImg, 0, 0, COLLAGE_WIDTH, COLLAGE_HEIGHT);
+      ctx.drawImage(secondCollageImg, 0, COLLAGE_HEIGHT, COLLAGE_WIDTH, COLLAGE_HEIGHT);
+      combinedCanvas.style.display = 'block';
+      downloadCombinedBtn.disabled = false;
+    });
+
+    downloadCombinedBtn.addEventListener('click', () => {
+      if (!combinedCanvas.style.display || combinedCanvas.style.display === 'none') return;
+      const link = document.createElement('a');
+      link.download = firstCollageFileName ? `${firstCollageFileName}-combined.png` : 'combined.png';
+      link.href = combinedCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    window.addEventListener('resize', updateContainerSizes);
+    // начальная установка текста
+    Object.values(collageData).forEach(s => s.element.textContent = s.select.value);
+    Object.values(collageData4).forEach(s => s.element.textContent = s.select.value);
+    Object.values(collageData2).forEach(s => s.element.textContent = s.select.value);
+  })();
+</script>
+</body>
+</html>
