@@ -4946,7 +4946,21 @@ class AlertLineManager {
                         }
                         return;
                     }
-
+   if (data.type === 'updateAlert') {
+                        const list = alerts.get(data.symbol);
+                        if (list) {
+                            const alertObj = list.find(a => a.id === data.id);
+                            if (alertObj) {
+                                alertObj.price = data.price;
+                                alertObj.time = data.time;
+                                alertObj.anchorTime = data.anchorTime;
+                                // Сбрасываем последнюю цену, чтобы алерт не выстрелил ложечно 
+                                // сразу после перемещения линии
+                                lastPrices.delete(data.symbol);
+                            }
+                        }
+                        return;
+                    }
                     if (data.type === 'setActiveSymbol') {
                         activeSymbol = data.symbol;
                         return;
@@ -6025,6 +6039,16 @@ class AlertLineManager {
             this._dragAlert.attached = false;
             this._dragAlert.anchorTime = this._dragAlert.time;
             this._saveAlerts();
+               if (this._worker && this._dragAlert) {
+                this._worker.postMessage({ 
+                    type: 'updateAlert', 
+                    symbol: this._dragAlert.symbol.toUpperCase(), 
+                    id: this._dragAlert.id, 
+                    price: this._dragAlert.price, 
+                    time: this._dragAlert.time,
+                    anchorTime: this._dragAlert.anchorTime
+                });
+            }
             this._dragAlert = null;
             this._requestRedraw();
         }
