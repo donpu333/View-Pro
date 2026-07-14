@@ -5124,67 +5124,72 @@ class AlertLineManager {
             });
         }
     }
+_onWorkerPrice(symbol, price) {
+    if (!symbol || !price || isNaN(price)) return;
 
-     _onWorkerPrice(symbol, price) {
-        if (!symbol || !price || isNaN(price)) return;
-        
-        // 🚨 ФИКС 1: Binance присылает "ADAUSDT", а у вас может быть "adausdt". Приводим к верхнему!
-        symbol = symbol.toUpperCase();
-        
-        const lastPrice = this._lastPrices.get(symbol);
-        this._lastPrices.set(symbol, price);
-        
-        if (lastPrice === undefined) return;
-        
-        const alerts = this._alertsBySymbol.get(symbol);
-        if (!alerts || alerts.length === 0) return;
-        
-        const now = Date.now();
-        
-        for (const alert of alerts) {
-            if (alert.triggered) continue;
-            
-            // 🚨 ФИКС 2: ЭТУ СТРОКУ НУЖНО УДАЛИТЬ! Она навсегда блокирует повторный алерт!
-            // if (alert.active) continue; 
-            
-            if (alert.status === 'paused') continue;
-            if (alert.status === 'completed') continue;
-            if (now - alert.createdAt < 2000) continue;
-            
-            const crossedAbove = lastPrice < alert.price && price >= alert.price;
-            const crossedBelow = lastPrice > alert.price && price <= alert.price;
-            
-            if (crossedAbove || crossedBelow) {
-                console.log(`🔔 ALERT TRIGGERED: ${alert.symbol} at ${price} (alert: ${alert.price})`);
-                
-                // 🚨 ФИКС 3: НЕ ставим active = true! Иначе алерт зависнет.
-                alert.triggerCount = (alert.triggerCount || 0) + 1;
-                alert.lastTriggerTime = now;
-                
-                const item = this._alerts.find(a => a.alert === alert);
-                
+    // Binance может присылать "ADAUSDT", приводим к верхнему регистру
+    symbol = symbol.toUpperCase();
+
+    const lastPrice = this._lastPrices.get(symbol);
+    this._lastPrices.set(symbol, price);
+
+    if (lastPrice === undefined) return; // нет предыдущей цены для сравнения
+
+    const alerts = this._alertsBySymbol.get(symbol);
+    if (!alerts || alerts.length === 0) return;
+
+    const now = Date.now();
+
+    for (const alert of alerts) {
+        if (alert.triggered) continue;
+        // Строка if (alert.active) continue; полностью удалена – иначе блокируются повторы
+        if (alert.status === 'paused') continue;
+        if (alert.status === 'completed') continue;
+        if (now - alert.createdAt < 2000) continue; // защита от ложного срабатывания при создании
+
+        const crossedUp = lastPrice <= alert.price && price >= alert.price;
+        const crossedDown = lastPrice >= alert.price && price <= alert.price;
+
+        let shouldTrigger = false;
+        if (alert.direction === 'above' && crossedUp) {
+            shouldTrigger = true;
+        } else if (alert.direction === 'below' && crossedDown) {
+            shouldTrigger = true;
+        } else if (alert.direction === 'both' && (crossedUp || crossedDown)) {
+            shouldTrigger = true;
+        }
+
+        // ВОТ ЭТО БЫЛО НЕПРАВИЛЬНО: if (crossedAbove || crossedBelow)  — таких переменных нет!
+        if (shouldTrigger) {
+            console.log(`🔔 ALERT TRIGGERED: ${alert.symbol} at ${price} (alert: ${alert.price})`);
+
+            alert.triggerCount = (alert.triggerCount || 0) + 1;
+            alert.lastTriggerTime = now;
+
+            const item = this._alerts.find(a => a.alert === alert);
+
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._startInfiniteHighlight(alert.id);
+            this._showAlertNotification(alert, price, alert.triggerCount > 1);
+            this._sendTelegramAlert(alert, price, alert.triggerCount > 1);
+            this._requestRedraw();
+
+            if (!alert.canTriggerAgain()) {
+                alert.complete();
+                this._stopHighlight(alert.id);
+                if (item && item.primitive && item.series) {
+                    try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+                    item.primitive = null;
+                    item.series = null;
+                }
                 this._saveAlerts();
                 this._updateAlertsListUI();
-                this._startInfiniteHighlight(alert.id);
-                this._showAlertNotification(alert, price, alert.triggerCount > 1);
-                this._sendTelegramAlert(alert, price, alert.triggerCount > 1);
-                this._requestRedraw();
-                
-                if (!alert.canTriggerAgain()) {
-                    alert.complete();
-                    this._stopHighlight(alert.id);
-                    if (item && item.primitive && item.series) {
-                        try { item.series.detachPrimitive(item.primitive); } catch(e) {}
-                        item.primitive = null;
-                        item.series = null;
-                    }
-                    this._saveAlerts();
-                    this._updateAlertsListUI();
-                    setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
-                }
+                setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
             }
         }
     }
+}
     // ==================== ТАЙМЕР АЛЕРТЫ ====================
     
     checkTimerAlerts() {
@@ -5465,7 +5470,7 @@ class AlertLineManager {
 
     // ==================== CRUD ====================
     
-    createAlert(price, time, options = {}) {
+     createAlert(price, time, options = {}) {
         const defaultVisibility = {
             '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
             '1h': true, '4h': true, '6h': true, '12h': true,
@@ -5473,11 +5478,16 @@ class AlertLineManager {
         };
         
         const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        const exchange = this._chartManager.currentExchange || 'binance';
+        
+        // ✅ Нормализуем символ сразу: верхний регистр + удаляем слеши/тире для Bybit
+        const rawSymbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const cleanSymbol = rawSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
         
         const alert = new AlertLine(price, time, {
             ...options,
-            symbol: this._chartManager.currentSymbol,
-            exchange: this._chartManager.currentExchange || 'binance',
+            symbol: cleanSymbol, // <-- Используем очищенный символ
+            exchange: exchange,
             marketType: this._chartManager.currentMarketType || 'futures',
             timeframeVisibility: timeframeVisibility,
             repeatCount: options.repeatCount ?? 5,
