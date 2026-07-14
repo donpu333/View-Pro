@@ -5,8 +5,9 @@ self.onmessage = function(e) {
     
     if (msg.type === 'subscribe') {
         var symbol = (msg.symbol || 'btcusdt').toLowerCase();
+        var key = symbol + ':' + (msg.exchange || 'binance') + ':' + (msg.marketType || 'futures');
         
-        if (connections[symbol]) return;
+        if (connections[key]) return;
         
         var url = 'wss://fstream.binance.com/ws/' + symbol + '@miniTicker';
         
@@ -14,7 +15,7 @@ self.onmessage = function(e) {
             var ws = new WebSocket(url);
             
             ws.onopen = function() {
-                self.postMessage({ type: 'log', message: '[Worker] Open: ' + symbol });
+                self.postMessage({ type: 'log', message: '[Worker] Open: ' + key });
             };
             
             ws.onmessage = function(event) {
@@ -27,31 +28,38 @@ self.onmessage = function(e) {
             };
             
             ws.onclose = function() {
-                delete connections[symbol];
+                delete connections[key];
                 setTimeout(function() {
-                    self.postMessage(msg);
+                    if (!connections[key]) {
+                        self.postMessage(msg);
+                    }
                 }, 5000);
             };
             
             ws.onerror = function() {
-                ws.close();
+                delete connections[key];
+                try { ws.close(); } catch(e) {}
             };
             
-            connections[symbol] = ws;
-        } catch(err) {}
+            connections[key] = ws;
+        } catch(err) {
+            self.postMessage({ type: 'log', message: '[Worker] Error: ' + err.message });
+        }
     }
     
     if (msg.type === 'unsubscribe') {
-        var key = msg.symbol.toLowerCase();
-        if (connections[key]) {
-            connections[key].close();
-            delete connections[key];
+        var symbol = msg.symbol.toLowerCase();
+        for (var k in connections) {
+            if (k.indexOf(symbol) === 0) {
+                try { connections[k].close(); } catch(e) {}
+                delete connections[k];
+            }
         }
     }
     
     if (msg.type === 'destroy') {
         for (var k in connections) {
-            connections[k].close();
+            try { connections[k].close(); } catch(e) {}
         }
         connections = {};
         self.postMessage({ type: 'destroyed' });
