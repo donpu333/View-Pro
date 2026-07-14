@@ -5059,43 +5059,64 @@ class AlertLineManager {
                 }
 
                 // Фоновая проверка для неактивных символов
+                                // Фоновая проверка СРАЗУ ВСЕХ монет (Анти-Бан)
                 setInterval(async () => {
-                    const now = Date.now();
+                    // 1. Вычисляем, какие рынки нам вообще нужны (спот бинанс, фьючи бинанс, спот байт и тд)
+                    const neededMarkets = new Set();
                     for (const [symbol, alertsList] of alerts.entries()) {
                         if (alertsList.length === 0) continue;
-                        if (symbol === activeSymbol) continue;
+                        if (symbol === activeSymbol) continue; // Текущую монету пропускает WS мост
+                                              const a = alertsList[0];
+                        const key = (a.exchange || 'binance') + '_' + (a.marketType || 'futures');
+                        neededMarkets.add(key);
+
+                    if (neededMarkets.size === 0) return;
+
+                    // 2. Делаем всего 1-2 запроса, получая ЦЕНЫ ВСЕХ МОНОТ МИРОМ
+                    const promises = [];
+                    for (const key of neededMarkets) {
+                        const [ex, mt] = key.split('_');
+                        let url = '';
                         
-                        const lastTick = lastPrices.get(symbol);
-                        if (!lastTick || (now - lastTick.time) > 2000) {
-                            try {
-                                const a = alertsList[0];
-                                const ex = a.exchange || 'binance';
-                                const mt = a.marketType || 'futures';
-                                let url = '';
-                                if (ex === 'binance') {
-                                    url = mt === 'spot' 
-                                        ? \`https://api.binance.com/api/v3/ticker/price?symbol=\${symbol}\`
-                                        : \`https://fapi.binance.com/fapi/v1/ticker/price?symbol=\${symbol}\`;
-                                } else if (ex === 'bybit') {
-                                    url = mt === 'spot'
-                                        ? \`https://api.bybit.com/v5/market/tickers?category=spot&symbol=\${symbol}\`
-                                        : \`https://api.bybit.com/v5/market/tickers?category=linear&symbol=\${symbol}\`;
-                                }
-                                
-                                if (url) {
-                                    const res = await fetch(url);
-                                    const data = await res.json();
-                                    let price = null;
-                                    if (ex === 'binance') price = parseFloat(data.price);
-                                    else if (ex === 'bybit' && data.result?.list?.[0]) price = parseFloat(data.result.list[0].lastPrice);
-                                    
-                                    if (price && !isNaN(price)) {
-                                        checkAlerts(symbol, price);
-                                    }
-                                }
-                            } catch (e) {}
+                        // ФИШКА: Не указываем symbol! Биржа вернет массив всех цен
+                        if (ex === 'binance') {
+                            url = mt === 'spot' 
+                                ? 'https://api.binance.com/api/v3/ticker/price' 
+                                : 'https://fapi.binance.com/fapi/v1/ticker/price';
+                        } else if (ex === 'bybit') {
+                            url = mt === 'spot'
+                                ? 'https://api.bybit.com/v5/market/tickers?category=spot'
+                                : 'https://api.bybit.com/v5/market/tickers?category=linear';
+                        }
+
+                        if (url) {
+                            promises.push(
+                                fetch(url)
+                                    .then(r => r.json())
+                                    .then(data => {
+                                        if (ex === 'binance') {
+                                            // data = [{"symbol":"BTCUSDT","price":"60000"}, ...]
+                                            for (const tick of data) {
+                                                const sym = tick.symbol?.toUpperCase();
+                                                if (sym && alerts.has(sym)) {
+                                                    checkAlerts(sym, parseFloat(tick.price));
+                                                }
+                                            }
+                                        } else if (ex === 'bybit' && data.result?.list) {
+                                            // data.result.list = [{"symbol":"BTCUSDT","lastPrice":"60000"}, ...]
+                                            for (const tick of data.result.list) {
+                                                const sym = tick.symbol?.toUpperCase();
+                                                if (sym && alerts.has(sym)) {
+                                                    checkAlerts(sym, parseFloat(tick.lastPrice));
+                                                }
+                                            }
+                                        }
+                                    })
+                                    .catch(() => {})
+                            );
                         }
                     }
+                    await Promise.all(promises);
                 }, 3000);
             `;
 
