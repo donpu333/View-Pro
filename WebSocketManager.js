@@ -142,7 +142,7 @@ if (k) {
         ws.onerror = () => {};
     }
 
-    connectTrade(symbol, exchange, marketType) {
+       connectTrade(symbol, exchange, marketType) {
         if (!symbol) { symbol = this.currentSymbol || 'BTCUSDT'; }
         if (!exchange) { exchange = this.currentExchange || 'binance'; }
         if (!marketType) { marketType = this.currentMarketType || 'futures'; }
@@ -199,6 +199,16 @@ wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
                     if (self.chartManager._syncPriceLine) {
                         self.chartManager._syncPriceLine(price);
                     }
+                    
+                    // === МОСТ ДЛЯ АЛЕРТОВ ===
+                    if (window.alertLineManager?._worker) {
+                        window.alertLineManager._worker.postMessage({ 
+                            type: 'tick', 
+                            symbol: symbol.toUpperCase(), 
+                            price: price 
+                        });
+                    }
+                    // ==========================
                 }
             } catch(e) {}
         };
@@ -214,7 +224,6 @@ wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
 
         ws.onerror = () => {};
     }
-
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         this.connectKline(symbol, interval, exchange, marketType);
         this.connectTrade(symbol, exchange, marketType);
