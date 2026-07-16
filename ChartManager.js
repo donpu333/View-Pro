@@ -1007,11 +1007,16 @@ _syncPriceLine(price) {
         
         // ✅ СТАЛО: Откладываем расчет индикаторов на следующий кадр (frame), 
         // чтобы свечи появились на экране мгновенно, а индикаторы "дорисовались" следом
+               // 🔥 ОТКЛАДЫВАЕМ тяжелую математику индикаторов на 2 кадра
+        // Кадр 1: Браузер рисует свечи и объем (мгновенно)
+        // Кадр 2: Браузер начинает считать индикаторы в фоне
         if (this.indicatorManager) {
             this.indicatorManager.restorePendingIndicators();
             requestAnimationFrame(() => {
-                this.indicatorManager.updateAllIndicators();
-                this.indicatorManager.loadIndicators();
+                requestAnimationFrame(() => {
+                    this.indicatorManager.updateAllIndicators();
+                    this.indicatorManager.loadIndicators();
+                });
             });
         }
 
@@ -1069,18 +1074,22 @@ _syncPriceLine(price) {
             window._sessionHighlighter = new SessionHighlighter(this);
         }
     }
-    async loadDrawingsForCurrentSymbol() {
-        // ✅ УБРАНА задержка в 100мс
+      loadDrawingsForCurrentSymbol() {
         const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
-        console.log('🎨 Загрузка рисунков для:', key);
+        // console.log('🎨 Фоновая загрузка рисунков для:', key); // Можно раскомментировать для отладки
 
-        await Promise.all([
-            window.rayManager?.loadRays(),
-            window.trendLineManager?.loadTrendLines(),
-            window.rulerLineManager?.loadRulers(),
-            window.alertLineManager?.loadAlerts(),
-            window.textManager?.loadTexts()
-        ].filter(Boolean));
+        // Запускаем все загрузки параллельно, но НЕ ждем их завершения (нет await)
+        // График уже отрисован, пользователь видит цену, а линии дорисуются через кадр
+        Promise.allSettled([
+            window.rayManager?.loadRays?.(),
+            window.trendLineManager?.loadTrendLines?.(),
+            window.rulerLineManager?.loadRulers?.(),
+            window.alertLineManager?.loadAlerts?.(),
+            window.textManager?.loadTexts?.()
+        ]).then(() => {
+            // После загрузки данных просим перерисовать их на холсте
+            this.requestDrawingsRedraw();
+        });
     }
 
     // 🔥 O(1) поиск через Map
@@ -1781,7 +1790,7 @@ if (priceScale) {
         }
     }
 
-    async switchSymbol(symbol, exchange, marketType) {
+          async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol) {
             console.warn('⚠️ Переключение уже выполняется, игнорируем');
             return;
@@ -1790,40 +1799,53 @@ if (priceScale) {
 
         try {
             console.log(`🔄 ПЕРЕКЛЮЧЕНИЕ: ${this.currentSymbol} → ${symbol}`);
-
             this._abortAllProcesses();
 
+            // 1. Мгновенная очистка
             this.candleSeries.setData([]);
             this.barSeries.setData([]);
             if (this.volumeSeries) this.volumeSeries.setData([]);
             this.chartData = [];
             this.lastCandle = null;
             this._candleTimeMap.clear();
-            
-            if (this.currentSymbol !== symbol) {
-                this.currentRealPrice = null;
-            }
+            this.currentRealPrice = null;
             this._lastAppliedColor = null;
 
             this.currentSymbol = symbol;
             this.currentExchange = exchange;
             this.currentMarketType = marketType;
-            
-            getPrecisionFromExchange(symbol, exchange, marketType).then(p => {
-                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, p);
-            }).catch(() => {});
-            
-            const candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+
+            // 2. Применяем кэшированный precision МГНОВЕННО
+            const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+            if (cachedPrecision) {
+                this.applyPriceFormat(parseInt(cachedPrecision));
+            }
+
+            // 3. 🔥 CACHE-FIRST: Пробуем загрузить из IndexedDB (это < 5мс)
+            let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
+            let isFromCache = !!candles;
+
+            // 4. Если кэша нет, делаем сетевой запрос (БЕЗ индикатора загрузки)
+            if (!isFromCache) {
+                candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+            }
 
             if (!candles || candles.length === 0) {
                 throw new Error('Нет данных для ' + symbol);
             }
 
+            // 5. Мгновенно рендерим данные (из кэша или сети)
             this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
+
+            // 6. Сохраняем свежие данные в кэш фоном (не блокируем UI)
+            if (!isFromCache) {
+                this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
+            }
 
             this._subscribeToPrice();
 
-            await this.loadDrawingsForCurrentSymbol();
+            // 7. Загружаем рисунки в фоне (fire-and-forget)
+            this.loadDrawingsForCurrentSymbol();
 
             if (this.timerManager) {
                 this.timerManager.destroy();
@@ -1833,9 +1855,13 @@ if (priceScale) {
             localStorage.setItem('lastSymbol', symbol);
             localStorage.setItem('lastExchange', exchange);
             localStorage.setItem('lastMarketType', marketType);
-
-         
+            
             this._notifySymbolChange();
+
+            // 8. ФОНОВОЕ ОБНОВЛЕНИЕ: Если мы показали кэш, тихо подтянем свежие свечи с биржи
+            if (isFromCache) {
+                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
+            }
 
         } catch (error) {
             console.error('❌ Ошибка переключения:', error);
@@ -1843,7 +1869,6 @@ if (priceScale) {
             this._switchingSymbol = false;
         }
     }
-
     updateColorsForSettings(bullishColor, bearishColor) {
         CONFIG.colors.bullish = bullishColor;
         CONFIG.colors.bearish = bearishColor;
