@@ -16,6 +16,7 @@ class TickerRenderer {
         this._injectFlashCSS();
 
         this.SCROLL_BUFFER = 10;
+         this._formatCache = new Map();
     }
 
     _injectFlashCSS() {
@@ -459,38 +460,71 @@ class TickerRenderer {
         return div;
     }
 
-    formatPrice(price) {
+     formatPrice(price) {
         if (!price || price <= 0) return '...';
+        const key = 'p' + price;
+        if (this._formatCache.has(key)) return this._formatCache.get(key);
+
+        // ✅ Быстрая обрезка нулей без медленного RegExp
         let str = price.toFixed(8);
-        str = str.replace(/\.?0+$/, '');
+        let end = str.length;
+        while (end > 0 && str[end - 1] === '0') end--;
+        if (end > 0 && str[end - 1] === '.') end--;
+        str = str.substring(0, end);
+        
         if (!str.includes('.')) str += '.00';
         else {
             const parts = str.split('.');
-            if (parts[1].length < 2) str = str.padEnd(str.length + (2 - parts[1].length), '0');
+            if (parts[1].length < 2) str += '0'.repeat(2 - parts[1].length);
         }
+        
+        this._formatCache.set(key, str);
+        if (this._formatCache.size > 5000) this._formatCache.clear(); // Мгновенная очистка без GC-пауз
         return str;
     }
 
     formatChange(change) {
         if (change === undefined || change === null) return '0.00';
-        return (change > 0 ? '+' : '') + change.toFixed(2);
+        const key = 'c' + change;
+        if (this._formatCache.has(key)) return this._formatCache.get(key);
+
+        const result = (change > 0 ? '+' : '') + change.toFixed(2);
+        this._formatCache.set(key, result);
+        if (this._formatCache.size > 5000) this._formatCache.clear();
+        return result;
     }
 
     formatVolume(volume) {
         if (!volume || volume === 0) return '0';
-        if (volume >= 1e9) return (volume / 1e9).toFixed(2) + 'B';
-        if (volume >= 1e6) return (volume / 1e6).toFixed(2) + 'M';
-        if (volume >= 1e3) return (volume / 1e3).toFixed(2) + 'K';
-        if (volume < 1) return volume.toFixed(4);
-        return volume.toFixed(2);
+        const key = 'v' + volume;
+        if (this._formatCache.has(key)) return this._formatCache.get(key);
+
+        let result;
+        if (volume >= 1e9) result = (volume / 1e9).toFixed(2) + 'B';
+        else if (volume >= 1e6) result = (volume / 1e6).toFixed(2) + 'M';
+        else if (volume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
+        else if (volume < 1) result = volume.toFixed(4);
+        else result = volume.toFixed(2);
+        
+        this._formatCache.set(key, result);
+        if (this._formatCache.size > 5000) this._formatCache.clear();
+        return result;
     }
 
     formatTrades(trades) {
         if (!trades || trades <= 0) return '—';
-        if (trades > 1e9) return (trades / 1e9).toFixed(1) + 'B';
-        if (trades > 1e6) return (trades / 1e6).toFixed(1) + 'M';
-        if (trades > 1e3) return (trades / 1e3).toFixed(1) + 'K';
-        return trades.toString();
+        const key = 't' + trades;
+        if (this._formatCache.has(key)) return this._formatCache.get(key);
+
+        let result;
+        if (trades > 1e9) result = (trades / 1e9).toFixed(1) + 'B';
+        else if (trades > 1e6) result = (trades / 1e6).toFixed(1) + 'M';
+        else if (trades > 1e3) result = (trades / 1e3).toFixed(1) + 'K';
+        else result = trades.toString();
+        
+        this._formatCache.set(key, result);
+        if (this._formatCache.size > 5000) this._formatCache.clear();
+        return result;
     }
 
     // ✅ УДАЛЕНО: startCacheCleanup и stopCacheCleanup (они больше не нужны)
