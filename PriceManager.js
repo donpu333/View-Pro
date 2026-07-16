@@ -7,21 +7,23 @@ class PriceManager {
         this.pingIntervals = new Map();
         this._pendingUpdates = new Map();
         this._flushRafId = null;
+        
         this._restPollInterval = null;
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
         this._connectionState = {};
-        this._initInProgress = false; // флаг, чтобы не запускать _init дважды
+        this._initInProgress = false; // Флаг, чтобы не запускать _init дважды
         
-        // Увеличенные задержки для снижения частоты реконнектов
+        // Оптимизированные настройки для максимальной стабильности
         this.config = {
-            reconnectDelay: 15000,        // 15 секунд вместо 5
-            maxReconnectDelay: 120000,    // 2 минуты
-            restPollInterval: 10000,
-            bybitPingInterval: 20000,
-            startupDelay: 2000            // задержка между подключениями при старте
+            reconnectDelay: 15000,        // 15 секунд базовой задержки
+            maxReconnectDelay: 120000,    // Максимум 2 минуты
+            restPollInterval: 10000,      // REST-опрос каждые 10 сек
+            bybitPingInterval: 20000,     // Пинг для Bybit каждые 20 сек
+            startupDelay: 2000            // Задержка 2 сек между подключениями при старте
         };
+        
         this._init();
     }
     
@@ -29,7 +31,7 @@ class PriceManager {
         if (this._initInProgress) return;
         this._initInProgress = true;
         
-        // Запускаем подключения с задержкой, чтобы не создавать 4 сокета одновременно
+        // Запускаем подключения с задержкой, чтобы не создавать 4 сокета одновременно (защита от soft-ban)
         const connectSequence = [
             () => this._connectBinanceFutures(),
             () => this._connectBinanceSpot(),
@@ -48,7 +50,7 @@ class PriceManager {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager запущен (REST каждые 10 сек, подключения с задержкой)');
+        console.log('✅ PriceManager v10 запущен (REST каждые 10 сек, подключения с задержкой)');
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
@@ -77,7 +79,6 @@ class PriceManager {
     }
     
     _connectBinance(key, url, onMessageHandler) {
-        // Очищаем старые таймеры и закрываем сокет
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
             this.reconnectTimers.delete(key);
@@ -87,7 +88,6 @@ class PriceManager {
             this.connections[key] = null;
         }
         
-        // Создаём новое соединение
         const ws = new WebSocket(url);
         this.connections[key] = ws;
         this._connectionAttempts[key] = (this._connectionAttempts[key] || 0) + 1;
@@ -114,20 +114,22 @@ class PriceManager {
         ws.onclose = () => {
             this._connectionState[key] = 'closed';
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
+            
             // Экспоненциальная задержка с увеличением при повторных попытках
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
                 this.config.maxReconnectDelay
             );
-            console.warn(`⚠️ ${key} закрыт, реконнект через ${delay/1000}с (попытка ${attempts+1})`);
+            console.warn(`⚠️ ${key} закрыт, реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            
             this.reconnectTimers.set(key, setTimeout(() => {
                 this._connectBinance(key, url, onMessageHandler);
             }, delay));
         };
         
-        ws.onerror = (error) => {
-            // Игнорируем ошибки, они обрабатываются в onclose
+        ws.onerror = () => {
+            // Игнорируем, обработка идет в onclose
         };
     }
     
@@ -149,6 +151,7 @@ class PriceManager {
             try { this.connections[key].close(1000); } catch(e) {}
             this.connections[key] = null;
         }
+        
         const ws = new WebSocket(url);
         this.connections[key] = ws;
         this._connectionAttempts[key] = (this._connectionAttempts[key] || 0) + 1;
@@ -177,12 +180,14 @@ class PriceManager {
             this._connectionState[key] = 'closed';
             this._stopPing(key);
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
+            
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
                 this.config.maxReconnectDelay
             );
-            console.warn(`⚠️ ${key} закрыт, реконнект через ${delay/1000}с (попытка ${attempts+1})`);
+            console.warn(`⚠️ ${key} закрыт, реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            
             this.reconnectTimers.set(key, setTimeout(() => {
                 this._connectBybit(key, url, marketKey, marketType);
             }, delay));
@@ -269,7 +274,8 @@ class PriceManager {
                 const price = parseFloat(ticker.price);
                 if (ticker.symbol && price && !isNaN(price)) {
                     this._setPrice(ticker.symbol, price, 'binance', marketType);
-                    window.alertLineManager._checkAlerts(ticker.symbol, price, 'binance', marketType);
+                    // ✅ ИСПРАВЛЕНО: Добавлена безопасная проверка optional chaining (?.)
+                    window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'binance', marketType);
                 }
             }
         } catch(e) {}
@@ -278,19 +284,24 @@ class PriceManager {
     async _fetchBybitRest(symbols, marketType) {
         try {
             const category = marketType === 'futures' ? 'linear' : 'spot';
-            const url = `https://api.bybit.com/v5/market/tickers?category=${category}`;
-            const response = await this._fetchWithRetry(url);
-            if (!response) return;
-            const data = await response.json();
-            if (data.retCode !== 0 || !data.result?.list) return;
             
-            const symbolSet = new Set(symbols);
-            for (const ticker of data.result.list) {
-                if (symbolSet.has(ticker.symbol)) {
+            // ✅ ИСПРАВЛЕНО: Запрашиваем ТОЛЬКО нужные символы через Promise.all, 
+            // а не тянем весь рынок ради 2-3 алертов.
+            const tasks = symbols.map(sym => 
+                fetch(`https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${sym}`)
+                    .then(r => r.json())
+                    .catch(() => null)
+            );
+            
+            const results = await Promise.all(tasks);
+            
+            for (const data of results) {
+                if (data?.retCode === 0 && data.result?.list?.[0]) {
+                    const ticker = data.result.list[0];
                     const price = parseFloat(ticker.lastPrice);
                     if (price && !isNaN(price)) {
                         this._setPrice(ticker.symbol, price, 'bybit', marketType);
-                        window.alertLineManager._checkAlerts(ticker.symbol, price, 'bybit', marketType);
+                        window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
                     }
                 }
             }
@@ -322,9 +333,14 @@ class PriceManager {
     // ========== УСТАНОВКА ЦЕНЫ ==========
     _setPrice(symbol, price, exchange, marketType) {
         if (!symbol || isNaN(price) || price <= 0) return;
+        
         const key = `${symbol}:${exchange}:${marketType}`;
         const old = this.prices.get(key);
-        if (old && Math.abs(price - old.price) / old.price < 0.0001) return;
+        
+        // ✅ ИСПРАВЛЕНО: Простое строгое неравенство. 
+        // Избегаем проблем с плавающей точкой для дешевых монет.
+        // WS биржи и так шлет обновление только при реальном изменении цены.
+        if (old && old.price === price) return;
         
         this.prices.set(key, { price, time: Date.now() });
         this._pendingUpdates.set(key, { price, symbol, exchange, marketType });
@@ -345,7 +361,7 @@ class PriceManager {
             });
         }
     }
-    
+
     // ========== ПОДПИСКА ==========
     subscribe(key, callback) {
         if (!this.subscribers.has(key)) this.subscribers.set(key, []);
