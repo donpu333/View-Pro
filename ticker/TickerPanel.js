@@ -96,7 +96,7 @@ class TickerPanel {
         this.formatChange = this.renderer.formatChange.bind(this.renderer);
         this.formatVolume = this.renderer.formatVolume.bind(this.renderer);
         this.formatTrades = this.renderer.formatTrades.bind(this.renderer);
-        this.startCacheCleanup = this.renderer.startCacheCleanup.bind(this.renderer);
+       
         this.setupHeaderSorting = this.renderer.setupHeaderSorting.bind(this.renderer);
         
         this.setupModal = this.modal.setupModal.bind(this.modal);
@@ -190,7 +190,6 @@ class TickerPanel {
             await this.loadUserData();
             if (this.watchlistManager) this.watchlistManager.syncActiveListFromPanel();
             this.initializeDataParallel();
-            this.startCacheCleanup();
             this.updateModalWithData?.();
             if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
 
