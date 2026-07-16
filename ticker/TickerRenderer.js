@@ -145,7 +145,32 @@ class TickerRenderer {
             console.log(`🔄 Обновлено ${domUpdates} DOM-элементов`);
         }
     }
+    // =========================================================================
+    // ⚡ ТОЧЕЧНОЕ ОБНОВЛЕНИЕ КОНКРЕТНОГО ТИКЕРА (для мгновенных WebSocket обновлений)
+    // =========================================================================
+    updatePriceForSymbol(key, price, change) {
+        const el = this.tickerElements.get(key);
+        if (!el || !el.isConnected) return;
 
+        const ticker = this.parent.tickersMap?.get(key);
+        if (!ticker) return;
+
+        const els = el._cachedEls || {};
+        
+        // Обновляем цену с анимацией мигания
+        if (els.price) {
+            this._updatePriceWithAnimation(els.price, ticker);
+        }
+        
+        // Обновляем процент изменения (если он вдруг изменился)
+        if (els.change) {
+            const newChange = this.formatChange(ticker.change) + '%';
+            if (els.change.textContent !== newChange) {
+                els.change.textContent = newChange;
+                els.change.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
+            }
+        }
+    }
     // =========================================================================
     // 🔄 СОРТИРОВКА ТИКЕРОВ (ВОЗВРАЩАЕТ НОВЫЙ МАССИВ)
     // =========================================================================
