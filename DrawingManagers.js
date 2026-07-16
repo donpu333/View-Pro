@@ -6188,37 +6188,52 @@ class AlertLineManager {
         this._showSystemNotification(alert, currentPrice, isRepeat);
     }
 
-    _playAlertSound() {
+      _playAlertSound() {
         try {
+            // 1. Пробуем использовать стандартный аудио-тег, если он есть
             const audio = document.getElementById('alertSound');
             if (audio && audio.src && audio.src !== '') {
                 audio.currentTime = 0;
-                audio.play().catch(e => console.log('Звук не воспроизвёлся:', e));
+                // Добавляем catch, чтобы ошибка не ломала выполнение
+                audio.play().catch(e => {
+                    // Тихо игнорируем ошибку автовоспроизведения
+                });
                 return;
             }
+
+            // 2. Если тега нет, используем Web Audio API
             const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (AudioContext) {
-                const ctx = new AudioContext();
-                if (ctx.state === 'suspended') ctx.resume();
-                const now = ctx.currentTime;
-                const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
-                melody.forEach((freq, i) => {
-                    const startTime = now + i * 0.15;
-                    const osc = ctx.createOscillator();
-                    const gain = ctx.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.value = freq;
-                    gain.gain.setValueAtTime(0, startTime);
-                    gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
-                    gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
-                    osc.connect(gain);
-                    gain.connect(ctx.destination);
-                    osc.start(startTime);
-                    osc.stop(startTime + 0.2);
+            if (!AudioContext) return;
+
+            const ctx = new AudioContext();
+            
+            // ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Пытаемся возобновить контекст
+            if (ctx.state === 'suspended') {
+                ctx.resume().catch(() => {
+                    // Если браузер все еще блокирует, просто игнорируем
                 });
             }
+
+            const now = ctx.currentTime;
+            const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
+            
+            melody.forEach((freq, i) => {
+                const startTime = now + i * 0.15;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0, startTime);
+                gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(startTime);
+                osc.stop(startTime + 0.2);
+            });
         } catch (e) {
-            console.warn('Ошибка воспроизведения звука:', e);
+            // ✅ Полностью подавляем спам в консоль от ошибок автовоспроизведения
+            // console.warn('Звук заблокирован браузером. Кликните по странице, чтобы включить.');
         }
     }
 
