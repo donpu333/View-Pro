@@ -214,6 +214,9 @@ class TickerModal {
     // =========================================================================
     // ✕ СОЗДАНИЕ КНОПКИ ОЧИСТКИ
     // =========================================================================
+      // =========================================================================
+    // ✕ СОЗДАНИЕ КНОПКИ ОЧИСТКИ (ИСПРАВЛЕНО: КРУГ УБРАН, ЦЕНТРИРОВАНИЕ ИДЕАЛЬНОЕ)
+    // =========================================================================
     createClearButton(modalSearch) {
         if (!modalSearch) return;
 
@@ -234,6 +237,8 @@ class TickerModal {
         clearBtn.innerHTML = '✕';
         clearBtn.title = 'Очистить поиск';
         clearBtn.setAttribute('aria-label', 'Очистить поле поиска');
+        
+        // ✅ КРУГ УБРАН, FLEXBOX ГАРАНТИРУЕТ ИДЕАЛЬНЫЙ ЦЕНТР
         clearBtn.style.cssText = `
             position: absolute;
             right: 32px;
@@ -242,30 +247,28 @@ class TickerModal {
             width: 20px;
             height: 20px;
             border: none;
-            background: #666;
-            color: #fff;
-            border-radius: 50%;
+            background: transparent !important;
+            color: #888;
+            border-radius: 0 !important;
             cursor: pointer;
-            display: none;
-            font-size: 11px;
-            line-height: 20px;
-            padding: 0;
-            text-align: center;
-            transition: all 0.15s ease;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 0 !important;
+            margin: 0 !important;
+            line-height: 1 !important;
+            transition: color 0.15s ease, transform 0.15s ease;
             z-index: 20;
-            flex-shrink: 0;
-            opacity: 0.8;
+            align-items: center;
+            justify-content: center;
         `;
         
         clearBtn.onmouseenter = () => {
-            clearBtn.style.background = '#f23645';
+            clearBtn.style.color = '#f23645';
             clearBtn.style.transform = 'translateY(-50%) scale(1.2)';
-            clearBtn.style.opacity = '1';
         };
         clearBtn.onmouseleave = () => {
-            clearBtn.style.background = '#666';
+            clearBtn.style.color = '#888';
             clearBtn.style.transform = 'translateY(-50%) scale(1)';
-            clearBtn.style.opacity = '0.8';
         };
         
         clearBtn.onclick = (e) => {
@@ -285,7 +288,6 @@ class TickerModal {
         
         searchWrapper.appendChild(clearBtn);
     }
-
     // =========================================================================
     // ⌨️ ЛИСТЕНЕРЫ ПОИСКА - ИСПРАВЛЕННАЯ ВЕРСИЯ
     // =========================================================================
