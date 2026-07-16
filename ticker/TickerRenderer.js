@@ -495,30 +495,11 @@ class TickerRenderer {
     // =========================================================================
     // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ (с защитой от floating point)
     // =========================================================================
+       // =========================================================================
+    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ (Без кэша, V8 сделает это быстрее)
+    // =========================================================================
     formatPrice(price) {
         if (!price || price <= 0) return '...';
-        const now = Date.now();
-        const cache = this.parent?.formatCache?.prices;
-        // ✅ Строковый ключ для избежания проблем с плавающей точкой
-        const key = price.toFixed(8);
-        if (cache) {
-            const cached = cache.get(key);
-            if (cached && (now - cached.timestamp) < (this.parent?.cacheMaxAge || 5000)) {
-                return cached.value;
-            }
-        }
-        const result = this._formatAsIs(price);
-        if (cache) {
-            cache.set(key, { value: result, timestamp: now });
-            if (cache.size > this.CACHE_MAX_SIZE) {
-                const oldestKey = cache.keys().next().value;
-                cache.delete(oldestKey);
-            }
-        }
-        return result;
-    }
-
-    _formatAsIs(price) {
         let str = price.toFixed(8);
         str = str.replace(/\.?0+$/, '');
         if (!str.includes('.')) str += '.00';
@@ -530,58 +511,27 @@ class TickerRenderer {
     }
 
     // =========================================================================
-    // 📈 ФОРМАТИРОВАНИЕ ИЗМЕНЕНИЯ % (строковый ключ)
+    // 📈 ФОРМАТИРОВАНИЕ ИЗМЕНЕНИЯ % (Без кэша)
     // =========================================================================
     formatChange(change) {
         if (change === undefined || change === null) return '0.00';
-        const now = Date.now();
-        const cache = this.parent?.formatCache?.changes;
-        const key = change.toFixed(2);
-        if (cache) {
-            const cached = cache.get(key);
-            if (cached && (now - cached.timestamp) < (this.parent?.cacheMaxAge || 5000)) return cached.value;
-        }
-        const result = (change > 0 ? '+' : '') + change.toFixed(2);
-        if (cache) {
-            cache.set(key, { value: result, timestamp: now });
-            if (cache.size > this.CACHE_MAX_SIZE) {
-                const oldestKey = cache.keys().next().value;
-                cache.delete(oldestKey);
-            }
-        }
-        return result;
+        return (change > 0 ? '+' : '') + change.toFixed(2);
     }
 
     // =========================================================================
-    // 📊 ФОРМАТИРОВАНИЕ ОБЪЁМА (строковый ключ)
+    // 📊 ФОРМАТИРОВАНИЕ ОБЪЁМА (Без кэша)
     // =========================================================================
     formatVolume(volume) {
         if (!volume || volume === 0) return '0';
-        const now = Date.now();
-        const cache = this.parent?.formatCache?.volumes;
-        const key = volume.toFixed(4);
-        if (cache) {
-            const cached = cache.get(key);
-            if (cached && (now - cached.timestamp) < (this.parent?.cacheMaxAge || 5000)) return cached.value;
-        }
-        let result;
-        if (volume >= 1e9) result = (volume / 1e9).toFixed(2) + 'B';
-        else if (volume >= 1e6) result = (volume / 1e6).toFixed(2) + 'M';
-        else if (volume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
-        else if (volume < 1) result = volume.toFixed(4);
-        else result = volume.toFixed(2);
-        if (cache) {
-            cache.set(key, { value: result, timestamp: now });
-            if (cache.size > this.CACHE_MAX_SIZE) {
-                const oldestKey = cache.keys().next().value;
-                cache.delete(oldestKey);
-            }
-        }
-        return result;
+        if (volume >= 1e9) return (volume / 1e9).toFixed(2) + 'B';
+        if (volume >= 1e6) return (volume / 1e6).toFixed(2) + 'M';
+        if (volume >= 1e3) return (volume / 1e3).toFixed(2) + 'K';
+        if (volume < 1) return volume.toFixed(4);
+        return volume.toFixed(2);
     }
 
     // =========================================================================
-    // 🔢 ФОРМАТИРОВАНИЕ СДЕЛОК (унифицированный: принимает число)
+    // 🔢 ФОРМАТИРОВАНИЕ СДЕЛОК
     // =========================================================================
     formatTrades(trades) {
         if (!trades || trades <= 0) return '—';
@@ -590,7 +540,6 @@ class TickerRenderer {
         if (trades > 1e3) return (trades / 1e3).toFixed(1) + 'K';
         return trades.toString();
     }
-
     // =========================================================================
     // 🧹 ОЧИСТКА КЭША ФОРМАТИРОВАНИЯ
     // =========================================================================
