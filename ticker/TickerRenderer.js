@@ -11,15 +11,11 @@ class TickerRenderer {
         this._renderRafId = null;
         this._firstRender = true;
         this._updatePriceRaf = null;
-        this._cleanupIntervalId = null;
-        this._cleanupStarted = false;
         this._escapeDiv = document.createElement('div');
 
         this._injectFlashCSS();
 
         this.SCROLL_BUFFER = 10;
-        this.CACHE_MAX_SIZE = 500;
-        this.CACHE_CLEANUP_INTERVAL = 30000;
     }
 
     _injectFlashCSS() {
@@ -52,9 +48,6 @@ class TickerRenderer {
         return this._escapeDiv.innerHTML;
     }
 
-    // =========================================================================
-    // 💫 УНИВЕРСАЛЬНЫЙ МЕТОД ОБНОВЛЕНИЯ ЦЕНЫ С АНИМАЦИЕЙ
-    // =========================================================================
     _updatePriceWithAnimation(priceEl, ticker) {
         if (!priceEl || !ticker) return false;
 
@@ -74,13 +67,12 @@ class TickerRenderer {
         if (flashClass) classes.push(flashClass);
         priceEl.className = classes.join(' ');
 
-        // ✅ Исправлено: сброс анимации через getAnimations() вместо offsetWidth
         if (flashClass) {
             priceEl.classList.remove('flash-up', 'flash-down');
             if (priceEl.getAnimations) {
                 priceEl.getAnimations().forEach(anim => anim.cancel());
             } else {
-                void priceEl.offsetWidth; // fallback для старых браузеров
+                void priceEl.offsetWidth; 
             }
             priceEl.classList.add(flashClass);
         }
@@ -88,9 +80,6 @@ class TickerRenderer {
         return true;
     }
 
-    // =========================================================================
-    // ⚡ RAF-троттлинг — DOM обновляется строго 1 раз за кадр (60fps)
-    // =========================================================================
     updatePriceElements() {
         if (this._updatePriceRaf) return;
         this._updatePriceRaf = requestAnimationFrame(() => {
@@ -101,7 +90,7 @@ class TickerRenderer {
 
     _doUpdatePriceElements() {
         let domUpdates = 0;
-        const formatCache = this.parent?.formatCache;
+        // ✅ Убрана неиспользуемая переменная formatCache
 
         for (const [key, el] of this.tickerElements.entries()) {
             if (!el || !el.isConnected) continue;
@@ -133,7 +122,6 @@ class TickerRenderer {
                 domUpdates++;
             }
 
-            // ✅ Унифицированный вызов: теперь передаём ticker.trades
             const newTrades = this.formatTrades(ticker.trades);
             if (tradesEl && tradesEl.textContent !== newTrades) {
                 tradesEl.textContent = newTrades;
@@ -145,9 +133,7 @@ class TickerRenderer {
             console.log(`🔄 Обновлено ${domUpdates} DOM-элементов`);
         }
     }
-    // =========================================================================
-    // ⚡ ТОЧЕЧНОЕ ОБНОВЛЕНИЕ КОНКРЕТНОГО ТИКЕРА (для мгновенных WebSocket обновлений)
-    // =========================================================================
+
     updatePriceForSymbol(key, price, change) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
@@ -157,12 +143,10 @@ class TickerRenderer {
 
         const els = el._cachedEls || {};
         
-        // Обновляем цену с анимацией мигания
         if (els.price) {
             this._updatePriceWithAnimation(els.price, ticker);
         }
         
-        // Обновляем процент изменения (если он вдруг изменился)
         if (els.change) {
             const newChange = this.formatChange(ticker.change) + '%';
             if (els.change.textContent !== newChange) {
@@ -171,9 +155,7 @@ class TickerRenderer {
             }
         }
     }
-    // =========================================================================
-    // 🔄 СОРТИРОВКА ТИКЕРОВ (ВОЗВРАЩАЕТ НОВЫЙ МАССИВ)
-    // =========================================================================
+
     sortTickers(tickers) {
         const arrayToSort = tickers || this.parent?.tickers;
         if (!arrayToSort || !Array.isArray(arrayToSort)) {
@@ -187,10 +169,6 @@ class TickerRenderer {
         return [...arrayToSort].sort((a, b) => this._compareTickers(a, b, sortBy, direction));
     }
 
-    // =========================================================================
-    // 📋 ПОЛУЧИТЬ ОТФИЛЬТРОВАННЫЕ И ОТСОРТИРОВАННЫЕ ТИКЕРЫ
-    // (теперь не изменяет displayedTickers, только возвращает результат)
-    // =========================================================================
     getFilteredTickers() {
         const state = this.parent?.state;
         if (!state) return [];
@@ -283,9 +261,6 @@ class TickerRenderer {
         return direction * res;
     }
 
-    // =========================================================================
-    // 🎨 ГЛАВНЫЙ МЕТОД РЕНДЕРИНГА СПИСКА
-    // =========================================================================
     renderTickerList() {
         const flagTabs = document.getElementById('flagTabs');
         if (flagTabs) {
@@ -344,9 +319,6 @@ class TickerRenderer {
         container.addEventListener('scroll', this._scrollHandler);
     }
 
-    // =========================================================================
-    // 📜 РЕНДЕРИНГ ВИДИМЫХ ЭЛЕМЕНТОВ (виртуальный скроллинг)
-    // =========================================================================
     renderVisibleTickers() {
         const container = document.getElementById('tickerListContainer');
         if (!container || !this.displayedTickers || this.totalItems === 0) return;
@@ -398,7 +370,6 @@ class TickerRenderer {
                         changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
                     }
                     if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
-                    // ✅ Унифицированный вызов formatTrades
                     if (tradesEl) tradesEl.textContent = this.formatTrades(ticker.trades);
                 }
 
@@ -421,9 +392,6 @@ class TickerRenderer {
         }
     }
 
-    // =========================================================================
-    // 📦 СОЗДАНИЕ DOM-ЭЛЕМЕНТА ТИКЕРА
-    // =========================================================================
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
         div.className = 'ticker-item';
@@ -463,7 +431,6 @@ class TickerRenderer {
 
         const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
 
-        // ✅ Унифицированный вызов formatTrades с числом
         div.innerHTML = `
             <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;">
                 ${flagHTML}
@@ -492,12 +459,6 @@ class TickerRenderer {
         return div;
     }
 
-    // =========================================================================
-    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ (с защитой от floating point)
-    // =========================================================================
-       // =========================================================================
-    // 💰 ФОРМАТИРОВАНИЕ ЦЕНЫ (Без кэша, V8 сделает это быстрее)
-    // =========================================================================
     formatPrice(price) {
         if (!price || price <= 0) return '...';
         let str = price.toFixed(8);
@@ -510,17 +471,11 @@ class TickerRenderer {
         return str;
     }
 
-    // =========================================================================
-    // 📈 ФОРМАТИРОВАНИЕ ИЗМЕНЕНИЯ % (Без кэша)
-    // =========================================================================
     formatChange(change) {
         if (change === undefined || change === null) return '0.00';
         return (change > 0 ? '+' : '') + change.toFixed(2);
     }
 
-    // =========================================================================
-    // 📊 ФОРМАТИРОВАНИЕ ОБЪЁМА (Без кэша)
-    // =========================================================================
     formatVolume(volume) {
         if (!volume || volume === 0) return '0';
         if (volume >= 1e9) return (volume / 1e9).toFixed(2) + 'B';
@@ -530,9 +485,6 @@ class TickerRenderer {
         return volume.toFixed(2);
     }
 
-    // =========================================================================
-    // 🔢 ФОРМАТИРОВАНИЕ СДЕЛОК
-    // =========================================================================
     formatTrades(trades) {
         if (!trades || trades <= 0) return '—';
         if (trades > 1e9) return (trades / 1e9).toFixed(1) + 'B';
@@ -540,41 +492,9 @@ class TickerRenderer {
         if (trades > 1e3) return (trades / 1e3).toFixed(1) + 'K';
         return trades.toString();
     }
-    // =========================================================================
-    // 🧹 ОЧИСТКА КЭША ФОРМАТИРОВАНИЯ
-    // =========================================================================
-    startCacheCleanup() {
-        if (this._cleanupStarted) return;
-        this._cleanupStarted = true;
 
-        this._cleanupIntervalId = setInterval(() => {
-            const now = Date.now();
-            const maxAge = this.parent?.cacheMaxAge || 5000;
-            const caches = this.parent?.formatCache;
-            if (!caches) return;
+    // ✅ УДАЛЕНО: startCacheCleanup и stopCacheCleanup (они больше не нужны)
 
-            for (const cache of [caches.prices, caches.changes, caches.volumes]) {
-                if (!cache) continue;
-                for (const [key, value] of cache) {
-                    if (now - value.timestamp > maxAge) {
-                        cache.delete(key);
-                    }
-                }
-            }
-        }, this.CACHE_CLEANUP_INTERVAL);
-    }
-
-    stopCacheCleanup() {
-        if (this._cleanupIntervalId) {
-            clearInterval(this._cleanupIntervalId);
-            this._cleanupIntervalId = null;
-            this._cleanupStarted = false;
-        }
-    }
-
-    // =========================================================================
-    // ⬆️⬇️ НАСТРОЙКА СОРТИРОВКИ ПО ЗАГОЛОВКАМ
-    // =========================================================================
     setupHeaderSorting() {
         const parent = this.parent;
         if (!parent) return;
@@ -642,11 +562,8 @@ class TickerRenderer {
         }
     }
 
-    // =========================================================================
-    // ♻️ Уничтожение рендерера (освобождение ресурсов)
-    // =========================================================================
     destroy() {
-        this.stopCacheCleanup();
+        // ✅ Убран вызов stopCacheCleanup()
         if (this._scrollHandler) {
             const container = document.getElementById('tickerListContainer');
             container?.removeEventListener('scroll', this._scrollHandler);
@@ -661,7 +578,6 @@ class TickerRenderer {
     }
 }
 
-// Экспорт
 if (typeof window !== 'undefined') {
     window.TickerRenderer = TickerRenderer;
 }
