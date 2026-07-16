@@ -2190,6 +2190,8 @@ window.addEventListener('resize', positionButtons);
 <script src="./ChartManager.js"></script>
 <script src="./WebSocketManager.js"></script>
 <script src="./TimeframeManager.js"></script>
+
+
 <script src="./DrawingManagers.js"></script>
 <script src="./IndicatorPanelManager.js"></script>
 <script src="./IndicatorManager.js"></script>
@@ -2813,6 +2815,80 @@ setTimeout(function() {
     if (resetBtn) resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
     
     console.log('✅ Адаптация OHLC + Crosshair (пунктир) активирована');
+})();
+</script>
+<script>
+(function() {
+    // Функция для обновления цветов при переключении типа графика
+    function updateChartTypeColors() {
+        if (!window.chartManagerInstance) return;
+        
+        const cm = window.chartManagerInstance;
+        const bullishColor = localStorage.getItem('chartBullishColor') || '#00bcd4';
+        const bearishColor = localStorage.getItem('chartBearishColor') || '#f23645';
+        
+        // Применяем цвета к активной серии
+        if (cm.currentChartType === 'candle' && cm.candleSeries) {
+            cm.candleSeries.applyOptions({
+                upColor: bullishColor,
+                downColor: bearishColor,
+                wickUpColor: bullishColor,
+                wickDownColor: bearishColor
+            });
+        } else if (cm.currentChartType === 'bar' && cm.barSeries) {
+            cm.barSeries.applyOptions({
+                upColor: bullishColor,
+                downColor: bearishColor
+            });
+        }
+        
+        // Обновляем цвет линии цены
+        const lastCandle = cm.chartData?.[cm.chartData.length - 1];
+        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+        const lineColor = isBullish ? bullishColor : bearishColor;
+        const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+        
+        if (activeSeries && cm.currentRealPrice) {
+            activeSeries.applyOptions({ priceLineColor: lineColor });
+        }
+        
+        // Обновляем объёмы
+        if (cm.volumeSeries && cm.chartData && cm.chartData.length > 0) {
+            const volumeData = cm.chartData.map(candle => ({
+                time: candle.time,
+                value: candle.volume,
+                color: candle.close >= candle.open ? bullishColor : bearishColor
+            }));
+            cm.volumeSeries.setData(volumeData);
+        }
+    }
+    
+    // Отслеживаем переключение типа графика
+    const candleBtn = document.getElementById('candleBtn');
+    const barBtn = document.getElementById('barBtn');
+    
+    if (candleBtn) {
+        candleBtn.addEventListener('click', function() {
+            setTimeout(updateChartTypeColors, 100);
+        });
+    }
+    
+    if (barBtn) {
+        barBtn.addEventListener('click', function() {
+            setTimeout(updateChartTypeColors, 100);
+        });
+    }
+    
+    // Также обновляем при изменении данных графика
+    const originalApplyColors = window.applyColorsToChart;
+    if (typeof originalApplyColors === 'function') {
+        window.applyColorsToChart = function(bg, bullish, bearish) {
+            originalApplyColors(bg, bullish, bearish);
+            setTimeout(updateChartTypeColors, 50);
+        };
+    }
+    
+    console.log('✅ Исправление подсветки баров/свечей активировано');
 })();
 </script>
 </body>
