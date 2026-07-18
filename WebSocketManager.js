@@ -34,7 +34,7 @@ class WebSocketManager {
     }
 
     // ========== ГЛАВНЫЙ МЕТОД ПОДКЛЮЧЕНИЯ (комбинированный) ==========
-    connect(symbol, interval, exchange, marketType) {
+  connect(symbol, interval, exchange, marketType) {
         // Нормализация параметров
         if (!symbol) symbol = this.currentSymbol || 'BTCUSDT';
         if (!exchange) exchange = this.currentExchange || 'binance';
@@ -61,11 +61,14 @@ class WebSocketManager {
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
         if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
         if (this.ws) {
+            // Обнуляем все обработчики
+            this.ws.onopen = null;
             this.ws.onclose = null;
             this.ws.onerror = null;
             this.ws.onmessage = null;
+            
             if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
-                this.ws.close();
+                this.ws.close(1000, 'Normal closure');
             }
             this.ws = null;
         }
@@ -75,18 +78,15 @@ class WebSocketManager {
         const formattedSymbol = this.formatSymbol(symbol, exchange);
 
         if (exchange === 'binance') {
-            // Комбинированный поток для Binance
             const baseUrl = marketType === 'spot'
                 ? 'wss://data-stream.binance.com/stream'
                 : 'wss://fstream.binance.com/stream';
             const streams = `${formattedSymbol}@kline_${interval}/${formattedSymbol}@trade`;
             wsUrl = `${baseUrl}?streams=${streams}`;
         } else if (exchange === 'bybit') {
-            // Bybit – одно соединение, подписка на несколько каналов
             const category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
             wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         } else {
-            // fallback – используем старый формат (для других бирж, но таких нет)
             wsUrl = `wss://${exchange}.com/ws`;
         }
 
@@ -100,7 +100,6 @@ class WebSocketManager {
         ws.onopen = () => {
             console.log(`✅ Комбинированный WS открыт: ${exchange} ${symbol} (${marketType}) ${interval}`);
             if (exchange === 'bybit') {
-                // Подписываемся на оба канала одним сообщением
                 const bybitInterval = self.getExchangeInterval(interval, exchange);
                 const bybitSymbol = self.formatSymbol(symbol, exchange);
                 const args = [
@@ -109,49 +108,37 @@ class WebSocketManager {
                 ];
                 ws.send(JSON.stringify({ op: 'subscribe', args: args }));
 
-                // Bybit требует периодический ping
                 self.pingInterval = setInterval(() => {
                     if (ws.readyState === WebSocket.OPEN) {
                         try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}
                     }
                 }, 20000);
             }
-            // Для Binance ping/pong обрабатывается автоматически, дополнительных действий не нужно
         };
 
-        // ========== ЕДИНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ==========
         ws.onmessage = (event) => {
             try {
                 if (symbol !== self.currentSymbol) return;
                 const raw = JSON.parse(event.data);
 
-                // Обработка pong (для Bybit)
                 if (raw.op === 'pong') return;
 
-                // ----- ОБРАБОТКА BINANCE (комбинированный поток) -----
                 if (exchange === 'binance') {
-                    // В комбинированном потоке сообщение содержит поле stream
                     if (raw.stream) {
                         const streamName = raw.stream;
-                        const payload = raw.data; // сами данные
+                        const payload = raw.data;
                         if (streamName.includes('@kline')) {
-                            // Это свеча
                             self._handleBinanceKline(payload, symbol);
                         } else if (streamName.includes('@trade')) {
-                            // Это сделка
                             self._handleBinanceTrade(payload, symbol);
                         }
                     }
                 }
-
-                // ----- ОБРАБОТКА BYBIT -----
                 else if (exchange === 'bybit') {
                     if (raw.topic) {
                         if (raw.topic.startsWith('kline.')) {
-                            // Свеча
                             self._handleBybitKline(raw, symbol);
                         } else if (raw.topic.startsWith('publicTrade.')) {
-                            // Сделка
                             self._handleBybitTrade(raw, symbol);
                         }
                     }
@@ -161,17 +148,14 @@ class WebSocketManager {
             }
         };
 
-        // ========== ОБРАБОТКА ЗАКРЫТИЯ ==========
         ws.onclose = (event) => {
             if (self.pingInterval) { clearInterval(self.pingInterval); self.pingInterval = null; }
             if (self.currentSymbol !== symbol || self.currentInterval !== interval) return;
 
-            if (event.code === 1000) return; // штатное закрытие
+            if (event.code === 1000) return;
 
-            // При 1008 пробуем переключиться на спот (если символ в списке) или просто выходим
             if (event.code === 1008) {
                 if (exchange === 'binance' && marketType === 'futures') {
-                    // Если символ в списке спотовых – переключаемся
                     if (self.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
                         console.warn(`⚠️ 1008: ${symbol} не найден на фьючерсах. Переключение на SPOT.`);
                         self.currentMarketType = 'spot';
@@ -183,7 +167,6 @@ class WebSocketManager {
                 return;
             }
 
-            // Реконнект с экспоненциальной задержкой
             self.retryCount++;
             const delay = Math.min(3000 * Math.pow(2, self.retryCount - 1), 30000);
             console.warn(`❌ WS ОБРЫВ (Код: ${event.code}). Переподключение через ${delay/1000}с...`);
@@ -294,15 +277,20 @@ class WebSocketManager {
     }
 
     // ========== ЗАКРЫТИЕ ВСЕХ СОЕДИНЕНИЙ ==========
-    closeAll() {
-        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
-        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-        if (this.ws) {
-            this.ws.onclose = null;
-            try { this.ws.close(); } catch(e) {}
-            this.ws = null;
-        }
+   closeAll() {
+    if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.ws) {
+        this.ws.onopen = null;
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onmessage = null;
+        try { 
+            this.ws.close(1000, 'Normal closure'); 
+        } catch(e) {}
+        this.ws = null;
     }
+}
 }
 
 if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;
