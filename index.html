@@ -2721,13 +2721,14 @@ setTimeout(function() {
     var btn = document.getElementById('autoScaleButton');
     if (btn && window.chartManagerInstance) {
         btn.onclick = function() {
-            window.chartManagerInstance.manualAutoScale();
+            // ✅ ИСПРАВЛЕНО: используем существующий метод autoScale()
+            window.chartManagerInstance.autoScale();
             
             // Визуальная обратная связь
             btn.classList.add('active');
             setTimeout(() => btn.classList.remove('active'), 300);
         };
-        console.log('✅ Кнопка A прикручена к manualAutoScale()');
+        console.log('✅ Кнопка A прикручена к autoScale()');
     } else {
         console.log('❌ Не нашли кнопку или менеджер');
     }
