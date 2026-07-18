@@ -59,16 +59,13 @@ this._debouncedSetData = this._debouncedSetData.bind(this);  // ✅ было _de
         this._drawingsFinalUpdateTimeout = null;
         this._scrollStopTimeout = null;
 
+                // Замените ваш старый _visibilityHandler на этот:
         this._visibilityHandler = () => {
             if (document.hidden) {
                 // Ничего не делаем при скрытии
             } else {
+                // 🔥 Вызываем наш новый мощный метод синхронизации
                 this._syncAfterHidden();
-                if (this.timerManager?._primitive) {
-                    this.timerManager._primitive.requestRedraw();
-                }
-                this.scheduleDrawingsUpdate();
-                this.requestDrawingsRedraw();
             }
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
@@ -442,7 +439,96 @@ this._debouncedSetData = this._debouncedSetData.bind(this);  // ✅ было _de
         };
         check();
     }
+    // ==========================================
+    // 🔥 СИНХРОНИЗАЦИЯ ПОСЛЕ ВОЗВРАТА ИЗ ФОНА
+    // ==========================================
+    async _syncAfterHidden() {
+        if (!this.chartData.length || !this.currentSymbol) return;
+        
+        // 1. Сбрасываем залипшие флаги скролла
+        this._isScrolling = false;
+        this._isScrollingFast = false;
+        this._isSyncing = false;
 
+        // 2. Мгновенно "будим" Canvas безопасным сдвигом
+        try {
+            const ts = this.chart.timeScale();
+            const range = ts.getVisibleLogicalRange();
+            if (range) {
+                ts.setVisibleLogicalRange({ from: range.from - 0.0001, to: range.to - 0.0001 });
+                requestAnimationFrame(() => ts.setVisibleLogicalRange(range));
+            }
+        } catch(e) {}
+
+        // 3. Берем точные данные по HTTP (обходит проблему уснувшего WS)
+        const isFutures = this.currentMarketType === 'futures';
+        const baseUrl = isFutures ? 'https://fapi.binance.com' : 'https://api.binance.com';
+        const endpoint = isFutures ? '/fapi/v1/klines' : '/api/v3/klines';
+        
+        try {
+            const res = await fetch(`${baseUrl}${endpoint}?symbol=${this.currentSymbol}USDT&interval=${this.currentInterval}&limit=2`);
+            const klines = await res.json();
+            
+            if (klines && klines.length > 0) {
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                
+                klines.forEach(k => {
+                    const freshCandle = {
+                        time: Math.floor(k[0] / 1000),
+                        open: parseFloat(k[1]),
+                        high: parseFloat(k[2]),
+                        low: parseFloat(k[3]),
+                        close: parseFloat(k[4]),
+                        volume: parseFloat(k[5])
+                    };
+                    
+                    const idx = this._candleTimeMap.get(freshCandle.time);
+                    
+                    if (idx !== undefined) {
+                        // Свеча есть — обновляем данные
+                        this.chartData[idx] = freshCandle;
+                        activeSeries.update(freshCandle);
+                    } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
+                        // Пропустили начало новой свечи — добавляем
+                        this.chartData.push(freshCandle);
+                        this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
+                        activeSeries.update(freshCandle);
+                    }
+                    
+                    // Обновляем объем
+                    if (this.volumeSeries) {
+                        this.volumeSeries.update({
+                            time: freshCandle.time,
+                            value: freshCandle.volume,
+                            color: freshCandle.close >= freshCandle.open ? this.bullishColor : this.bearishColor
+                        });
+                    }
+                });
+                
+                // Обновляем состояние менеджера
+                this.lastCandle = this.chartData[this.chartData.length - 1];
+                this.currentRealPrice = this.lastCandle.close;
+            }
+        } catch (e) {
+            // Если инет отвалился — ничего страшного, просто оставим как есть
+        }
+
+        // 4. Финальная полировка интерфейса
+        this._updatePageTitle();
+        this.scheduleUpdatePosition();
+        
+        if (this.indicatorManager) {
+            this.indicatorManager.updateAllIndicators();
+        }
+        
+        // Перерисовываем линии и лучи
+        this.scheduleDrawingsUpdate(true);
+        this.requestDrawingsRedraw();
+        
+        if (this.timerManager?._primitive) {
+            this.timerManager._primitive.requestRedraw();
+        }
+    }
        _setupPanelsSync() {
         if (!this.chart) return;
         
@@ -1346,88 +1432,7 @@ autoScale() {
         this.indicatorManager.loadIndicators();
     }
 
-       async _syncAfterHidden() {
-        if (!this.chartData.length) return;
-
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        const nowSec = Math.floor(Date.now() / 1000);
-
-        const intervalSeconds = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900,
-            '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600,
-            '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000
-        }[this.currentInterval] || 3600;
-
-        if (nowSec - lastCandle.time < intervalSeconds * 1.5) {
-            if (this.timerManager?._primitive) {
-                this.timerManager._primitive.requestRedraw();
-            }
-            this.scheduleDrawingsUpdate();
-            return;
-        }
-
-        console.log('🔄 Обнаружен гэп, загружаем пропущенные свечи...');
-        try {
-            const freshCandles = await this.fetchKlines(
-                this.currentSymbol,
-                this.currentExchange,
-                this.currentMarketType,
-                this.currentInterval,
-                1000
-            );
-
-            if (freshCandles && freshCandles.length > 0) {
-                const newCandles = freshCandles.filter(c => c.time > lastCandle.time);
-                if (newCandles.length > 0) {
-                    // ✅ НОВОЕ: Сохраняем текущую позицию скролла ДО обновления данных
-                    const timeScale = this.chart.timeScale();
-                    const savedRange = timeScale.getVisibleLogicalRange();
-
-                    for (const candle of newCandles) {
-                        if (!this._candleTimeMap.has(candle.time)) {
-                            this.chartData.push(candle);
-                        }
-                    }
-                    this.chartData.sort((a, b) => a.time - b.time);
-                    this._rebuildTimeMap(); 
-                    this.lastCandle = this.chartData[this.chartData.length - 1];
-                    
-                    this.candleSeries.setData(this.chartData);
-                    this.barSeries.setData(this.chartData);
-                    
-                    if (this.volumeSeries) {
-                        const volumeData = this.chartData.map(c => ({
-                            time: c.time,
-                            value: c.volume || 0,
-                            color: c.close >= c.open ? this.bullishColor : this.bearishColor
-                        }));
-                        this.volumeSeries.setData(volumeData);
-                    }
-                    
-                    if (this.indicatorManager) {
-                        this.indicatorManager.updateAllIndicators();
-                    }
-
-                    // ✅ НОВОЕ: Восстанавливаем позицию скролла ПОСЛЕ обновления данных
-                    if (savedRange) {
-                        try { timeScale.setVisibleLogicalRange(savedRange); } catch(e) {}
-                    }
-                    
-                    console.log(`✅ Добавлено ${newCandles.length} пропущенных свечей`);
-                }
-            }
-            
-            this.hasMoreData = true;
-            this.isLoadingMore = false;
-        } catch (e) {
-            console.warn('⚠️ Ошибка при синхронизации после скрытия:', e);
-        }
-
-        if (this.timerManager?._primitive) {
-            this.timerManager._primitive.requestRedraw();
-        }
-        this.scheduleDrawingsUpdate();
-    }
+      
 
     _saveZoomState() {
         const timeScale = this.chart.timeScale();
