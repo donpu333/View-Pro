@@ -354,12 +354,18 @@
 <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
 </svg>
 </button>
-
+<!-- Кнопка для открытия предпосылок -->
+<button class="alert-history-btn" id="premisesBtn" title="Предпосылки и ТВХ">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 -960 960 960" fill="currentColor">
+        <path d="M168-144q-29.7 0-50.85-21.15Q96-186.3 96-216v-528q0-29.7 21.15-50.85Q138.3-816 168-816h624q29.7 0 50.85 21.15Q864-773.7 864-744v528q0 29.7-21.15 50.85Q821.7-144 792-144H168Zm0-72h624v-528H168v528Zm43-71h192v-72H211v72Zm371-73 170-170-51-51-119 119-51-51-51 51 102 102Zm-371-84h192v-72H211v72Zm0-156h192v-72H211v72Zm-43 384v-528 528Z"/>
+    </svg>
+</button>
 <button class="alert-history-btn" id="toolScreenshot" title="Скриншот графика (S)">
 <svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
 <path d="M480-260q75 0 127.5-52.5T660-440q0-75-52.5-127.5T480-620q-75 0-127.5 52.5T300-440q0 75 52.5 127.5T480-260Zm0-80q-42 0-71-29t-29-71q0-42 29-71t71-29q42 0 71 29t29 71q0 42-29 71t-71 29ZM160-120q-33 0-56.5-23.5T80-200v-480q0-33 23.5-56.5T160-760h126l74-80h240l74 80h126q33 0 56.5 23.5T880-680v480q0 33-23.5 56.5T800-120H160Zm0-80h640v-480H638l-73-80H395l-73 80H160v480Zm320-240Z"/>
 </svg>
 </button>
+
 <button class="alert-history-btn" id="calculatorBtn" title="Калькулятор рисков">
 <svg width="24" height="24" viewBox="0 0 512 512" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
 <path d="M56.5 34L455.5 34Q467.3 36.2 473 44.5L478 56.5L478 455.5Q475.8 467.3 467.5 473L455.5 478L56.5 478Q44.7 475.8 39 467.5L34 455.5L34 56.5Q36.2 44.7 44.5 39L56.5 34ZM75 64L73 65L69 70L69 166L70 168L75 171L438 171L440 170L443 166L443 70L442 68L438 64L75 64ZM76 201L73 202L69 207L69 258L70 260L74 263L127 263L131 258L131 207L130 205L125 201L76 201ZM180 201L177 202L173 207L173 258L174 260L178 263L231 263L235 258L235 207L234 205L229 201L180 201ZM284 201L281 202L277 207L277 258L278 260L282 263L335 263L339 258L339 207L338 205L333 201L284 201ZM388 201L384 203L381 207L381 258L382 260L386 263L439 263L443 258L443 207L442 205L437 201L388 201ZM77 293L69 299L69 351L71 354L76 356L125 356L129 354L131 351L131 299L124 293L77 293ZM181 293L173 299L173 351L175 354L180 356L229 356L233 354L235 351L235 299L228 293L181 293ZM285 293L277 299L277 351L279 354L284 356L333 356L337 354L339 351L339 299L332 293L285 293ZM389 293L381 299L381 443L382 445L387 448L438 448L440 447L443 443L443 299L436 293L389 293ZM74 386L69 392L69 443L70 445L75 448L126 448L128 447L131 443L131 392L130 390L127 386L74 386ZM178 386L173 392L173 443L174 445L179 448L230 448L232 447L235 443L235 392L234 390L231 386L178 386ZM282 386L277 392L277 443L278 445L283 448L334 448L336 447L339 443L339 392L338 390L335 386L282 386Z"/>
@@ -2890,6 +2896,84 @@ setTimeout(function() {
     
     console.log('✅ Исправление подсветки баров/свечей активировано');
 })();
+</script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const btn = document.getElementById('premisesBtn');
+        if (!btn) return;
+
+        // Создаём оверлей с iframe
+        const overlay = document.createElement('div');
+        overlay.id = 'premisesOverlay';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        `;
+        overlay.innerHTML = `
+            <div style="
+                background: #1E1E1E;
+                border-radius: 12px;
+                width: 100%;
+                max-width: 1200px;
+                height: 90vh;
+                max-height: 90vh;
+                position: relative;
+                overflow: hidden;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+                border: 1px solid rgba(33,150,243,0.2);
+            ">
+                <button id="premisesCloseBtn" style="
+                    position: absolute;
+                    top: 10px;
+                    right: 15px;
+                    background: none;
+                    border: none;
+                    color: #9CA3AF;
+                    font-size: 28px;
+                    cursor: pointer;
+                    z-index: 10;
+                ">✕</button>
+                <iframe src="./premises.html" style="
+                    width: 100%;
+                    height: 100%;
+                    border: none;
+                    background: #1E1E1E;
+                "></iframe>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        // Открытие
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            overlay.style.display = 'flex';
+            // Перезагружаем iframe при каждом открытии (опционально)
+            const iframe = overlay.querySelector('iframe');
+            if (iframe) iframe.src = './premises.html';
+        });
+
+        // Закрытие
+        document.getElementById('premisesCloseBtn').addEventListener('click', function() {
+            overlay.style.display = 'none';
+        });
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) overlay.style.display = 'none';
+        });
+
+        // Закрытие по Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && overlay.style.display === 'flex') {
+                overlay.style.display = 'none';
+            }
+        });
+    });
 </script>
 </body>
 </html>
