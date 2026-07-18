@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Предпосылки и ТВХ</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #2196F3;
+            --secondary: #1976D2;
+            --dark: #121212;
+            --light: #ffffff;
+            --border-radius: 12px;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #1E1E1E;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .premises-container {
+            background-color: #1E1E1E;
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border: 1px solid rgba(33,150,243,0.2);
+            max-width: 1200px;
+            width: 100%;
+        }
+        .premises-container h1 { color: var(--primary); margin-bottom: 20px; }
+        .premises-container .button-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .premises-container .button-container button {
+            background-color: #1E88E5;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .premises-container .button-container button:hover { background-color: #1565C0; }
+        .premises-container .text-display {
+            background-color: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 8px;
+            white-space: pre-line;
+            display: none;
+            margin-top: 15px;
+            border: 1px solid #3D3D3D;
+            max-height: none;
+            overflow-y: visible;
+        }
+        .premises-container .action-btn {
+            background-color: #4CAF50;
+            padding: 8px 15px;
+            margin-right: 10px;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .premises-container .action-btn:hover { background-color: #45a049; }
+        .premises-container .export-btn-premises { background-color: #2196F3; }
+        .premises-container .export-btn-premises:hover { background-color: #0b7dda; }
+        .premises-container .reset-btn { background-color: #FF9800; }
+        .premises-container .reset-btn:hover { background-color: #F57C00; }
+        .premises-container .action-buttons-container {
+            display: none;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .premises-container .checkbox-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .premises-container .checkbox-item input {
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        .premises-container .status-message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .premises-container .success { background-color: #2E7D32; color: white; }
+        .premises-container .error { background-color: #C62828; color: white; }
+        .premises-container .item-text { margin-left: 5px; }
+        .premises-container .daily-buttons,
+        .premises-container .minute-buttons,
+        .premises-container .tvh-sub-buttons,
+        .premises-container .algorithm-sub-buttons {
+            display: none;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .premises-container .tvh-sub-buttons button,
+        .premises-container .algorithm-sub-buttons button,
+        .premises-container .daily-buttons button,
+        .premises-container .minute-buttons button {
+            background-color: #757575;
+            padding: 8px 16px;
+            font-size: 14px;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .premises-container .tvh-sub-buttons button:hover,
+        .premises-container .algorithm-sub-buttons button:hover,
+        .premises-container .daily-buttons button:hover,
+        .premises-container .minute-buttons button:hover {
+            background-color: #616161;
+        }
+        .premises-container .back-button {
+            background-color: #FF9800;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .premises-container .back-button:hover { background-color: #F57C00; }
+
+        /* ---- ТВХ-текст (внутреннее модальное окно) ---- */
+        .tvh-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1001;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .tvh-modal {
+            background: #1E1E1E;
+            border-radius: 12px;
+            max-width: 700px;
+            width: 100%;
+            max-height: 80vh;
+            overflow-y: auto;
+            padding: 30px;
+            position: relative;
+            border: 1px solid rgba(33,150,243,0.2);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        .tvh-close {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: none;
+            border: none;
+            color: #9CA3AF;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .tvh-copy-btn {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 15px;
+        }
+        .tvh-copy-btn:hover { background: #0b7dda; }
+
+        /* ---- фото-модалка ---- */
+        .photo-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.95);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1002;
+            padding: 0;
+        }
+        .photo-modal.active { display: flex; }
+        .photo-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            border: none;
+            color: white;
+            font-size: 2rem;
+            cursor: pointer;
+            z-index: 1003;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .photo-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .photo-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            transition: transform 0.1s ease;
+            cursor: grab;
+            transform-origin: center center;
+        }
+        .photo-image:active { cursor: grabbing; }
+        .photo-thumbnails {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            z-index: 1004;
+        }
+        .photo-thumb {
+            width: 60px;
+            height: 45px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.3s;
+            border: 2px solid transparent;
+        }
+        .photo-thumb:hover { opacity: 0.8; }
+        .photo-thumb.active { opacity: 1; border-color: #4A90E2; }
+        .photo-navigation {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            position: absolute;
+            bottom: 80px;
+            left: 0;
+            right: 0;
+            z-index: 1004;
+        }
+        .photo-nav-btn {
+            background: #4A90E2;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .photo-nav-btn:hover { background: #3a7bc8; }
+        .photo-nav-btn:disabled { background: #666; cursor: not-allowed; }
+        .photo-counter {
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 1004;
+        }
+        .zoom-btn {
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .zoom-btn:hover { background: rgba(0,0,0,0.9); }
+        .zoom-reset-btn { font-size: 14px; }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px;
+            background-color: #4CAF50;
+            color: white;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1100;
+            display: none;
+            animation: fadeInOut 3s ease-in-out;
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(-20px); }
+            10% { opacity: 1; transform: translateY(0); }
+            90% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Уведомление -->
+    <div class="notification" id="notification"></div>
+
+    <div class="premises-container">
+        <h1 class="text-2xl font-bold mb-6">Предпосылки и ТВХ</h1>
+
+        <div class="button-container">
+            <button onclick="toggleSection('daily')">Дневка</button>
+            <button onclick="toggleSection('minute')">Минута</button>
+        </div>
+
+        <!-- ===== КНОПКИ ДНЕВКА ===== -->
+        <div id="dailyButtons" class="daily-buttons">
+            <button style="background-color:#067d0a;" onclick="toggleText('dailyBreakthrough')">Предпосылки Пробой</button>
+            <button style="background-color:#06717d;" onclick="toggleText('dailyFalseBreakthrough')">Предпосылки Ложный пробой</button>
+            <button style="background-color:#790710;" onclick="toggleText('dailyBreakthroughMinuses')">Предпосылки Пробой минусы ⛔️</button>
+            <button style="background-color:#C62828;" onclick="toggleText('dailyFalseBreakthroughMinuses')">Предпосылки Ложный пробой минусы ⛔️</button>
+            <button style="background-color:#2962ff;" onclick="toggleTvhButtons('tvhDailyBreakthrough')">ТВХ пробой</button>
+            <button style="background-color:#757575;" onclick="toggleTvhButtons('tvhDailyFalseBreakthrough')">ТВХ ложный пробой</button>
+            <button style="background-color:#7b48d7;" onclick="toggleAlgorithmButtons()">Алгоритм</button>
+        </div>
+
+        <!-- ===== КНОПКИ МИНУТА ===== -->
+        <div id="minuteButtons" class="minute-buttons">
+            <button style="background-color:#067d0a;" onclick="toggleText('minuteBreakthrough')">Пробой Минута</button>
+            <button style="background-color:#06717d;" onclick="toggleText('minuteFalseBreakthrough')">Ложный пробой Минута</button>
+            <button style="background-color:#790710;" onclick="toggleText('minuteBreakthroughMinuses')">Пробой минусы Минута⛔️</button>
+            <button style="background-color:#C62828;" onclick="toggleText('minuteFalseBreakthroughMinuses')">Ложный пробой минусы Минута⛔️</button>
+            <button style="background-color:#2962ff;" onclick="toggleTvhButtons('tvhMinuteBreakthrough')">ТВХ пробой Минута</button>
+            <button style="background-color:#757575;" onclick="toggleTvhButtons('tvhMinuteFalseBreakthrough')">ТВХ ложный пробой Минута</button>
+            <button style="background-color:#7b48d7;" onclick="toggleAlgorithmButtons()">Алгоритм</button>
+        </div>
+
+        <!-- ===== ТВХ ПОД-КНОПКИ ===== -->
+        <div id="tvhDailyBreakthroughButtons" class="tvh-sub-buttons">
+            <button style="background-color:#00332a;" onclick="showTvhText('tvhDailyPrimaryMovement')">ТВХ №1 Первичное движение</button>
+            <button style="background-color:#279f0d;" onclick="showTvhText('tvhDailyTradingAbove')">ТВХ №2 После проторговки возле уровня</button>
+            <button style="background-color:#13c2e6;" onclick="showTvhText('tvhDailyTradingBelow')">ТВХ №3 Проторговка после пробоя</button>
+            <button style="background-color:#e65100;" onclick="showTvhText('tvhDailySecondaryMovement')">ТВХ №4 во вторичное движение</button>
+            <button style="background-color:#09806b;" onclick="showTvhText('tvhDailyEntry')">ТВХ №5 После ретеста</button>
+        </div>
+
+        <div id="tvhDailyFalseBreakthroughButtons" class="tvh-sub-buttons">
+            <button style="background-color:#149aa4;" onclick="showTvhText('tvhAccumulation')">ТВХ ЛП с накоплением</button>
+            <button style="background-color:#00332a;" onclick="showTvhText('tvhConfirmation')">ТВХ ЛП с подтверждением</button>
+        </div>
+
+        <div id="tvhMinuteBreakthroughButtons" class="tvh-sub-buttons">
+            <button style="background-color:#2962ff;" onclick="showTvhText('tvhMinutePrimaryMovement')">ТВХ №1 Первичное движение</button>
+            <button style="background-color:#2962ff;" onclick="showTvhText('tvhMinuteTradingAbove')">ТВХ №2 После проторговки возле уровня</button>
+            <button style="background-color:#2962ff;" onclick="showTvhText('tvhMinuteTradingBelow')">ТВХ №3 Проторговка после пробоя</button>
+            <button style="background-color:#2962ff;" onclick="showTvhText('tvhMinuteSecondaryMovement')">ТВХ №4 во вторичное движение</button>
+            <button style="background-color:#2962ff;" onclick="showTvhText('tvhMinuteEntry')">ТВХ №5 После ретеста</button>
+        </div>
+
+        <div id="tvhMinuteFalseBreakthroughButtons" class="tvh-sub-buttons">
+            <button style="background-color:#2962ff;" onclick="showTvhText('tvhMinuteFalsePrimaryMovement')">ТВХ первичное движение</button>
+            <button style="background-color:#09806b;" onclick="showTvhText('tvhMinuteFalseTradingAbove')">ТВХ проторговки над уровнем</button>
+            <button style="background-color:#13c2e6;" onclick="showTvhText('tvhMinuteFalseTradingBelow')">ТВХ проторговки под уровнем</button>
+            <button style="background-color:#13e691;" onclick="showTvhText('tvhMinuteFalseSecondaryMovement')">ТВХ во вторичное движение</button>
+            <button style="background-color:#279f0d;" onclick="showTvhText('tvhMinuteFalseEntry')">ТВХ вход</button>
+        </div>
+
+        <!-- ===== АЛГОРИТМ ===== -->
+        <div id="algorithmButtons" class="algorithm-sub-buttons">
+            <button style="background-color:#067d0a;" onclick="showTvhText('algorithmPremises')">Отбор по дневки</button>
+            <button style="background-color:#06717d;" onclick="toggleAlgorithmSubButtons('falseBreakthroughAlgorithm')">Ложный пробой</button>
+            <button style="background-color:#00332a;" onclick="toggleAlgorithmSubButtons('breakthroughAlgorithm')">Пробой</button>
+            <button style="background-color:#C62828;" onclick="showTvhText('algorithmUFormation')">U-Формация</button>
+            <button style="background-color:#757575;" onclick="showTvhText('algorithmVFormation')">V-Формация</button>
+            <button style="background-color:#279f0d;" onclick="showTvhText('algorithmChannel')">Каннал</button>
+            <button onclick="showTvhText('algorithmTailedBar')">Бар с хвостами</button>
+        </div>
+
+        <div id="falseBreakthroughAlgorithmButtons" class="algorithm-sub-buttons" style="display: none;">
+            <button class="back-button" onclick="backToAlgorithmMain()">
+                <i class="fas fa-arrow-left"></i> Назад к алгоритму
+            </button>
+            <button onclick="showTvhText('algorithmNoRetracement')">Безоткатное движение</button>
+            <button onclick="showTvhText('algorithmParanormalBars')">Подход на паранормальных барах</button>
+            <button onclick="showTvhText('algorithmDistribution')">Дистрибуция</button>
+            <button onclick="showTvhText('algorithmFarClosing')">Дальнее закрытие от уровня</button>
+            <button onclick="showTvhText('algorithmFarRetest')">Дальный ретест</button>
+            <button onclick="showTvhText('algorithmInfectedZone')">Зона зараженности</button>
+            <button onclick="showTvhText('algorithmExtremum')">Экстремум</button>
+            <button onclick="showTvhText('algorithmATRHalf')">День открывается с АТР более половины до уровня</button>
+        </div>
+
+        <div id="breakthroughAlgorithmButtons" class="algorithm-sub-buttons" style="display: none;">
+            <button class="back-button" onclick="backToAlgorithmMain()">
+                <i class="fas fa-arrow-left"></i> Назад к алгоритму
+            </button>
+            <button onclick="showTvhText('algorithmBreakthroughModels')">Пробойные модели</button>
+            <button onclick="showTvhText('algorithmSqueeze')">Поджатие</button>
+            <button onclick="showTvhText('algorithmNoImpulse')">Отсутствие импульса где он должен быть</button>
+            <button onclick="showTvhText('algorithmNarrowTrading')">Узкая проторговка</button>
+            <button onclick="showTvhText('algorithmConsolidation')">Консолидация вдоль уровня с поджатием</button>
+            <button onclick="showTvhText('algorithmRange')">Рендж</button>
+            <button onclick="showTvhText('algorithmCloseToLevel')">Закрытие в близи уровня</button>
+            <button onclick="showTvhText('algorithmNearRetest')">Ближний ретест</button>
+            <button onclick="showTvhText('algorithmNoReactionToLP')">Нет реакции на ЛП</button>
+            <button onclick="showTvhText('algorithmDailyClose')">Закрытие дневки под хай /лоу</button>
+            <button onclick="showTvhText('algorithmParanormalNoRetracement')">После паранормального бара нет отката</button>
+        </div>
+
+        <!-- ===== ТЕКСТОВЫЕ БЛОКИ (ПРЕДПОСЫЛКИ) ===== -->
+        <div id="dailyBreakthroughText" class="text-display">
+            <h3 style="color: #098ae2;">📊Предпосылки Пробой (Дневной уровень)</h3>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный тренд лонг</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный тренд шорт</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный тренд Рендж</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд лонг</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд шорт</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд Рендж</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Ближний ретест</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет реакции на ЛП</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня до (5%)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">После сильного движения нет отката</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди свободная зона</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выкупной бар</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Продажный бар</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V-Формация</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">U-Формация</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на коротком таймфрейме 1ч/4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подходит поджатием на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подходит поджатием на 1ч/4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Понижающие хаи и лои на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Понижающие хаи и лои на лок.ТФ 1ч/4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышающие хаи и лои 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышающие хаи и лои на лок.ТФ 1ч/4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Затухание волатильности на 1d</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Затухание волатильности на лок.ТФ 1ч/4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень находится на круглом числе</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Задерг против тренда</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабея рынка</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Сильнее рынка</span></div>
+        </div>
+
+        <div id="dailyFalseBreakthroughText" class="text-display">
+            <h3 style="color: #098ae2;">📊Предпосылки Ложный пробой (Дневной уровень)</h3>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дальний ретест (от 10 дней)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подход на больших барах</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на лок таймфрейме</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенные объемы перед уровням на 1ч 4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Экстремум</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди зараженная зона</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длинное безоткатное движение</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вдали от уровня мин от 10%(больше половины от ATR)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет накопления</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Сильный уровень впереди</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V подход к уровню(без накопления)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дистрибуция</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет ипульса после пробоя</span></div>
+        </div>
+
+        <div id="dailyBreakthroughMinusesText" class="text-display">
+            <h3 style="color: #098ae2;">📊Предпосылки Пробой Минусы ⛔️ (Дневной уровень)</h3>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный и локальный тренд не совпадают</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на лок.ТФ 1ч/4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на лок.ТФ</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий ЛП</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на лок ТФ</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Далеко закрылись от уровня</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Пройдено больше половина ATR</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 1ч далеко от уровня</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на лок.ТФ</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенного объёма на лок.ТФ</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабое накопление на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабое накопление на лок.ТФ</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень часто прошивается на лок.ТФ</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длиное безоткатное движение к уровню</span></div>
+        </div>
+
+        <div id="dailyFalseBreakthroughMinusesText" class="text-display">
+            <h3 style="color: #098ae2;">📊Предпосылки Ложный пробой ⛔️(Дневной уровень)</h3>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на лок.ТФ 1-4ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">В переди свободная зона</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий пробой</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня на 1D</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие с затуханиям волатильности</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поступательное движения к уровню</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление в близи уровня</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Большой запас ATR</span></div>
+        </div>
+
+        <div id="minuteBreakthroughText" class="text-display">
+            <h3>Пробой (Минутный таймфрейм)</h3>
+            <p>📊Предпосылки для МИНУТНОГО пробоя</p>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд лонг на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд шорт на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд Рендж на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Ближний ретест на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет реакции на ЛП на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня на 5M (до 2%)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">После сильного движения нет отката на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди свободная зона на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выкупной бар на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Продажный бар на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V-Формация на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">U-Формация на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на 1ч</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Понижающие хаи и лои на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышающие хаи и лои на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Затухание волатильности на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень находится на круглом числе</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Задерг против тренда на 5M</span></div>
+        </div>
+
+        <div id="minuteFalseBreakthroughText" class="text-display">
+            <h3>Ложный пробой (Минутный таймфрейм)</h3>
+            <p>📊Предпосылки для МИНУТНОГО ложного пробоя</p>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дальний ретест (от 5 дней)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подход на больших барах на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенные объемы перед уровням на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Экстремум на 1H</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди зараженная зона на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длинное безоткатное движение на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вдали от уровня на 5M (больше половины от ATR)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет накопления на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Сильный уровень впереди на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V подход к уровню на 5M (без накопления)</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дистрибуция на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет импульса после пробоя на 5M</span></div>
+        </div>
+
+        <div id="minuteBreakthroughMinusesText" class="text-display">
+            <h3>Пробой минусы (Минутный таймфрейм)</h3>
+            <p>⛔️ Минусы для МИНУТНОГО пробоя</p>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный и локальный тренд не совпадают</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий ЛП на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Далеко закрылись от уровня на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Пройдено больше половина ATR на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 5M далеко от уровня</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенного объёма на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабое накопление на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень часто прошивается на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длиное безоткатное движение к уровню на 5M</span></div>
+        </div>
+
+        <div id="minuteFalseBreakthroughMinusesText" class="text-display">
+            <h3>Ложный пробой минусы (Минутный таймфрейм)</h3>
+            <p>⛔️ Минусы для МИНУТНОГО ложного пробоя</p>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 15M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">В переди свободная зона на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий пробой на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие с затуханиям волатильности на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поступательное движения к уровню на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление в близи уровня на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Большой запас ATR на 5M</span></div>
+        </div>
+
+        <!-- ===== КНОПКИ ДЕЙСТВИЙ ===== -->
+        <div id="actionButtons" class="action-buttons-container">
+            <button class="action-btn" onclick="copySelectedText()">Копировать текст</button>
+            <button class="action-btn export-btn-premises" onclick="exportSelectedToTelegram()">Отправить в Telegram</button>
+            <button class="action-btn reset-btn" onclick="resetCheckboxes()">Сбросить все</button>
+        </div>
+        <div id="statusMessage" class="status-message"></div>
+    </div>
+
+    <!-- ===== МОДАЛЬНОЕ ОКНО ДЛЯ ТВХ-ТЕКСТА ===== -->
+    <div class="tvh-overlay" id="tvhOverlay">
+        <div class="tvh-modal">
+            <button class="tvh-close" onclick="closeTvhText()">&times;</button>
+            <div id="tvhTextInner"></div>
+            <button class="tvh-copy-btn" onclick="copyTvhText()">
+                <i class="fas fa-copy"></i> Копировать
+            </button>
+        </div>
+    </div>
+
+    <!-- ===== МОДАЛЬНОЕ ОКНО ДЛЯ ФОТО ===== -->
+    <div class="photo-modal" id="photoModal">
+        <button class="photo-close" onclick="closePhotoModal()">&times;</button>
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomOut()">-</button>
+            <button class="zoom-btn zoom-reset-btn" onclick="resetZoom()">1:1</button>
+            <button class="zoom-btn" onclick="zoomIn()">+</button>
+        </div>
+        <div class="photo-container" id="photoContainer">
+            <img class="photo-image" id="photoImage" src="" alt="ТВХ изображение">
+        </div>
+        <div class="photo-thumbnails" id="photoThumbnails"></div>
+        <div class="photo-navigation">
+            <button class="photo-nav-btn" id="prevPhotoBtn" onclick="changePhoto(-1)">
+                <i class="fas fa-chevron-left"></i> Предыдущее
+            </button>
+            <div class="photo-counter" id="photoCounter">1 / 1</div>
+            <button class="photo-nav-btn" id="nextPhotoBtn" onclick="changePhoto(1)">
+                Следующее <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- ===== СКРИПТЫ ===== -->
+    <script>
+        // ---- ГЛОБАЛЬНЫЕ ДАННЫЕ ----
+        const botToken = '8044055704:AAGk8cQFayPqYCscLlEB3qGRj0Uw_NTpe30';
+        const chatId = '1720793889';
+        let currentlyActiveText = null;
+        let currentAlgorithmType = null;
+
+        // ---- ТЕКСТЫ ТВХ ----
+       const tvhTexts = {
+    // =====================================================
+    // ================ ДНЕВНЫЕ ТВХ =========================
+    // =====================================================
+    
+    tvhDailyPrimaryMovement: { 
+        text: `<h3>ТВХ №1 Первичное движение (Дневной уровень)</h3>
+        <p>Первичное движение-Часовые бары при подходе к уровню должны быть не большимими одного цвета хотябы 3-4 последних бара перед уровнем закрытие должно быть в близи уровня .<br>5 минут бары должны поодходить поджатием и не высокая волатильность.<br>Также подход на часовеке и на 5м должен быть плавным на низкой волатильности (все предпосылки к пробою.)<br>Также усиливыющие факторы закрытие дневки прям перед уровнем.<br>В переди свободная зона, нет заколов.<br>Если все условия соблюдены можно ставить стоп 5% от ATR.</p>
+        <p style="color: red;">Если начинается запил жду когда уйдет цена под уровень в случае шорта(и над если лонг)и образуется проторговка.</p>
+        <p>Условия перезахода<br>1) Картинка не поломалась.<br>2) Уровень не пилится.<br>3) Нет глубокого отката.<br>4) Пониженная волатильность.<br>Больше 2-х раза не перезахожу.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhDailyTradingAbove: { 
+        text: `<h3>ТВХ №2 После проторговки возле уровня (Дневной таймфрейм)</h3>
+        <p>На 1 час должен закрыться в близи уровня или может сделать ЛП и не откатывать,<br>на 5 мин начинается проторговка с низкой волатильностью(все предпосылки к пробою.)</p>
+        <p style="color: red;">Если начинается запил жду когда уйдет цена под уровень в случае шорта(и над если лонг)и образуется проторговка.</p>
+        <p>Условия перезахода<br>1) Картинка не поломалась.<br>2) Уровень не пилится.<br>3) Нет глубокого отката.<br>4) Пониженная волатильность.<br>Больше 2-х раза не перезахожу.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhDailyTradingBelow: { 
+        text: `<h3>ТВХ №3 Проторговка после пробоя (Дневной уровень)</h3>
+        <p>На часавике бар пробил и закрылся далеко от уровня.<br>на 5 минутки должен оброзоватся локальный уровень БСУ БПУ1 БПУ2 стоп ставить за дневной уровень.<br>Также подход на часовеке и на 5м должен быть плавным на низкой волатильности (все предпосылки к пробою.).<br></p>
+        <p style="color: red;">Если начинается запил жду когда уйдет цена под уровень в случае шорта(и над если лонг)и образуется проторговка.</p>
+        <p>Условия перезахода<br>1) Картинка не поломалась.<br>2) Уровень не пилится<br>3) Нет глубокого отката.<br>4) Пониженная волатильности.<br>Больше 2-х раза не перезахожу</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhDailySecondaryMovement: { 
+        text: `<h3>ТВХ №4 во вторичное движение (Дневной уровень)</h3>
+        <p>1 час подлетел из далека делает лп и делает не клубокий отскок не больше 30% от ATR. Возрат через 2-4 часовых бара или V образно.<br>на 5 минутки должно быть закругление.<br>Условия перезахода<br>1) Картинка не поломалась.<br>2) Уровень не пилится<br>3) Нет глубокого отката.<br>4) Пониженная волатильности.<br>Больше 2-х раза не перезахожу</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhDailyEntry: { 
+        text: `<h3>ТВХ №5 После ретеста (Дневной уровень)</h3>
+        <p>Часовой бар закрывается под уровнем (или над) не далеко.На 5 мин возвращение к уровню и должен произойти ЛП,<br>твх на после возвращением за уровень втором красном баре при шорте и на втором зеленом при лонг.<br>Также подход на часовеке и на 5м должен быть плавным на низкой волатильности (все предпосылки к пробою.) </p>
+        <p style="color: red;">Если начинается запил жду когда уйдет цена под уровень в случае шорта(и над если лонг)и образуется проторговка.</p>
+        <p>Условия перезахода<br>1) Картинка не поломалась.<br>2) Уровень не пилится<br>3) Нет глубокого отката.<br>4) Пониженная волатильности.<br>Больше 2-х раза не перезахожу</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhAccumulation: { 
+        text: `<h3>ТВХ ЛП с накоплением</h3>
+        <p>Инструмент пробил уровень, после вернулся к уровню на ретест и после не обновляет хаи или (лоу) после первого ретеста (если инструмент далеко ушел от уровня в первичном движении, лучше рассматривать вход после второго подхода). Рассматриваю вход на коротком таймфрейме должно сформироваться пробойная модель, проторговка возле уровня или под уровнем.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhConfirmation: { 
+        text: `<h3>ТВХ ЛП с подтверждением</h3>
+        <p>Ложный пробой с подтверждением</p>
+        <p><strong>Предпосылки к ложному пробою:</strong> Инструмент пробивает уровень не глубоко и останавливается и встает в боковик, и после пробивает уровень и отходит от уровня, а потом возвращается к уровню и не может зайти за него.</p>
+        <p><strong>Вход:</strong> Осуществляю вход на коротком таймфрейме. Должен быть ЛП двумя барами или продажный бар.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    // =====================================================
+    // ================ МИНУТНЫЕ ТВХ =======================
+    // =====================================================
+    
+    tvhMinutePrimaryMovement: { 
+        text: `<h3>ТВХ №1 Первичное движение (Минутный таймфрейм)</h3>
+        <p>Первичное движение на минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteTradingAbove: { 
+        text: `<h3>ТВХ №2 После проторговки возле уровня (Минутный таймфрейм)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteTradingBelow: { 
+        text: `<h3>ТВХ №3 Проторговка после пробоя (Минутный таймфрейм)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteSecondaryMovement: { 
+        text: `<h3>ТВХ №4 во вторичное движение (Минутный таймфрейм)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteEntry: { 
+        text: `<h3>ТВХ №5 После ретеста (Минутный таймфрейм)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    // =====================================================
+    // ================ МИНУТНЫЕ ЛП ========================
+    // =====================================================
+    
+    tvhMinuteFalsePrimaryMovement: { 
+        text: `<h3>ТВХ первичное движение (Минутный ложный пробой)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteFalseTradingAbove: { 
+        text: `<h3>ТВХ проторговки над уровнем (Минутный ложный пробой)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteFalseTradingBelow: { 
+        text: `<h3>ТВХ проторговки под уровнем (Минутный ложный пробой)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteFalseSecondaryMovement: { 
+        text: `<h3>ТВХ во вторичное движение (Минутный ложный пробой)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    tvhMinuteFalseEntry: { 
+        text: `<h3>ТВХ вход (Минутный ложный пробой)</h3>
+        <p>На минутном таймфрейме...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    // =====================================================
+    // ================ АЛГОРИТМЫ ==========================
+    // =====================================================
+    
+    algorithmPremises: { 
+        text: `<h3>Алгоритм - для отбора инструментов по дневки</h3>
+        <p><strong>Пробой</strong></p>
+        <ol>
+            <li>1. Сильный дневной уровень(или 12 часов)</li>
+            <li>2. Закрытие дневного бара вблизи уровня</li>
+            <li>3. Нет Зараженной зона впереди (впереди пустота)Если заражения зона больше двух недель она не актуальна</li>
+            <li>4. Уровень не должен быть запилен.</li>
+            <li>5. Накопление</li>
+            <li>6. Как подошли к уровню?(на паранормальных барах или с поджатием)</li>
+            <li>7. Сколько прошли?(чем больше прошли тем больше шансы что инструмент развернется)</li>
+            <li>8. Как прошли?(было движенье безоткатное или было с откатами)</li>
+            <li>9. Откуда пришли?(развернулся инструмент воздухе или было накопление)</li>
+        </ol>
+        <p><strong>Ложный пробой</strong></p>
+        <ol>
+            <li>1. Сильный дневной уровень(или 12-4часов)</li>
+            <li>2. Дальний ретест (от 10 дней)</li>
+            <li>3. Подход на больших барах</li>
+            <li>4. Резкий подход на лок таймфрейме.</li>
+            <li>5. Выход повышенные объемы перед уровням на 1ч 4ч</li>
+            <li>6. Впереди зараженная зона</li>
+            <li>7. Экстремум</li>
+            <li>8. Длинное безоткатное движение</li>
+            <li>9. Нет накопления</li>
+            <li>10. V подход к уровню(без накопления)</li>
+            <li>11. Дистрибуция</li>
+            <li>12. Нет ипульса после пробоя</li>
+            <li>13.Закрытие вдали от уровня мин от 10%(больше половины от ATR)</li>
+        </ol>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+   algorithmUFormation: { 
+    text: `<h3>U-Формация</h3>
+    <p>U-формация как устроена-это не очень сильное падение, чем более плоское дно и чем дольше будет стоять инструмент на дне тем сильнее будет движение.В U-формация понятно что инструмент набирает большую позицию и что в U-формация можно зайти с коротким стопом.</p>
+    <hr>
+    <p><strong>📸 Примеры:</strong></p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+        <img src="images/алгоритм/U-Формация-4.png" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('images/алгоритм/U-Формация-4.png', ['images/алгоритм/U-Формация-4.png'])">
+        <img src="images/алгоритм/U-Формация-4.png" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('images/алгоритм/U-Формация-4.png', ['images/алгоритм/U-Формация-4.png'])">
+    </div>`
+},
+    
+    algorithmVFormation: { 
+        text: `<h3>V-Формация</h3>
+        <p>V-Формация работает очень быстро, когда появляется динамический продавец он сносит лимитные заявки и стопы, и также быстро возвращается так-как по дороги не будет большое количество ордеров.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="https://clck.ru/3UqXE9" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('https://clck.ru/3UqXF7', ['https://clck.ru/3UqXGZ','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmChannel: { 
+        text: `<h3>Каннал</h3>
+        <p>Инструмент долго в каннале копил энергию. Самые сильные позиции набираются когда инструмент стоит либо в консолидации, либо контртренд.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="https://clck.ru/3UqXJi" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('https://clck.ru/3UqXKm', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmTailedBar: { 
+        text: `<h3>Бар с хвостами</h3>
+        <p>Большие хвосты создают для того чтобы собирать позицию. Как трактовать эту картинка, откуда пришли туда и пойдем</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="https://clck.ru/3UqXLz" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('https://clck.ru/3UqXMP', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    // =====================================================
+    // ================ ОСТАЛЬНЫЕ АЛГОРИТМЫ ================
+    // =====================================================
+    
+    algorithmNoRetracement: { 
+        text: `<h3>Безоткатное движение</h3>
+        <p>Длинное безоткатное движение это когда инструмент прошел много и шел долго и без отката (50% и больше)скорей всего инструмент начнет откатываться у ближайший сильных дневных уровней, такое движение ведет к отбою или ложному пробою.при длинном безоткатном движение в инструменте накопилась контр трендовая энергия.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="https://clck.ru/3UqXPV" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmParanormalBars: { 
+        text: `<h3>Подход на паранормальных барах</h3>
+        <p>Это означает что скорее всего нет большого сопротивления. Малая плотность лимитных ордеров. И скорее всего самое большое сопротивление будет уже на уровне. Но если инструмент очень сильно прошел и закрылся под самый хай, то мы ожидаем все равно пробоя, но смотрим глубину этого пробоя. При отсутствии импульса глубина пробоя маленькая и значит будет ложный пробой.(нужно учитывать и короткий тайм-фрейм) Но! Если на коротком тайм-фрейме внутри большого дневного бара идет маленькое поступательное движение на коротких барах, это скорее всего приведет к пробою.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="https://clck.ru/3UqXQN" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmDistribution: { 
+        text: `<h3>Дистрибуция</h3>
+        <p>На дневки это выглядит в виде больших баров. Но если вдруг на коротком тайм-фрейме внутри большого дневного бара идет маленькое поступательное движение на коротких барах, это скорее всего приведет к пробою.Дистрибуция ведет к развороту либо к остановке.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmFarClosing: { 
+        text: `<h3>Дальнее закрытие от уровня</h3>
+        <p>Инструмент подошел к уровню, но закрывается далеко от него. Есть сильное сопротивление, и следовательно возрастает вероятность разворота.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmFarRetest: { 
+        text: `<h3>Дальный ретест</h3>
+        <p>Дальний ретест от 2 недель - 1 месяца до 1 года в 90% случаях с первого раза не пробивается будет отбой или ложный пробой. Что усиливает дальний ретест; 1)Если инструмент много проходит без остановки 2)Если инструмент подходит к уровню на паранормальных барах(если последний бар перед уровнем паронормальный 90% будет отбой или ложный пробой) В каких случаях это правило отменяется; если подход был на паранормальных барах а перед уровнем инструмент замедляется и подходит на маленьких барах, и закрывается под самый уровень.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmInfectedZone: { 
+        text: `<h3>Зона зараженности</h3>
+        <p>Зона заражённости это когда инструмент попадает в одну из зон где была проторговка инструменту тяжело проходить такие зоны, зона заражённости скорей всего будет служить Поддержкой или сопротивлением и скорей всего это будет остановка отбой или ложный пробой.с первого раза инструмент такую зону не пройдет, нужно чтоб эту зону прочистили ,прочистить такую зону может один бар (снимите все лимитные заявки) Если Заражённая зона больше двух недель она не актуальна</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmExtremum: { 
+        text: `<h3>Экстремум</h3>
+        <p>Такую точку с первого раза инструменту будет сложно пройти, потому-что в таких точках будет большое количества лимитных ордеров.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmATRHalf: { 
+        text: `<h3>День открывается с АТР более половины до уровня</h3>
+        <p>80% времени инструмент ходит 1 ATR, значит вероятность что у инструмента хватит энергии дойти до уровня и еще пробить его уменьшается. К тому времени когда инструмент пройдет пол ATR и дойдет до уровня, у него повысится волатильность возле уровня, что приведет к большому стопу.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmBreakthroughModels: { 
+        text: `<h3>Пробойные модели</h3>
+        <p>Контент пробойных моделей...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmSqueeze: { 
+        text: `<h3>Поджатие</h3>
+        <p>Если перед уровнем стоит большое количество лимитных ордеров, то при подходе к уровню становится тяжелее идти. Ключевой игрок идет медленно, он пытается их разбить, чтобы расчистить себе дорогу для пробоя. Поэтому если он идет и пробивает маленькими барами, это означает во-первых, что стоит огромное количество лимитных ордеров и во-вторых, что если ключевой игрок это делает, то скорее всего он и уровень пробьет, потому что он гораздо сильнее.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmNoImpulse: { 
+        text: `<h3>Отсутствие импульса где он должен быть</h3>
+        <p>Контент отсутствия импульса...</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmNarrowTrading: { 
+        text: `<h3>Узкая проторговка</h3>
+        <p>Это значит, что инструмент не откатывается. Кто-то удерживает его. Когда инструмент очень сильно поднялся перед уровнем все будут продавать. Если инструмент не откатывается сидит очень крупный покупатель, который не дает инструменту уйти вниз и поломать график. Либо же продавцов вообще нет. И наоборот если после сильного падения нет отката, нет покупателей.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmConsolidation: { 
+        text: `<h3>Консолидация вдоль уровня с поджатием</h3>
+        <p>Если инструмент не откатывается после сильного движения ключевой игрок удерживает инструмент около уровня и значит готовится пробить уровень.Нет отката -значит сопротивления</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmRange: { 
+        text: `<h3>Рендж</h3>
+        <p>Инструмент долго копил энергию. Самые сильные позиции набираются когда инструмент стоит либо в консолидации, либо контртренд.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmCloseToLevel: { 
+        text: `<h3>Закрытие в близи уровня</h3>
+        <p>80%-85% времени инструмент ходит 1 ATR, значит вероятность что у инструмента хватит энергии дойти до уровня и еще пробить его увеличивается (чем ближе инструмент закрывается к уровню, тем лучше, потому что если мы стоим в самом начале своего ATR, то у него большое количество энергии и ему легче пойти)</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmNearRetest: { 
+        text: `<h3>Ближний ретест</h3>
+        <p>Ближний ретест - это когда цена возвращается к уровню в течение короткого времени (самый сильный ретест 3 дня)</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmNoReactionToLP: { 
+        text: `<h3>Нет реакции на ЛП</h3>
+        <p>После ложного пробоя должен быть откат, если после ложного пробоя не было глубокого отката, то есть нет реакции на ложный пробой, это сигнал к пробою</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmDailyClose: { 
+        text: `<h3>Закрытие дневки под хай (или лоу)</h3>
+        <p>Закрытие бара без хвоста в сторону уровня говорит о том, что крупный игрок не успел набрать позицию и инструмент скорее всего продолжит движение в ту же сторону. Тем более если еще и закрылись за уровнем. Инструменту допустим откат от своего хая не больше 10% от своего дневного движение.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    },
+    
+    algorithmParanormalNoRetracement: { 
+        text: `<h3>После паранормального бара нет отката</h3>
+        <p>После подхода паранормального бара и вообще сильного движения должен быть откат, если его нет, да еще и наблюдается консолидация, то есть подготовка к пробою, то вероятность пробоя увеличивается. Инструмент после сильного движения встает и у него с двух сторон образуются лимитные уровни. Есть исключения из правил если эта точка не является экстремум.</p>
+        <hr>
+        <p><strong>📸 Примеры:</strong></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+            <img src="(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)" style="width:150px; height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" onclick="openPhotoModal('(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)', ['(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)','(ВСТАВЬТЕ ССЫЛКУ НА ФОТО)'])">
+        </div>`
+    }
+};
+
+        // ---- УПРАВЛЕНИЕ РАЗДЕЛАМИ ----
+        function toggleSection(section) {
+            const daily = document.getElementById('dailyButtons');
+            const minute = document.getElementById('minuteButtons');
+            const texts = document.querySelectorAll('.text-display');
+            const subs = document.querySelectorAll('.tvh-sub-buttons, .algorithm-sub-buttons');
+            const actionBtns = document.getElementById('actionButtons');
+            texts.forEach(el => el.style.display = 'none');
+            subs.forEach(el => el.style.display = 'none');
+            actionBtns.style.display = 'none';
+
+            if (section === 'daily') {
+                if (daily.style.display === 'flex') daily.style.display = 'none';
+                else { daily.style.display = 'flex'; minute.style.display = 'none'; }
+            } else if (section === 'minute') {
+                if (minute.style.display === 'flex') minute.style.display = 'none';
+                else { minute.style.display = 'flex'; daily.style.display = 'none'; }
+            }
+            currentlyActiveText = null;
+        }
+
+        function toggleText(textId) {
+            const textElement = document.getElementById(textId + 'Text');
+            const actionBtns = document.getElementById('actionButtons');
+            if (currentlyActiveText === textId && textElement.style.display === 'block') {
+                textElement.style.display = 'none';
+                actionBtns.style.display = 'none';
+                currentlyActiveText = null;
+                return;
+            }
+            document.querySelectorAll('.text-display').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.tvh-sub-buttons, .algorithm-sub-buttons').forEach(el => el.style.display = 'none');
+            if (textElement) {
+                textElement.style.display = 'block';
+                actionBtns.style.display = 'flex';
+                currentlyActiveText = textId;
+            }
+        }
+
+        function toggleTvhButtons(tvhType) {
+            const btns = {
+                dailyBreak: document.getElementById('tvhDailyBreakthroughButtons'),
+                dailyFalse: document.getElementById('tvhDailyFalseBreakthroughButtons'),
+                minuteBreak: document.getElementById('tvhMinuteBreakthroughButtons'),
+                minuteFalse: document.getElementById('tvhMinuteFalseBreakthroughButtons')
+            };
+            document.querySelectorAll('.text-display').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.algorithm-sub-buttons').forEach(el => el.style.display = 'none');
+            document.getElementById('actionButtons').style.display = 'none';
+
+            if (tvhType === 'tvhDailyBreakthrough') {
+                if (btns.dailyBreak.style.display === 'flex') btns.dailyBreak.style.display = 'none';
+                else { btns.dailyBreak.style.display = 'flex'; btns.dailyFalse.style.display = 'none'; btns.minuteBreak.style.display = 'none'; btns.minuteFalse.style.display = 'none'; }
+            } else if (tvhType === 'tvhDailyFalseBreakthrough') {
+                if (btns.dailyFalse.style.display === 'flex') btns.dailyFalse.style.display = 'none';
+                else { btns.dailyFalse.style.display = 'flex'; btns.dailyBreak.style.display = 'none'; btns.minuteBreak.style.display = 'none'; btns.minuteFalse.style.display = 'none'; }
+            } else if (tvhType === 'tvhMinuteBreakthrough') {
+                if (btns.minuteBreak.style.display === 'flex') btns.minuteBreak.style.display = 'none';
+                else { btns.minuteBreak.style.display = 'flex'; btns.dailyBreak.style.display = 'none'; btns.dailyFalse.style.display = 'none'; btns.minuteFalse.style.display = 'none'; }
+            } else if (tvhType === 'tvhMinuteFalseBreakthrough') {
+                if (btns.minuteFalse.style.display === 'flex') btns.minuteFalse.style.display = 'none';
+                else { btns.minuteFalse.style.display = 'flex'; btns.dailyBreak.style.display = 'none'; btns.dailyFalse.style.display = 'none'; btns.minuteBreak.style.display = 'none'; }
+            }
+            currentlyActiveText = null;
+        }
+
+        function toggleAlgorithmButtons() {
+            const alg = document.getElementById('algorithmButtons');
+            document.querySelectorAll('.text-display').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.tvh-sub-buttons').forEach(el => el.style.display = 'none');
+            document.getElementById('breakthroughAlgorithmButtons').style.display = 'none';
+            document.getElementById('falseBreakthroughAlgorithmButtons').style.display = 'none';
+            document.getElementById('actionButtons').style.display = 'none';
+
+            if (alg.style.display === 'flex') alg.style.display = 'none';
+            else alg.style.display = 'flex';
+            currentlyActiveText = null;
+            currentAlgorithmType = null;
+        }
+
+        function toggleAlgorithmSubButtons(algorithmType) {
+            const breakthrough = document.getElementById('breakthroughAlgorithmButtons');
+            const falseBreak = document.getElementById('falseBreakthroughAlgorithmButtons');
+            document.querySelectorAll('.text-display').forEach(el => el.style.display = 'none');
+            document.getElementById('actionButtons').style.display = 'none';
+
+            if (algorithmType === 'breakthroughAlgorithm') {
+                if (breakthrough.style.display === 'flex') { breakthrough.style.display = 'none'; currentAlgorithmType = null; }
+                else { breakthrough.style.display = 'flex'; falseBreak.style.display = 'none'; currentAlgorithmType = algorithmType; }
+            } else if (algorithmType === 'falseBreakthroughAlgorithm') {
+                if (falseBreak.style.display === 'flex') { falseBreak.style.display = 'none'; currentAlgorithmType = null; }
+                else { falseBreak.style.display = 'flex'; breakthrough.style.display = 'none'; currentAlgorithmType = algorithmType; }
+            }
+            document.getElementById('algorithmButtons').style.display = 'none';
+            currentlyActiveText = null;
+        }
+
+        function backToAlgorithmMain() {
+            document.getElementById('breakthroughAlgorithmButtons').style.display = 'none';
+            document.getElementById('falseBreakthroughAlgorithmButtons').style.display = 'none';
+            document.getElementById('algorithmButtons').style.display = 'flex';
+            currentAlgorithmType = null;
+            currentlyActiveText = null;
+        }
+
+        // ---- ТВХ - МОДАЛЬНОЕ ОКНО ----
+        function showTvhText(tvhKey) {
+            const data = tvhTexts[tvhKey];
+            if (!data) { showNotification('Текст не найден', 'error'); return; }
+            document.getElementById('tvhTextInner').innerHTML = data.text;
+            document.getElementById('tvhOverlay').style.display = 'flex';
+        }
+
+        function closeTvhText() {
+            document.getElementById('tvhOverlay').style.display = 'none';
+            document.getElementById('tvhTextInner').innerHTML = '';
+        }
+
+        function copyTvhText() {
+            const el = document.getElementById('tvhTextInner');
+            const text = el.innerText || el.textContent;
+            navigator.clipboard.writeText(text).then(() => showNotification('Текст скопирован', 'success'));
+        }
+
+        // ---- КОПИРОВАНИЕ / ОТПРАВКА / СБРОС ----
+        function copySelectedText() {
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            if (!active) { showNotification('Нет активного текста', 'error'); return; }
+            const checked = active.querySelectorAll('input[type="checkbox"]:checked');
+            if (checked.length === 0) { showNotification('Не выбрано ни одного пункта', 'error'); return; }
+            const header = active.querySelector('h3');
+            const headerText = header ? header.textContent.trim() : '';
+            let text = headerText ? headerText + '\n' : '';
+            const items = Array.from(checked).map((cb, i) => `${i+1}. ☑ ${cb.nextElementSibling.textContent}`);
+            text += items.join('\n');
+            navigator.clipboard.writeText(text).then(() => showNotification('Выбранное скопировано с нумерацией', 'success'));
+        }
+
+        function exportSelectedToTelegram() {
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            if (!active) { showNotification('Нет активного текста', 'error'); return; }
+            const checked = active.querySelectorAll('input[type="checkbox"]:checked');
+            if (checked.length === 0) { showNotification('Не выбрано ни одного пункта', 'error'); return; }
+            const header = active.querySelector('h3');
+            const headerText = header ? header.textContent.trim() : '';
+            let text = headerText ? headerText + '\n' : '';
+            const items = Array.from(checked).map((cb, i) => `${i+1}. ☑ ${cb.nextElementSibling.textContent}`);
+            text += items.join('\n');
+            const msg = encodeURIComponent(text);
+            fetch(`https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${msg}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.ok) showNotification('Отправлено в Telegram', 'success');
+                    else showNotification('Ошибка отправки', 'error');
+                })
+                .catch(() => showNotification('Ошибка соединения', 'error'));
+        }
+
+        function resetCheckboxes() {
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            if (!active) { showNotification('Нет активного текста', 'error'); return; }
+            active.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+            showNotification('Сброшено', 'success');
+        }
+
+        function showNotification(message, type = 'success') {
+            const n = document.getElementById('notification');
+            n.textContent = message;
+            n.style.backgroundColor = type === 'success' ? '#4CAF50' : '#C62828';
+            n.style.display = 'block';
+            clearTimeout(n._timeout);
+            n._timeout = setTimeout(() => n.style.display = 'none', 3000);
+        }
+
+        // ---- ФОТО-МОДАЛКА ----
+        let currentPhotos = [];
+        let currentPhotoIndex = 0;
+        let currentScale = 1;
+        let translateX = 0, translateY = 0;
+        let isDragging = false;
+        let dragStartX = 0, dragStartY = 0;
+        let dragStartTranslateX = 0, dragStartTranslateY = 0;
+
+        function openPhotoModal(photoUrl, photoArray) {
+            currentPhotos = photoArray || [photoUrl];
+            currentPhotoIndex = currentPhotos.indexOf(photoUrl);
+            if (currentPhotoIndex === -1) currentPhotoIndex = 0;
+            const modal = document.getElementById('photoModal');
+            const image = document.getElementById('photoImage');
+            const thumbnails = document.getElementById('photoThumbnails');
+            image.src = currentPhotos[currentPhotoIndex];
+            modal.classList.add('active');
+            currentScale = 1;
+            translateX = 0;
+            translateY = 0;
+            isDragging = false;
+            updateImageTransform();
+
+            thumbnails.innerHTML = '';
+            currentPhotos.forEach((photo, index) => {
+                const thumb = document.createElement('img');
+                thumb.src = photo;
+                thumb.className = 'photo-thumb';
+                if (index === currentPhotoIndex) thumb.classList.add('active');
+                thumb.onclick = () => {
+                    currentPhotoIndex = index;
+                    image.src = currentPhotos[currentPhotoIndex];
+                    updateThumbnails();
+                    updateNavigation();
+                    currentScale = 1;
+                    translateX = 0;
+                    translateY = 0;
+                    updateImageTransform();
+                };
+                thumbnails.appendChild(thumb);
+            });
+            updateNavigation();
+            updateThumbnails();
+
+            image.addEventListener('mousedown', startDrag);
+            image.addEventListener('touchstart', startDragTouch, { passive: false });
+            image.addEventListener('wheel', handleWheel, { passive: false });
+            document.addEventListener('mousemove', handleDrag);
+            document.addEventListener('touchmove', handleDragTouch, { passive: false });
+            document.addEventListener('mouseup', stopDrag);
+            document.addEventListener('touchend', stopDrag);
+        }
+
+        function closePhotoModal() {
+            const modal = document.getElementById('photoModal');
+            modal.classList.remove('active');
+            currentPhotos = [];
+            currentPhotoIndex = 0;
+            const image = document.getElementById('photoImage');
+            image.removeEventListener('mousedown', startDrag);
+            image.removeEventListener('touchstart', startDragTouch);
+            image.removeEventListener('wheel', handleWheel);
+            document.removeEventListener('mousemove', handleDrag);
+            document.removeEventListener('touchmove', handleDragTouch);
+            document.removeEventListener('mouseup', stopDrag);
+            document.removeEventListener('touchend', stopDrag);
+        }
+
+        function changePhoto(direction) {
+            currentPhotoIndex += direction;
+            if (currentPhotoIndex < 0) currentPhotoIndex = currentPhotos.length - 1;
+            if (currentPhotoIndex >= currentPhotos.length) currentPhotoIndex = 0;
+            document.getElementById('photoImage').src = currentPhotos[currentPhotoIndex];
+            currentScale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateImageTransform();
+            updateNavigation();
+            updateThumbnails();
+        }
+
+        function updateNavigation() {
+            const counter = document.getElementById('photoCounter');
+            const prev = document.getElementById('prevPhotoBtn');
+            const next = document.getElementById('nextPhotoBtn');
+            const total = currentPhotos.length;
+            counter.textContent = `${currentPhotoIndex + 1} / ${total}`;
+            prev.disabled = total <= 1;
+            next.disabled = total <= 1;
+        }
+
+        function updateThumbnails() {
+            document.querySelectorAll('.photo-thumb').forEach((thumb, i) => {
+                thumb.classList.toggle('active', i === currentPhotoIndex);
+            });
+        }
+
+        function zoomIn() {
+            currentScale = Math.min(currentScale + 0.25, 5);
+            updateImageTransform();
+        }
+
+        function zoomOut() {
+            currentScale = Math.max(currentScale - 0.25, 1);
+            updateImageTransform();
+        }
+
+        function resetZoom() {
+            currentScale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateImageTransform();
+        }
+
+        function updateImageTransform() {
+            const img = document.getElementById('photoImage');
+            img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${currentScale})`;
+        }
+
+        function startDrag(e) {
+            if (currentScale <= 1) return;
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragStartTranslateX = translateX;
+            dragStartTranslateY = translateY;
+            e.preventDefault();
+        }
+
+        function startDragTouch(e) {
+            if (currentScale <= 1) return;
+            isDragging = true;
+            dragStartX = e.touches[0].clientX;
+            dragStartY = e.touches[0].clientY;
+            dragStartTranslateX = translateX;
+            dragStartTranslateY = translateY;
+            e.preventDefault();
+        }
+
+        function handleDrag(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            translateX = dragStartTranslateX + (e.clientX - dragStartX);
+            translateY = dragStartTranslateY + (e.clientY - dragStartY);
+            updateImageTransform();
+        }
+
+        function handleDragTouch(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            translateX = dragStartTranslateX + (e.touches[0].clientX - dragStartX);
+            translateY = dragStartTranslateY + (e.touches[0].clientY - dragStartY);
+            updateImageTransform();
+        }
+
+        function stopDrag() {
+            isDragging = false;
+        }
+
+        function handleWheel(e) {
+            e.preventDefault();
+            if (e.deltaY < 0) zoomIn();
+            else zoomOut();
+        }
+
+        // Закрытие фото-модалки по клику на фон
+        document.getElementById('photoModal').addEventListener('click', function(e) {
+            if (e.target === this) closePhotoModal();
+        });
+    </script>
+</body>
+</html>
