@@ -442,15 +442,13 @@ this._debouncedSetData = this._debouncedSetData.bind(this);  // ✅ было _de
     // ==========================================
     // 🔥 СИНХРОНИЗАЦИЯ ПОСЛЕ ВОЗВРАТА ИЗ ФОНА
     // ==========================================
-    async _syncAfterHidden() {
+      async _syncAfterHidden() {
         if (!this.chartData.length || !this.currentSymbol) return;
         
-        // 1. Сбрасываем залипшие флаги скролла
         this._isScrolling = false;
         this._isScrollingFast = false;
         this._isSyncing = false;
 
-        // 2. Мгновенно "будим" Canvas безопасным сдвигом
         try {
             const ts = this.chart.timeScale();
             const range = ts.getVisibleLogicalRange();
@@ -460,42 +458,30 @@ this._debouncedSetData = this._debouncedSetData.bind(this);  // ✅ было _de
             }
         } catch(e) {}
 
-        // 3. Берем точные данные по HTTP (обходит проблему уснувшего WS)
-        const isFutures = this.currentMarketType === 'futures';
-        const baseUrl = isFutures ? 'https://fapi.binance.com' : 'https://api.binance.com';
-        const endpoint = isFutures ? '/fapi/v1/klines' : '/api/v3/klines';
-        
         try {
-            const res = await fetch(`${baseUrl}${endpoint}?symbol=${this.currentSymbol}USDT&interval=${this.currentInterval}&limit=2`);
-            const klines = await res.json();
+            const freshCandles = await this.fetchKlines(
+                this.currentSymbol,
+                this.currentExchange,
+                this.currentMarketType,
+                this.currentInterval,
+                2
+            );
             
-            if (klines && klines.length > 0) {
+            if (freshCandles && freshCandles.length > 0) {
                 const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
                 
-                klines.forEach(k => {
-                    const freshCandle = {
-                        time: Math.floor(k[0] / 1000),
-                        open: parseFloat(k[1]),
-                        high: parseFloat(k[2]),
-                        low: parseFloat(k[3]),
-                        close: parseFloat(k[4]),
-                        volume: parseFloat(k[5])
-                    };
-                    
+                freshCandles.forEach(freshCandle => {
                     const idx = this._candleTimeMap.get(freshCandle.time);
                     
                     if (idx !== undefined) {
-                        // Свеча есть — обновляем данные
                         this.chartData[idx] = freshCandle;
                         activeSeries.update(freshCandle);
                     } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
-                        // Пропустили начало новой свечи — добавляем
                         this.chartData.push(freshCandle);
                         this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
                         activeSeries.update(freshCandle);
                     }
                     
-                    // Обновляем объем
                     if (this.volumeSeries) {
                         this.volumeSeries.update({
                             time: freshCandle.time,
@@ -505,29 +491,17 @@ this._debouncedSetData = this._debouncedSetData.bind(this);  // ✅ было _de
                     }
                 });
                 
-                // Обновляем состояние менеджера
                 this.lastCandle = this.chartData[this.chartData.length - 1];
                 this.currentRealPrice = this.lastCandle.close;
             }
-        } catch (e) {
-            // Если инет отвалился — ничего страшного, просто оставим как есть
-        }
+        } catch (e) {}
 
-        // 4. Финальная полировка интерфейса
         this._updatePageTitle();
         this.scheduleUpdatePosition();
-        
-        if (this.indicatorManager) {
-            this.indicatorManager.updateAllIndicators();
-        }
-        
-        // Перерисовываем линии и лучи
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
         this.scheduleDrawingsUpdate(true);
         this.requestDrawingsRedraw();
-        
-        if (this.timerManager?._primitive) {
-            this.timerManager._primitive.requestRedraw();
-        }
+        if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
     }
        _setupPanelsSync() {
         if (!this.chart) return;
