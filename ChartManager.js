@@ -1153,91 +1153,100 @@ _syncPriceLine(price) {
     }
 
     // 🔥 O(1) поиск через Map
-     onCrosshairMove(param) {
-        if (!this.overlay) {
-            this.overlay = safeElement('candleStatsOverlay');
-        }
-        
-        if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
-            if (this.overlay) this.overlay.classList.remove('visible');
-            this._latestCrosshairData = null;
-            return;
-        }
-
-        // 1. СНАЧАЛА собираем данные в память (без обращения к DOM - работает мгновенно)
-        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        const candle = param.seriesData.get(activeSeries);
-        
-        if (candle) {
-            const isBullish = candle.close >= candle.open;
-            const bullishClass = isBullish ? 'bullish' : 'bearish';
-            const change = Utils.calculateChange(candle.open, candle.close);
-            const changeNum = parseFloat(change);
-            
-            // Объем LWC не отдает в seriesData, поэтому берем через O(1) Map
-            const index = this._candleTimeMap.get(param.time);
-            const vol = index !== undefined ? this.chartData[index].volume : 0;
-
-            this._latestCrosshairData = {
-                open: Utils.formatPrice(candle.open),
-                high: Utils.formatPrice(candle.high),
-                low: Utils.formatPrice(candle.low),
-                close: Utils.formatPrice(candle.close),
-                change: (changeNum > 0 ? '+' : '') + change + '%',
-                volume: Utils.formatVolume(vol),
-                cls: bullishClass,
-                visible: true
-            };
-        } else {
-            this._latestCrosshairData = { visible: false };
-        }
-        
-        // 2. ПОТОМ просим браузер обновить DOM строго в момент отрисовки кадра (60 FPS)
-        if (!this._crosshairRafId) {
-            this._crosshairRafId = requestAnimationFrame(() => {
-                this._applyCrosshairDOM();
-                this._crosshairRafId = null;
-            });
-        }
+    onCrosshairMove(param) {
+    if (!this.overlay) {
+        this.overlay = safeElement('candleStatsOverlay');
+    }
+    
+    if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
+        if (this.overlay) this.overlay.classList.remove('visible');
+        this._latestCrosshairData = null;
+        return;
     }
 
+    const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    const candle = param.seriesData.get(activeSeries);
+    
+    if (candle) {
+        const isBullish = candle.close >= candle.open;
+        const change = Utils.calculateChange(candle.open, candle.close);
+        const changeNum = parseFloat(change);
+        
+        const index = this._candleTimeMap.get(param.time);
+        const vol = index !== undefined ? this.chartData[index].volume : 0;
+
+        // 🔥 СОХРАНЯЕМ СЫРЫЕ ЧИСЛА (без форматирования)
+        this._latestCrosshairData = {
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            change: (changeNum > 0 ? '+' : '') + change + '%',
+            volume: Utils.formatVolume(vol),
+            cls: isBullish ? 'bullish' : 'bearish',
+            visible: true
+        };
+    } else {
+        this._latestCrosshairData = { visible: false };
+    }
+    
+    if (!this._crosshairRafId) {
+        this._crosshairRafId = requestAnimationFrame(() => {
+            this._applyCrosshairDOM();
+            this._crosshairRafId = null;
+        });
+    }
+}
+
     // Отдельный метод для безопасного обновления DOM
-    _applyCrosshairDOM() {
+_applyCrosshairDOM() {
     const data = this._latestCrosshairData;
     if (!data || !data.visible) {
         if (this.overlay) this.overlay.classList.remove('visible');
         return;
     }
 
-    // 🔥 БЕРЁМ ЦВЕТА ИЗ CONFIG (учитывает пользовательские настройки)
+    // 🔥 БЕРЁМ ТУ ЖЕ ТОЧНОСТЬ, ЧТО И У ЛУЧА
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    const precision = series?.options()?.priceFormat?.precision ?? 2;
+    
+    // 🔥 ИСПОЛЬЗУЕМ ТУ ЖЕ ЛОГИКУ ФОРМАТИРОВАНИЯ, ЧТО И В ЛУЧЕ
+    const formatWithPrecision = (value) => {
+        if (value === undefined || value === null || isNaN(value)) return '—';
+        return Number(value).toFixed(precision);
+    };
+
     const bullishColor = this.bullishColor || CONFIG?.colors?.bullish || '#26a69a';
     const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
     const color = data.cls === 'bullish' ? bullishColor : bearishColor;
 
-    // Применяем цвет ко всем элементам
-    const elements = [
-        { el: this.openEl, defaultClass: 'stat-value' },
-        { el: this.highEl, defaultClass: 'stat-value' },
-        { el: this.lowEl, defaultClass: 'stat-value' },
-        { el: this.closeEl, defaultClass: 'stat-value' },
-        { el: this.changeEl, defaultClass: 'change-value' }
-    ];
+    // Обновляем элементы
+    if (this.openEl) {
+        this.openEl.textContent = formatWithPrecision(data.open);
+        this.openEl.className = `stat-value ${data.cls}`;
+        this.openEl.style.color = color;
+    }
+    if (this.highEl) {
+        this.highEl.textContent = formatWithPrecision(data.high);
+        this.highEl.className = `stat-value ${data.cls}`;
+        this.highEl.style.color = color;
+    }
+    if (this.lowEl) {
+        this.lowEl.textContent = formatWithPrecision(data.low);
+        this.lowEl.className = `stat-value ${data.cls}`;
+        this.lowEl.style.color = color;
+    }
+    if (this.closeEl) {
+        this.closeEl.textContent = formatWithPrecision(data.close);
+        this.closeEl.className = `stat-value ${data.cls}`;
+        this.closeEl.style.color = color;
+    }
+    if (this.changeEl) {
+        this.changeEl.textContent = data.change;
+        this.changeEl.className = `change-value ${data.cls}`;
+        this.changeEl.style.color = color;
+    }
 
-    elements.forEach(({ el, defaultClass }) => {
-        if (el) {
-            el.className = `${defaultClass} ${data.cls}`;
-            el.style.color = color; // 🔥 Устанавливаем цвет напрямую
-        }
-    });
-
-    // Значения
-    if (this.openEl) this.openEl.textContent = data.open;
-    if (this.highEl) this.highEl.textContent = data.high;
-    if (this.lowEl) this.lowEl.textContent = data.low;
-    if (this.closeEl) this.closeEl.textContent = data.close;
-    if (this.changeEl) this.changeEl.textContent = data.change;
-
-    // Объём (отдельно, т.к. id другой)
     const volumeEl = document.getElementById('volumeValue');
     if (volumeEl) {
         volumeEl.textContent = data.volume;
