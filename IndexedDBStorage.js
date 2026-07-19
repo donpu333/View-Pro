@@ -1,12 +1,24 @@
+/**
+ * Надежный и безопасный класс-обертка для работы с IndexedDB.
+ * Включает защиту от зависаний, потерь данных и блокировок браузера.
+ */
 class IndexedDBStorage {
+    /**
+     * @param {string} dbName - Имя базы данных
+     * @param {number} [version=2] - Версия схемы базы данных
+     */
     constructor(dbName, version = 2) {
         this.dbName = dbName;
         this.version = version;
         this.db = null;
         this.initPromise = null;
-        console.log('📦 IndexedDBStorage constructor', dbName, version);
+        console.log('📦 IndexedDBStorage constructor:', dbName, 'v' + version);
     }
 
+    /**
+     * Инициализирует соединение с базой данных.
+     * @returns {Promise<IDBDatabase>}
+     */
     async init() {
         if (this.db) return this.db;
         if (this.initPromise) return this.initPromise;
@@ -17,7 +29,7 @@ class IndexedDBStorage {
                 return reject(new Error('IndexedDB is not supported in this environment'));
             }
 
-            console.log('📦 opening database...');
+            console.log('📦 Opening database...');
             const request = indexedDB.open(this.dbName, this.version);
 
             request.onerror = (event) => {
@@ -29,7 +41,7 @@ class IndexedDBStorage {
             request.onblocked = (event) => {
                 console.warn('📦 Database blocked - close other tabs with this app');
                 // ЗАЩИТА 2: Reject обязателен! Иначе await init() зависнет навсегда (pending).
-                // Это корректно активирует твой глобальный .catch() и Proxy-fallback.
+                // Это корректно активирует глобальный .catch() и Proxy-fallback.
                 reject(new Error('Database blocked by another connection'));
             };
 
@@ -51,7 +63,7 @@ class IndexedDBStorage {
                 const db = event.target.result;
                 const transaction = event.target.transaction;
 
-                // Версия 1 – создание всех хранилищ с нуля
+                // Версия 1: Создание всех хранилищ с нуля
                 if (event.oldVersion < 1) {
                     if (!db.objectStoreNames.contains('symbolCaches')) {
                         const symbolStore = db.createObjectStore('symbolCaches', { keyPath: 'exchange' });
@@ -76,10 +88,11 @@ class IndexedDBStorage {
                     }
                 }
 
-                // Версия 2 – миграция: добавляем индекс symbolKey
+                // Версия 2: Миграция - добавляем индекс symbolKey, если его нет
                 if (event.oldVersion < 2 && db.objectStoreNames.contains('drawings')) {
                     const drawingsStore = transaction.objectStore('drawings');
                     if (!drawingsStore.indexNames.contains('symbolKey')) {
+                        console.log('📦 Adding symbolKey index to existing drawings store');
                         drawingsStore.createIndex('symbolKey', 'symbolKey');
                     }
                 }
@@ -89,6 +102,9 @@ class IndexedDBStorage {
         return this.initPromise;
     }
 
+    /**
+     * Закрывает соединение с базой данных.
+     */
     close() {
         if (this.db) {
             this.db.close();
@@ -98,9 +114,15 @@ class IndexedDBStorage {
         }
     }
 
+    /**
+     * Удаляет запись по ключу.
+     * @param {string} storeName - Имя хранилища
+     * @param {string|number} key - Ключ записи
+     * @returns {Promise<void>}
+     */
     async delete(storeName, key) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -117,9 +139,15 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Сохраняет или обновляет запись.
+     * @param {string} storeName - Имя хранилища
+     * @param {any} data - Данные для сохранения (должны содержать keyPath)
+     * @returns {Promise<any>} - Возвращает ключ сохраненной записи
+     */
     async put(storeName, data) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -136,9 +164,15 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Получает одну запись по ключу.
+     * @param {string} storeName - Имя хранилища
+     * @param {string|number} key - Ключ записи
+     * @returns {Promise<any>}
+     */
     async get(storeName, key) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -155,9 +189,14 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Получает все записи из хранилища.
+     * @param {string} storeName - Имя хранилища
+     * @returns {Promise<Array<any>>}
+     */
     async getAll(storeName) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -174,9 +213,16 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Получает записи по значению индекса.
+     * @param {string} storeName - Имя хранилища
+     * @param {string} indexName - Имя индекса
+     * @param {any} value - Искомое значение (ОБЯЗАТЕЛЬНО)
+     * @returns {Promise<Array<any>>}
+     */
     async getByIndex(storeName, indexName, value) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -184,7 +230,7 @@ class IndexedDBStorage {
                 const store = transaction.objectStore(storeName);
 
                 if (!store.indexNames.contains(indexName)) {
-                    console.warn(`📦 Index ${indexName} not found in ${storeName}`);
+                    console.warn(`📦 Index '${indexName}' not found in '${storeName}'`);
                     return resolve([]);
                 }
 
@@ -204,9 +250,14 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Очищает все записи в хранилище.
+     * @param {string} storeName - Имя хранилища
+     * @returns {Promise<void>}
+     */
     async clear(storeName) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -223,9 +274,14 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Возвращает количество записей в хранилище.
+     * @param {string} storeName - Имя хранилища
+     * @returns {Promise<number>}
+     */
     async count(storeName) {
         await this.init();
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -242,10 +298,16 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Массовое сохранение записей с гарантией сохранения порядка результатов.
+     * @param {string} storeName - Имя хранилища
+     * @param {Array<any>} items - Массив данных для сохранения
+     * @returns {Promise<Array<any>>} - Массив ключей в том же порядке, что и items
+     */
     async putMany(storeName, items) {
         await this.init();
         if (!Array.isArray(items) || items.length === 0) return [];
-        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store ${storeName} not found`);
+        if (!this.db.objectStoreNames.contains(storeName)) throw new Error(`Store '${storeName}' not found`);
 
         return new Promise((resolve, reject) => {
             try {
@@ -263,7 +325,7 @@ class IndexedDBStorage {
                     // Отдельный onerror не нужен: ошибка автоматически прервет транзакцию
                 });
 
-                // Нативные события транзакции надежнее ручных счетчиков (completed/errored)
+                // Нативные события транзакции надежнее ручных счетчиков
                 transaction.oncomplete = () => resolve(results);
                 transaction.onerror = () => reject(transaction.error);
                 transaction.onabort = () => reject(transaction.error || new Error('Transaction aborted'));
@@ -274,6 +336,10 @@ class IndexedDBStorage {
         });
     }
 
+    /**
+     * Полное удаление базы данных.
+     * @returns {Promise<void>}
+     */
     async deleteDatabase() {
         this.close();
         return new Promise((resolve, reject) => {
@@ -287,45 +353,44 @@ class IndexedDBStorage {
 }
 
 // ============================================================
-// Глобальная инициализация
+// Глобальная инициализация (Безопасная для SSR/Node.js)
 // ============================================================
-
-window.db = new IndexedDBStorage('TradingViewPro', 3);
-window.dbReady = false;
-
-window.db.init()
-    .then(() => {
-        window.dbReady = true;
-        console.log('✅ IndexedDB ready to use');
-    })
-    .catch(err => {
-        window.dbReady = false;
-        console.error('❌ IndexedDB init failed:', err);
-
-        // Заглушка – все операции будут безопасно игнорироваться
-        window.db = new Proxy({}, {
-            get: (target, prop) => {
-                if (['get', 'put', 'delete', 'getAll', 'getByIndex', 'clear', 'count', 'putMany', 'init', 'close'].includes(prop)) {
-                    return (...args) => {
-                        console.warn(`📦 IndexedDB DISABLED. Call to db.${prop}(${args[0] || ''}) was ignored.`);
-                        if (prop === 'getAll' || prop === 'getByIndex' || prop === 'putMany') {
-                            return Promise.resolve([]);
-                        }
-                        if (prop === 'count') {
-                            return Promise.resolve(0);
-                        }
-                        return Promise.resolve(undefined);
-                    };
-                }
-                return undefined;
-            }
-        });
-
-        setTimeout(() => {
-            alert('Ваш браузер заблокировал доступ к локальной базе данных.\nСохранение рисунков и кэш свечей будут недоступны в этой сессии.\nРазрешите использование Cookies/Storage в настройках браузера.');
-        }, 1000);
-    });
-
 if (typeof window !== 'undefined') {
     window.IndexedDBStorage = IndexedDBStorage;
+    
+    window.db = new IndexedDBStorage('TradingViewPro', 3);
+    window.dbReady = false;
+
+    window.db.init()
+        .then(() => {
+            window.dbReady = true;
+            console.log('✅ IndexedDB ready to use');
+        })
+        .catch(err => {
+            window.dbReady = false;
+            console.error('❌ IndexedDB init failed:', err);
+
+            // Умная заглушка (Proxy) – все операции будут безопасно игнорироваться
+            window.db = new Proxy({}, {
+                get: (target, prop) => {
+                    if (['get', 'put', 'delete', 'getAll', 'getByIndex', 'clear', 'count', 'putMany', 'init', 'close'].includes(prop)) {
+                        return (...args) => {
+                            console.warn(`📦 IndexedDB DISABLED. Call to db.${prop}(${args[0] || ''}) was ignored.`);
+                            if (prop === 'getAll' || prop === 'getByIndex' || prop === 'putMany') {
+                                return Promise.resolve([]);
+                            }
+                            if (prop === 'count') {
+                                return Promise.resolve(0);
+                            }
+                            return Promise.resolve(undefined);
+                        };
+                    }
+                    return undefined;
+                }
+            });
+
+            setTimeout(() => {
+                alert('Ваш браузер заблокировал доступ к локальной базе данных.\nСохранение рисунков и кэш свечей будут недоступны в этой сессии.\nРазрешите использование Cookies/Storage в настройках браузера.');
+            }, 1000);
+        });
 }
