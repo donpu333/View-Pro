@@ -1871,20 +1871,22 @@ svg, svg * { font-family: none !important; }
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     flex: 1.5;
     min-width: 100px;
-    max-width: 140px;
+    max-width: none;
 }
 
 .ticker-panel .symbol-text {
-    font-size: 0.75rem;
+    font-family: var(--font-main);
+    font-size: 0.7rem;
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
+    flex: 0 1 auto;
+    min-width: 24px;
+    max-width: 90px;
+    margin-left: 2px;
     color: var(--text-white) !important;
 }
 
