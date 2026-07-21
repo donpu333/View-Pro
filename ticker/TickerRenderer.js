@@ -424,11 +424,14 @@ class TickerRenderer {
         const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
         const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
 
-        let rawName = ticker.symbol.replace('USDT', '');
-        const match = rawName.match(/^(\d+)([A-Z]+)$/);
-        if (match) rawName = '1' + match[2];
-        else if (rawName.length > 8) rawName = rawName.substring(0, 7) + '…';
-        const displayName = this._escapeHtml(rawName);
+      let rawName = ticker.symbol.replace('USDT', '');
+const match = rawName.match(/^(\d+)([A-Z]+)$/);
+if (match) {
+    rawName = match[2]; // Убираем цифры
+}
+// Берём первые 3 буквы
+rawName = rawName.substring(0, 3);
+const displayName = this._escapeHtml(rawName);
 
         const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
 
