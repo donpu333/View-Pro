@@ -62,24 +62,16 @@ class ChartManager {
         this._historyLoadQueue = [];
         this._preloadThreshold = 400;
         this._batchSize = 500;
-        this._minLoadDelay = 200;
+        this._minLoadDelay = 1000;
         this._lastHistoryLoadTime = 0;
         this._pendingHistoryLoad = false;
         this._historyEndTime = null;
         this._fetchPromise = null;
 
         // ОКНО ДАННЫХ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
-        this._maxCandlesInMemory = 3000;
-        this._leftBuffer = 1000;
-        this._rightBuffer = 500;
-
-        // ОТЛОЖЕННЫЙ ПЕРЕСЧЁТ ИНДИКАТОРОВ
-        this._indicatorUpdateTimeout = null;
-        this._indicatorUpdateDelay = 300;
-
-        // КЭШ ЗАПРОСОВ
-        this._klineCache = new Map();
-        this._klineCacheMaxSize = 20;
+        this._maxCandlesInMemory = 5000;
+        this._leftBuffer = 2000;
+        this._rightBuffer = 1000;
 
         this._visibilityHandler = () => {
             if (!document.hidden) {
@@ -564,7 +556,7 @@ class ChartManager {
                     if (this._updateMainChartHeight) this._updateMainChartHeight();
                     setTimeout(() => this.scrollToLast(), 50);
                 }
-                if (this.timerManager && this.timerManager._primitive) this.timerManager._primitive.requestRedraw();
+                if (this.timerManager?. _primitive) this.timerManager._primitive.requestRedraw();
                 this.scheduleDrawingsUpdate(true);
             }, 100);
         });
@@ -1246,13 +1238,6 @@ class ChartManager {
     }
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null) {
-        // КЭШ
-        const cacheKey = `${symbol}_${interval}_${endTime}_${limit}`;
-        if (this._klineCache && this._klineCache.has(cacheKey)) {
-            console.log('💾 Из кэша:', cacheKey);
-            return this._klineCache.get(cacheKey);
-        }
-
         if (this._fetchPromise) { try { await this._fetchPromise; } catch(e) {} }
         if (this._currentFetchController) this._currentFetchController.abort();
         this._currentFetchController = new AbortController();
@@ -1302,15 +1287,6 @@ class ChartManager {
                 const noDupes = rawCandles.filter(c => { if (seenTimes.has(c.time)) return false; seenTimes.add(c.time); return true; });
                 const validCandles = noDupes.filter(c => this._isValidCandle(c));
                 validCandles.sort((a, b) => a.time - b.time);
-                
-                // Сохраняем в кэш
-                if (validCandles.length > 0 && this._klineCache) {
-                    this._klineCache.set(cacheKey, validCandles);
-                    if (this._klineCache.size > this._klineCacheMaxSize) {
-                        const firstKey = this._klineCache.keys().next().value;
-                        this._klineCache.delete(firstKey);
-                    }
-                }
                 
                 console.log(`✅ fetchKlines: получено ${validCandles.length} свечей`);
                 return validCandles;
@@ -1369,9 +1345,6 @@ class ChartManager {
             this.isLoadingMore = false;
             this._lastHistoryLoadTime = 0;
             this._fetchPromise = null;
-            
-            // Очистка кэша
-            if (this._klineCache) this._klineCache.clear();
 
             this.currentSymbol = symbol;
             this.currentExchange = exchange;
@@ -1465,8 +1438,6 @@ class ChartManager {
         if (this._updatePositionRafId) { cancelAnimationFrame(this._updatePositionRafId); this._updatePositionRafId = null; }
         if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
-        if (this._indicatorUpdateTimeout) { clearTimeout(this._indicatorUpdateTimeout); this._indicatorUpdateTimeout = null; }
-        if (this._klineCache) this._klineCache.clear();
         this._fetchPromise = null;
     }
 
@@ -1632,10 +1603,13 @@ class ChartManager {
         const fromIndex = Math.max(0, Math.floor(range.from));
         const toIndex = Math.min(this.chartData.length - 1, Math.ceil(range.to));
         
+        // Загрузка истории
         if (fromIndex < this._preloadThreshold && this.hasMoreData && !this.isLoadingMore) {
+            console.log(`🔥 ТРИГГЕР ЗАГРУЗКИ: fromIndex=${fromIndex}`);
             this._loadHistoryAsync();
         }
         
+        // Обрезка данных для производительности
         this._trimToWindow(fromIndex, toIndex);
     }
 
@@ -1648,6 +1622,7 @@ class ChartManager {
         
         if (leftTrim === 0 && rightTrim === 0) return;
         
+        // Обрезаем массив
         this.chartData = this.chartData.slice(keepFrom, keepTo);
         this._rebuildTimeMap();
         
@@ -1655,7 +1630,9 @@ class ChartManager {
         const currentRange = timeScale.getVisibleLogicalRange();
         
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (activeSeries) activeSeries.setData(this.chartData);
+        if (activeSeries) {
+            activeSeries.setData(this.chartData);
+        }
         
         if (this.volumeSeries && this.chartData.length > 0) {
             const volumeData = new Array(this.chartData.length);
@@ -1678,10 +1655,9 @@ class ChartManager {
         }
         
         if (leftTrim > 0 || rightTrim > 0) {
-            if (this._indicatorUpdateTimeout) clearTimeout(this._indicatorUpdateTimeout);
-            this._indicatorUpdateTimeout = setTimeout(() => {
+            requestAnimationFrame(() => {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            }, this._indicatorUpdateDelay);
+            });
         }
     }
 
@@ -1699,6 +1675,7 @@ class ChartManager {
             if (!oldestCandle) { this.isLoadingMore = false; return; }
             
             const endTime = (oldestCandle.time * 1000) - 1;
+            console.log(`📥 ЗАГРУЗКА: before ${new Date(endTime).toISOString()}`);
             
             const olderCandles = await this.fetchKlines(
                 this.currentSymbol, this.currentExchange, this.currentMarketType,
@@ -1706,6 +1683,7 @@ class ChartManager {
             );
             
             if (!olderCandles || olderCandles.length === 0) {
+                console.log('⚠️ Пустой ответ');
                 this.hasMoreData = false;
                 this.isLoadingMore = false;
                 return;
@@ -1726,6 +1704,7 @@ class ChartManager {
                 
                 this.chartData = [...uniqueOlder, ...this.chartData];
                 
+                // Обрезаем если слишком много
                 if (this.chartData.length > this._maxCandlesInMemory) {
                     this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
                 }
@@ -1755,14 +1734,16 @@ class ChartManager {
                     this.volumeSeries.setData(volumeData);
                 }
                 
-                if (this._indicatorUpdateTimeout) clearTimeout(this._indicatorUpdateTimeout);
-                this._indicatorUpdateTimeout = setTimeout(() => {
+                requestAnimationFrame(() => {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                     this.scheduleDrawingsUpdate(true);
-                }, this._indicatorUpdateDelay);
+                });
+                
+                console.log(`✅ ЗАГРУЖЕНО: +${uniqueOlder.length} свечей (всего в памяти: ${this.chartData.length})`);
             }
             
             if (olderCandles.length < this._batchSize) {
+                console.log('⚠️ Получено меньше лимита, данных больше нет');
                 this.hasMoreData = false;
             }
         } catch (e) {
