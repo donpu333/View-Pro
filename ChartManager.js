@@ -69,7 +69,7 @@ class ChartManager {
         this._fetchPromise = null;
 
         // ОКНО ДАННЫХ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
-        this._maxCandlesInMemory = 5000;
+        this._maxCandlesInMemory = 10000; // ⚡ Увеличено до 10000, Lightweight Charts легко это переваривает
         this._leftBuffer = 2000;
         this._rightBuffer = 1000;
 
@@ -348,11 +348,11 @@ class ChartManager {
         this._drawingsRafId = requestAnimationFrame(() => {
             this._drawingsRafId = null;
             
-            if (this.rayManager?._applyRedrawIfNeeded) this.rayManager._applyRedrawIfNeeded();
-            if (this.trendLineManager?._requestRedraw) this.trendLineManager._requestRedraw();
-            if (this.rulerLineManager?._requestRedraw) this.rulerLineManager._requestRedraw();
-            if (this.alertLineManager?._applyRedrawsIfNeeded) this.alertLineManager._applyRedrawsIfNeeded();
-            if (this.textManager?._requestRedraw) this.textManager._requestRedraw();
+            if (window.rayManager?._applyRedrawIfNeeded) window.rayManager._applyRedrawIfNeeded();
+            if (window.trendLineManager?._requestRedraw) window.trendLineManager._requestRedraw();
+            if (window.rulerLineManager?._requestRedraw) window.rulerLineManager._requestRedraw();
+            if (window.alertLineManager?._applyRedrawsIfNeeded) window.alertLineManager._applyRedrawsIfNeeded();
+            if (window.textManager?._requestRedraw) window.textManager._requestRedraw();
         });
     }
 
@@ -504,8 +504,10 @@ class ChartManager {
         });
     }
 
+    // ⚡ ОПТИМИЗАЦИЯ: Синхронизация панелей и тяжелые обновления вынесены в requestAnimationFrame и debounce
     setupMaximumSubscriptions() {
         let lastScrollTime = 0;
+        let syncRafId = null;
         
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             const now = performance.now();
@@ -516,11 +518,20 @@ class ChartManager {
             this._isScrolling = true;
             
             clearTimeout(this._scrollStopTimeout);
+            
+            // ⚡ Тяжелые операции выполняются ТОЛЬКО после остановки скролла (через 150мс)
             this._scrollStopTimeout = setTimeout(() => {
                 this._isScrolling = false;
                 this._isScrollingFast = false;
-            }, 200);
+                
+                if (this.indicatorManager) {
+                    this.indicatorManager.updateAllIndicators();
+                }
+                this.scheduleDrawingsUpdate(true);
+                this.requestDrawingsRedraw();
+            }, 150);
             
+            // Легкие операции во время скролла
             this.scheduleDrawingsUpdate();
             
             if (range) {
@@ -530,14 +541,20 @@ class ChartManager {
             if (!this.indicatorManager?.panelManager || this._isSyncing) return;
             this._isSyncing = true;
             
-            const panels = this.indicatorManager.panelManager.panels;
-            panels.forEach((panel) => {
-                if (panel.chart && !panel.isCollapsed) {
-                    try { panel.chart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
-                }
+            // ⚡ Синхронизация панелей через RAF предотвращает рассинхронизацию и лаги
+            if (syncRafId) cancelAnimationFrame(syncRafId);
+            syncRafId = requestAnimationFrame(() => {
+                const panels = this.indicatorManager.panelManager.panels;
+                panels.forEach((panel) => {
+                    if (panel.chart && !panel.isCollapsed) {
+                        try { 
+                            panel.chart.timeScale().setVisibleLogicalRange(range); 
+                        } catch(e) {}
+                    }
+                });
+                this._isSyncing = false;
+                syncRafId = null;
             });
-            
-            requestAnimationFrame(() => { this._isSyncing = false; });
         });
         
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
@@ -556,7 +573,7 @@ class ChartManager {
                     if (this._updateMainChartHeight) this._updateMainChartHeight();
                     setTimeout(() => this.scrollToLast(), 50);
                 }
-                if (this.timerManager?. _primitive) this.timerManager._primitive.requestRedraw();
+                if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
                 this.scheduleDrawingsUpdate(true);
             }, 100);
         });
@@ -693,12 +710,9 @@ class ChartManager {
         if (this.timerManager) {
             const prim = this.timerManager._primitive;
             if (prim) {
-                if (price !== null) {
-                    if (prim.setPrice) prim.setPrice(price);
-                } else {
-                    if (prim.setPrice && lastCandle) prim.setPrice(lastCandle.close);
-                    if (prim.setColor) prim.setColor(lineColorByCandle);
-                }
+                if (prim.setPrice) prim.setPrice(price);
+                if (prim.setPrice && !price && lastCandle) prim.setPrice(lastCandle.close);
+                if (prim.setColor) prim.setColor(lineColorByCandle);
             }
             this.timerManager.start(this.currentInterval);
         }
@@ -732,7 +746,7 @@ class ChartManager {
         if (prim) {
             if (prim.setPrice) prim.setPrice(price);
             if (prim.setColor) prim.setColor(lineColor);
-            if (prim.isEnabled()) prim.requestRedraw();
+            if (prim.isEnabled) prim.requestRedraw();
         }
         
         this.scheduleUpdatePosition();
@@ -781,7 +795,7 @@ class ChartManager {
             if (this.timerManager?._primitive) {
                 if (this.timerManager._primitive.setPrice) this.timerManager._primitive.setPrice(candle.close);
                 if (this.timerManager._primitive.setColor) this.timerManager._primitive.setColor(lineColor);
-                if (this.timerManager._primitive.isEnabled()) this.timerManager._primitive.requestRedraw();
+                if (this.timerManager._primitive.isEnabled) this.timerManager._primitive.requestRedraw();
             }
             
             if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
@@ -901,14 +915,16 @@ class ChartManager {
         this.scheduleUpdatePosition();
         this._updatePageTitle();
 
-        getPrecisionFromExchange(symbol, exchange, marketType)
-            .then(precision => {
-                if (this.currentSymbol === symbol) {
-                    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                    this.applyPriceFormat(precision);
-                }
-            })
-            .catch(() => {});
+        if (typeof getPrecisionFromExchange === 'function') {
+            getPrecisionFromExchange(symbol, exchange, marketType)
+                .then(precision => {
+                    if (this.currentSymbol === symbol) {
+                        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                        this.applyPriceFormat(precision);
+                    }
+                })
+                .catch(() => {});
+        }
 
         requestAnimationFrame(() => {
             if (window.renderDrawings) window.renderDrawings();
@@ -1416,7 +1432,7 @@ class ChartManager {
             if (prim) {
                 if (prim.setColor) prim.setColor(lineColor);
                 if (prim.setPrice && price) prim.setPrice(price);
-                if (prim.isEnabled()) prim.requestRedraw();
+                if (prim.isEnabled) prim.requestRedraw();
             }
             if (this.timerManager.forceColorUpdate) this.timerManager.forceColorUpdate();
         }
@@ -1478,9 +1494,11 @@ class ChartManager {
         const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
         if (cachedPrecision) { this.applyPriceFormat(parseInt(cachedPrecision)); return; }
         this.applyPriceFormat(this._inferPrecisionFromData());
-        getPrecisionFromExchange(symbol, exchange, marketType)
-            .then(precision => { this.applyPriceFormat(precision); localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision); })
-            .catch(() => {});
+        if (typeof getPrecisionFromExchange === 'function') {
+            getPrecisionFromExchange(symbol, exchange, marketType)
+                .then(precision => { this.applyPriceFormat(precision); localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision); })
+                .catch(() => {});
+        }
     }
 
     forceRedraw() {
@@ -1595,70 +1613,21 @@ class ChartManager {
     coordinateToPrice(coordinate) { try { const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries; return series.coordinateToPrice(coordinate); } catch (e) { return null; } }
 
     // ==========================================
-    // 🔥 БЕСКОНЕЧНЫЙ СКРОЛЛ С ОКНОМ ДАННЫХ
+    // 🔥 ОПТИМИЗИРОВАННЫЙ БЕСКОНЕЧНЫЙ СКРОЛЛ
     // ==========================================
     onVisibleLogicalRangeChange(range) {
         if (!range || !this.chartData.length) return;
         
         const fromIndex = Math.max(0, Math.floor(range.from));
-        const toIndex = Math.min(this.chartData.length - 1, Math.ceil(range.to));
         
-        // Загрузка истории
+        // ⚡ ОПТИМИЗАЦИЯ: Выносим запрос в макрозадачу, чтобы не блокировать поток рендеринга скролла
         if (fromIndex < this._preloadThreshold && this.hasMoreData && !this.isLoadingMore) {
-            console.log(`🔥 ТРИГГЕР ЗАГРУЗКИ: fromIndex=${fromIndex}`);
-            this._loadHistoryAsync();
+            setTimeout(() => this._loadHistoryAsync(), 0);
         }
         
-        // Обрезка данных для производительности
-        this._trimToWindow(fromIndex, toIndex);
-    }
-
-    _trimToWindow(fromIndex, toIndex) {
-        const keepFrom = Math.max(0, fromIndex - this._leftBuffer);
-        const keepTo = Math.min(this.chartData.length, toIndex + this._rightBuffer);
-        
-        const leftTrim = keepFrom;
-        const rightTrim = this.chartData.length - keepTo;
-        
-        if (leftTrim === 0 && rightTrim === 0) return;
-        
-        // Обрезаем массив
-        this.chartData = this.chartData.slice(keepFrom, keepTo);
-        this._rebuildTimeMap();
-        
-        const timeScale = this.chart.timeScale();
-        const currentRange = timeScale.getVisibleLogicalRange();
-        
-        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (activeSeries) {
-            activeSeries.setData(this.chartData);
-        }
-        
-        if (this.volumeSeries && this.chartData.length > 0) {
-            const volumeData = new Array(this.chartData.length);
-            for (let i = 0; i < this.chartData.length; i++) {
-                const c = this.chartData[i];
-                volumeData[i] = {
-                    time: c.time,
-                    value: c.volume || 0,
-                    color: c.close >= c.open ? this.bullishColor : this.bearishColor
-                };
-            }
-            this.volumeSeries.setData(volumeData);
-        }
-        
-        if (currentRange && leftTrim > 0) {
-            timeScale.setVisibleLogicalRange({
-                from: Math.max(0, currentRange.from - leftTrim),
-                to: Math.max(1, currentRange.to - leftTrim)
-            });
-        }
-        
-        if (leftTrim > 0 || rightTrim > 0) {
-            requestAnimationFrame(() => {
-                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            });
-        }
+        // ⛔ УДАЛЕНО: this._trimToWindow() больше не вызывается при скролле.
+        // Lightweight Charts сам эффективно рендерит только видимую область.
+        // Принудительный setData при скролле был главной причиной лагов.
     }
 
     async _loadHistoryAsync() {
@@ -1689,31 +1658,32 @@ class ChartManager {
                 return;
             }
             
-            const existingTimes = new Set();
-            for (let i = 0; i < this.chartData.length; i++) existingTimes.add(this.chartData[i].time);
-            
-            const uniqueOlder = [];
-            for (let i = 0; i < olderCandles.length; i++) {
-                if (!existingTimes.has(olderCandles[i].time)) uniqueOlder.push(olderCandles[i]);
-            }
+            const existingTimes = new Set(this.chartData.map(c => c.time));
+            const uniqueOlder = olderCandles.filter(c => !existingTimes.has(c.time));
             
             if (uniqueOlder.length > 0) {
                 const timeScale = this.chart.timeScale();
                 const currentRange = timeScale.getVisibleLogicalRange();
                 const addedCount = uniqueOlder.length;
                 
+                // Добавляем новые данные в начало
                 this.chartData = [...uniqueOlder, ...this.chartData];
                 
-                // Обрезаем если слишком много
+                // ⚡ ОПТИМИЗАЦИЯ: Обрезаем массив только если он превышает жесткий лимит памяти
                 if (this.chartData.length > this._maxCandlesInMemory) {
                     this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
                 }
                 
+                // Пересобираем Map только один раз после изменения данных
                 this._rebuildTimeMap();
                 
                 const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (activeSeries) activeSeries.setData(this.chartData);
+                if (activeSeries) {
+                    // ⚡ setData вызывается ТОЛЬКО здесь (при реальной загрузке новых данных), а не при скролле
+                    activeSeries.setData(this.chartData);
+                }
                 
+                // Корректируем видимую область, чтобы график не "прыгал" вправо при добавлении данных
                 if (currentRange) {
                     timeScale.setVisibleLogicalRange({
                         from: currentRange.from + addedCount,
@@ -1722,15 +1692,11 @@ class ChartManager {
                 }
                 
                 if (this.volumeSeries) {
-                    const volumeData = new Array(this.chartData.length);
-                    for (let i = 0; i < this.chartData.length; i++) {
-                        const c = this.chartData[i];
-                        volumeData[i] = {
-                            time: c.time,
-                            value: c.volume || 0,
-                            color: c.close >= c.open ? this.bullishColor : this.bearishColor
-                        };
-                    }
+                    const volumeData = this.chartData.map(c => ({
+                        time: c.time,
+                        value: c.volume || 0,
+                        color: c.close >= c.open ? this.bullishColor : this.bearishColor
+                    }));
                     this.volumeSeries.setData(volumeData);
                 }
                 
@@ -1749,6 +1715,7 @@ class ChartManager {
         } catch (e) {
             console.error('❌ Ошибка загрузки истории:', e);
         } finally {
+            // ⚡ ГАРАНТИРОВАННЫЙ сброс флага даже при ошибке сети, чтобы не заблокировать будущие загрузки
             setTimeout(() => { this.isLoadingMore = false; }, this._minLoadDelay);
         }
     }
