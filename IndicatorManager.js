@@ -185,40 +185,49 @@ class IndicatorManager {
     }
     
     // 🔥 ОПТИМИЗИРОВАННЫЙ ВЫЗОВ WORKER С DEBOUNCE
-    updateAllIndicators() {
-        if (!this.worker) return;
+   updateAllIndicators() {
+    if (!this.worker) return;
+    
+    // Debounce защита (если она у вас уже есть, оставьте её)
+    if (this._updateWorkerTimer) clearTimeout(this._updateWorkerTimer);
+
+    this._updateWorkerTimer = setTimeout(() => {
+        const calculations = [];
+        const chartData = this.chartManager.chartData;
         
-        // Очищаем предыдущий таймер, если метод вызван слишком часто (например, при скролле)
-        if (this._updateWorkerTimer) {
-            clearTimeout(this._updateWorkerTimer);
+        if (!chartData || chartData.length === 0) return;
+
+        // ⚡ ШАГ 4: Берем только видимый диапазон + буфер по 50 свечей с каждой стороны
+        const range = this.chartManager.chart.timeScale().getVisibleLogicalRange();
+        let from = 0;
+        let to = chartData.length - 1;
+        
+        if (range) {
+            from = Math.max(0, Math.floor(range.from) - 50);
+            to = Math.min(chartData.length - 1, Math.ceil(range.to) + 50);
         }
+        
+        const visibleData = chartData.slice(from, to + 1);
 
-        this._updateWorkerTimer = setTimeout(() => {
-            const calculations = [];
-            const chartData = this.chartManager.chartData;
+        this.activeIndicators.forEach(indicator => {
+            const workerType = indicator.getWorkerType();
+            if (!workerType) return; 
             
-            if (!chartData || chartData.length === 0) return;
-
-            this.activeIndicators.forEach(indicator => {
-                const workerType = indicator.getWorkerType();
-                if (!workerType) return; // Пропускаем индикаторы без воркера (как наш новый Volume24H)
-                
-                // 🔥 ОПТИМИЗАЦИЯ: Если индикатору нужны не все данные, а только видимые, 
-                // здесь можно сделать slice. Но пока оставляем полную копию для совместимости.
-                calculations.push({
-                    indicatorId: indicator.id,
-                    type: workerType,
-                    data: [...chartData], // Копируем, чтобы воркер не мутировал оригинал
-                    params: indicator.getWorkerParams ? indicator.getWorkerParams() : {}
-                });
+            calculations.push({
+                indicatorId: indicator.id,
+                type: workerType,
+                data: visibleData, // ⚡ Отправляем в воркер 200 элементов вместо 10 000!
+                params: indicator.getWorkerParams ? indicator.getWorkerParams() : {},
+                offsetIndex: from // Передаем смещение, чтобы индикатор знал, к каким свечам это относится
             });
-            
-            if (calculations.length > 0) {
-                this._isWorkerProcessing = true;
-                this.worker.postMessage({ task: 'calculateMultiple', calculations });
-            }
-        }, 150); // 🔥 Ждем 150мс тишины перед отправкой в воркер. Это убивает спам при скролле.
-    }
+        });
+        
+        if (calculations.length > 0) {
+            this._isWorkerProcessing = true;
+            this.worker.postMessage({ task: 'calculateMultiple', calculations });
+        }
+    }, 150);
+}
 
     showIndicatorSettings(indicator) {
         const panel = document.getElementById('indicatorSettings');
