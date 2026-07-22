@@ -1,4 +1,5 @@
 class IndicatorManager {
+    
     constructor(chartManager) {
         this.chartManager = chartManager;
         this.activeIndicators = [];
@@ -10,10 +11,6 @@ class IndicatorManager {
         this._currentSettingsIndicator = null;
         this._outsideClickHandler = null;
         
-        // 🔥 ЗАЩИТА ОТ СПАМА WORKER (Debounce)
-        this._updateWorkerTimer = null;
-        this._isWorkerProcessing = false;
-
         // Привязываем контекст всех методов
         this._handleWorkerMessage = this._handleWorkerMessage.bind(this);
         this.updateAllIndicators = this.updateAllIndicators.bind(this);
@@ -22,11 +19,9 @@ class IndicatorManager {
         this._saveIndicators = this._saveIndicators.bind(this);
         
         // Инициализируем Worker
-        this.worker = window.initIndicatorWorker ? window.initIndicatorWorker() : null;
+        this.worker = window.initIndicatorWorker();
         if (this.worker) {
             this.worker.addEventListener('message', (e) => this._handleWorkerMessage(e.data));
-            // Обработка ошибок воркера, чтобы не ронять приложение
-            this.worker.addEventListener('error', (e) => console.error('❌ Worker error:', e));
         }
         
         this._initIndicatorPanels();
@@ -36,30 +31,33 @@ class IndicatorManager {
         }, 2000);
     }
     
-    _handleWorkerMessage(message) {
-        this._isWorkerProcessing = false; // Разрешаем следующие запросы
-
-        const processResult = (res) => {
-            const indicator = this.activeIndicators.find(i => i.id == res.indicatorId);
-            if (indicator && res.success) {
-                // 🔥 ОПТИМИЗАЦИЯ: Убрали s.setData([]). 
-                // Пусть onCalculateResult сам делает setData(newData). Это предотвратит 1-кадровое моргание.
-                indicator.onCalculateResult({ 
-                    indicatorId: res.indicatorId, 
-                    result: res.result, 
-                    success: true 
+   _handleWorkerMessage(message) {
+    const processResult = (res) => {
+        const indicator = this.activeIndicators.find(i => i.id == res.indicatorId);
+        if (indicator && res.success) {
+            // ✅ Очищаем и сразу заполняем в одном цикле (без моргания)
+            if (indicator.series) {
+                indicator.series.forEach(s => {
+                    if (s && s.setData) s.setData([]); 
                 });
             }
-        };
+            indicator.onCalculateResult({ 
+                indicatorId: res.indicatorId, 
+                result: res.result, 
+                success: true 
+            });
+        }
+    };
 
-        if (message.task === 'result') {
-            processResult(message);
-        } else if (message.task === 'resultMultiple') {
-            for (const res of message.results) {
-                processResult(res);
-            }
+    if (message.task === 'result') {
+        processResult(message);
+    }
+    else if (message.task === 'resultMultiple') {
+        for (const res of message.results) {
+            processResult(res);
         }
     }
+}
     
     _filterData(data) {
         if (!data || !Array.isArray(data)) return [];
@@ -71,7 +69,6 @@ class IndicatorManager {
     
     _initIndicatorPanels() {
         const chartContainer = document.getElementById('chart-container');
-        if (!chartContainer) return;
         
         let panelsContainer = document.getElementById('indicator-panels-container');
         if (!panelsContainer) {
@@ -104,11 +101,6 @@ class IndicatorManager {
             const panelName = activeInd ? activeInd.data.name : panelId.toUpperCase();
             panel = this.panelManager.createPanel(panelId, panelName, 150, 60, 400);
             this.indicatorPanels[panelId] = panel;
-            
-            // 🔥 ВАЖНО: Привязываем кроссхейр и синхронизацию сразу при создании
-            if (this.panelManager._syncPanelWithMainChart) {
-                this.panelManager._syncPanelWithMainChart(panelId);
-            }
         }
         
         if (panel && panel.isCollapsed) {
@@ -123,22 +115,23 @@ class IndicatorManager {
         this._addingInProgress.add(type);
         
         try {
-            const indicator = window.IndicatorFactory ? window.IndicatorFactory.createIndicator(type, this) : null;
+            const indicator = window.IndicatorFactory.createIndicator(type, this);
             if (!indicator) return false;
             
             if (indicator.data.panel !== 'main') {
                 this._showPanel(indicator.data.panel);
             }
             
-            const series = indicator.createSeries();
+                      const series = indicator.createSeries();
             if (series) {
                 this.activeIndicators.push(indicator);
                 this._saveIndicators();
                 this._renderUI();
                 this.chartManager?._updateMainChartHeight?.();
                 
-                // 🔥 Запускаем расчет, но с защитой от дублирования
+                // ✅ ЗАПУСКАЕМ РАСЧЕТ ДАННЫХ ДЛЯ НОВОГО ИНДИКАТОРА
                 this.updateAllIndicators();
+                
                 return true;
             }
             return false;
@@ -177,58 +170,39 @@ class IndicatorManager {
         
         this._saveIndicators();
         this._renderUI();
-        
-        // ❌ УДАЛЕНО: this.chartManager?.chart?.timeScale()?.fitContent();
-        // Вызов fitContent() при удалении индикатора сбрасывает позицию скролла пользователя, что очень раздражает.
+        this.chartManager?.chart?.timeScale()?.fitContent();
         
         return true;
     }
     
-    // 🔥 ОПТИМИЗИРОВАННЫЙ ВЫЗОВ WORKER С DEBOUNCE
    updateAllIndicators() {
     if (!this.worker) return;
     
-    // Debounce защита (если она у вас уже есть, оставьте её)
-    if (this._updateWorkerTimer) clearTimeout(this._updateWorkerTimer);
-
-    this._updateWorkerTimer = setTimeout(() => {
-        const calculations = [];
+    const calculations = [];
+    this.activeIndicators.forEach(indicator => {
+        const workerType = indicator.getWorkerType();
+        if (!workerType) return; 
+        
         const chartData = this.chartManager.chartData;
-        
-        if (!chartData || chartData.length === 0) return;
-
-        // ⚡ ШАГ 4: Берем только видимый диапазон + буфер по 50 свечей с каждой стороны
-        const range = this.chartManager.chart.timeScale().getVisibleLogicalRange();
-        let from = 0;
-        let to = chartData.length - 1;
-        
-        if (range) {
-            from = Math.max(0, Math.floor(range.from) - 50);
-            to = Math.min(chartData.length - 1, Math.ceil(range.to) + 50);
-        }
-        
-        const visibleData = chartData.slice(from, to + 1);
-
-        this.activeIndicators.forEach(indicator => {
-            const workerType = indicator.getWorkerType();
-            if (!workerType) return; 
+        if (chartData && chartData.length > 0) {
+            // ❌ УДАЛИЛИ ОЧИСТКУ СЕРИЙ ОТСЮДА. Они очистятся в момент прихода новых данных.
+            if (indicator.result) {
+                indicator.result = null;
+            }
             
             calculations.push({
                 indicatorId: indicator.id,
                 type: workerType,
-                data: visibleData, // ⚡ Отправляем в воркер 200 элементов вместо 10 000!
-                params: indicator.getWorkerParams ? indicator.getWorkerParams() : {},
-                offsetIndex: from // Передаем смещение, чтобы индикатор знал, к каким свечам это относится
+                data: [...chartData],
+                params: indicator.getWorkerParams()
             });
-        });
-        
-        if (calculations.length > 0) {
-            this._isWorkerProcessing = true;
-            this.worker.postMessage({ task: 'calculateMultiple', calculations });
         }
-    }, 150);
+    });
+    
+    if (calculations.length > 0) {
+        this.worker.postMessage({ task: 'calculateMultiple', calculations });
+    }
 }
-
     showIndicatorSettings(indicator) {
         const panel = document.getElementById('indicatorSettings');
         const content = document.getElementById('indicatorSettingsContent');
@@ -238,7 +212,7 @@ class IndicatorManager {
         
         this._currentSettingsIndicator = indicator;
         title.textContent = `Настройки: ${indicator.data.name}`;
-        content.innerHTML = indicator.getSettingsHTML ? indicator.getSettingsHTML() : '';
+        content.innerHTML = indicator.getSettingsHTML();
         
         const widthSlider = document.getElementById('indicatorLineWidth');
         const widthValue = document.getElementById('lineWidthValue');
@@ -258,12 +232,11 @@ class IndicatorManager {
         const saveBtn = document.getElementById('indicatorSaveSettings');
         if (saveBtn) {
             saveBtn.onclick = () => {
-                if (this._currentSettingsIndicator && this._currentSettingsIndicator.applySettingsFromForm) {
+                if (this._currentSettingsIndicator) {
                     this._currentSettingsIndicator.applySettingsFromForm();
                     this._currentSettingsIndicator.createSeries();
                     this._renderUI();
                     this._saveIndicators();
-                    this.updateAllIndicators(); // Пересчитываем с новыми настройками
                 }
                 this._closeSettingsPanel(panel);
             };
@@ -309,6 +282,7 @@ class IndicatorManager {
             visible: indicator.visible !== false
         }));
         localStorage.setItem('activeIndicatorsV2', JSON.stringify(indicatorsData));
+        console.log('💾 Индикаторы сохранены:', indicatorsData.length);
     }
     
     loadIndicators() {
@@ -321,6 +295,7 @@ class IndicatorManager {
             
             if (!this.chartManager.chartData || this.chartManager.chartData.length === 0) {
                 this._pendingIndicators = indicatorsData;
+                console.log('⏳ Данные графика еще не загружены, откладываем восстановление индикаторов');
                 return;
             }
             
@@ -337,6 +312,11 @@ class IndicatorManager {
             const data = [...this._pendingIndicators];
             this._pendingIndicators = null;
             this._restoreIndicators(data);
+            
+            // Запускаем пересчет
+            setTimeout(() => {
+                this.updateAllIndicators();
+            }, 500);
         }
     }
     
@@ -344,12 +324,13 @@ class IndicatorManager {
         indicatorsData.forEach(data => {
             if (this.activeIndicators.some(i => i.type === data.type)) return;
             
-            const IndicatorClass = window.IndicatorRegistry ? window.IndicatorRegistry.get(data.type) : null;
+            const IndicatorClass = window.IndicatorRegistry.get(data.type);
             if (!IndicatorClass) return;
             
             const indicator = new IndicatorClass(this);
             if (!indicator) return;
             
+            // Сначала настройки, ПОТОМ createSeries
             if (data.settings) {
                 indicator.settings = { ...indicator.settings, ...data.settings };
             }
@@ -357,6 +338,7 @@ class IndicatorManager {
                 indicator.visible = data.visible;
             }
             
+            // Проверяем цвет
             if (!indicator.settings.color || indicator.settings.color === 'undefined') {
                 indicator.settings.color = indicator.data.color || '#FFA500';
             }
@@ -376,50 +358,17 @@ class IndicatorManager {
         
         this._saveIndicators();
         this._renderUI();
-        this.chartManager?._updateMainChartHeight?.();
-        
-        // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Запускаем расчет после восстановления!
-        // Раньше этого не было, и индикаторы висели пустыми до первого обновления.
-        setTimeout(() => {
-            this.updateAllIndicators();
-        }, 300);
+        this.afterAllIndicatorsLoaded();
     }
+    afterAllIndicatorsLoaded() {
+    // ❌ УДАЛИЛИ строку с volumeScale, чтобы не сбивать настройки графика
+    this.chartManager?._updateMainChartHeight?.();
+}
     
-    // 🔥 ОПТИМИЗИРОВАННОЕ МАССОВОЕ УДАЛЕНИЕ
     clearAllIndicators() {
-        if (this.activeIndicators.length === 0) return;
-        
-        // 1. Сначала уничтожаем все серии и DOM-элементы
         for (let i = this.activeIndicators.length - 1; i >= 0; i--) {
-            const indicator = this.activeIndicators[i];
-            if (indicator.destroy) indicator.destroy();
-            
-            indicator.series.forEach(series => {
-                if (indicator.data.panel === 'main') {
-                    try { this.chartManager.chart.removeSeries(series); } catch(e) {}
-                } else {
-                    this.panelManager.removeSeries(indicator.data.panel, series);
-                }
-            });
+            this.removeIndicator(i);
         }
-        
-        // 2. Закрываем пустые панели
-        const panelsToClose = new Set();
-        this.activeIndicators.forEach(ind => {
-            if (ind.data.panel !== 'main') panelsToClose.add(ind.data.panel);
-        });
-        
-        panelsToClose.forEach(panelId => {
-            this.panelManager.closePanel(panelId);
-            delete this.indicatorPanels[panelId];
-        });
-        
-        // 3. Очищаем массив ОДИН раз
-        this.activeIndicators = [];
-        
-        // 4. Сохраняем и обновляем UI ОДИН раз (вместо N раз в цикле)
-        this._saveIndicators();
-        this._renderUI();
     }
     
     _renderUI() {
