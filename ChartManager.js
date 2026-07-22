@@ -737,58 +737,40 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    _syncPriceLine(price) {
-        if (!price) return;
-        
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series) return;
-        
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        
-        lastCandle.close = price;
-        if (price > lastCandle.high) lastCandle.high = price;
-        if (price < lastCandle.low) lastCandle.low = price;
-        
-        const isBullish = price >= lastCandle.open;
-        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
-        
-        this.currentRealPrice = price;
-        this._lastAppliedColor = lineColor;
-        this.lastCandle = lastCandle;
-        
-        series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
-        series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-        
-        const prim = this.timerManager?._primitive;
-        if (prim) {
-            if (prim.setPrice) prim.setPrice(price);
-            if (prim.setColor) prim.setColor(lineColor);
-            if (prim.isEnabled()) prim.requestRedraw();
-        }
-        
-        this.scheduleUpdatePosition();
-        this._updatePageTitle();
-        this.requestDrawingsRedraw();
-        
-        if (!this._isScrolling && !this._autoScalePending) {
-            const priceScale = this.chart.priceScale('right');
-            if (priceScale) {
-                const visibleRange = priceScale.getVisiblePriceRange();
-                if (visibleRange && (price > visibleRange.to * 1.02 || price < visibleRange.from * 0.98)) {
-                    this._autoScalePending = true;
-                    priceScale.applyOptions({ autoScale: true });
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            priceScale.applyOptions({ autoScale: false });
-                            this._autoScalePending = false;
-                        });
-                    });
-                }
-            }
-        }
+   _syncPriceLine(price) {
+    if (!price) return;
+    
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series) return;
+    
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    lastCandle.close = price;
+    if (price > lastCandle.high) lastCandle.high = price;
+    if (price < lastCandle.low) lastCandle.low = price;
+    
+    const isBullish = price >= lastCandle.open;
+    const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+    
+    this.currentRealPrice = price;
+    this._lastAppliedColor = lineColor;
+    this.lastCandle = lastCandle;
+    
+    series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
+    series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
+    
+    const prim = this.timerManager?._primitive;
+    if (prim) {
+        if (prim.setPrice) prim.setPrice(price);
+        if (prim.setColor) prim.setColor(lineColor);
+        if (prim.isEnabled()) prim.requestRedraw();
     }
-
+    
+    this.scheduleUpdatePosition();
+    this._updatePageTitle();
+    this.requestDrawingsRedraw();
+}
     updateLastCandle(candle) {
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
         
