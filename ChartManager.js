@@ -818,48 +818,49 @@ class ChartManager {
 
   _applyCrosshairDOM() {
     const data = this._latestCrosshairData;
-    
     if (!data || !data.visible) {
-        if (this._crosshairVisible && this.overlay) {
-            this.overlay.classList.remove('visible');
-            this._crosshairVisible = false;
-        }
-        this._crosshairCache.lastData = null;
+        if (this.overlay) this.overlay.classList.remove('visible');
+        this._lastCrosshairData = null;
         return;
     }
 
-    // 🔥 Пропускаем если данные не изменились
-    if (this._crosshairCache.lastData === data) return;
-    this._crosshairCache.lastData = data;
+    // 🔥 Оптимизация 1: Пропускаем если данные не изменились
+    if (this._lastCrosshairData === data) return;
+    this._lastCrosshairData = data;
 
-    const precision = this._crosshairPrecision ?? 2;
-    const color = data.cls === 'bullish' 
-        ? (this.bullishColor || '#26a69a') 
-        : (this.bearishColor || '#ef5350');
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    const precision = series?.options()?.priceFormat?.precision ?? 2;
+    const formatWithPrecision = (value) => (value === undefined || value === null || isNaN(value)) ? '—' : Number(value).toFixed(precision);
 
-    // 🔥 Форматирование без toFixed (3x быстрее)
-    const fmt = (v, p = precision) => {
-        if (v == null || isNaN(v)) return '—';
-        const m = Math.pow(10, p);
-        return (Math.round(v * m) / m).toFixed(p);
-    };
+    const bullishColor = this.bullishColor || CONFIG?.colors?.bullish || '#26a69a';
+    const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
+    const color = data.cls === 'bullish' ? bullishColor : bearishColor;
 
-    const html = `<div style="color:${color}">
-        O:${fmt(data.open)} H:${fmt(data.high)} L:${fmt(data.low)} C:${fmt(data.close)} 
-        <b>${data.change}</b> V:${data.volume}
-    </div>`;
-
-    // 🔥 Обновляем DOM только если строка изменилась
-    if (this._crosshairCache.html !== html) {
-        this._crosshairCache.html = html;
-        if (this.overlay) {
-            this.overlay.innerHTML = html;
-            if (!this._crosshairVisible) {
-                this.overlay.classList.add('visible');
-                this._crosshairVisible = true;
-            }
-        }
+    // 🔥 Оптимизация 2: Меняем цвет только если класс изменился
+    if (this._lastCrosshairClass !== data.cls) {
+        this._lastCrosshairClass = data.cls;
+        
+        if (this.openEl) { this.openEl.className = `stat-value ${data.cls}`; this.openEl.style.color = color; }
+        if (this.highEl) { this.highEl.className = `stat-value ${data.cls}`; this.highEl.style.color = color; }
+        if (this.lowEl) { this.lowEl.className = `stat-value ${data.cls}`; this.lowEl.style.color = color; }
+        if (this.closeEl) { this.closeEl.className = `stat-value ${data.cls}`; this.closeEl.style.color = color; }
+        if (this.changeEl) { this.changeEl.className = `change-value ${data.cls}`; this.changeEl.style.color = color; }
+        
+        const volumeEl = document.getElementById('volumeValue');
+        if (volumeEl) { volumeEl.className = `stat-value ${data.cls}`; volumeEl.style.color = color; }
     }
+
+    // 🔥 Оптимизация 3: Обновляем textContent всегда (быстрая операция)
+    if (this.openEl) this.openEl.textContent = formatWithPrecision(data.open);
+    if (this.highEl) this.highEl.textContent = formatWithPrecision(data.high);
+    if (this.lowEl) this.lowEl.textContent = formatWithPrecision(data.low);
+    if (this.closeEl) this.closeEl.textContent = formatWithPrecision(data.close);
+    if (this.changeEl) this.changeEl.textContent = data.change;
+    
+    const volumeEl = document.getElementById('volumeValue');
+    if (volumeEl) volumeEl.textContent = data.volume;
+
+    if (this.overlay) this.overlay.classList.add('visible');
 }
     updateRealPrice(price) { this._syncPriceLine(price); }
     scrollToLast() { if (this.chart && this.chartData.length > 0) this.chart.timeScale().scrollToRealTime(); }
