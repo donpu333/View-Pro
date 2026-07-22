@@ -58,6 +58,10 @@ class ChartManager {
         this._drawingsFinalUpdateTimeout = null;
         this._scrollStopTimeout = null;
 
+        // 🔥 FIX: Троттлинг для вертикального зума и движения мыши
+        this._lastCrosshairUpdate = 0;
+        this._CROSSHAIR_THROTTLE_MS = 32; // ~30 FPS для DOM-обновлений
+
         // НАСТРОЙКИ ПОДГРУЗКИ ИСТОРИИ
         this._historyLoadQueue = [];
         this._preloadThreshold = 400;
@@ -67,7 +71,7 @@ class ChartManager {
         this._pendingHistoryLoad = false;
         this._historyEndTime = null;
         this._fetchPromise = null;
-        this._historyLoadScheduled = false; // 🔧 FIX: Защита от множественных вызовов
+        this._historyLoadScheduled = false; // 🔧 Защита от множественных вызовов
 
         // ОКНО ДАННЫХ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
         this._maxCandlesInMemory = 10000;
@@ -200,6 +204,7 @@ class ChartManager {
      
         this._setupPanelsSync();
         this._startNewCandleChecker();
+        this._startBackgroundPreloadChecker(); // 🔥 НОВОЕ: Фоновая предзагрузка перед закрытием свечи
 
         this._bgInterval = setInterval(() => {
             if (window.wsManager?.wsKline?.readyState === WebSocket.OPEN) window.wsManager.wsKline.send(JSON.stringify({ type: 'ping' }));
@@ -281,6 +286,39 @@ class ChartManager {
         check();
     }
 
+    // 🔥 НОВЫЙ МЕТОД: Фоновая предзагрузка прямо перед закрытием свечи
+    _startBackgroundPreloadChecker() {
+        const check = () => {
+            if (!this.chartData.length || !this.currentInterval || this._switchingSymbol) {
+                setTimeout(check, 5000);
+                return;
+            }
+            
+            const stepMap = { 
+                '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, 
+                '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200, 
+                '1d': 86400, '1w': 604800, '1M': 2592000 
+            };
+            const step = stepMap[this.currentInterval] || 3600;
+            const nowSec = Math.floor(Date.now() / 1000);
+            
+            // Сколько секунд осталось до закрытия текущей свечи
+            const timeLeft = step - (nowSec % step);
+            
+            // 🔥 Если до закрытия меньше 10 секунд, подготавливаем данные заранее
+            if (timeLeft <= 10 && timeLeft > 0) {
+                if (!this.isLoadingMore) {
+                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
+                }
+            }
+            
+            // Проверяем чаще, если до конца мало времени
+            const nextCheck = timeLeft <= 10 ? 1000 : 5000;
+            setTimeout(check, nextCheck);
+        };
+        check();
+    }
+
     async _syncAfterHidden() {
         if (!this.chartData.length || !this.currentSymbol) return;
         this._isScrolling = false; this._isScrollingFast = false; this._isSyncing = false;
@@ -325,14 +363,25 @@ class ChartManager {
         if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
     }
 
+    // 🔥 FIX: Синхронизация панелей с троттлингом для защиты от лагов при вертикальном зуме
     _setupPanelsSync() {
         if (!this.chart) return;
+        
         const mainChart = this.chart;
         let crosshairUpdateScheduled = false;
         let lastCrosshairParam = null;
         
+        // 🔥 Локальный троттлинг для синхронизации панелей (~30 FPS)
+        let lastPanelSyncTime = 0;
+        const PANEL_SYNC_THROTTLE = 32;
+
         const syncCrosshairToPanels = (param) => {
-            if (!mainChart || !param || this._isScrolling) return; // 🔧 FIX: Блокировка при скролле
+            if (!mainChart || !param || this._isScrolling) return;
+            
+            const now = performance.now();
+            if (now - lastPanelSyncTime < PANEL_SYNC_THROTTLE) return;
+            lastPanelSyncTime = now;
+
             const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
             if (!panels) return;
             
@@ -379,6 +428,7 @@ class ChartManager {
             this._isScrollingFast = delta < 50;
             this._isScrolling = true;
             
+            // ⚡ Скрываем рисунки при быстром скролле
             if (this._isScrollingFast && !wasFast && drawingsContainer) drawingsContainer.style.display = 'none'; 
             
             clearTimeout(this._scrollStopTimeout);
@@ -717,12 +767,20 @@ class ChartManager {
         ]).then(() => this.requestDrawingsRedraw());
     }
 
+    // 🔥 FIX: Троттлинг кроссхейра для защиты от лагов при вертикальном зуме
     onCrosshairMove(param) {
-        // 🔧 FIX: Полная блокировка обновления DOM-оверлея при быстром скролле
+        // Блокировка при горизонтальном скролле
         if (this._isScrollingFast || this._isScrolling) {
             if (this.overlay) this.overlay.classList.remove('visible');
             return; 
         }
+
+        // 🔥 Жесткий тайм-троттлинг (~30 FPS)
+        const now = performance.now();
+        if (now - this._lastCrosshairUpdate < this._CROSSHAIR_THROTTLE_MS) {
+            return; 
+        }
+        this._lastCrosshairUpdate = now;
 
         if (!this.overlay) this.overlay = safeElement('candleStatsOverlay');
         if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
@@ -1135,7 +1193,7 @@ class ChartManager {
         if (this.timerManager) this.timerManager.destroy();
         this._loadingSymbol = false; this.isLoadingMore = false;
         this._updateScheduled = false; this._pendingUpdates = false; this._pendingRedraw = false;
-        this._historyLoadScheduled = false; // 🔧 FIX: Сброс нового флага
+        this._historyLoadScheduled = false; // 🔧 Сброс флага
         
         if (this._drawingsUpdateRafId) { cancelAnimationFrame(this._drawingsUpdateRafId); this._drawingsUpdateRafId = null; }
         if (this._updatePositionRafId) { cancelAnimationFrame(this._updatePositionRafId); this._updatePositionRafId = null; }
@@ -1288,20 +1346,18 @@ class ChartManager {
     timeToLogical(time) { if (!this.chartData || !this.chartData.length) return null; const index = this._candleTimeMap.get(time); return index !== undefined ? index : null; }
 
     // ==========================================
-    // 🔥 ОПТИМИЗИРОВАННЫЙ БЕСКОНЕЧНЫЙ СКРОЛЛ
+    // 🔥 МГНОВЕННАЯ ЗАГРУЗКА ИСТОРИИ (без setTimeout)
     // ==========================================
-    
-    // 🔧 FIX: Защита от множественных setTimeout
     onVisibleLogicalRangeChange(range) {
         if (!range || !this.chartData.length) return;
         const fromIndex = Math.max(0, Math.floor(range.from));
         
+        // 🔥 FIX: Вызываем напрямую. Async/await сам уступает управление браузеру во время сети.
         if (fromIndex < this._preloadThreshold && this.hasMoreData && !this.isLoadingMore && !this._historyLoadScheduled) {
             this._historyLoadScheduled = true;
-            setTimeout(() => {
+            this._loadHistoryAsync().finally(() => {
                 this._historyLoadScheduled = false;
-                this._loadHistoryAsync();
-            }, 0);
+            });
         }
     }
 
@@ -1365,7 +1421,7 @@ class ChartManager {
                 const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
                 if (activeSeries) activeSeries.setData(this.chartData);
                 
-                // 🔧 FIX: Защита от отрицательных индексов
+                // 🔧 Защита от отрицательных индексов
                 if (currentRange) {
                     timeScale.setVisibleLogicalRange({
                         from: Math.max(0, currentRange.from + addedCount),
@@ -1396,35 +1452,51 @@ class ChartManager {
         } catch (e) {
             console.error('❌ Ошибка загрузки истории:', e);
         } finally {
-            // 🔧 FIX: Гарантированный сброс флага
             setTimeout(() => { 
                 this.isLoadingMore = false; 
             }, this._minLoadDelay);
         }
     }
 
+    // 🔥 УЛУЧШЕННАЯ ФОНОВАЯ ПОДГРУЗКА (с защитой от лишних перерисовок)
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange) return;
-            const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, 100);
-            if (!freshCandles || freshCandles.length === 0 || symbol !== this.currentSymbol) return;
+            
+            // Берем немного больше, чтобы гарантированно захватить закрывающуюся свечу
+            const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, 50);
+            if (!freshCandles || freshCandles.length === 0) return;
+            if (symbol !== this.currentSymbol) return; // Защита от смены символа во время запроса
 
             const lastCachedTime = this.chartData.length > 0 ? this.chartData[this.chartData.length - 1].time : 0;
-            if (freshCandles[freshCandles.length - 1].time > lastCachedTime) {
+            const lastFreshTime = freshCandles[freshCandles.length - 1].time;
+            
+            if (lastFreshTime > lastCachedTime) {
                 const newCandles = freshCandles.filter(c => c.time > lastCachedTime);
+                if (newCandles.length === 0) return;
+
                 this.chartData.push(...newCandles);
                 this._rebuildTimeMap();
                 
                 const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
                 if (activeSeries) activeSeries.setData(this.chartData);
-                if (this.volumeSeries) this.volumeSeries.setData(this.chartData.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? this.bullishColor : this.bearishColor })));
+                
+                if (this.volumeSeries) {
+                    this.volumeSeries.setData(this.chartData.map(c => ({ 
+                        time: c.time, value: c.volume || 0, 
+                        color: c.close >= c.open ? this.bullishColor : this.bearishColor 
+                    })));
+                }
+                
+                // Обновляем индикаторы тихо, без принудительного скролла
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                this.scrollToLast();
             }
-        } catch (error) { console.warn('⚠️ Ошибка фонового обновления:', error); }
+        } catch (error) { 
+            console.warn('⚠️ Фоновое обновление пропущено:', error); 
+        }
     }
 
-    // 🔧 FIX: Метод для ручной очистки памяти
+    // 🔧 Метод для ручной очистки памяти
     trimMemoryIfNeeded() {
         if (this.chartData.length > this._maxCandlesInMemory) {
             const removeCount = this.chartData.length - this._maxCandlesInMemory;
