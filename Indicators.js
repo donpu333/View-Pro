@@ -1,14 +1,3 @@
-// ============================================================
-// ИСПРАВЛЕННЫЕ ИНДИКАТОРЫ
-// Все критические ошибки устранены:
-// - Переименованы _createEmptySeries → createSeries
-// - Добавлены return this.series
-// - Исправлены applySettingsFromForm с проверками
-// - Добавлена отписка от событий в Volume24HIndicator
-// - Исправлена дедупликация запросов в MultiTimeframeATRIndicator
-// - Добавлены проверки существования элементов DOM
-// ============================================================
-
 class ADXIndicator extends BaseIndicator {
     static meta = { name: 'ADX', category: 'trend', panel: 'adx', color: '#66BB6A' };
 
@@ -36,7 +25,7 @@ class ADXIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    createSeries() {
+        createSeries() {
         this._removeAllSeries();
         const panelManager = this.manager.panelManager;
         const panelId = this.data.panel;
@@ -46,6 +35,7 @@ class ADXIndicator extends BaseIndicator {
             panelManager.addSeries(panelId, `${this.type}-plus`, 'line', { color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed }),
             panelManager.addSeries(panelId, `${this.type}-minus`, 'line', { color: '#FF5252', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed })
         ];
+        
         return this.series;
     }
     
@@ -84,7 +74,7 @@ class ATRIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    createSeries() {
+       createSeries() {
         this._removeAllSeries();
         const panelManager = this.manager.panelManager;
         const panelId = this.data.panel;
@@ -92,6 +82,7 @@ class ATRIndicator extends BaseIndicator {
         this.series = [
             panelManager.addSeries(panelId, `${this.type}-line`, 'line', { color: this.settings.color, lineWidth: this.settings.lineWidth })
         ];
+        
         return this.series;
     }
     
@@ -128,19 +119,12 @@ class EMAIndicator extends BaseIndicator {
         super.applySettingsFromForm();
     }
     
-    createSeries() {
-        this._removeAllSeries();
-        const panelManager = this.manager.panelManager;
-        const panelId = this.data.panel; // 'main'
-        this.series = [
-            panelManager.addSeries(panelId, `${this.type}-line`, 'line', {
-                color: this.settings.color,
-                lineWidth: this.settings.lineWidth
-            })
-        ];
-        return this.series;
-    }
-    
+   _createEmptySeries() {
+    this._removeAllSeries();
+    this.series = [
+        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
+    ];
+}
     updateSeriesData(data) {
         if (!data || !data.length) return;
         if (this.series[0]) this.series[0].setData(this.manager._filterData(data));
@@ -170,26 +154,26 @@ class MACDIndicator extends BaseIndicator {
     }
     
     applySettingsFromForm() {
-        const fastInput = document.getElementById('indicatorFastPeriod');
-        if (fastInput) this.settings.fastPeriod = parseInt(fastInput.value);
-        const slowInput = document.getElementById('indicatorSlowPeriod');
-        if (slowInput) this.settings.slowPeriod = parseInt(slowInput.value);
-        const signalInput = document.getElementById('indicatorSignalPeriod');
-        if (signalInput) this.settings.signalPeriod = parseInt(signalInput.value);
+        if (document.getElementById('indicatorFastPeriod')) this.settings.fastPeriod = parseInt(document.getElementById('indicatorFastPeriod').value);
+        if (document.getElementById('indicatorSlowPeriod')) this.settings.slowPeriod = parseInt(document.getElementById('indicatorSlowPeriod').value);
+        if (document.getElementById('indicatorSignalPeriod')) this.settings.signalPeriod = parseInt(document.getElementById('indicatorSignalPeriod').value);
         super.applySettingsFromForm();
     }
     
-    createSeries() {
-        this._removeAllSeries();
+        createSeries() {
+        this._removeAllSeries(); // ✅ ДОБАВЛЕНО
         const pm = this.manager.panelManager;
         const pid = this.data.panel;
         
+        // 1. Гистограмма — ТОЖЕ НА ПРАВОЙ ШКАЛЕ
         const histSeries = pm.addSeries(pid, `${this.type}-histogram`, 'histogram', {
             priceLineVisible: false,
             lastValueVisible: false,
             priceScaleId: 'right',     
             scaleMargins: { top: 0.2, bottom: 0.05 }
         });
+        
+        // Нулевая линия на ПРАВОЙ шкале
         histSeries.createPriceLine({
             price: 0,
             color: '#787b86',
@@ -199,6 +183,7 @@ class MACDIndicator extends BaseIndicator {
             title: 'Zero'
         });
         
+        // 2. Линия MACD — ПРАВАЯ ШКАЛА
         const macdSeries = pm.addSeries(pid, `${this.type}-line`, 'line', {
             color: '#2196F3',
             lineWidth: this.settings.lineWidth,
@@ -207,6 +192,7 @@ class MACDIndicator extends BaseIndicator {
             title: 'MACD'
         });
         
+        // 3. Сигнальная линия — ПРАВАЯ ШКАЛА
         const signalSeries = pm.addSeries(pid, `${this.type}-signal`, 'line', {
             color: '#ff6d00',
             lineWidth: 2,
@@ -216,14 +202,14 @@ class MACDIndicator extends BaseIndicator {
         });
         
         this.series = [histSeries, macdSeries, signalSeries];
-        return this.series;
+        return this.series; // ✅ ДОБАВЛЕНО
     }
-    
     updateSeriesData(data) {
         if (!data || !data.length) return;
         const chartData = this.manager.chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
         
+        // Индексируем данные
         const macdMap = new Map(), signalMap = new Map(), histMap = new Map();
         data.forEach(item => { macdMap.set(item.time, item.macd); signalMap.set(item.time, item.signal); histMap.set(item.time, item.histogram); });
         
@@ -238,29 +224,35 @@ class MACDIndicator extends BaseIndicator {
                 macdData.push({ time: candle.time, value: macd });
                 signalData.push({ time: candle.time, value: signal });
                 
+                // ТОЧНАЯ КОПИЯ ЛОГИКИ TV: 4 цвета в зависимости от текущего и предыдущего значения
+                // color hColor = hist >= 0 ? hist > hist[1] ? #26a69a : #b2dfdb : hist > hist[1] ? #ffcdd2 : #ff5252
                 let hColor;
                 const prevHist = index > 0 ? (histMap.get(chartData[index - 1].time) || 0) : 0;
+                
                 if (hist >= 0) {
+                    // Растущая гистограмма (темно-зеленая) или падающая (светло-зеленая)
                     hColor = hist > prevHist ? '#26a69a' : '#b2dfdb';
                 } else {
+                    // Падающая гистограмма (темно-красная) или растущая (светло-красная)
                     hColor = hist > prevHist ? '#ffcdd2' : '#ff5252';
                 }
+                
                 histData.push({ time: candle.time, value: hist, color: hColor });
             }
         });
         
+        // Применяем данные. Порядок важен: [0] = hist, [1] = macd, [2] = signal
         if (this.series[0]) this.series[0].setData(histData);
         if (this.series[1]) this.series[1].setData(macdData);
         if (this.series[2]) this.series[2].setData(signalData);
     }
 }
-
-// ==================== MultiTimeframeATRIndicator (исправлен) ====================
 class MultiTimeframeATRIndicator extends BaseIndicator {
     constructor(manager) {
         super(manager, 'multiatr', 'ATR Multi', '#FFA500', 'main');
         
         const savedSettings = this._loadSettings();
+        
         this.settings = {
             atrPeriod: savedSettings.atrPeriod || 3,
             rangeMode: savedSettings.rangeMode || 'High-Low',
@@ -298,7 +290,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._updateTimeout = null;
         this._fallbackTimer = null;
         this._currentApiInterval = '1h';
-        this._unsubscribeSymbol = null; // для отписки
         
         this._setupEventHandlers();
         this._initTableDOM();
@@ -536,31 +527,48 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const rawInterval = chartManager.currentInterval || '60';
             this._currentApiInterval = this._normalizeInterval(rawInterval);
 
-            // Простой и надёжный подход: выполняем запросы параллельно без дедупликации
-            const tasks = [];
+            // 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Хранилище промисов, чтобы не делать 2 одинаковых запроса
+            const apiRequests = {};
 
-            // current
-            tasks.push(this._fetchAndCompute('current', this._currentApiInterval, this.settings.atrPeriod));
+            // Функция: если запрос с такими параметрами уже есть — просто копирует результат
+            const fetchOnce = (reqKey, cacheKey, tf, period) => {
+                if (!apiRequests[reqKey]) {
+                    apiRequests[reqKey] = this._fetchAndCompute(cacheKey, tf, period);
+                } else {
+                    // Если ключ совпал (⭐ и 1H имеют одинаковые ТФ и период),
+                    // мы не делаем новый запрос, а просто копируем данные из первого
+                    apiRequests[reqKey] = apiRequests[reqKey].then(() => {
+                        if (cacheKey !== 'current') {
+                            this.cache[cacheKey] = { ...this.cache.current };
+                        }
+                    });
+                }
+            };
 
+            // 1. Строка ⭐ (текущий ТФ графика)
+            const starKey = `${this._currentApiInterval}_${this.settings.atrPeriod}`;
+            fetchOnce(starKey, 'current', this._currentApiInterval, this.settings.atrPeriod);
+            
+            // 2. Остальные строки
             if (this.settings.showWeekTF) {
-                tasks.push(this._fetchAndCompute('week', '1w', this.settings.weekATRPeriod));
+                fetchOnce(`1w_${this.settings.weekATRPeriod}`, 'week', '1w', this.settings.weekATRPeriod);
             }
             if (this.settings.showDayTF) {
-                tasks.push(this._fetchAndCompute('day', '1d', this.settings.dayATRPeriod));
+                fetchOnce(`1d_${this.settings.dayATRPeriod}`, 'day', '1d', this.settings.dayATRPeriod);
             }
             if (this.settings.showHourTF) {
-                tasks.push(this._fetchAndCompute('hour', this.settings.hourTF + 'h', this.settings.hourATRPeriod));
+                fetchOnce(`${this.settings.hourTF}h_${this.settings.hourATRPeriod}`, 'hour', this.settings.hourTF + 'h', this.settings.hourATRPeriod);
             }
             if (this.settings.showMinuteTF) {
                 const p = this.calculateCandlesFromHours(this.settings.minuteATRPeriod, this.settings.minuteTF);
-                tasks.push(this._fetchAndCompute('minute', this.settings.minuteTF + 'm', p));
+                fetchOnce(`${this.settings.minuteTF}m_${p}`, 'minute', this.settings.minuteTF + 'm', p);
             }
             if (this.settings.showMinute1TF) {
                 const p = this.calculateCandlesFromHours(this.settings.minute1ATRPeriod, this.settings.minute1TF);
-                tasks.push(this._fetchAndCompute('minute1', this.settings.minute1TF + 'm', p));
+                fetchOnce(`${this.settings.minute1TF}m_${p}`, 'minute1', this.settings.minute1TF + 'm', p);
             }
 
-            await Promise.allSettled(tasks);
+            await Promise.allSettled(Object.values(apiRequests));
             this.renderFullTable();
         } catch (e) {
             console.error('ATR Multi error:', e);
@@ -590,9 +598,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     _setupEventHandlers() {
         const chartManager = this.manager?.chartManager;
         if (!chartManager) return;
-        if (chartManager._subscribeToSymbolChange) {
-            this._unsubscribeSymbol = chartManager._subscribeToSymbolChange(() => setTimeout(() => this.updateAllMetrics(), 500));
-        }
+        if (chartManager._subscribeToSymbolChange) chartManager._subscribeToSymbolChange(() => setTimeout(() => this.updateAllMetrics(), 500));
         if (chartManager.on && typeof chartManager.on === 'function') {
             chartManager.on('dataUpdate', () => this._onChartDataUpdate());
         } else {
@@ -620,18 +626,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 
     destroy() {
-        if (this._unsubscribeSymbol) {
-            this._unsubscribeSymbol();
-            this._unsubscribeSymbol = null;
-        }
         if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
         if (this._dragMoveHandler) document.removeEventListener('mousemove', this._dragMoveHandler);
         if (this._dragUpHandler) document.removeEventListener('mouseup', this._dragUpHandler);
-        this._removeAllSeries(); // удаляем серии до обнуления менеджера
-        this.manager = null;
         const table = document.getElementById('multiatr-full-table');
         if (table) table.remove();
+        this._removeAllSeries();
+        this.manager = null;
     }
     
     async fetchDataForTF(tf, limit) {
@@ -824,36 +826,32 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
     
     applySettingsFromForm() {
-        const el = (id) => document.getElementById(id);
-        if (el('atrPeriod')) this.settings.atrPeriod = parseInt(el('atrPeriod').value);
-        if (el('rangeMode')) this.settings.rangeMode = el('rangeMode').value;
-        if (el('useFilter')) this.settings.useFilter = el('useFilter').checked;
-        if (el('filterType')) this.settings.filterType = el('filterType').value;
-        if (el('devFactor')) this.settings.devFactor = parseFloat(el('devFactor').value);
-        if (el('fixedMult')) this.settings.fixedMult = parseFloat(el('fixedMult').value);
-        if (el('showWeekTF')) this.settings.showWeekTF = el('showWeekTF').checked;
-        if (el('weekATRPeriod')) this.settings.weekATRPeriod = parseInt(el('weekATRPeriod').value);
-        if (el('showDayTF')) this.settings.showDayTF = el('showDayTF').checked;
-        if (el('dayATRPeriod')) this.settings.dayATRPeriod = parseInt(el('dayATRPeriod').value);
-        if (el('showHourTF')) this.settings.showHourTF = el('showHourTF').checked;
-        if (el('hourTF')) this.settings.hourTF = el('hourTF').value;
-        if (el('hourATRPeriod')) this.settings.hourATRPeriod = parseInt(el('hourATRPeriod').value);
-        if (el('showMinuteTF')) this.settings.showMinuteTF = el('showMinuteTF').checked;
-        if (el('minuteTF')) this.settings.minuteTF = el('minuteTF').value;
-        if (el('minuteATRPeriod')) this.settings.minuteATRPeriod = parseInt(el('minuteATRPeriod').value);
-        if (el('showMinute1TF')) this.settings.showMinute1TF = el('showMinute1TF').checked;
-        if (el('minute1TF')) this.settings.minute1TF = el('minute1TF').value;
-        if (el('minute1ATRPeriod')) this.settings.minute1ATRPeriod = parseInt(el('minute1ATRPeriod').value);
+        this.settings.atrPeriod = parseInt(document.getElementById('atrPeriod')?.value || 3);
+        this.settings.rangeMode = document.getElementById('rangeMode')?.value || 'High-Low';
+        this.settings.useFilter = document.getElementById('useFilter')?.checked || false;
+        this.settings.filterType = document.getElementById('filterType')?.value || 'Adaptive';
+        this.settings.devFactor = parseFloat(document.getElementById('devFactor')?.value || 1);
+        this.settings.fixedMult = parseFloat(document.getElementById('fixedMult')?.value || 1.5);
+        this.settings.showWeekTF = document.getElementById('showWeekTF')?.checked || false;
+        this.settings.weekATRPeriod = parseInt(document.getElementById('weekATRPeriod')?.value || 5);
+        this.settings.showDayTF = document.getElementById('showDayTF')?.checked || false;
+        this.settings.dayATRPeriod = parseInt(document.getElementById('dayATRPeriod')?.value || 5);
+        this.settings.showHourTF = document.getElementById('showHourTF')?.checked || false;
+        this.settings.hourTF = document.getElementById('hourTF')?.value || '1';
+        this.settings.hourATRPeriod = parseInt(document.getElementById('hourATRPeriod')?.value || 24);
+        this.settings.showMinuteTF = document.getElementById('showMinuteTF')?.checked || false;
+        this.settings.minuteTF = document.getElementById('minuteTF')?.value || '5';
+        this.settings.minuteATRPeriod = parseInt(document.getElementById('minuteATRPeriod')?.value || 3);
+        this.settings.showMinute1TF = document.getElementById('showMinute1TF')?.checked || false;
+        this.settings.minute1TF = document.getElementById('minute1TF')?.value || '1';
+        this.settings.minute1ATRPeriod = parseInt(document.getElementById('minute1ATRPeriod')?.value || 1);
         
         this._saveSettings();
         this.updateAllMetrics();
         super.applySettingsFromForm();
     }
     
-    createSeries() {
-        this._removeAllSeries();
-        return this.series; // этот индикатор не рисует на графике
-    }
+    _createEmptySeries() { this._removeAllSeries(); }
     
     updateSeriesData(data) {
         if (data && data.length) {
@@ -862,8 +860,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         }
     }
 }
-
-// ==================== Volume24HIndicator (ПОЛНОСТЬЮ ОПТИМИЗИРОВАН) ====================
 class Volume24HIndicator extends BaseIndicator {
     static meta = { name: 'Vol 24H', category: 'info', panel: 'vol24h', color: '#2962FF' };
 
@@ -874,24 +870,18 @@ class Volume24HIndicator extends BaseIndicator {
         this._updateInterval = null;
         this._dataLoaded = false;
         this._pendingTimer = null;
-        this._unsubscribeSymbol = null;
 
+        // Тултип
         this._volumeData = [];
         this._volumeMap = new Map();
         this._tooltipEl = null;
         this._crosshairTimer = null;
-        
-        // 🔥 ЗАЩИТА ОТ ЛИШНИХ ПЕРЕСЧЕТОВ
-        this._isCalculating = false;
-        this._lastAlignedLength = 0;
-
         this._initTooltip();
         setTimeout(() => this._bindCrosshair(), 300);
+
         this._setupListeners();
     }
 
-    // ⛔ Оставляем null, так как логика теперь сверхбыстрая и работает в главном потоке без лагов.
-    // Если хотите воркер, нужно переписывать BaseIndicator, но это уже не нужно при O(N).
     getWorkerType() { return null; }
     calculateAsync() {}
 
@@ -920,18 +910,16 @@ class Volume24HIndicator extends BaseIndicator {
         if (!cm) return;
 
         if (cm._subscribeToSymbolChange) {
-            this._unsubscribeSymbol = cm._subscribeToSymbolChange(() => {
+            cm._subscribeToSymbolChange(() => {
                 this._baseVolumes = [];
                 this._dataLoaded = false;
-                this._lastAlignedLength = 0;
                 if (this._pendingTimer) clearTimeout(this._pendingTimer);
                 this._waitForChartData(cm);
             });
         }
 
-        // Обновляем раз в минуту, а не при каждом чихе
         this._updateInterval = setInterval(() => {
-            if (this._dataLoaded && !this._isCalculating) this.fetchAndCalculate();
+            if (this._dataLoaded) this.fetchAndCalculate();
         }, 60000);
 
         this._waitForChartData(cm);
@@ -943,24 +931,26 @@ class Volume24HIndicator extends BaseIndicator {
             this.fetchAndCalculate();
             return;
         }
-        this._pendingTimer = setTimeout(() => this._waitForChartData(cm), 200);
+        this._pendingTimer = setTimeout(() => {
+            this._waitForChartData(cm);
+        }, 200);
     }
 
     async fetchAndCalculate() {
-        if (this._isCalculating) return; // 🔥 Защита от параллельных вызовов
-        this._isCalculating = true;
-
         const cm = this.manager?.chartManager;
-        try {
-            if (!cm?.currentSymbol || !this._dataLoaded) return;
+        if (!cm?.currentSymbol || !this._dataLoaded) return;
 
+        try {
             const currentTF = cm.currentInterval;
             const chartData = cm.chartData;
             if (!chartData || chartData.length === 0) return;
 
             if (currentTF === '1d' && chartData.length > 1) {
                 const daysNeeded = chartData.length + 50;
-                const dailyBars = await this._fetchKlines(cm.currentSymbol, cm.currentExchange, cm.currentMarketType, '1d', daysNeeded);
+                const dailyBars = await this._fetchKlines(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                    '1d', daysNeeded
+                );
                 if (!dailyBars || dailyBars.length === 0) return;
 
                 const dailyMap = new Map(dailyBars.map(b => [b.time, b.volume]));
@@ -969,9 +959,11 @@ class Volume24HIndicator extends BaseIndicator {
                     value: dailyMap.get(candle.time) || 0
                 }));
 
-                // Для 1d берем последние 5м свечи только для обновления ТЕКУЩЕЙ свечи
-                const live5m = await this._fetchKlines(cm.currentSymbol, cm.currentExchange, cm.currentMarketType, '5m', 300);
-                if (live5m && live5m.length > 0 && historyData.length > 0) {
+                const live5m = await this._fetchKlines(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                    '5m', 300
+                );
+                if (live5m && live5m.length > 0) {
                     const msIn24h = 24 * 60 * 60 * 1000;
                     const lastTime = live5m[live5m.length - 1].time * 1000;
                     let sum = 0;
@@ -979,7 +971,9 @@ class Volume24HIndicator extends BaseIndicator {
                         if (lastTime - live5m[i].time * 1000 > msIn24h) break;
                         sum += live5m[i].volume || 0;
                     }
-                    historyData[historyData.length - 1].value = sum;
+                    if (historyData.length > 0) {
+                        historyData[historyData.length - 1].value = sum;
+                    }
                 }
 
                 this.series[0].setData(historyData);
@@ -987,34 +981,28 @@ class Volume24HIndicator extends BaseIndicator {
                 this._volumeMap = new Map(historyData.map(d => [d.time, d.value]));
 
             } else {
-                // 🔥 ОПТИМИЗАЦИЯ: Берем ровно столько, сколько нужно для 24ч + небольшой запас
-                const data = await this._fetchKlines(cm.currentSymbol, cm.currentExchange, cm.currentMarketType, '5m', 388);
+                const data = await this._fetchKlines(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                    '5m', 388
+                );
                 if (!data || data.length === 0) return;
 
-                // 🔥 АЛГОРИТМ СКОЛЬЗЯЩЕГО ОКНА O(N) вместо вложенного цикла O(N²)
-                const calculated = [];
-                let sum = 0;
-                let windowStart = 0;
                 const msIn24h = 24 * 60 * 60 * 1000;
-
+                const calculated = [];
                 for (let i = 0; i < data.length; i++) {
-                    sum += data[i].volume || 0;
-                    
-                    // Вычитаем объем, который "выпал" из 24-часового окна
-                    while (windowStart < i && (data[i].time * 1000 - data[windowStart].time * 1000 > msIn24h)) {
-                        sum -= data[windowStart].volume || 0;
-                        windowStart++;
+                    let sum = 0;
+                    for (let j = i; j >= 0; j--) {
+                        if (data[i].time * 1000 - data[j].time * 1000 <= msIn24h) {
+                            sum += data[j].volume || 0;
+                        } else break;
                     }
                     calculated.push({ time: data[i].time, value: sum });
                 }
-
                 this._baseVolumes = calculated;
                 this._alignToMainChart();
             }
         } catch (e) {
             console.warn('Vol 24H: Ошибка', e);
-        } finally {
-            this._isCalculating = false;
         }
     }
 
@@ -1022,17 +1010,6 @@ class Volume24HIndicator extends BaseIndicator {
         if (!this.series[0] || !this._baseVolumes.length) return;
         const chartData = this.manager.chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
-
-        // 🔥 ЗАЩИТА: Если длина данных не изменилась и это не первый запуск, не пересчитываем всё заново
-        if (this._lastAlignedLength === chartData.length && this._volumeData.length > 0) {
-            // Обновляем только последнюю свечу, если она изменилась
-            const lastMain = chartData[chartData.length - 1];
-            const lastBase = this._baseVolumes[this._baseVolumes.length - 1];
-            if (lastMain && lastBase && lastMain.time === lastBase.time) {
-                 // Проверяем, нужно ли обновлять (можно добавить сравнение значений)
-                 return; 
-            }
-        }
 
         const aligned = [];
         let vIdx = 0;
@@ -1049,11 +1026,9 @@ class Volume24HIndicator extends BaseIndicator {
             }
             aligned.push({ time: mainTime, value: this._baseVolumes[vIdx].value });
         }
-        
         this.series[0].setData(aligned);
         this._volumeData = aligned.filter(d => d.value > 0);
         this._volumeMap = new Map(aligned.map(d => [d.time, d.value]));
-        this._lastAlignedLength = chartData.length;
     }
 
     async _fetchKlines(symbol, exchange, marketType, tf, limit) {
@@ -1087,6 +1062,7 @@ class Volume24HIndicator extends BaseIndicator {
         }
     }
 
+    // ---------- ТУЛТИП ----------
     _initTooltip() {
         if (document.getElementById('vol24h-tooltip')) return;
         const el = document.createElement('div');
@@ -1142,18 +1118,14 @@ class Volume24HIndicator extends BaseIndicator {
     }
 
     _fmt(v) {
-        if (!v) return '0';
-        if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
-        if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
-        if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
-        return v.toFixed(2);
+        if (!v) return '0 $';
+        if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B $';
+        if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M $';
+        if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K $';
+        return v.toFixed(2) + ' $';
     }
 
     destroy() {
-        if (this._unsubscribeSymbol) {
-            this._unsubscribeSymbol();
-            this._unsubscribeSymbol = null;
-        }
         if (this._updateInterval) clearInterval(this._updateInterval);
         if (this._pendingTimer) clearTimeout(this._pendingTimer);
         if (this._crosshairTimer) clearTimeout(this._crosshairTimer);
@@ -1164,7 +1136,63 @@ class Volume24HIndicator extends BaseIndicator {
         super.destroy();
     }
 }
-// ==================== SMAIndicator (исправлен) ====================
+
+window.IndicatorRegistry.set('volume24h', Volume24HIndicator);
+class RSI14Indicator extends BaseIndicator {
+    static meta = { name: 'RSI 14', category: 'oscillator', panel: 'rsi', color: '#FFA500' };
+
+    constructor(manager) {
+        super(manager, 'rsi14', 'RSI 14', '#FFA500', 'rsi');
+        this.settings.period = 14;
+    }
+    
+    getWorkerType() { return 'rsi'; }
+    getWorkerParams() { return { period: this.settings.period }; }
+    
+    getSettingsHTML() {
+        return `
+            ${super.getSettingsHTML()}
+            <div class="settings-row">
+                <label>Период RSI:</label>
+                <input type="number" id="indicatorPeriod" value="${this.settings.period}" min="5" max="50" style="width: 70px;">
+            </div>
+        `;
+    }
+    
+    applySettingsFromForm() {
+        if (document.getElementById('indicatorPeriod')) this.settings.period = parseInt(document.getElementById('indicatorPeriod').value);
+        super.applySettingsFromForm();
+    }
+    
+      createSeries() {
+        this._removeAllSeries();
+        const pm = this.manager.panelManager, pid = this.data.panel;
+        this.series = [
+            pm.addSeries(pid, `${this.type}-line`, 'line', { color: this.settings.color, lineWidth: this.settings.lineWidth }),
+            pm.addSeries(pid, `${this.type}-level30`, 'line', { color: '#808080', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed }),
+            pm.addSeries(pid, `${this.type}-level70`, 'line', { color: '#808080', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed })
+        ];
+        return this.series;
+    }
+    updateSeriesData(data) {
+        if (!data || !data.length) return;
+        const chartData = this.manager.chartManager.chartData;
+        if (!chartData || chartData.length === 0) return;
+        
+        const rsiMap = new Map();
+        data.forEach(item => rsiMap.set(item.time, item.value));
+        
+        const rsiData = [];
+        chartData.forEach(candle => {
+            if (rsiMap.has(candle.time)) rsiData.push({ time: candle.time, value: rsiMap.get(candle.time) });
+        });
+        
+        if (this.series[0]) this.series[0].setData(rsiData);
+        if (this.series[1]) this.series[1].setData(chartData.map(c => ({ time: c.time, value: 30 })));
+        if (this.series[2]) this.series[2].setData(chartData.map(c => ({ time: c.time, value: 70 })));
+    }
+}
+
 class SMAIndicator extends BaseIndicator {
     static meta = { name: 'SMA 20', category: 'trend', panel: 'main', color: '#FFD700' };
 
@@ -1187,23 +1215,16 @@ class SMAIndicator extends BaseIndicator {
     }
     
     applySettingsFromForm() {
-        const periodInput = document.getElementById('indicatorPeriod');
-        if (periodInput) this.settings.period = parseInt(periodInput.value);
+        if (document.getElementById('indicatorPeriod')) this.settings.period = parseInt(document.getElementById('indicatorPeriod').value);
         super.applySettingsFromForm();
     }
     
-    createSeries() {
-        this._removeAllSeries();
-        const pm = this.manager.panelManager;
-        const panelId = this.data.panel; // 'main'
-        this.series = [
-            pm.addSeries(panelId, `${this.type}-line`, 'line', {
-                color: this.settings.color,
-                lineWidth: this.settings.lineWidth
-            })
-        ];
-        return this.series;
-    }
+    _createEmptySeries() {
+    this._removeAllSeries();
+    this.series = [
+        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
+    ];
+}
     
     updateSeriesData(data) {
         if (!data || !data.length) return;
@@ -1211,7 +1232,7 @@ class SMAIndicator extends BaseIndicator {
     }
 }
 
-// Специальный класс для SMA 50
+// Специальный класс для SMA 50, чтобы Реестр мог отличить его от SMA 20
 class SMA50Indicator extends SMAIndicator {
     static meta = { name: 'SMA 50', category: 'trend', panel: 'main', color: '#FF69B4' };
     constructor(manager) {
@@ -1221,7 +1242,6 @@ class SMA50Indicator extends SMAIndicator {
     }
 }
 
-// ==================== StochRSIIndicator (исправлен) ====================
 class StochRSIIndicator extends BaseIndicator {
     static meta = { name: 'Stochastic RSI', category: 'oscillator', panel: 'stoch', color: '#87CEEB' };
 
@@ -1243,24 +1263,19 @@ class StochRSIIndicator extends BaseIndicator {
     }
     
     applySettingsFromForm() {
-        const periodInput = document.getElementById('indicatorPeriod');
-        if (periodInput) this.settings.period = parseInt(periodInput.value);
-        const kInput = document.getElementById('indicatorK');
-        if (kInput) this.settings.k = parseInt(kInput.value);
-        const dInput = document.getElementById('indicatorD');
-        if (dInput) this.settings.d = parseInt(dInput.value);
+        if (document.getElementById('indicatorPeriod')) this.settings.period = parseInt(document.getElementById('indicatorPeriod').value);
+        if (document.getElementById('indicatorK')) this.settings.k = parseInt(document.getElementById('indicatorK').value);
+        if (document.getElementById('indicatorD')) this.settings.d = parseInt(document.getElementById('indicatorD').value);
         super.applySettingsFromForm();
     }
     
-    createSeries() {
-        this._removeAllSeries();
-        const pm = this.manager.panelManager;
-        const pid = this.data.panel;
+    _createEmptySeries() {
+        const pm = this.manager.panelManager, pid = this.data.panel;
+        this.series.forEach(s => { if (s) pm.removeSeries(pid, s); });
         this.series = [
             pm.addSeries(pid, `${this.type}-k`, 'line', { color: '#87CEEB', lineWidth: this.settings.lineWidth }),
             pm.addSeries(pid, `${this.type}-d`, 'line', { color: '#FFA500', lineWidth: this.settings.lineWidth })
         ];
-        return this.series;
     }
     
     updateSeriesData(data) {
@@ -1286,7 +1301,7 @@ class StochRSIIndicator extends BaseIndicator {
     }
 }
 
-// ==================== РЕГИСТРАЦИЯ ИНДИКАТОРОВ ====================
+// === РЕГИСТРАЦИЯ В РЕЕСТРЕ (ОБЯЗАТЕЛЬНО ДЛЯ МЕНЮ) ===
 function bootIndicators() {
     if (!window.IndicatorRegistry) {
         console.error('❌ IndicatorRegistry не загружен!');
@@ -1318,4 +1333,5 @@ if (typeof window !== 'undefined') {
     window.ATRIndicator = ATRIndicator;
     window.MultiTimeframeATRIndicator = MultiTimeframeATRIndicator;
     window.Volume24HIndicator = Volume24HIndicator;
+ 
 }
