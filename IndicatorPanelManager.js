@@ -7,38 +7,34 @@ class IndicatorPanelManager {
         this.startY = 0;
         this.startHeight = 0;
         
-        // 🔥 Кэш для предотвращения лишних вызовов resize
-        this._resizeDebounceTimer = null;
-        
         this._initEvents();
     }
     
     _initEvents() {
+        // Глобальные события для перетаскивания мышью
         document.addEventListener('mousemove', this._onMouseMove.bind(this));
         document.addEventListener('mouseup', this._onMouseUp.bind(this));
         
-        // 🔥 ОПТИМИЗАЦИЯ: Debounce для ResizeObserver, чтобы не спамить chart.resize()
+        // 🚀 НОВОЕ: Автоматическая подстройка размеров при изменении окна/контейнера
         this._resizeObserver = new ResizeObserver(entries => {
-            if (this._resizeDebounceTimer) return;
-            
-            this._resizeDebounceTimer = requestAnimationFrame(() => {
-                for (let entry of entries) {
-                    if (entry.contentRect.width === 0) continue;
-                    
-                    this.panels.forEach(panel => {
-                        if (panel.chart && !panel.isCollapsed) {
-                            const width = panel.content.clientWidth;
-                            const height = panel.height - 28;
-                            if (width > 0 && height > 0) {
-                                panel.chart.applyOptions({ width, height });
-                            }
+            for (let entry of entries) {
+                // Если контейнер вообще не виден (например, скрыт вкладка), пропускаем
+                if (entry.contentRect.width === 0) return;
+                
+                this.panels.forEach(panel => {
+                    if (panel.chart && !panel.isCollapsed) {
+                        // Берем ширину конкретной обертки панели, а не всего контейнера!
+                        const width = panel.content.clientWidth;
+                        const height = panel.height - 28; // 28px - высота заголовка
+                        if (width > 0 && height > 0) {
+                            panel.chart.resize(width, height);
                         }
-                    });
-                }
-                this._resizeDebounceTimer = null;
-            });
+                    }
+                });
+            }
         });
         
+        // Начинаем следить за контейнером индикаторов
         if (this.container) {
             this._resizeObserver.observe(this.container);
         }
@@ -51,7 +47,6 @@ class IndicatorPanelManager {
         wrapper.className = 'indicator-panel-wrapper';
         wrapper.style.height = `${defaultHeight}px`;
         wrapper.dataset.panelId = id;
-        wrapper.style.position = 'relative'; // 🔥 ВАЖНО для абсолютного позиционирования кроссхейра
         
         const header = document.createElement('div');
         header.className = 'indicator-panel-header';
@@ -75,6 +70,7 @@ class IndicatorPanelManager {
         wrapper.appendChild(content);
         this.container.appendChild(wrapper);
         
+             // ✅ ЗАЩИТА ОТ 0: Если браузер еще не посчитал ширину, ставим дефолтную
         const safeWidth = content.clientWidth || 400;
         const safeHeight = Math.max(50, defaultHeight - 28);
         
@@ -89,14 +85,10 @@ class IndicatorPanelManager {
             rightPriceScale: { scaleMargins: { top: 0.1, bottom: 0.1 }, borderColor: '#333333' }
         });
         
-        const panel = { 
-            wrapper, header, content, resizer, chart, 
-            height: defaultHeight, minHeight, maxHeight, 
-            isCollapsed: false, series: new Map(),
-            crosshairLine: null // 🔥 Ссылка на линию кроссхейра
-        };
+        const panel = { wrapper, header, content, resizer, chart, height: defaultHeight, minHeight, maxHeight, isCollapsed: false, series: new Map() };
         this.panels.set(id, panel);
         
+        // Обработчики кнопок
         header.querySelector('.collapse-btn').addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(id); });
         header.querySelector('.close-btn').addEventListener('click', (e) => { e.stopPropagation(); this.closePanel(id); });
         resizer.addEventListener('mousedown', (e) => { this._startResize(id, e); });
@@ -114,17 +106,17 @@ class IndicatorPanelManager {
             panel.wrapper.classList.add('collapsed');
             panel.wrapper.style.height = '36px';
             panel.header.querySelector('.collapse-btn').innerHTML = '▶';
-            if (panel.crosshairLine) panel.crosshairLine.style.display = 'none';
         } else {
             panel.wrapper.classList.remove('collapsed');
             panel.wrapper.style.height = `${panel.height}px`;
             panel.header.querySelector('.collapse-btn').innerHTML = '▼';
         }
         
+        // ИСПРАВЛЕНО: Используем chart.resize вместо applyOptions и УБРАЛИ пересчет данных!
         setTimeout(() => {
             const width = panel.content.clientWidth;
             const height = panel.isCollapsed ? 0 : panel.height - 28;
-            if (width > 0) panel.chart.applyOptions({ width, height });
+            if (width > 0) panel.chart.resize(width, height);
         }, 10);
         
         this._updateContainerHeight();
@@ -134,7 +126,6 @@ class IndicatorPanelManager {
         const panel = this.panels.get(id);
         if (!panel) return;
         
-        if (panel.crosshairLine) panel.crosshairLine.remove();
         if (panel.wrapper && panel.wrapper.parentNode) panel.wrapper.remove();
         try { if (panel.chart) panel.chart.remove(); } catch(e) {}
         
@@ -165,8 +156,9 @@ class IndicatorPanelManager {
             panel.height = newHeight;
             panel.wrapper.style.height = `${newHeight}px`;
             
+            // ИСПРАВЛЕНО: Используем chart.resize (без пересчета данных!)
             const width = panel.content.clientWidth;
-            if (width > 0) panel.chart.applyOptions({ width, height: newHeight - 28 });
+            if (width > 0) panel.chart.resize(width, newHeight - 28);
             
             this._updateContainerHeight();
         }
@@ -183,13 +175,7 @@ class IndicatorPanelManager {
     }
     
     _updateContainerHeight() {
-        if (this.chartManager?._updateMainChartHeight) {
-            // 🔥 Debounce обновления высоты главного графика
-            clearTimeout(this._updateHeightTimer);
-            this._updateHeightTimer = setTimeout(() => {
-                this.chartManager._updateMainChartHeight();
-            }, 50);
-        }
+        if (this.chartManager?._updateMainChartHeight) this.chartManager._updateMainChartHeight();
     }
     
     addSeries(panelId, seriesId, type, options) {
@@ -213,6 +199,7 @@ class IndicatorPanelManager {
         
         if (seriesToDelete) {
             try { panel.chart.removeSeries(seriesToDelete); } catch(e) {}
+            // Удаляем по значению объекта из Map
             for (const [key, val] of panel.series.entries()) {
                 if (val === seriesToDelete) { panel.series.delete(key); break; }
             }
@@ -223,75 +210,84 @@ class IndicatorPanelManager {
         this.panels.forEach(panel => {
             if (panel.chart && !panel.isCollapsed) {
                 const h = panel.height - 28;
-                if (width > 0 && h > 0) panel.chart.applyOptions({ width, height: h });
+                if (width > 0 && h > 0) panel.chart.resize(width, h);
             }
         });
     }
-
-    // 🔥 НОВЫЙ МЕТОД: Вызывается ИЗ ChartManager для синхронизации скролла
-    syncVisibleRange(range) {
-        this.panels.forEach(panel => {
-            if (panel.chart && !panel.isCollapsed) {
-                try {
-                    panel.chart.timeScale().setVisibleLogicalRange(range);
-                } catch(e) {}
-            }
-        });
-    }
-
-    // 🔥 ОПТИМИЗИРОВАННАЯ ПРИВЯЗКА КРОССХЕЙРА (БЕЗ getBoundingClientRect!)
-    _syncPanelWithMainChart(panelId) {
-        const panel = this.panels.get(panelId);
-        const cm = this.chartManager;
-        if (!panel || !cm?.chart) return;
-        
-        const mainChart = cm.chart;
-        
-        // 1. Синхронизируем базовые настройки timeScale один раз
-        const mainOptions = mainChart.options();
-        panel.chart.applyOptions({
-            timeScale: {
-                ...mainOptions.timeScale,
-                visible: false,
-                rightOffset: mainOptions.timeScale?.rightOffset || 5,
-                barSpacing: mainOptions.timeScale?.barSpacing || 12,
-                minBarSpacing: mainOptions.timeScale?.minBarSpacing || 3,
-                fixLeftEdge: true,
-                fixRightEdge: false
-            }
-        });
-        
-        // 2. Создаем линию кроссхейра ВНУТРИ wrapper панели (а не в body!)
-        // Это позволяет использовать CSS top:0 и height:100% без JS-вычислений
-        if (!panel.crosshairLine) {
-            const line = document.createElement('div');
-            line.style.cssText = `
-                position: absolute; width: 1px; 
-                height: 100%; top: 0; pointer-events: none; z-index: 9999;
-                display: none; border-left: 1px dashed #758696;
-            `;
-            panel.wrapper.appendChild(line); // 🔥 Добавляем в wrapper, а не в document.body
-            panel.crosshairLine = line;
+_syncPanelWithMainChart(panelChart) {
+    const cm = this.chartManager;
+    if (!cm?.chart) return;
+    
+    const mainChart = cm.chart;
+    
+    let panelData = null;
+    this.panels.forEach((p) => {
+        if (p.chart === panelChart) panelData = p;
+    });
+    
+    if (!panelData?.wrapper) return;
+    
+    // ════════════════════════════════════
+    // ❗️❗️❗️ ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ
+    // ════════════════════════════════════
+    
+    // 1. Копируем настройки timeScale из основного!
+    const mainOptions = mainChart.options();
+    
+    panelChart.applyOptions({
+        timeScale: {
+            ...mainOptions.timeScale,
+            visible: false,
+            rightOffset: mainOptions.timeScale?.rightOffset || 5,
+            barSpacing: mainOptions.timeScale?.barSpacing || 12,
+            minBarSpacing: mainOptions.timeScale?.minBarSpacing || 3,
+            fixLeftEdge: true,
+            fixRightEdge: false
         }
+    });
+    
+    // 2. Синхронизация при каждом изменении
+    let syncTimer = null;
+    
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (syncTimer) cancelAnimationFrame(syncTimer);
         
-        // 3. Синхронизация кроссхейра через API графика (мгновенно и точно)
-        mainChart.subscribeCrosshairMove((p) => {
-            if (!p?.time || panel.isCollapsed) {
-                panel.crosshairLine.style.display = 'none';
-                return;
-            }
-            
-            // 🔥 МАГИЯ: Преобразуем время главного графика в X-координату панели
-            const panelX = panel.chart.timeScale().timeToCoordinate(p.time);
-            
-            if (panelX === null) {
-                panel.crosshairLine.style.display = 'none';
-            } else {
-                panel.crosshairLine.style.display = 'block';
-                panel.crosshairLine.style.left = `${panelX}px`; // Идеальное совпадение без getBoundingClientRect
-            }
+        syncTimer = requestAnimationFrame(() => {
+            try {
+                // ❗️ Получаем актуальный диапазон и применяем
+                const currentRange = mainChart.timeScale().getVisibleLogicalRange();
+                if (currentRange) {
+                    panelChart.timeScale().setVisibleLogicalRange({
+                        from: Math.floor(currentRange.from),
+                        to: Math.ceil(currentRange.to)
+                    });
+                }
+            } catch(e){}
         });
+    });
+    
+    // 3. Crosshair линия
+    let line = document.getElementById(`crosshair-line-${panelData.wrapper.dataset.panelId}`);
+    if (!line) {
+        line = document.createElement('div');
+        line.id = `crosshair-line-${panelData.wrapper.dataset.panelId}`;
+        line.style.cssText = `
+            position:absolute; width:1px; background:transparent;
+            height:100%; top:0; pointer-events:none; z-index:99999;
+            display:none; border-left:1px dashed #758696;
+        `;
+        document.body.appendChild(line);
     }
+    
+    mainChart.subscribeCrosshairMove((p) => {
+        if (!p?.time || !p?.point) { line.style.display='none'; return; }
+        const rect = panelData.wrapper.getBoundingClientRect();
+        line.style.display='block';
+        line.style.left=p.point.x+'px';
+        line.style.top=rect.top+'px';
+        line.style.height=(rect.height-28)+'px';
+    });
+}
 }
 
 if (typeof window !== 'undefined') {
