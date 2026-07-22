@@ -253,7 +253,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         
         const savedSettings = this._loadSettings();
         
-        // ВОЗВРАЩЕНЫ ВСЕ СТАРЫЕ НАСТРОЙКИ ПЕРИОДОВ
         this.settings = {
             atrPeriod: savedSettings.atrPeriod || 3,
             rangeMode: savedSettings.rangeMode || 'High-Low',
@@ -266,9 +265,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             hourATRPeriod: savedSettings.hourATRPeriod || 12,
             hourTF: savedSettings.hourTF || '1',
             minuteTF: savedSettings.minuteTF || '5',
-            minuteATRPeriod: savedSettings.minuteATRPeriod || 3, // В часах!
+            minuteATRPeriod: savedSettings.minuteATRPeriod || 3,
             minute1TF: savedSettings.minute1TF || '1',
-            minute1ATRPeriod: savedSettings.minute1ATRPeriod || 3 // В часах!
+            minute1ATRPeriod: savedSettings.minute1ATRPeriod || 3
         };
         
         this.metrics = { 
@@ -385,16 +384,13 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return map[apiInterval] || apiInterval.toUpperCase();
     }
 
-    // Старая функция перевода часов в количество свечей
     calculateCandlesFromHours(hours, minuteTFStr) {
         return Math.max(Math.floor(hours * 60 / parseInt(minuteTFStr)), 1);
     }
 
-    // УМНЫЙ ВЫБОР ПЕРИОДА: берет настройки под конкретный открытый ТФ
     getActualPeriod(apiInterval) {
         if (apiInterval === '1w') return this.settings.weekATRPeriod || 3;
         if (apiInterval === '1d') return this.settings.dayATRPeriod || 3;
-        
         if (['1h', '2h', '4h', '6h', '12h'].includes(apiInterval)) return this.settings.hourATRPeriod || 12;
         
         const minuteApiTF = this.settings.minuteTF + 'm';
@@ -407,7 +403,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             return this.calculateCandlesFromHours(this.settings.minute1ATRPeriod || 3, this.settings.minute1TF);
         }
 
-        // Фолбэк для ТФ, которые не настроены явно (например 15м, 3м)
         return this.settings.atrPeriod || 3;
     }
     
@@ -439,13 +434,22 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: Math.min(progress, 100), remaining: Math.max(0, 100 - progress), remainingPoints: Math.max(0, atr - distFromOpen), trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
     }
     
-    async updateMetrics() {
+    // УБРАН ASYNC, ТАК КАК МЫ БЕРЕМ ДАННЫЕ ЛОКАЛЬНО
+    updateMetrics() {
         if (this._isUpdating) return;
         this._isUpdating = true;
         if (this._updateTimeout) clearTimeout(this._updateTimeout);
+        
         try {
             const chartManager = this.manager?.chartManager;
-            if (!chartManager?.chartData?.length) return;
+            // БЕРЕМ ДАННЫЕ НАПРЯМУЮ ИЗ ГРАФИКА
+            const data = chartManager?.chartData;
+            
+            if (!data?.length) {
+                this._isUpdating = false;
+                return;
+            }
+
             const rawInterval = chartManager.currentInterval || '60';
             const newApiInterval = this._normalizeInterval(rawInterval);
             
@@ -454,17 +458,22 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 this.metrics.atr = 0; this.renderWidget();
             }
             
-            // Берем умный период под текущий ТФ
             const actualPeriod = this.getActualPeriod(this._currentApiInterval);
-            const limit = Math.max(actualPeriod * 3, 200);
-            const data = await this.fetchDataForTF(this._currentApiInterval, limit);
             
-            if (data && data.length >= actualPeriod + 1) {
+            // Если на графике недостаточно свечей для периода, просто показываем 0
+            if (data.length >= actualPeriod + 1) {
                 this.metrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
-                this.metrics._actualPeriod = actualPeriod; // Сохраняем чтобы вывести на экран
+                this.metrics._actualPeriod = actualPeriod;
+            } else {
+                this.metrics.atr = 0;
+                this.metrics._actualPeriod = actualPeriod;
             }
             this.renderWidget();
-        } catch (e) { console.error('ATR error:', e); } finally { this._isUpdating = false; }
+        } catch (e) { 
+            console.error('ATR error:', e); 
+        } finally { 
+            this._isUpdating = false; 
+        }
     }
 
     _setupEventHandlers() {
@@ -509,24 +518,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._removeAllSeries(); this.manager = null;
     }
     
-    async fetchDataForTF(tf, limit) {
-        const chartManager = this.manager?.chartManager;
-        if (!chartManager) return [];
-        const { currentSymbol: symbol, currentExchange: exchange, currentMarketType: marketType } = chartManager;
-        const bybitIntervalMap = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '2h': '120', '4h': '240', '6h': '360', '8h': '480', '12h': '720', '1d': 'D', '1w': 'W' };
-        let url;
-        if (exchange === 'binance') { const base = marketType === 'futures' ? 'https://fapi.binance.com/fapi/v1/klines' : 'https://api.binance.com/api/v3/klines'; url = `${base}?symbol=${symbol}&interval=${tf}&limit=${limit}`; }
-        else { const category = marketType === 'futures' ? 'linear' : 'spot'; url = `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${symbol}&interval=${bybitIntervalMap[tf] || tf}&limit=${limit}`; }
-        try {
-            const controller = new AbortController(); const timeoutId = setTimeout(() => controller.abort(), 5000);
-            const response = await fetch(url, { signal: controller.signal }); clearTimeout(timeoutId);
-            if (!response.ok) return [];
-            const data = await response.json();
-            if (exchange === 'binance') { return Array.isArray(data) ? data.map(item => ({ time: Math.floor(item[0] / 1000), open: parseFloat(item[1]), high: parseFloat(item[2]), low: parseFloat(item[3]), close: parseFloat(item[4]), volume: parseFloat(item[5]) })) : []; }
-            else { if (data.retCode !== 0 || !data.result?.list) return []; return data.result.list.reverse().map(item => ({ time: Math.floor(parseInt(item[0]) / 1000), open: parseFloat(item[1]), high: parseFloat(item[2]), low: parseFloat(item[3]), close: parseFloat(item[4]), volume: parseFloat(item[5] || 0) })); }
-        } catch (e) { return []; }
-    }
-    
     renderWidget() {
         const wrapper = document.getElementById('multiatr-widget');
         if (!wrapper) return;
@@ -552,8 +543,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         
         const formatATR = (v) => (!v || v === 0) ? '...' : v.toFixed(this._decimals);
         const remColor = m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
-        
-        // В скобках показываем реальное количество свечей, по которым идет расчет
         const periodDisplay = m._actualPeriod || this.getActualPeriod(this._currentApiInterval);
 
         wrapper.innerHTML = `
@@ -579,7 +568,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
     
     getSettingsHTML() {
-        // ВОЗВРАЩЕНЫ ВСЕ НАСТРОЙКИ ТФ
         return `
             <div style="max-height:400px; overflow-y:auto; padding-right:5px; scrollbar-width: thin; scrollbar-color: #4A4A4A #1E1E1E;">
                 <div style="margin-bottom:12px;">
@@ -649,7 +637,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
     
     applySettingsFromForm() {
-        // СОХРАНЯЕМ ВСЕ СТАРЫЕ НАСТРОЙКИ
         this.settings.atrPeriod = parseInt(document.getElementById('atrPeriod')?.value || 3);
         this.settings.rangeMode = document.getElementById('rangeMode')?.value || 'High-Low';
         this.settings.useFilter = document.getElementById('useFilter')?.checked || false;
