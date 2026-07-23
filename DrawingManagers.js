@@ -1690,7 +1690,7 @@ class TrendLine {
         const { timeframeVisibility, anchorCandle1, anchorCandle2, symbolKey, symbol, exchange, marketType, ...restOptions } = options;
 
         this.options = {
-            color: restOptions.color || '#0933e2',
+            color: restOptions.color || '#2505da',
             lineWidth: restOptions.lineWidth || 2,
             lineStyle: restOptions.lineStyle || 'solid',
             opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.9,
@@ -2147,7 +2147,7 @@ class TempTrendLinePrimitive {
                         const { position: y2 } = positionsLine(point2Y, scope.verticalPixelRatio, lineWidthBitmap, false);
 
                         ctx.save();
-                        ctx.strokeStyle = tempLine.options.color || '#4A90E2';
+                        ctx.strokeStyle = tempLine.options.color || '#100cdd';
                         ctx.lineWidth = lineWidthBitmap;
                         if (tempLine.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
                         else if (tempLine.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
@@ -2400,7 +2400,7 @@ class TrendLineManager {
         this._isDrawingMode = enabled;
         const btn = document.getElementById('toolTrendLine');
         if (btn) {
-            if (enabled) { btn.style.background = '#4A90E2'; btn.style.color = '#FFFFFF'; btn.classList.add('active'); }
+            if (enabled) { btn.style.background = '#091dd3'; btn.style.color = '#FFFFFF'; btn.classList.add('active'); }
             else { btn.style.background = ''; btn.style.color = ''; btn.classList.remove('active'); }
         }
         if (!enabled) {
@@ -2602,7 +2602,7 @@ class TrendLineManager {
                         point1: this._drawingStartPoint,
                         point2: { price, time },
                         options: {
-                            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#4A90E2',
+                            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#072edd',
                             lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
                             lineStyle: document.getElementById('templateSelect')?.value || 'solid'
                         }
@@ -2831,7 +2831,7 @@ class TrendLineManager {
         this.createTrendLine(point1, point2, {
             anchorCandle1: ac1,
             anchorCandle2: ac2,
-            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#4A90E2',
+            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#0e23dd',
             lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
             lineStyle: document.getElementById('templateSelect')?.value || 'solid',
             opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9
@@ -8071,7 +8071,7 @@ document.addEventListener('keydown', (e) => {
             if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
             if (window.textManager && ns) window.textManager.setDrawingMode(false);
             const btn = document.getElementById('toolTrendLine');
-            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+            if (btn) btn.style.background = ns ? '#1f11e9' : '';
         }
     }
     
