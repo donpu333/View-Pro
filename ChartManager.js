@@ -81,7 +81,7 @@ class ChartManager {
         
         // ОПТИМИЗАЦИЯ: Дебаунсинг обрезки данных
         this._trimDebounceTimeout = null;
-        this._trimDebounceDelay = 300; // 300мс задержка перед обрезкой
+        this._trimDebounceDelay = 300;
         this._pendingTrimParams = null;
         this._isTrimming = false;
         
@@ -108,7 +108,7 @@ class ChartManager {
         this.lowEl = safeElement('lowValue');
         this.closeEl = safeElement('closeValue');
         this.changeEl = safeElement('changeValue');
-        this.volumeEl = document.getElementById('volumeValue'); // Кэшируем поиск элемента
+        this.volumeEl = document.getElementById('volumeValue');
         
         // ОПТИМИЗАЦИЯ: Кэш форматирования и цветов для crosshair
         this._formatCache = new Map(); 
@@ -332,9 +332,9 @@ class ChartManager {
     }
 
     scheduleDrawingsUpdate(forceHighPriority = false) {
-        // ⚡ ОПТИМИЗАЦИЯ: Полный стоп отрисовки, если вкладка не активна
         if (document.hidden) return;
         if (this._isVerticalZooming) return;
+        if (this._isScrolling) return;
         
         const now = performance.now();
         let delay;
@@ -343,8 +343,6 @@ class ChartManager {
             delay = 0;
         } else if (this._isScrollingFast) {
             delay = 50;
-        } else if (this._isScrolling) {
-            delay = 100;
         } else {
             delay = 150;
         }
@@ -369,7 +367,6 @@ class ChartManager {
     }
 
     requestDrawingsRedraw() {
-        // ⚡ ОПТИМИЗАЦИЯ: Не планируем перерисовку рисунков в скрытой вкладке
         if (document.hidden || this._isScrolling || this._isScrollingFast) return;
         
         if (this._drawingsRafId !== null) return;
@@ -386,8 +383,6 @@ class ChartManager {
 
     _startNewCandleChecker() {
         const check = () => {
-            // ⚡ ОПТИМИЗАЦИЯ: Если вкладка скрыта, проверяем новую свечу реже (раз в 2 сек), 
-            // чтобы не грузить CPU. При возврате на вкладку _syncAfterHidden() всё синхронизирует.
             if (document.hidden) {
                 setTimeout(check, 2000);
                 return;
@@ -439,7 +434,8 @@ class ChartManager {
         };
         check();
     }
-       async _syncAfterHidden() {
+
+    async _syncAfterHidden() {
         if (!this.chartData.length || !this.currentSymbol) return;
         
         this._isScrolling = false;
@@ -496,6 +492,7 @@ class ChartManager {
         this.requestDrawingsRedraw();
         if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
     }
+
     _setupPanelsSync() {
         if (!this.chart) return;
         
@@ -538,7 +535,7 @@ class ChartManager {
     }
 
     // =========================================================================
-    // ОПТИМИЗИРОВАННЫЕ МЕТОДЫ СКРОЛЛА (ГЛАВНОЕ ИСПРАВЛЕНИЕ ЛАГОВ)
+    // ОПТИМИЗИРОВАННЫЕ МЕТОДЫ СКРОЛЛА (ИСПРАВЛЕНИЕ ЛАГОВ)
     // =========================================================================
     setupOptimizedSubscriptions() {
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -554,17 +551,34 @@ class ChartManager {
                 this._isScrolling = false;
                 this._isScrollingFast = false;
                 
-                // ТЯЖЕЛЫЕ операции выполняем ТОЛЬКО после остановки скролла!
+                // ТЯЖЕЛЫЕ операции выполняем ПОСЛЕДОВАТЕЛЬНО после остановки скролла
+                
+                // 1. Сначала обрезка данных
                 this._applyPendingTrim();
-                this.onVisibleLogicalRangeChange(this._lastVisibleRange); // Загрузка истории
-                this.scheduleDrawingsUpdate(true); // Высокий приоритет отрисовки рисунков
-                this.requestDrawingsRedraw();
-            }, 150); // 150мс - оптимальная задержка для плавности
+                
+                // 2. Загрузка истории с задержкой
+                setTimeout(() => {
+                    if (!this._isScrolling) {
+                        this.onVisibleLogicalRangeChange(this._lastVisibleRange);
+                    }
+                }, 100);
+                
+                // 3. Перерисовка рисунков в последнюю очередь
+                setTimeout(() => {
+                    if (!this._isScrolling) {
+                        this.scheduleDrawingsUpdate(true);
+                        this.requestDrawingsRedraw();
+                    }
+                }, 200);
+                
+            }, 150);
 
-            // 1. Синхронизация панелей (легкая операция, но через RAF)
+            // Синхронизация панелей (легкая операция)
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
                 if (!this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
+                        this._panelsSyncRafId = null;
+                        if (this._isScrolling) return;
                         this._isSyncing = true;
                         const panels = this.indicatorManager.panelManager.panels;
                         panels.forEach((panel) => {
@@ -575,16 +589,11 @@ class ChartManager {
                             }
                         });
                         this._isSyncing = false;
-                        this._panelsSyncRafId = null;
                     });
                 }
             }
-
-            // 2. Обновление рисунков (уже имеет встроенный RAF-троттлинг)
-            this.scheduleDrawingsUpdate();
         });
         
-        // Пассивный слушатель колеса мыши для улучшения отклика браузера
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
@@ -1043,7 +1052,6 @@ class ChartManager {
             
             if (!this._formatCache.has(key)) {
                 this._formatCache.set(key, Number(value).toFixed(precision));
-                // LRU-подобная очистка: удаляем самый старый элемент, если кэш > 100
                 if (this._formatCache.size > 100) {
                     this._formatCache.delete(this._formatCache.keys().next().value);
                 }
@@ -1055,7 +1063,6 @@ class ChartManager {
         const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
         const color = data.cls === 'bullish' ? bullishColor : bearishColor;
 
-        // ⚡ ОПТИМИЗАЦИЯ: Обновляем цвет ТОЛЬКО если он реально изменился
         if (this._lastCrosshairColor !== color) {
             this._lastCrosshairColor = color;
             
@@ -1070,7 +1077,6 @@ class ChartManager {
         const baseClass = `stat-value ${data.cls}`;
         const changeClass = `change-value ${data.cls}`;
 
-        // ⚡ ОПТИМИЗАЦИЯ: Обновляем текст и классы только при изменении
         if (this.openEl) {
             const newText = formatWithPrecision(data.open);
             if (this.openEl.textContent !== newText) this.openEl.textContent = newText;
@@ -1371,7 +1377,6 @@ class ChartManager {
         return volumeData;
     }
 
-    // ОПТИМИЗИРОВАННОЕ ОБНОВЛЕНИЕ ОБЪЕМОВ
     _updateVolumeOptimized() {
         if (!this.volumeSeries || !this.chartData.length) return;
         
@@ -1745,6 +1750,7 @@ class ChartManager {
 
     onVisibleLogicalRangeChange(range) {
         if (!range || !this.chartData.length) return;
+        if (this._isScrolling) return;
         
         const fromIndex = Math.max(0, Math.floor(range.from));
         
@@ -1756,10 +1762,10 @@ class ChartManager {
     }
 
     // =========================================================================
-    // ОПТИМИЗИРОВАННАЯ ОБРЕЗКА ДАННЫХ (ГЛАВНОЕ ИСПРАВЛЕНИЕ ЛАГОВ)
+    // ОПТИМИЗИРОВАННАЯ ОБРЕЗКА ДАННЫХ (ИСПРАВЛЕНИЕ ЛАГОВ)
     // =========================================================================
     _scheduleTrim(range) {
-        if (this._isTrimming || this.isLoadingMore) return;
+        if (this._isTrimming || this.isLoadingMore || this._isScrolling) return;
         
         const fromIndex = Math.max(0, Math.floor(range.from));
         const toIndex = Math.min(this.chartData.length - 1, Math.ceil(range.to));
@@ -1770,8 +1776,6 @@ class ChartManager {
             clearTimeout(this._trimDebounceTimeout);
         }
         
-        // УБРАНО: мгновенный вызов _performTrimNow. 
-        // Теперь обрезка ВСЕГДА ждет окончания скролла (debounce), что гарантирует плавность.
         this._trimDebounceTimeout = setTimeout(() => {
             this._applyPendingTrim();
             this._trimDebounceTimeout = null;
@@ -1779,7 +1783,7 @@ class ChartManager {
     }
 
     _applyPendingTrim() {
-        if (this._pendingTrimParams && !this._isTrimming) {
+        if (this._pendingTrimParams && !this._isTrimming && !this._isScrolling) {
             const { fromIndex, toIndex } = this._pendingTrimParams;
             this._performTrimNow(fromIndex, toIndex);
             this._pendingTrimParams = null;
@@ -1788,7 +1792,14 @@ class ChartManager {
 
     _performTrimNow(fromIndex, toIndex) {
         if (this._isTrimming || this.isLoadingMore) return;
-        // Добавлена проверка: не обрезаем, если не скроллим и данных в пределах нормы
+        if (this._isScrolling || this._isScrollingFast) {
+            if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
+            this._trimDebounceTimeout = setTimeout(() => {
+                this._applyPendingTrim();
+            }, this._trimDebounceDelay);
+            return;
+        }
+        
         if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
         
         const keepFrom = Math.max(0, fromIndex - this._leftBuffer);
@@ -1802,7 +1813,6 @@ class ChartManager {
         this._isTrimming = true;
         
         try {
-            // 1. Обрезаем данные
             this.chartData = this.chartData.slice(keepFrom, keepTo);
             this._rebuildTimeMap();
             this._volumeDataDirty = true;
@@ -1810,7 +1820,6 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             const currentRange = timeScale.getVisibleLogicalRange();
             
-            // 2. ОПТИМИЗАЦИЯ: Обновляем ТОЛЬКО активную серию, а не все подряд
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (activeSeries) {
                 activeSeries.setData(this.chartData);
@@ -1818,7 +1827,6 @@ class ChartManager {
             
             this._updateVolumeOptimized();
             
-            // 3. Корректируем видимый диапазон, чтобы график не "прыгал"
             if (currentRange && leftTrim > 0) {
                 timeScale.setVisibleLogicalRange({
                     from: Math.max(0, currentRange.from - leftTrim),
@@ -1826,7 +1834,6 @@ class ChartManager {
                 });
             }
             
-            // 4. Индикаторы обновляем асинхронно, чтобы не блокировать основной поток
             if (leftTrim > 0 || rightTrim > 0) {
                 requestAnimationFrame(() => {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -1842,6 +1849,7 @@ class ChartManager {
 
     async _loadHistoryAsync() {
         if (this.isLoadingMore || !this.hasMoreData) return;
+        if (this._isScrolling || this._isScrollingFast) return;
         
         const now = Date.now();
         if (now - this._lastHistoryLoadTime < this._minLoadDelay) return;
@@ -1860,6 +1868,8 @@ class ChartManager {
                 this.currentInterval, this._batchSize, endTime
             );
             
+            if (this._isScrolling) { this.isLoadingMore = false; return; }
+            
             if (!olderCandles || olderCandles.length === 0) {
                 this.hasMoreData = false;
                 this.isLoadingMore = false;
@@ -1874,7 +1884,7 @@ class ChartManager {
                 if (!existingTimes.has(olderCandles[i].time)) uniqueOlder.push(olderCandles[i]);
             }
             
-            if (uniqueOlder.length > 0) {
+            if (uniqueOlder.length > 0 && !this._isScrolling) {
                 const timeScale = this.chart.timeScale();
                 const currentRange = timeScale.getVisibleLogicalRange();
                 const addedCount = uniqueOlder.length;
@@ -1902,7 +1912,9 @@ class ChartManager {
                 
                 requestAnimationFrame(() => {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                    this.scheduleDrawingsUpdate(true);
+                    if (!this._isScrolling) {
+                        this.scheduleDrawingsUpdate(true);
+                    }
                 });
             }
             
