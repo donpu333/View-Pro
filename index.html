@@ -422,6 +422,7 @@
 <div class="alert-history-content" id="telegramContent"></div>
 </div>
 <div id="chart-container">
+    <div id="chart-container" style="width:100%; height:100%;"></div>
 <div class="drawing-toolbar" id="drawingToolbar">
 <div class="toolbar-header" id="toolbarHeader">
 <div class="toolbar-drag">
@@ -1095,13 +1096,19 @@ colorOpacity.addEventListener('input', function() { colorOpacityValue.textConten
 let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
 let toolbarRafId = null; // Для плавности
 // ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
+
+// ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
 toolbarHeader.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.toolbar-toggle')) return;
+    // ✅ ИСПРАВЛЕНО: Игнорируем клики по кнопке сворачивания И кнопке ориентации
+    if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) {
+        return;
+    }
+    
     isDraggingToolbar = true;
     
     const rect = drawingToolbar.getBoundingClientRect();
     dragToolbarStartX = e.clientX; 
-    dragToolbarStartY = e.clientY;
+    dragToolbarStartY = e.clientY; 
     dragToolbarStartLeft = rect.left; 
     dragToolbarStartTop = rect.top;
     
@@ -2721,14 +2728,13 @@ setTimeout(function() {
     var btn = document.getElementById('autoScaleButton');
     if (btn && window.chartManagerInstance) {
         btn.onclick = function() {
-            // ✅ ИСПРАВЛЕНО: используем существующий метод autoScale()
-            window.chartManagerInstance.autoScale();
+            window.chartManagerInstance.manualAutoScale();
             
             // Визуальная обратная связь
             btn.classList.add('active');
             setTimeout(() => btn.classList.remove('active'), 300);
         };
-        console.log('✅ Кнопка A прикручена к autoScale()');
+        console.log('✅ Кнопка A прикручена к manualAutoScale()');
     } else {
         console.log('❌ Не нашли кнопку или менеджер');
     }
@@ -2976,5 +2982,6 @@ setTimeout(function() {
         });
     });
 </script>
+
 </body>
 </html>
