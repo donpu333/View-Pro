@@ -838,7 +838,7 @@ svg, svg * { font-family: none !important; }
 .candle-stats-overlay {
     position: absolute;
     top: 10px;
-    left: 38%;
+    left: 40%;
     transform: translateX(-50%);
     background: transparent;
     display: none;
