@@ -58,6 +58,11 @@ class ChartManager {
         this._drawingsFinalUpdateTimeout = null;
         this._scrollStopTimeout = null;
 
+        // ОПТИМИЗАЦИЯ: Переменные для отслеживания скролла
+        this._lastScrollTime = 0;
+        this._panelsSyncRafId = null;
+        this._lastVisibleRange = null;
+
         // НАСТРОЙКИ ПОДГРУЗКИ ИСТОРИИ
         this._historyLoadQueue = [];
         this._preloadThreshold = 400;
@@ -76,7 +81,7 @@ class ChartManager {
         
         // ОПТИМИЗАЦИЯ: Дебаунсинг обрезки данных
         this._trimDebounceTimeout = null;
-        this._trimDebounceDelay = 300;
+        this._trimDebounceDelay = 300; // 300мс задержка перед обрезкой
         this._pendingTrimParams = null;
         this._isTrimming = false;
         
@@ -96,12 +101,18 @@ class ChartManager {
         this.scheduleDrawingsUpdate = this.scheduleDrawingsUpdate.bind(this);
         this.onVisibleLogicalRangeChange = this.onVisibleLogicalRangeChange.bind(this);
 
+        // Элементы DOM для кроссхейра (кэшируем для скорости)
         this.overlay = safeElement('candleStatsOverlay');
         this.openEl = safeElement('openValue');
         this.highEl = safeElement('highValue');
         this.lowEl = safeElement('lowValue');
         this.closeEl = safeElement('closeValue');
         this.changeEl = safeElement('changeValue');
+        this.volumeEl = document.getElementById('volumeValue'); // Кэшируем поиск элемента
+        
+        // ОПТИМИЗАЦИЯ: Кэш форматирования и цветов для crosshair
+        this._formatCache = new Map(); 
+        this._lastCrosshairColor = null; 
 
         this.loadingOverlay = safeElement('loadingOverlay');
         this.loadingProgress = safeElement('loadingProgress');
@@ -321,6 +332,8 @@ class ChartManager {
     }
 
     scheduleDrawingsUpdate(forceHighPriority = false) {
+        // ⚡ ОПТИМИЗАЦИЯ: Полный стоп отрисовки, если вкладка не активна
+        if (document.hidden) return;
         if (this._isVerticalZooming) return;
         
         const now = performance.now();
@@ -356,7 +369,8 @@ class ChartManager {
     }
 
     requestDrawingsRedraw() {
-        if (this._isScrolling || this._isScrollingFast) return;
+        // ⚡ ОПТИМИЗАЦИЯ: Не планируем перерисовку рисунков в скрытой вкладке
+        if (document.hidden || this._isScrolling || this._isScrollingFast) return;
         
         if (this._drawingsRafId !== null) return;
         this._drawingsRafId = requestAnimationFrame(() => {
@@ -372,6 +386,13 @@ class ChartManager {
 
     _startNewCandleChecker() {
         const check = () => {
+            // ⚡ ОПТИМИЗАЦИЯ: Если вкладка скрыта, проверяем новую свечу реже (раз в 2 сек), 
+            // чтобы не грузить CPU. При возврате на вкладку _syncAfterHidden() всё синхронизирует.
+            if (document.hidden) {
+                setTimeout(check, 2000);
+                return;
+            }
+
             if (!this.chartData.length || !this.currentInterval) {
                 setTimeout(check, 1000);
                 return;
@@ -520,60 +541,61 @@ class ChartManager {
         });
     }
 
+    // =========================================================================
+    // ОПТИМИЗИРОВАННЫЕ МЕТОДЫ СКРОЛЛА (ГЛАВНОЕ ИСПРАВЛЕНИЕ ЛАГОВ)
+    // =========================================================================
     setupOptimizedSubscriptions() {
-        let lastScrollTime = 0;
-        let panelsSyncRafId = null;
-        let lastRange = null;
-        
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             const now = performance.now();
-            const delta = now - lastScrollTime;
-            lastScrollTime = now;
-            
-            this._isScrollingFast = delta < 40;
+            this._isScrollingFast = (now - this._lastScrollTime) < 40;
             this._isScrolling = true;
-            
+            this._lastScrollTime = now;
+            this._lastVisibleRange = range;
+
+            // Сбрасываем таймер остановки скролла
             clearTimeout(this._scrollStopTimeout);
             this._scrollStopTimeout = setTimeout(() => {
                 this._isScrolling = false;
                 this._isScrollingFast = false;
+                
+                // ТЯЖЕЛЫЕ операции выполняем ТОЛЬКО после остановки скролла!
                 this._applyPendingTrim();
-            }, 200);
-            
-            this.scheduleDrawingsUpdate();
-            
-            if (range) {
-                lastRange = range;
-                this.onVisibleLogicalRangeChange(range);
-            }
+                this.onVisibleLogicalRangeChange(this._lastVisibleRange); // Загрузка истории
+                this.scheduleDrawingsUpdate(true); // Высокий приоритет отрисовки рисунков
+                this.requestDrawingsRedraw();
+            }, 150); // 150мс - оптимальная задержка для плавности
 
-            if (!range || !this.indicatorManager?.panelManager || this._isSyncing) return;
-            
-            if (!panelsSyncRafId) {
-                panelsSyncRafId = requestAnimationFrame(() => {
-                    this._isSyncing = true;
-                    const panels = this.indicatorManager.panelManager.panels;
-                    if (lastRange) {
+            // 1. Синхронизация панелей (легкая операция, но через RAF)
+            if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
+                if (!this._panelsSyncRafId) {
+                    this._panelsSyncRafId = requestAnimationFrame(() => {
+                        this._isSyncing = true;
+                        const panels = this.indicatorManager.panelManager.panels;
                         panels.forEach((panel) => {
                             if (panel.chart && !panel.isCollapsed) {
                                 try { 
-                                    panel.chart.timeScale().setVisibleLogicalRange(lastRange); 
+                                    panel.chart.timeScale().setVisibleLogicalRange(range); 
                                 } catch(e) {}
                             }
                         });
-                    }
-                    this._isSyncing = false;
-                    panelsSyncRafId = null;
-                });
+                        this._isSyncing = false;
+                        this._panelsSyncRafId = null;
+                    });
+                }
             }
+
+            // 2. Обновление рисунков (уже имеет встроенный RAF-троттлинг)
+            this.scheduleDrawingsUpdate();
         });
         
+        // Пассивный слушатель колеса мыши для улучшения отклика браузера
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
     setupMaximumSubscriptions() {
         this.setupOptimizedSubscriptions();
     }
+    // =========================================================================
 
     setupEventListeners() {
         let resizeTimeout;
@@ -737,40 +759,41 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-   _syncPriceLine(price) {
-    if (!price) return;
-    
-    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-    if (!series) return;
-    
-    const lastCandle = this.chartData[this.chartData.length - 1];
-    if (!lastCandle) return;
-    
-    lastCandle.close = price;
-    if (price > lastCandle.high) lastCandle.high = price;
-    if (price < lastCandle.low) lastCandle.low = price;
-    
-    const isBullish = price >= lastCandle.open;
-    const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
-    
-    this.currentRealPrice = price;
-    this._lastAppliedColor = lineColor;
-    this.lastCandle = lastCandle;
-    
-    series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
-    series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-    
-    const prim = this.timerManager?._primitive;
-    if (prim) {
-        if (prim.setPrice) prim.setPrice(price);
-        if (prim.setColor) prim.setColor(lineColor);
-        if (prim.isEnabled()) prim.requestRedraw();
+    _syncPriceLine(price) {
+        if (!price) return;
+        
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (!series) return;
+        
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (!lastCandle) return;
+        
+        lastCandle.close = price;
+        if (price > lastCandle.high) lastCandle.high = price;
+        if (price < lastCandle.low) lastCandle.low = price;
+        
+        const isBullish = price >= lastCandle.open;
+        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+        
+        this.currentRealPrice = price;
+        this._lastAppliedColor = lineColor;
+        this.lastCandle = lastCandle;
+        
+        series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
+        series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
+        
+        const prim = this.timerManager?._primitive;
+        if (prim) {
+            if (prim.setPrice) prim.setPrice(price);
+            if (prim.setColor) prim.setColor(lineColor);
+            if (prim.isEnabled()) prim.requestRedraw();
+        }
+        
+        this.scheduleUpdatePosition();
+        this._updatePageTitle();
+        this.requestDrawingsRedraw();
     }
-    
-    this.scheduleUpdatePosition();
-    this._updatePageTitle();
-    this.requestDrawingsRedraw();
-}
+
     updateLastCandle(candle) {
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
         
@@ -1020,23 +1043,75 @@ class ChartManager {
         
         const formatWithPrecision = (value) => {
             if (value === undefined || value === null || isNaN(value)) return '—';
-            return Number(value).toFixed(precision);
+            const key = `${value}_${precision}`;
+            
+            if (!this._formatCache.has(key)) {
+                this._formatCache.set(key, Number(value).toFixed(precision));
+                // LRU-подобная очистка: удаляем самый старый элемент, если кэш > 100
+                if (this._formatCache.size > 100) {
+                    this._formatCache.delete(this._formatCache.keys().next().value);
+                }
+            }
+            return this._formatCache.get(key);
         };
 
         const bullishColor = this.bullishColor || CONFIG?.colors?.bullish || '#26a69a';
         const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
         const color = data.cls === 'bullish' ? bullishColor : bearishColor;
 
-        if (this.openEl) { this.openEl.textContent = formatWithPrecision(data.open); this.openEl.className = `stat-value ${data.cls}`; this.openEl.style.color = color; }
-        if (this.highEl) { this.highEl.textContent = formatWithPrecision(data.high); this.highEl.className = `stat-value ${data.cls}`; this.highEl.style.color = color; }
-        if (this.lowEl) { this.lowEl.textContent = formatWithPrecision(data.low); this.lowEl.className = `stat-value ${data.cls}`; this.lowEl.style.color = color; }
-        if (this.closeEl) { this.closeEl.textContent = formatWithPrecision(data.close); this.closeEl.className = `stat-value ${data.cls}`; this.closeEl.style.color = color; }
-        if (this.changeEl) { this.changeEl.textContent = data.change; this.changeEl.className = `change-value ${data.cls}`; this.changeEl.style.color = color; }
+        // ⚡ ОПТИМИЗАЦИЯ: Обновляем цвет ТОЛЬКО если он реально изменился
+        if (this._lastCrosshairColor !== color) {
+            this._lastCrosshairColor = color;
+            
+            if (this.openEl) this.openEl.style.color = color;
+            if (this.highEl) this.highEl.style.color = color;
+            if (this.lowEl) this.lowEl.style.color = color;
+            if (this.closeEl) this.closeEl.style.color = color;
+            if (this.changeEl) this.changeEl.style.color = color;
+            if (this.volumeEl) this.volumeEl.style.color = color;
+        }
 
-        const volumeEl = document.getElementById('volumeValue');
-        if (volumeEl) { volumeEl.textContent = data.volume; volumeEl.className = `stat-value ${data.cls}`; volumeEl.style.color = color; }
+        const baseClass = `stat-value ${data.cls}`;
+        const changeClass = `change-value ${data.cls}`;
 
-        if (this.overlay) this.overlay.classList.add('visible');
+        // ⚡ ОПТИМИЗАЦИЯ: Обновляем текст и классы только при изменении
+        if (this.openEl) {
+            const newText = formatWithPrecision(data.open);
+            if (this.openEl.textContent !== newText) this.openEl.textContent = newText;
+            if (this.openEl.className !== baseClass) this.openEl.className = baseClass;
+        }
+        
+        if (this.highEl) {
+            const newText = formatWithPrecision(data.high);
+            if (this.highEl.textContent !== newText) this.highEl.textContent = newText;
+            if (this.highEl.className !== baseClass) this.highEl.className = baseClass;
+        }
+        
+        if (this.lowEl) {
+            const newText = formatWithPrecision(data.low);
+            if (this.lowEl.textContent !== newText) this.lowEl.textContent = newText;
+            if (this.lowEl.className !== baseClass) this.lowEl.className = baseClass;
+        }
+        
+        if (this.closeEl) {
+            const newText = formatWithPrecision(data.close);
+            if (this.closeEl.textContent !== newText) this.closeEl.textContent = newText;
+            if (this.closeEl.className !== baseClass) this.closeEl.className = baseClass;
+        }
+        
+        if (this.changeEl) {
+            if (this.changeEl.textContent !== data.change) this.changeEl.textContent = data.change;
+            if (this.changeEl.className !== changeClass) this.changeEl.className = changeClass;
+        }
+
+        if (this.volumeEl) {
+            if (this.volumeEl.textContent !== data.volume) this.volumeEl.textContent = data.volume;
+            if (this.volumeEl.className !== baseClass) this.volumeEl.className = baseClass;
+        }
+
+        if (this.overlay && !this.overlay.classList.contains('visible')) {
+            this.overlay.classList.add('visible');
+        }
     }
 
     updateRealPrice(price) { this._syncPriceLine(price); }
@@ -1300,19 +1375,15 @@ class ChartManager {
         return volumeData;
     }
 
+    // ОПТИМИЗИРОВАННОЕ ОБНОВЛЕНИЕ ОБЪЕМОВ
     _updateVolumeOptimized() {
         if (!this.volumeSeries || !this.chartData.length) return;
         
-        if (this.chartData.length > 500) {
-            if (this._volumeDataDirty) {
-                const volumeData = this._buildVolumeData(this.chartData);
-                this.volumeSeries.setData(volumeData);
-            }
-            return;
+        if (this._volumeDataDirty) {
+            const volumeData = this._buildVolumeData(this.chartData);
+            this.volumeSeries.setData(volumeData);
+            this._volumeDataDirty = false;
         }
-        
-        const volumeData = this._buildVolumeData(this.chartData);
-        this.volumeSeries.setData(volumeData);
     }
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null) {
@@ -1688,6 +1759,9 @@ class ChartManager {
         this._scheduleTrim(range);
     }
 
+    // =========================================================================
+    // ОПТИМИЗИРОВАННАЯ ОБРЕЗКА ДАННЫХ (ГЛАВНОЕ ИСПРАВЛЕНИЕ ЛАГОВ)
+    // =========================================================================
     _scheduleTrim(range) {
         if (this._isTrimming || this.isLoadingMore) return;
         
@@ -1700,11 +1774,8 @@ class ChartManager {
             clearTimeout(this._trimDebounceTimeout);
         }
         
-        if (this.chartData.length > this._maxCandlesInMemory * 1.5) {
-            this._performTrimNow(fromIndex, toIndex);
-            return;
-        }
-        
+        // УБРАНО: мгновенный вызов _performTrimNow. 
+        // Теперь обрезка ВСЕГДА ждет окончания скролла (debounce), что гарантирует плавность.
         this._trimDebounceTimeout = setTimeout(() => {
             this._applyPendingTrim();
             this._trimDebounceTimeout = null;
@@ -1721,6 +1792,7 @@ class ChartManager {
 
     _performTrimNow(fromIndex, toIndex) {
         if (this._isTrimming || this.isLoadingMore) return;
+        // Добавлена проверка: не обрезаем, если не скроллим и данных в пределах нормы
         if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
         
         const keepFrom = Math.max(0, fromIndex - this._leftBuffer);
@@ -1733,10 +1805,8 @@ class ChartManager {
         
         this._isTrimming = true;
         
-        const oldData = [...this.chartData];
-        const oldMap = new Map(this._candleTimeMap);
-        
         try {
+            // 1. Обрезаем данные
             this.chartData = this.chartData.slice(keepFrom, keepTo);
             this._rebuildTimeMap();
             this._volumeDataDirty = true;
@@ -1744,6 +1814,7 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             const currentRange = timeScale.getVisibleLogicalRange();
             
+            // 2. ОПТИМИЗАЦИЯ: Обновляем ТОЛЬКО активную серию, а не все подряд
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (activeSeries) {
                 activeSeries.setData(this.chartData);
@@ -1751,6 +1822,7 @@ class ChartManager {
             
             this._updateVolumeOptimized();
             
+            // 3. Корректируем видимый диапазон, чтобы график не "прыгал"
             if (currentRange && leftTrim > 0) {
                 timeScale.setVisibleLogicalRange({
                     from: Math.max(0, currentRange.from - leftTrim),
@@ -1758,20 +1830,19 @@ class ChartManager {
                 });
             }
             
+            // 4. Индикаторы обновляем асинхронно, чтобы не блокировать основной поток
             if (leftTrim > 0 || rightTrim > 0) {
                 requestAnimationFrame(() => {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                 });
             }
         } catch (e) {
-            console.error('❌ Ошибка обрезки данных, откат:', e);
-            this.chartData = oldData;
-            this._candleTimeMap = oldMap;
-            this._volumeDataDirty = true;
+            console.error('❌ Ошибка обрезки данных:', e);
         } finally {
             this._isTrimming = false;
         }
     }
+    // =========================================================================
 
     async _loadHistoryAsync() {
         if (this.isLoadingMore || !this.hasMoreData) return;
