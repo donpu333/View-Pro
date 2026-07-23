@@ -838,7 +838,7 @@ svg, svg * { font-family: none !important; }
 .candle-stats-overlay {
     position: absolute;
     top: 10px;
-    left: 50%;
+    left: 38%;
     transform: translateX(-50%);
     background: transparent;
     display: none;
@@ -866,10 +866,10 @@ svg, svg * { font-family: none !important; }
     top: 60px;
     background: rgba(45,45,45,0.95);
     border-radius: 8px;
-    padding: 5px 8px;
+    padding: 2px 3px;
     display: flex;
     flex-direction: row;
-    gap: 4px;
+    gap: 1px;
     z-index: 100000 !important;
     border: 1px solid var(--border-medium);
     box-shadow: var(--shadow-md);
