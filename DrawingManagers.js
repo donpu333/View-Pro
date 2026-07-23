@@ -1690,7 +1690,7 @@ class TrendLine {
         const { timeframeVisibility, anchorCandle1, anchorCandle2, symbolKey, symbol, exchange, marketType, ...restOptions } = options;
 
         this.options = {
-            color: restOptions.color || '#4A90E2',
+            color: restOptions.color || '#0933e2',
             lineWidth: restOptions.lineWidth || 2,
             lineStyle: restOptions.lineStyle || 'solid',
             opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.9,
