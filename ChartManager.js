@@ -439,64 +439,116 @@ class ChartManager {
         };
         check();
     }
-   async _syncAfterHidden() {
+    async _syncAfterHidden() {
         if (!this.chartData.length || !this.currentSymbol) return;
         
+        // Сбрасываем все состояния, чтобы избежать конфликтов
         this._isScrolling = false;
         this._isScrollingFast = false;
         this._isSyncing = false;
+        this._isTrimming = false;
+        
+        // Очищаем отложенные операции
+        if (this._scrollStopTimeout) { clearTimeout(this._scrollStopTimeout); this._scrollStopTimeout = null; }
+        if (this._trimDebounceTimeout) { clearTimeout(this._trimDebounceTimeout); this._trimDebounceTimeout = null; }
+        this._pendingTrimParams = null;
 
         try {
-            const ts = this.chart.timeScale();
-            const range = ts.getVisibleLogicalRange();
-            if (range) {
-                ts.setVisibleLogicalRange({ from: range.from - 0.0001, to: range.to - 0.0001 });
-                requestAnimationFrame(() => ts.setVisibleLogicalRange(range));
-            }
-        } catch(e) {}
-
-        try {
+            // Загружаем с запасом (50 свечей), чтобы гарантированно найти пересечение 
+            // даже если вкладка была закрыта долго (например, на выходных)
             const freshCandles = await this.fetchKlines(
-                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 2
+                this.currentSymbol, this.currentExchange, this.currentMarketType, 
+                this.currentInterval, 50 
             );
             
             if (freshCandles && freshCandles.length > 0) {
-                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                
-                freshCandles.forEach(freshCandle => {
-                    const idx = this._candleTimeMap.get(freshCandle.time);
-                    
+                // 1. Ищем последнюю свечу из freshCandles, которая УЖЕ есть в нашем chartData
+                let spliceIndex = -1;
+                for (let i = freshCandles.length - 1; i >= 0; i--) {
+                    const idx = this._candleTimeMap.get(freshCandles[i].time);
                     if (idx !== undefined) {
-                        this.chartData[idx] = freshCandle;
-                        activeSeries.update(freshCandle);
-                    } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
-                        this.chartData.push(freshCandle);
-                        this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
-                        activeSeries.update(freshCandle);
+                        spliceIndex = idx;
+                        break;
                     }
+                }
+
+                if (spliceIndex !== -1) {
+                    // 2. БЕСШОВНОЕ СРАЩИВАНИЕ:
+                    // Отрезаем устаревший "хвост" до найденной общей свечи включительно
+                    this.chartData = this.chartData.slice(0, spliceIndex + 1);
                     
-                    if (this.volumeSeries) {
-                        this.volumeSeries.update({
-                            time: freshCandle.time,
-                            value: freshCandle.volume,
-                            color: freshCandle.close >= freshCandle.open ? this.bullishColor : this.bearishColor
-                        });
+                    const lastKnownTime = this.chartData[this.chartData.length - 1].time;
+                    
+                    // 3. Добавляем только те свежие свечи, которых еще нет в массиве
+                    for (const fc of freshCandles) {
+                        if (fc.time > lastKnownTime) {
+                            this.chartData.push(fc);
+                            this._addToTimeMap(fc.time, this.chartData.length - 1);
+                        } else {
+                            // Обновляем саму точку пересечения, если данные в ней изменились
+                            const idx = this._candleTimeMap.get(fc.time);
+                            if (idx !== undefined) {
+                                this.chartData[idx] = fc;
+                            }
+                        }
                     }
-                });
+                } else {
+                    // Fallback: если вдруг пересечений нет (крайне редкий случай), 
+                    // просто обновляем последние свечи, чтобы минимизировать ущерб
+                    console.warn('⚠️ Нет пересечений при синхронизации, обновляем хвост');
+                    for (const fc of freshCandles) {
+                        const idx = this._candleTimeMap.get(fc.time);
+                        if (idx !== undefined) {
+                            this.chartData[idx] = fc;
+                        }
+                    }
+                }
+
+                // 4. Перерисовываем всё целиком через setData, чтобы Lightweight Charts 
+                // пересчитал координаты и гарантированно убрал любые визуальные артефакты
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                if (activeSeries) {
+                    activeSeries.setData(this.chartData);
+                }
+                
+                this._volumeDataDirty = true;
+                this._updateVolumeOptimized();
                 
                 this.lastCandle = this.chartData[this.chartData.length - 1];
                 this.currentRealPrice = this.lastCandle.close;
-            }
-        } catch (e) {}
 
+                // 5. Умная прокрутка: не дергаем график, если пользователь смотрел в историю
+                const ts = this.chart.timeScale();
+                const visibleRange = ts.getVisibleLogicalRange();
+                if (visibleRange) {
+                    const lastVisibleIndex = Math.floor(visibleRange.to);
+                    // Если пользователь был у правого края (в пределах 5 свечей), прокручиваем к реальному времени
+                    if (lastVisibleIndex >= this.chartData.length - 5) {
+                        ts.scrollToRealTime();
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ Ошибка синхронизации после скрытия:', e);
+        }
+
+        // Обновляем всё остальное
         this._updatePageTitle();
         this.scheduleUpdatePosition();
-        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+        
+        if (this.indicatorManager) {
+            requestAnimationFrame(() => {
+                this.indicatorManager.updateAllIndicators();
+            });
+        }
+        
         this.scheduleDrawingsUpdate(true);
         this.requestDrawingsRedraw();
-        if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
+        
+        if (this.timerManager?._primitive) {
+            this.timerManager._primitive.requestRedraw();
+        }
     }
-
     _setupPanelsSync() {
         if (!this.chart) return;
         
