@@ -439,102 +439,63 @@ class ChartManager {
         };
         check();
     }
-
    async _syncAfterHidden() {
-    if (!this.chartData.length || !this.currentSymbol) return;
-    
-    // Сбрасываем ВСЕ состояния скролла и обрезки
-    this._isScrolling = false;
-    this._isScrollingFast = false;
-    this._isSyncing = false;
-    this._isTrimming = false;
-    
-    // Очищаем все отложенные операции
-    if (this._scrollStopTimeout) {
-        clearTimeout(this._scrollStopTimeout);
-        this._scrollStopTimeout = null;
-    }
-    if (this._trimDebounceTimeout) {
-        clearTimeout(this._trimDebounceTimeout);
-        this._trimDebounceTimeout = null;
-    }
-    this._pendingTrimParams = null;
-
-    try {
-        // Загружаем БОЛЬШЕ свечей (не только 2), чтобы покрыть период отсутствия
-        // Для 1m таймфрейма: 10 свечей = 10 минут
-        // Для 1h таймфрейма: 10 свечей = 10 часов
-        const freshCandles = await this.fetchKlines(
-            this.currentSymbol, this.currentExchange, this.currentMarketType, 
-            this.currentInterval, 10 // ← Было 2, стало 10
-        );
+        if (!this.chartData.length || !this.currentSymbol) return;
         
-        if (freshCandles && freshCandles.length > 0) {
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            
-            // Обновляем существующие свечи и добавляем новые
-            freshCandles.forEach(freshCandle => {
-                const idx = this._candleTimeMap.get(freshCandle.time);
-                
-                if (idx !== undefined) {
-                    // Обновляем существующую свечу
-                    this.chartData[idx] = freshCandle;
-                } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
-                    // Добавляем новую свечу
-                    this.chartData.push(freshCandle);
-                    this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
-                }
-            });
-            
-            // ВАЖНО: Перерисовываем ВСЕ данные через setData, а не update
-            // Это гарантирует корректную отрисовку всех свечей
-            if (activeSeries) {
-                activeSeries.setData(this.chartData);
-            }
-            
-            // Обновляем volume
-            if (this.volumeSeries) {
-                this._volumeDataDirty = true;
-                this._updateVolumeOptimized();
-            }
-            
-            this.lastCandle = this.chartData[this.chartData.length - 1];
-            this.currentRealPrice = this.lastCandle.close;
-            
-            // Прокручиваем к последней свече, если пользователь был у правого края
-            const ts = this.chart.timeScale();
-            const visibleRange = ts.getVisibleLogicalRange();
-            if (visibleRange) {
-                const lastVisibleIndex = Math.floor(visibleRange.to);
-                const totalCandles = this.chartData.length;
-                
-                // Если пользователь смотрел на последние свечи (в пределах 5 свечей от конца)
-                if (lastVisibleIndex >= totalCandles - 5) {
-                    ts.scrollToRealTime();
-                }
-            }
-        }
-    } catch (e) {
-        console.warn('⚠️ Ошибка синхронизации после скрытия:', e);
-    }
+        this._isScrolling = false;
+        this._isScrollingFast = false;
+        this._isSyncing = false;
 
-    // Обновляем всё остальное
-    this._updatePageTitle();
-    this.scheduleUpdatePosition();
-    
-    if (this.indicatorManager) {
-        requestAnimationFrame(() => {
-            this.indicatorManager.updateAllIndicators();
-        });
+        try {
+            const ts = this.chart.timeScale();
+            const range = ts.getVisibleLogicalRange();
+            if (range) {
+                ts.setVisibleLogicalRange({ from: range.from - 0.0001, to: range.to - 0.0001 });
+                requestAnimationFrame(() => ts.setVisibleLogicalRange(range));
+            }
+        } catch(e) {}
+
+        try {
+            const freshCandles = await this.fetchKlines(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 2
+            );
+            
+            if (freshCandles && freshCandles.length > 0) {
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                
+                freshCandles.forEach(freshCandle => {
+                    const idx = this._candleTimeMap.get(freshCandle.time);
+                    
+                    if (idx !== undefined) {
+                        this.chartData[idx] = freshCandle;
+                        activeSeries.update(freshCandle);
+                    } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
+                        this.chartData.push(freshCandle);
+                        this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
+                        activeSeries.update(freshCandle);
+                    }
+                    
+                    if (this.volumeSeries) {
+                        this.volumeSeries.update({
+                            time: freshCandle.time,
+                            value: freshCandle.volume,
+                            color: freshCandle.close >= freshCandle.open ? this.bullishColor : this.bearishColor
+                        });
+                    }
+                });
+                
+                this.lastCandle = this.chartData[this.chartData.length - 1];
+                this.currentRealPrice = this.lastCandle.close;
+            }
+        } catch (e) {}
+
+        this._updatePageTitle();
+        this.scheduleUpdatePosition();
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+        this.scheduleDrawingsUpdate(true);
+        this.requestDrawingsRedraw();
+        if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
     }
-    
-    this.scheduleDrawingsUpdate(true);
-    this.requestDrawingsRedraw();
-    
-    if (this.timerManager?._primitive) {
-        this.timerManager._primitive.requestRedraw();
-    }
-}
 
     _setupPanelsSync() {
         if (!this.chart) return;
