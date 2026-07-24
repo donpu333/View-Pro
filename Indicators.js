@@ -290,22 +290,29 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         setTimeout(() => this.updateMetrics(), 500);
     }
     
-       _loadSettings() {
-        try { 
-            const saved = localStorage.getItem('atr_multi_settings'); 
-            const parsed = saved ? JSON.parse(saved) : {};
-            return {
-                posX: parsed.posX !== undefined ? parsed.posX : 20,
-                posY: parsed.posY !== undefined ? parsed.posY : 80,
-                ...parsed
-            }; 
-        } catch (e) { 
-            return { posX: 20, posY: 80 }; 
-        }
+    _loadSettings() {
+        try { const saved = localStorage.getItem('atr_multi_settings'); return saved ? JSON.parse(saved) : {}; } catch (e) { return {}; }
     }
 
     _saveSettings() {
         try { localStorage.setItem('atr_multi_settings', JSON.stringify(this.settings)); } catch (e) {}
+    }
+    
+    _loadPosition() {
+        try {
+            const saved = localStorage.getItem('multiatr_position');
+            if (saved) {
+                const pos = JSON.parse(saved);
+                return { x: pos.x ?? 20, y: pos.y ?? 80 };
+            }
+        } catch (e) {}
+        return { x: 20, y: 80 };
+    }
+    
+    _savePosition(x, y) {
+        try {
+            localStorage.setItem('multiatr_position', JSON.stringify({ x, y }));
+        } catch (e) {}
     }
     
     get visible() { return this._visible; }
@@ -321,17 +328,15 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     getWorkerType() { return null; }
     calculateAsync() {}
     
-       _initWidgetDOM() {
+    _initWidgetDOM() {
         if (document.getElementById('multiatr-widget')) return;
         
-        const savedSettings = this._loadSettings();
-        const posX = savedSettings.posX !== undefined ? savedSettings.posX : 20;
-        const posY = savedSettings.posY !== undefined ? savedSettings.posY : 80;
+        const pos = this._loadPosition();
         
         const wrapper = document.createElement('div');
         wrapper.id = 'multiatr-widget';
         wrapper.style.cssText = `
-            position: fixed; top: ${posY}px; left: ${posX}px;
+            position: fixed; top: ${pos.y}px; left: ${pos.x}px;
             background: rgba(5, 5, 15, 0.9); 
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px;
@@ -354,7 +359,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         });
     }
 
-      _setupDrag(handle, element) {
+    _setupDrag(handle, element) {
         let isDragging = false, startX, startY, initialLeft, initialTop;
         this._wasDragged = false;
         handle.addEventListener('mousedown', (e) => {
@@ -373,12 +378,10 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._dragUpHandler = () => { 
             if (isDragging) { 
                 isDragging = false; 
-                element.style.transition = ''; 
-                
-                // ✅ СОХРАНЯЕМ ТОЧНУЮ ПОЗИЦИЮ В НАСТРОЙКИ
-                this.settings.posX = parseInt(element.style.left) || 20;
-                this.settings.posY = parseInt(element.style.top) || 80;
-                this._saveSettings();
+                element.style.transition = '';
+                const x = parseInt(element.style.left) || 20;
+                const y = parseInt(element.style.top) || 80;
+                this._savePosition(x, y);
             } 
         };
         document.addEventListener('mousemove', this._dragMoveHandler);
@@ -430,7 +433,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return this.settings.atrPeriod || 3;
     }
     
-    // === МАТЕМАТИКА БЕЗ ИЗМЕНЕНИЙ ===
     computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
         if (!data || data.length < period + 1) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
         const ranges = [];
@@ -458,7 +460,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: Math.min(progress, 100), remaining: Math.max(0, 100 - progress), remainingPoints: Math.max(0, atr - distFromOpen), trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
     }
     
-    // УБРАН ASYNC, ТАК КАК МЫ БЕРЕМ ДАННЫЕ ЛОКАЛЬНО
     updateMetrics() {
         if (this._isUpdating) return;
         this._isUpdating = true;
@@ -466,7 +467,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         
         try {
             const chartManager = this.manager?.chartManager;
-            // БЕРЕМ ДАННЫЕ НАПРЯМУЮ ИЗ ГРАФИКА
             const data = chartManager?.chartData;
             
             if (!data?.length) {
@@ -484,7 +484,6 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             
             const actualPeriod = this.getActualPeriod(this._currentApiInterval);
             
-            // Если на графике недостаточно свечей для периода, просто показываем 0
             if (data.length >= actualPeriod + 1) {
                 this.metrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
                 this.metrics._actualPeriod = actualPeriod;
