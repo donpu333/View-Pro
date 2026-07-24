@@ -460,44 +460,47 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: progress, remaining: Math.max(0, 100 - progress), remainingPoints: Math.max(0, atr - distFromOpen), trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
     }
     
-    updateMetrics() {
-        if (this._isUpdating) return;
-        this._isUpdating = true;
-        if (this._updateTimeout) clearTimeout(this._updateTimeout);
+  updateMetrics() {
+    if (this._updateTimeout) clearTimeout(this._updateTimeout);
+    
+    try {
+        const chartManager = this.manager?.chartManager;
+        const data = chartManager?.chartData;
         
-        try {
-            const chartManager = this.manager?.chartManager;
-            const data = chartManager?.chartData;
-            
-            if (!data?.length) {
-                this._isUpdating = false;
-                return;
-            }
+        if (!data?.length) return;
 
-            const rawInterval = chartManager.currentInterval || '60';
-            const newApiInterval = this._normalizeInterval(rawInterval);
-            
-            if (this._currentApiInterval !== newApiInterval) {
-                this._currentApiInterval = newApiInterval;
-                this.metrics.atr = 0; this.renderWidget();
-            }
-            
-            const actualPeriod = this.getActualPeriod(this._currentApiInterval);
-            
-            if (data.length >= actualPeriod + 1) {
-                this.metrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
-                this.metrics._actualPeriod = actualPeriod;
-            } else {
-                this.metrics.atr = 0;
-                this.metrics._actualPeriod = actualPeriod;
-            }
-            this.renderWidget();
-        } catch (e) { 
-            console.error('ATR error:', e); 
-        } finally { 
-            this._isUpdating = false; 
+        const rawInterval = chartManager.currentInterval || '60';
+        const newApiInterval = this._normalizeInterval(rawInterval);
+        
+        if (this._currentApiInterval !== newApiInterval) {
+            this._currentApiInterval = newApiInterval;
+            this.metrics.atr = 0; 
         }
+        
+        const actualPeriod = this.getActualPeriod(this._currentApiInterval);
+        
+        if (data.length >= actualPeriod + 1) {
+            const newMetrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
+            newMetrics._actualPeriod = actualPeriod;
+            
+            // Рендерим ТОЛЬКО если метрики изменились
+            if (newMetrics.atr !== this.metrics.atr || 
+                newMetrics.remaining !== this.metrics.remaining ||
+                this._currentApiInterval !== newApiInterval) {
+                this.metrics = newMetrics;
+                this.renderWidget();
+            } else {
+                this.metrics = newMetrics; // обновляем без рендера
+            }
+        } else {
+            this.metrics.atr = 0;
+            this.metrics._actualPeriod = actualPeriod;
+            this.renderWidget();
+        }
+    } catch (e) { 
+        console.error('ATR error:', e); 
     }
+}
 
     _setupEventHandlers() {
         const chartManager = this.manager?.chartManager;
@@ -507,30 +510,31 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._startSmartFallbackTimer();
     }
     
-    _onChartDataUpdate() {
-        if (this._updateTimeout) clearTimeout(this._updateTimeout);
-        this._updateTimeout = setTimeout(() => {
-            const data = this.manager?.chartManager?.chartData;
-            if (!data?.length) return;
-            const lastTime = data[data.length - 1].time;
-            if (lastTime !== this._lastCandleTime) { this._lastCandleTime = lastTime; this.updateMetrics(); }
-        }, 100);
-    }
-    
-    _startSmartFallbackTimer() {
-        if (this._fallbackTimer) return;
-        let lastTime = 0;
-        this._fallbackTimer = setInterval(() => {
-            const cm = this.manager?.chartManager;
-            if (!cm?.chartData?.length) return;
-            const currentInterval = cm.currentInterval;
-            const lastCandleTime = cm.chartData[cm.chartData.length - 1].time;
-            if (currentInterval !== this._lastInterval || lastCandleTime !== lastTime) {
-                this._lastInterval = currentInterval; lastTime = lastCandleTime; this.updateMetrics();
-            }
-        }, 1000);
-    }
+  _onChartDataUpdate() {
+    if (this._updateTimeout) clearTimeout(this._updateTimeout);
+    this._updateTimeout = setTimeout(() => {
+        this.updateMetrics();
+    }, 100);
+}
 
+_startSmartFallbackTimer() {
+    if (this._fallbackTimer) return;
+    let lastDataLength = 0;
+    let lastClose = 0;
+    this._fallbackTimer = setInterval(() => {
+        const cm = this.manager?.chartManager;
+        if (!cm?.chartData?.length) return;
+        const data = cm.chartData;
+        const lastCandle = data[data.length - 1];
+        
+        // Обновляем ТОЛЬКО если изменились данные или закрытие
+        if (data.length !== lastDataLength || lastCandle.close !== lastClose) {
+            lastDataLength = data.length;
+            lastClose = lastCandle.close;
+            this.updateMetrics();
+        }
+    }, 500); // 500мс вместо 1000 — более отзывчиво
+}
     destroy() {
         if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
