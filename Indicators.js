@@ -446,7 +446,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const rma = (src, len) => { const result = new Array(src.length).fill(0); let sum = 0; for (let i = 0; i < len; i++) sum += src[i]; result[len - 1] = sum / len; for (let i = len; i < src.length; i++) result[i] = (src[i] + (len - 1) * result[i - 1]) / len; return result; };
         if (!useFilter) {
             const atrArray = rma(ranges, period); const lastIdx = ranges.length - 1; const atr = atrArray[lastIdx]; const lastCandle = data[lastIdx]; const dist = lastCandle.high - lastCandle.low; const prog = atr > 0 ? (dist / atr) * 100 : 0;
-            return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: prog, remaining: Math.max(0, 100 - prog), remainingPoints: Math.max(0, atr - dist), trueRange: ranges[lastIdx], rangeRatio: (lastIdx > 0 && atrArray[lastIdx - 1] > 0) ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100 : 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
+            return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: prog, remaining: 100 - prog, remainingPoints: atr - dist, trueRange: ranges[lastIdx], rangeRatio: (lastIdx > 0 && atrArray[lastIdx - 1] > 0) ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100 : 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
         }
         const rawRMA = rma(ranges, period); const filteredRanges = [...ranges]; const filteredATR = new Array(ranges.length).fill(0);
         for (let i = 0; i < period; i++) { filteredRanges[i] = ranges[i]; if (i === period - 1) { let sum = 0; for (let j = 0; j < period; j++) sum += ranges[j]; filteredATR[i] = sum / period; } else if (i > 0) { let sum = 0; for (let j = 0; j <= i; j++) sum += ranges[j]; filteredATR[i] = sum / (i + 1); } else filteredATR[i] = ranges[i]; }
@@ -457,7 +457,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             filteredRanges[i] = (currentRange > upperBound || currentRange < lowerBound) ? prevRawATR : currentRange; filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
         }
         const lastIdx = ranges.length - 1; const atr = filteredATR[lastIdx]; const lastCandle = data[lastIdx]; const lastRange = ranges[lastIdx]; const prevATR = lastIdx > 0 ? filteredATR[lastIdx - 1] : atr; const isCurrentlyAnomaly = lastRange > upperBound || lastRange < lowerBound; const distFromOpen = lastCandle.high - lastCandle.low; const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
-        return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: progress, remaining: Math.max(0, 100 - progress), remainingPoints: Math.max(0, atr - distFromOpen), trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
+        return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: progress, remaining: 100 - progress, remainingPoints: atr - distFromOpen, trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
     }
     
     updateMetrics() {
@@ -582,7 +582,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             return v.toFixed(decimals);
         };
         
-        const remColor = m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
+        const remColor = m.remaining < 0 ? '#FF00FF' : m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
 
         wrapper.innerHTML = `
             <span style="color:#AAA">⭐</span>
