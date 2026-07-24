@@ -290,8 +290,18 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         setTimeout(() => this.updateMetrics(), 500);
     }
     
-    _loadSettings() {
-        try { const saved = localStorage.getItem('atr_multi_settings'); return saved ? JSON.parse(saved) : {}; } catch (e) { return {}; }
+       _loadSettings() {
+        try { 
+            const saved = localStorage.getItem('atr_multi_settings'); 
+            const parsed = saved ? JSON.parse(saved) : {};
+            return {
+                posX: parsed.posX !== undefined ? parsed.posX : 20,
+                posY: parsed.posY !== undefined ? parsed.posY : 80,
+                ...parsed
+            }; 
+        } catch (e) { 
+            return { posX: 20, posY: 80 }; 
+        }
     }
 
     _saveSettings() {
@@ -311,13 +321,17 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     getWorkerType() { return null; }
     calculateAsync() {}
     
-    _initWidgetDOM() {
+       _initWidgetDOM() {
         if (document.getElementById('multiatr-widget')) return;
+        
+        const savedSettings = this._loadSettings();
+        const posX = savedSettings.posX !== undefined ? savedSettings.posX : 20;
+        const posY = savedSettings.posY !== undefined ? savedSettings.posY : 80;
         
         const wrapper = document.createElement('div');
         wrapper.id = 'multiatr-widget';
         wrapper.style.cssText = `
-            position: fixed; top: 80px; left: 20px;
+            position: fixed; top: ${posY}px; left: ${posX}px;
             background: rgba(5, 5, 15, 0.9); 
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px;
@@ -340,7 +354,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         });
     }
 
-    _setupDrag(handle, element) {
+      _setupDrag(handle, element) {
         let isDragging = false, startX, startY, initialLeft, initialTop;
         this._wasDragged = false;
         handle.addEventListener('mousedown', (e) => {
@@ -356,7 +370,17 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             element.style.left = `${initialLeft + e.clientX - startX}px`; 
             element.style.top = `${initialTop + e.clientY - startY}px`; 
         };
-        this._dragUpHandler = () => { if (isDragging) { isDragging = false; element.style.transition = ''; } };
+        this._dragUpHandler = () => { 
+            if (isDragging) { 
+                isDragging = false; 
+                element.style.transition = ''; 
+                
+                // ✅ СОХРАНЯЕМ ТОЧНУЮ ПОЗИЦИЮ В НАСТРОЙКИ
+                this.settings.posX = parseInt(element.style.left) || 20;
+                this.settings.posY = parseInt(element.style.top) || 80;
+                this._saveSettings();
+            } 
+        };
         document.addEventListener('mousemove', this._dragMoveHandler);
         document.addEventListener('mouseup', this._dragUpHandler);
     }
