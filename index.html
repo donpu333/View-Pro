@@ -1096,27 +1096,30 @@ colorOpacity.addEventListener('input', function() { colorOpacityValue.textConten
 let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
 let toolbarRafId = null; // Для плавности
 
+// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ==========
 
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ИСПРАВЛЕННАЯ ТОЧНОСТЬ) ==========
+// 1. ✅ ВОССТАНОВЛЕНИЕ ПОЗИЦИИ ПРИ ЗАГРУЗКЕ СТРАНИЦЫ
+const savedLeft = localStorage.getItem('drawingToolbarLeft');
+const savedTop = localStorage.getItem('drawingToolbarTop');
+if (savedLeft) drawingToolbar.style.left = savedLeft;
+if (savedTop) drawingToolbar.style.top = savedTop;
+
+// 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ
 toolbarHeader.addEventListener('mousedown', (e) => {
-    // Игнорируем клики по кнопкам управления
-    if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) return;
+    // Игнорируем клики по кнопкам управления, чтобы не начинать перетаскивание
+    if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) {
+        return;
+    }
     
     isDraggingToolbar = true;
+    const rect = drawingToolbar.getBoundingClientRect();
+    dragToolbarStartX = e.clientX; 
+    dragToolbarStartY = e.clientY; 
+    dragToolbarStartLeft = rect.left; 
+    dragToolbarStartTop = rect.top;
     
-    const containerRect = chartElement.getBoundingClientRect();
-    const toolbarRect = drawingToolbar.getBoundingClientRect();
-    
-    // Сохраняем начальные координаты ОТНОСИТЕЛЬНО контейнера графика, а не экрана
-    dragToolbarStartLeft = toolbarRect.left - containerRect.left;
-    dragToolbarStartTop = toolbarRect.top - containerRect.top;
-    
-    dragToolbarStartX = e.clientX;
-    dragToolbarStartY = e.clientY;
-    
-    toolbarWidth = drawingToolbar.offsetWidth;
-    toolbarHeight = drawingToolbar.offsetHeight;
+    toolbarWidth = rect.width;
+    toolbarHeight = rect.height;
 
     document.body.style.userSelect = 'none';
     document.body.style.webkitUserSelect = 'none';
@@ -1124,6 +1127,7 @@ toolbarHeader.addEventListener('mousedown', (e) => {
     e.preventDefault();
 });
 
+// 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ
 document.addEventListener('mousemove', (e) => {
     if (!isDraggingToolbar) return;
 
@@ -1131,15 +1135,13 @@ document.addEventListener('mousemove', (e) => {
         toolbarRafId = requestAnimationFrame(() => {
             const deltaX = e.clientX - dragToolbarStartX;
             const deltaY = e.clientY - dragToolbarStartY;
-            
             let newLeft = dragToolbarStartLeft + deltaX;
             let newTop = dragToolbarStartTop + deltaY;
             
             const containerRect = chartElement.getBoundingClientRect();
-            
-            // Ограничиваем границами контейнера (отступ 5px со всех сторон)
+            // Убрали жесткий отступ 60, теперь можно прижимать к самому верху (5px)
             newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, newLeft));
-            newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, newTop)); // Убрали жесткий min 60
+            newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, newTop));
             
             drawingToolbar.style.left = newLeft + 'px';
             drawingToolbar.style.top = newTop + 'px';
@@ -1149,6 +1151,7 @@ document.addEventListener('mousemove', (e) => {
     }
 });
 
+// 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ И СОХРАНЕНИЕ
 document.addEventListener('mouseup', () => {
     if (isDraggingToolbar) {
         isDraggingToolbar = false;
@@ -1161,24 +1164,26 @@ document.addEventListener('mouseup', () => {
             cancelAnimationFrame(toolbarRafId);
             toolbarRafId = null;
         }
-        
-        // Сохраняем точные относительные координаты в момент отпускания мыши
+
+        // ✅ Сохраняем точную позицию в память браузера
         localStorage.setItem('drawingToolbarLeft', drawingToolbar.style.left);
         localStorage.setItem('drawingToolbarTop', drawingToolbar.style.top);
     }
 });
 
+// 5. СВОРАЧИВАНИЕ ПАНЕЛИ
 toolbarToggle.addEventListener('click', () => {
     drawingToolbar.classList.toggle('collapsed');
     toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
+    
     setTimeout(() => {
-        toolbarWidth = drawingToolbar.offsetWidth;
-        toolbarHeight = drawingToolbar.offsetHeight;
+        const rect = drawingToolbar.getBoundingClientRect();
+        toolbarWidth = rect.width;
+        toolbarHeight = rect.height;
     }, 50);
 });
 
-// ResizeObserver: теперь он НЕ сбивает сохраненную позицию, а только корректирует её, 
-// если окно браузера уменьшилось и панель "вылезла" за границы.
+// 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА (БЕЗ СБИВАНИЯ СОХРАНЕННОЙ ПОЗИЦИИ)
 const chartContainerForToolbar = document.getElementById('chart-container');
 if (chartContainerForToolbar && window.ResizeObserver) {
     const toolbarObserver = new ResizeObserver(() => {
@@ -1188,21 +1193,18 @@ if (chartContainerForToolbar && window.ResizeObserver) {
         toolbarWidth = drawingToolbar.offsetWidth;
         toolbarHeight = drawingToolbar.offsetHeight;
         
-        // Читаем текущие значения из style (они там уже сохранены или восстановлены)
         let currentLeft = parseFloat(drawingToolbar.style.left) || 20;
         let currentTop = parseFloat(drawingToolbar.style.top) || 60;
         
-        // Корректируем ТОЛЬКО если панель вылезла за границы из-за уменьшения окна
         let newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, currentLeft));
-        let newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, currentTop)); 
+        let newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, currentTop)); // Убрали 60
         
-       // Применяем изменения только если они действительно нужны (чтобы не перезаписывать хорошую позицию)
-if (newLeft !== currentLeft || newTop !== currentTop) {
-    drawingToolbar.style.left = newLeft + 'px';
-    drawingToolbar.style.top = newTop + 'px';
-    localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
-    localStorage.setItem('drawingToolbarTop', newTop + 'px');  // ← была пропущена )
-
+        // Обновляем координаты ТОЛЬКО если панель вылезла за границы из-за уменьшения окна
+        if (newLeft !== currentLeft || newTop !== currentTop) {
+            drawingToolbar.style.left = newLeft + 'px';
+            drawingToolbar.style.top = newTop + 'px';
+            localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
+            localStorage.setItem('drawingToolbarTop', newTop + 'px');
         }
     });
     toolbarObserver.observe(chartContainerForToolbar);
