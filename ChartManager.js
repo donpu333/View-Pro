@@ -1,3001 +1,1952 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>View Pro </title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css">
-<script src="https://unpkg.com/lightweight-charts@5.0.3/dist/lightweight-charts.standalone.production.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-<link rel="icon" type="image/svg+xml" href="./favicon.svg">
-</head>
-<body>
-<!-- ПАНЕЛЬ КОТИРОВОК -->
-<div class="ticker-panel" id="tickerPanel">
-<div class="tabs-container">
-<div class="tabs">
-<button class="tab active" data-tab="all">Все</button>
-<button class="tab" data-tab="favorites"><i class="fas fa-star"></i></button>
-<button class="tab" data-tab="flags">
-<div class="flag-group">
-<span class="flag-mini flag-mini-red"></span>
-<span class="flag-mini flag-mini-blue"></span>
-<span class="flag-mini flag-mini-green"></span>
-<span class="flag-mini flag-mini-yellow"></span>
-</div>
-</button>
-</div>
-<button class="add-instrument-btn" id="addInstrumentBtn" title="Добавить инструмент (+)">
-<i class="fas fa-plus"></i>
-</button>
-<button class="clear-all-btn" id="clearAllBtn" title="Очистить все (двойной клик)">
-<svg width="18" height="18" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-<path fill="currentColor" d="M 88.5 92 Q 96.5 90.5 98 95.5 L 99 98.5 L 99 127.5 L 100 128.5 L 100 157.5 L 101 158.5 L 101 191.5 Q 99.5 196.5 91.5 195 L 87 188.5 L 85 95.5 L 88.5 92 Z" />
-<path fill="currentColor" d="M 124.5 92 Q 132.3 90.2 134 94.5 L 135 96.5 L 135 190.5 L 131.5 195 Q 123.8 196.8 122 192.5 L 121 190.5 L 121 96.5 L 124.5 92 Z" />
-<path fill="currentColor" d="M 161.5 92 Q 169.5 90.5 171 95.5 L 169 188.5 L 164.5 195 Q 156.5 196.5 155 191.5 L 157 98.5 L 161.5 92 Z" />
-</svg>
-</button>
-</div>
-<div class="filter-section">
-<div class="filter-row">
-<div class="filter-group">
-<button class="filter-btn active" data-filter="market" data-value="all">Все рынки</button>
-<button class="filter-btn" data-filter="market" data-value="futures">Фьючерс</button>
-<button class="filter-btn" data-filter="market" data-value="spot">Спот</button>
-</div>
-</div>
-<div class="filter-row">
-<div class="filter-group">
-<button class="filter-btn active" data-filter="exchange" data-value="all">Все биржи</button>
-<svg xmlns="http://www.w3.org/2000/svg" class="filter-btn binance" data-filter="exchange" data-value="binance" height="29" viewBox="0 0 700 120" style="cursor: pointer; width: auto; display: block; padding: 4px 10px;" role="button" tabindex="0">
-<g transform="translate(-39.87 -49.56) scale(1.025)">
-<path d="M63 101.74L51.43 113.3l-11.56-11.56 11.56-11.56zm28.05-28.07l19.81 19.82 11.56-11.56-31.37-31.37-31.37 31.37 11.56 11.56zm39.63 16.51l-11.56 11.56 11.56 11.56 11.55-11.56zm-39.63 39.63L71.24 110l-11.56 11.55 31.37 31.37 31.37-31.37L110.86 110zm0-16.51l11.56-11.56-11.56-11.56-11.56 11.56z" fill="#f0b90b"/>
-<g transform="translate(85, 0)">
-<path d="M122 111.22v-.16c0-7.54-4-11.31-10.51-13.79 4-2.25 7.38-5.78 7.38-12.11v-.16c0-8.82-7.06-14.52-18.53-14.52h-26.04v56.14h26.7c12.67 0 21.02-5.13 21.02-15.4zm-15.4-24c0 4.17-3.45 5.94-8.9 5.94h-11.37V84.5h12.19c5.21 0 8.1 2.08 8.1 5.77v.95zm3.13 22.46c0 4.17-3.29 6.09-8.75 6.09h-14.65v-12.33h14.27c6.34 0 9.15 2.33 9.15 6.1v.14z" fill="#FFFFFF" stroke="none" shape-rendering="geometricPrecision"/>
-</g>
-<path d="M239 129.81V73.67h-12.39v56.14z" fill="#FFFFFF"/>
-<path d="M305.4 129.8V73.7h-12.2v34.6l-26.3-34.6h-11.4v56.1h12.2V94.1l27.2 35.7z" fill="#FFFFFF"/>
-<path d="M373.8 129.8l-24.1-56.5h-11.4l-24 56.5h12.6l5.1-12.6h23.7l5.1 12.6zm-22.5-23.5h-15l7.5-18.2z" fill="#FFFFFF"/>
-<path d="M432.6 129.8V73.7h-12.2v34.6l-26.3-34.6h-11.4v56.1h12.2V94.1l27.2 35.7z" fill="#FFFFFF"/>
-<path d="M496.4 120.7l-7.9-7.9c-4.4 4-8.3 6.6-14.8 6.6-9.6 0-16.3-8-16.3-17.6v-.2c0-9.6 6.8-17.5 16.3-17.5 5.6 0 10 2.4 14.4 6.3l7.8-9.1c-5.2-5.1-11.5-8.7-22.1-8.7-17.2 0-29.3 13.1-29.3 29v.2c0 16.1 12.3 28.9 28.8 28.9 10.8 0 17.2-3.8 23-10z" fill="#FFFFFF"/>
-<path d="M549.1 129.8v-11h-30.1v-11.8h26.5V96H519V84.7h30.1v-11h-42.4v56.1z" fill="#FFFFFF"/>
-</g>
-</svg>
-<svg xmlns="http://www.w3.org/2000/svg" class="filter-btn bybit" data-filter="exchange" data-value="bybit" height="28" viewBox="-200 -50 2900 1000" style="cursor: pointer; width: auto; display: block; padding: 4px 10px;" role="button" tabindex="0">
-<style type="text/css">
-.st0 { fill: #FFFFFF; stroke: #FFFFFF; stroke-width: 5; }
-.st1 { fill: #F7A600; stroke: #FFFFFF; stroke-width: 5; }
-</style>
-<g id="Layer_x0020_1">
-<g id="_2498434179408">
-<g id="Layer_x0020_1_0">
-<g id="_3036754161648">
-<polygon class="st1" points="1781.6,642.2 1781.6,0 1910.7,0 1910.7,642.2"/>
-<path class="st0" d="M277.3,832.9H0.6V190.8h265.6c129,0,204.3,70.4,204.3,180.4c0,71.3-48.3,117.2-81.8,132.6c39.9,18,91,58.6,91,144.3 C479.7,767.9,395.2,832.9,277.3,832.9L277.3,832.9z M256,302.7H129.6v147.9H256c54.8,0,85.5-29.8,85.5-74S310.8,302.7,256,302.7 L256,302.7z M264.3,563.3H129.6v157.8h134.6c58.6,0,86.4-36.1,86.4-79.4C350.6,598.4,322.7,563.3,264.3,563.3z"/>
-<polygon class="st0" points="873.4,569.5 873.4,832.9 745.2,832.9 745.2,569.5 546.5,190.8 686.8,190.8 810.2,449.6 931.9,190.8 1072.1,190.8"/>
-<path class="st0" d="M1438,832.9h-276.7V190.8h265.6c129,0,204.3,70.4,204.3,180.4c0,71.3-48.3,117.2-81.8,132.6c39.9,18,91,58.6,91,144.3 C1640.4,767.9,1556,832.9,1438,832.9L1438,832.9z M1416.7,302.7h-126.3v147.9h126.3c54.8,0,85.5-29.8,85.5-74 C1502.1,332.4,1471.4,302.7,1416.7,302.7L1416.7,302.7z M1425,563.3h-134.6v157.8H1425c58.6,0,86.4-36.1,86.4-79.4 C1511.4,598.4,1483.5,563.3,1425,563.3L1425,563.3z"/>
-<polygon class="st0" points="2326.7,302.7 2326.7,833 2197.6,833 2197.6,302.7 2024.9,302.7 2024.9,190.8 2499.4,190.8 2499.4,302.7"/>
-</g>
-</g>
-</g>
-</g>
-</svg>
-</div>
-</div>
-</div>
-<div class="flag-tabs" id="flagTabs" style="display: none;">
-<button class="tab" data-flag="red"><span class="flag-preview-small flag-red-small"></span></button>
-<button class="tab" data-flag="yellow"><span class="flag-preview-small flag-yellow-small"></span></button>
-<button class="tab" data-flag="green"><span class="flag-preview-small flag-green-small"></span></button>
-<button class="tab" data-flag="lime"><span class="flag-preview-small flag-lime-small"></span></button>
-<button class="tab" data-flag="blue"><span class="flag-preview-small flag-blue-small"></span></button>
-<button class="tab" data-flag="purple"><span class="flag-preview-small flag-purple-small"></span></button>
-<button class="tab" data-flag="cyan"><span class="flag-preview-small flag-cyan-small"></span></button>
-</div>
-<div class="table-header">
-<span data-sort="flag" class="sortable flag-header">
-<span class="flag flag-red" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
-<span class="flag flag-yellow" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
-<span class="flag flag-green" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
-<span class="flag flag-blue" style="width:16px;height:16px;display:inline-block;margin-right:2px;"></span>
-<i class="fas fa-sort"></i>
-</span>
-<span data-sort="price">Цена <i class="fas fa-sort"></i></span>
-<span data-sort="change">% <i class="fas fa-sort"></i></span>
-<span data-sort="volume">Объём <i class="fas fa-sort"></i></span>
-<span data-sort="trades">Сд/24 <i class="fas fa-sort"></i></span>
-</div>
-<div id="tickerLoader" style="display:none; text-align:center; padding:40px; color:#787b86; font-size:14px;">
-<div style="width:24px; height:24px; border:2px solid #333; border-top-color:#5b9bd5; border-radius:50%; animation:spin 0.8s linear infinite; margin:0 auto 10px;"></div>
-Загрузка тикеров...
-</div>
-<div class="ticker-list-container" id="tickerListContainer">
-<div class="no-results">Загрузка инструментов...</div>
-</div>
-</div>
-<!-- МОДАЛЬНОЕ ОКНО -->
-<div class="modal-overlay" id="addInstrumentModal">
-<div class="modal-content">
-<div class="modal-header">
-<h2>Добавить инструмент</h2>
-<div class="modal-close" id="modalClose"><i class="fas fa-times"></i></div>
-</div>
-<div class="modal-exchange-selector">
-<div class="modal-selector-group">
-<span class="modal-selector-label">Биржа:</span>
-<button class="modal-selector-btn active" data-exchange="binance" id="modalBinanceBtn">Binance</button>
-<button class="modal-selector-btn" data-exchange="bybit" id="modalBybitBtn">Bybit</button>
-</div>
-<div class="modal-selector-group">
-<span class="modal-selector-label">Рынок:</span>
-<button class="modal-selector-btn active" data-market="futures" id="modalFuturesBtn">Futures</button>
-<button class="modal-selector-btn" data-market="spot" id="modalSpotBtn">Spot</button>
-</div>
-<div class="modal-add-all-container">
-<span class="modal-found-count">Найдено: <span id="modalFoundCount">0</span></span>
-<button class="modal-add-all-btn" id="modalAddAllBtn">
-<i class="fas fa-plus-circle"></i> Добавить все
-</button>
-</div>
-<button id="refreshCacheBtn" title="Обновить кэш пар" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#848e9c">
-<path d="M12,2a10.032,10.032,0,0,1,7.122,3H15V7h5.143A1.859,1.859,0,0,0,22,5.143V0H20V3.078A11.982,11.982,0,0,0,0,12H2A10.011,10.011,0,0,1,12,2Z"/>
-<path d="M22,12A9.986,9.986,0,0,1,4.878,19H9V17H3.857A1.859,1.859,0,0,0,2,18.857V24H4V20.922A11.982,11.982,0,0,0,24,12Z"/>
-</svg>
-</button>
-</div>
-<div class="modal-search">
-<input type="text" class="modal-search-input" id="modalSearchInput" placeholder="Поиск по символу..." autocomplete="off">
-</div>
-<div class="modal-results" id="modalResults"></div>
-</div>
-</div>
-<!-- КОНТЕКСТНОЕ МЕНЮ ФЛАГОВ -->
-<div class="context-menu" id="flagContextMenu">
-<div class="context-menu-item" data-flag="red"><span class="flag-preview flag-red"></span>Красный</div>
-<div class="context-menu-item" data-flag="yellow"><span class="flag-preview flag-yellow"></span>Желтый</div>
-<div class="context-menu-item" data-flag="green"><span class="flag-preview flag-green"></span>Зеленый</div>
-<div class="context-menu-item" data-flag="lime"><span class="flag-preview flag-lime"></span>Лайм</div>
-<div class="context-menu-item" data-flag="blue"><span class="flag-preview flag-blue"></span>Синий</div>
-<div class="context-menu-item" data-flag="purple"><span class="flag-preview flag-purple"></span>Фиолетовый</div>
-<div class="context-menu-item" data-flag="cyan"><span class="flag-preview flag-cyan"></span>Бирюзовый</div>
-</div>
-<div class="app-container">
-<div class="timeframe-bar">
-<div class="instrument-info" id="instrumentInfo">
-<span class="pair" id="pairDisplay"></span>
-<span class="contract-type" id="contractTypeDisplay">PERP</span>
-<span class="exchange" id="exchangeDisplay">Binance</span>
-<span class="timeframe-badge" id="currentTfBadge">1ч</span>
-<button class="copy-button" id="copyPairButton" title="Копировать тикер">
-<span class="copy-icon"></span>
-</button>
-</div>
-<div class="chart-type-selector" id="chartTypeSelector">
-<button class="alert-history-btn active" id="candleBtn" data-type="candle" title="Японские свечи">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
-<path d="M280-160v-80h-80v-480h80v-80h80v80h80v480h-80v80h-80Zm0-160h80v-320h-80v320Z" fill="currentColor"/>
-<path d="M200-640h80v-80h-80v80Zm0 480h80v-80h-80v80Z" fill="currentColor" opacity="0.5"/>
-<path d="M600-160v-200h-80v-280h80v-160h80v160h80v280h-80v200h-80Zm0-280h80v-120h-80v120Z" fill="currentColor"/>
-<path d="M520-640h80v-80h-80v80Zm0 480h80v-80h-80v80Z" fill="currentColor" opacity="0.5"/>
-</svg>
-</button>
-<button class="alert-history-btn" id="barBtn" data-type="bar" title="Бары OHLC">
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<line x1="6" y1="4" x2="6" y2="20" stroke="currentColor" stroke-width="3"/>
-<line x1="1" y1="15" x2="6" y2="15" stroke="currentColor" stroke-width="3"/>
-<line x1="6" y1="9" x2="11" y2="9" stroke="currentColor" stroke-width="3"/>
-<line x1="18" y1="4" x2="18" y2="20" stroke="currentColor" stroke-width="3"/>
-<line x1="13" y1="9" x2="18" y2="9" stroke="currentColor" stroke-width="3"/>
-<line x1="18" y1="15" x2="23" y2="15" stroke="currentColor" stroke-width="3"/>
-</svg>
-</button>
-</div>
-<!-- ПАНЕЛЬ НАСТРОЕК ГРАФИКА - С COLOR PICKER'АМИ -->
-<div class="drawing-settings-panel" id="chartColorPanel" style="display: none; position: fixed; background: #2D2D2D; border: 1px solid #404040; border-radius: 8px; padding: 15px; color: #B0B0B0; font-size: 12px; z-index: 10002; width: 400px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); left: 50%; top: 50%; transform: translate(-50%, -50%);">
-<div class="settings-tabs" style="display: flex; border-bottom: 1px solid #404040; background: #1E1E1E; padding: 4px; gap: 4px; margin-bottom: 15px;">
-<button class="settings-tab active" data-color-tab="background" style="flex: 1; padding: 8px; text-align: center; background: #4A4A4A; border: 1px solid #888888; color: #FFFFFF; font-size: 12px; cursor: pointer; border-radius: 4px;">ФОН</button>
-<button class="settings-tab" data-color-tab="candles" style="flex: 1; padding: 8px; text-align: center; background: #2D2D2D; border: 1px solid #404040; color: #B0B0B0; font-size: 12px; cursor: pointer; border-radius: 4px;">СВЕЧИ</button>
-<button class="settings-tab" data-color-tab="separators" style="flex: 1; padding: 8px; text-align: center; background: #2D2D2D; border: 1px solid #404040; color: #B0B0B0; font-size: 12px; cursor: pointer; border-radius: 4px;">РАЗДЕЛ</button>
-<button class="settings-tab" data-color-tab="sessions" style="flex: 1; padding: 8px; text-align: center; background: #2D2D2D; border: 1px solid #404040; color: #B0B0B0; font-size: 12px; cursor: pointer; border-radius: 4px;">СЕССИИ</button>
-</div>
-<!-- Вкладка ФОН -->
-<div class="color-tab-content active" id="tab-background" style="display: block;">
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Цвет фона</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-<div class="current-color-box" id="bgCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #000000; flex-shrink: 0;"></div>
-<input type="color" class="color-picker-input" id="bgColorPicker" value="#000000" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-<div class="colors-grid" id="bgColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
-</div>
-</div>
-<!-- Вкладка СВЕЧИ -->
-<div class="color-tab-content" id="tab-candles" style="display: none;">
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #00bcd4; font-size: 13px; margin-bottom: 8px; display: block;">Бычий цвет (рост)</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-<div class="current-color-box" id="bullishCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #00bcd4;"></div>
-<input type="color" class="color-picker-input" id="bullishColorPicker" value="#00bcd4" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-<div class="colors-grid" id="bullishColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #f23645; font-size: 13px; margin-bottom: 8px; display: block;">Медвежий цвет (падение)</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-<div class="current-color-box" id="bearishCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #f23645;"></div>
-<input type="color" class="color-picker-input" id="bearishColorPicker" value="#f23645" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-<div class="colors-grid" id="bearishColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
-</div>
-</div>
-<!-- Вкладка РАЗДЕЛИТЕЛИ -->
-<div class="color-tab-content" id="tab-separators" style="display: none;">
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<div style="display: flex; align-items: center; justify-content: space-between;">
-<span class="color-label" style="color: #fff; font-size: 13px;">Показывать разделители дней</span>
-<label class="switch">
-<input type="checkbox" id="separatorsEnabled" checked>
-<span class="slider round"></span>
-</label>
-</div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Цвет разделителя</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-<div class="current-color-box" id="separatorCurrentColor" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #808080; flex-shrink: 0;"></div>
-<input type="color" class="color-picker-input" id="separatorColorPicker" value="#808080" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-<div class="colors-grid" id="separatorColorsGrid" style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 10px;"></div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Стиль линии</span>
-<select id="separatorLineStyle" style="width: 100%; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px; font-size: 12px;">
-<option value="solid">Сплошная</option>
-<option value="dashed" selected>Пунктирная</option>
-<option value="dotted">Точечная</option>
-</select>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Толщина линии</span>
-<input type="range" id="separatorLineWidth" min="1" max="5" value="1" style="width: 100%;">
-<span style="color: #B0B0B0; font-size: 11px;">Текущая: <span id="separatorWidthValue">1px</span></span>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Прозрачность</span>
-<input type="range" id="separatorOpacity" min="5" max="100" value="30" style="width: 100%;">
-<span style="color: #B0B0B0; font-size: 11px;">Текущая: <span id="separatorOpacityValue">30%</span></span>
-</div>
-</div>
-<!-- Вкладка СЕССИИ -->
-<div class="color-tab-content" id="tab-sessions" style="display: none;">
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<div style="display: flex; align-items: center; justify-content: space-between;">
-<span class="color-label" style="color: #fff; font-size: 13px;">Показывать сессии</span>
-<label class="switch">
-<input type="checkbox" id="sessionsEnabled" checked>
-<span class="slider round"></span>
-</label>
-</div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Азиатская (00:00 - 09:00 UTC)</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px;">
-<div class="current-color-box" id="sessionAsianColorBox" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #FF9800; flex-shrink: 0;"></div>
-<input type="color" class="color-picker-input" id="sessionAsianColor" value="#FF9800" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Европейская (07:00 - 16:00 UTC)</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px;">
-<div class="current-color-box" id="sessionEuropeanColorBox" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #2196F3; flex-shrink: 0;"></div>
-<input type="color" class="color-picker-input" id="sessionEuropeanColor" value="#2196F3" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Американская (13:00 - 00:00 UTC)</span>
-<div class="color-picker-row" style="display: flex; align-items: center; gap: 10px;">
-<div class="current-color-box" id="sessionAmericanColorBox" style="width: 40px; height: 40px; border-radius: 4px; border: 2px solid #4A90E2; background-color: #E040FB; flex-shrink: 0;"></div>
-<input type="color" class="color-picker-input" id="sessionAmericanColor" value="#E040FB" style="flex: 1; height: 34px; border: 1px solid #404040; border-radius: 4px; background: #1E1E1E; cursor: pointer; padding: 2px;">
-</div>
-</div>
-<div class="color-section" style="margin-bottom: 15px; padding: 8px; background: #1E1E1E; border-radius: 6px;">
-<span class="color-label" style="color: #fff; font-size: 13px; margin-bottom: 8px; display: block;">Прозрачность сессий</span>
-<input type="range" id="sessionOpacity" min="1" max="50" value="15" style="width: 100%;">
-<span style="color: #B0B0B0; font-size: 11px;">Текущая: <span id="sessionOpacityValue">15%</span></span>
-</div>
-</div>
-<div class="settings-actions" style="display: flex; gap: 10px; margin-top: 15px;">
-<button id="saveChartColors" style="flex: 1; padding: 8px; border: none; border-radius: 4px; cursor: pointer; background: #404040; color: #fff; transition: all 0.2s; font-size: 12px;">Сохранить</button>
-<button class="delete-btn" id="resetChartColors" style="flex: 1; padding: 8px; border: none; border-radius: 4px; cursor: pointer; background: #404040; color: #fff; transition: all 0.2s; font-size: 12px;">Сброс</button>
-</div>
-</div>
-<button class="chart-settings-btn" id="openChartColorPanel" title="Заливка" style="background: transparent; border: 1px solid #404040; border-radius: 4px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #B0B0B0; margin-left: 5px;">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
-<path d="m247-904 57-56 343 343q23 23 23 57t-23 57L457-313q-23 23-57 23t-57-23L153-503q-23-23-23-57t23-57l190-191-96-96Zm153 153L209-560h382L400-751Zm303.5 447.5Q680-327 680-360q0-21 12.5-45t27.5-45q9-12 19-25t21-25q11 12 21 25t19 25q15 21 27.5 45t12.5 45q0 33-23.5 56.5T760-280q-33 0-56.5-23.5ZM80 0v-160h800V0H80z"/>
-</svg>
-</button>
-<button class="chart-settings-btn" id="indicatorsBtn" title="Индикаторы" style="background: transparent; border: 1px solid #404040; border-radius: 4px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #B0B0B0; margin-left: 5px;">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
-<path d="M120-120v-80l80-80v160h-80Zm160 0v-240l80-80v320h-80Zm160 0v-320l80 81v239h-80Zm160 0v-239l80-80v319h-80Zm160 0v-400l80-80v480h-80ZM120-327v-113l280-280 160 160 280-280v113L560-447 400-607 120-327Z"/>
-</svg>
-</button>
-<div class="timeframe-panel" id="timeframePanel">
-<div class="timeframe-header" id="timeframeHeader">
-<button class="toggle-btn" id="toggleBtn"><svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e3e3e3"><path d="M339.5-108.5q-65.5-28.5-114-77t-77-114Q120-365 120-440t28.5-140.5q28.5-65.5 77-114t114-77Q405-800 480-800t140.5 28.5q65.5 28.5 114 77t77 114Q840-515 840-440t-28.5 140.5q-28.5 65.5-77 114t-114 77Q555-80 480-80t-140.5-28.5ZM480-440Zm112 168 56-56-128-128v-184h-80v216l152 152ZM224-866l56 56-170 170-56-56 170-170Zm512 0 170 170-56 56-170-170 56-56ZM480-160q117 0 198.5-81.5T760-440q0-117-81.5-198.5T480-720q-117 0-198.5 81.5T200-440q0 117 81.5 198.5T480-160Z"/></svg></button>
-</div>
-<div class="timeframe-list" id="timeframeList">
-<div class="timeframe-item" data-tf="1m" data-label="1м"><span class="tf-label">1м</span><span class="tf-star" data-tf="1m"></span></div>
-<div class="timeframe-item" data-tf="3m" data-label="3м"><span class="tf-label">3м</span><span class="tf-star" data-tf="3m"></span></div>
-<div class="timeframe-item" data-tf="5m" data-label="5м"><span class="tf-label">5м</span><span class="tf-star" data-tf="5m"></span></div>
-<div class="timeframe-item" data-tf="15m" data-label="15м"><span class="tf-label">15м</span><span class="tf-star" data-tf="15m"></span></div>
-<div class="timeframe-item" data-tf="30m" data-label="30м"><span class="tf-label">30м</span><span class="tf-star" data-tf="30m"></span></div>
-<div class="timeframe-item active" data-tf="1h" data-label="1ч"><span class="tf-label">1ч</span><span class="tf-star" data-tf="1h"></span></div>
-<div class="timeframe-item" data-tf="4h" data-label="4ч"><span class="tf-label">4ч</span><span class="tf-star" data-tf="4h"></span></div>
-<div class="timeframe-item" data-tf="6h" data-label="6ч"><span class="tf-label">6ч</span><span class="tf-star" data-tf="6h"></span></div>
-<div class="timeframe-item" data-tf="12h" data-label="12ч"><span class="tf-label">12ч</span><span class="tf-star" data-tf="12h"></span></div>
-<div class="timeframe-item" data-tf="1d" data-label="1D"><span class="tf-label">1D</span><span class="tf-star" data-tf="1d"></span></div>
-<div class="timeframe-item" data-tf="1w" data-label="1W"><span class="tf-label">1W</span><span class="tf-star" data-tf="1w"></span></div>
-<div class="timeframe-item" data-tf="1M" data-label="1M"><span class="tf-label">1M</span><span class="tf-star" data-tf="1M"></span></div>
-</div>
-</div>
-<div class="starred-timeframes" id="starredTimeframes"></div>
-<button class="alert-history-btn" id="alertHistoryBtn" title="История алертов">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 126.5 0 L 134.5 1 L 144 6 L 150 17.5 L 150 39.5 L 151.5 41 L 158.5 43 Q 169.8 49.2 178 58.5 Q 187.1 67.9 192 81.5 L 195 93.5 L 195 145.5 Q 197.5 147 196 152.5 L 202 166.5 L 207.5 172 L 219 177 L 225 188.5 L 225 198.5 L 219 210 L 209.5 215 L 204.5 216 L 175 216 L 168 234.5 L 159.5 244 L 147.5 252 L 138.5 255 L 125.5 256 Q 123.7 253.3 117.5 255 L 108.5 252 L 93 240.5 Q 83.7 230.9 81 216 L 51.5 216 L 46.5 215 L 36 208.5 Q 30.1 202.4 31 189.5 Q 32.7 181.7 37.5 177 L 48.5 172 L 54 166.5 L 58 158.5 L 61 145.5 L 61 93.5 L 64 81.5 Q 70.9 63.4 84.5 52 L 97.5 43 L 106 39.5 L 106 17.5 L 112 6 L 121.5 1 L 126.5 0 Z M 126 15 L 124 16 L 120 20 L 121 21 L 120 22 L 120 37 L 125 36 Q 131 34 133 37 L 136 37 L 136 22 L 136 20 Q 134 14 126 15 Z M 120 51 Q 107 53 99 59 L 84 74 L 77 89 L 75 100 L 75 152 L 69 170 L 69 171 L 188 171 L 184 163 L 181 152 L 181 100 Q 178 98 180 92 L 172 74 L 158 59 L 153 56 L 138 51 L 120 51 Z M 51 186 L 49 187 L 45 193 L 47 199 L 51 201 L 206 201 L 208 200 L 211 197 L 210 196 L 211 193 L 211 191 L 206 186 L 51 186 Z M 97 216 L 100 227 Q 107 237 122 241 L 135 241 L 147 236 Q 157 230 160 217 L 97 216 Z" />
-</svg>
-</button>
-<button class="alert-history-btn" id="telegramBtn" title="Telegram настройки">
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-</svg>
-</button>
-<!-- Кнопка для открытия предпосылок -->
-<button class="alert-history-btn" id="premisesBtn" title="Предпосылки и ТВХ">
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 -960 960 960" fill="currentColor">
-        <path d="M168-144q-29.7 0-50.85-21.15Q96-186.3 96-216v-528q0-29.7 21.15-50.85Q138.3-816 168-816h624q29.7 0 50.85 21.15Q864-773.7 864-744v528q0 29.7-21.15 50.85Q821.7-144 792-144H168Zm0-72h624v-528H168v528Zm43-71h192v-72H211v72Zm371-73 170-170-51-51-119 119-51-51-51 51 102 102Zm-371-84h192v-72H211v72Zm0-156h192v-72H211v72Zm-43 384v-528 528Z"/>
-    </svg>
-</button>
-<button class="alert-history-btn" id="toolScreenshot" title="Скриншот графика (S)">
-<svg width="24" height="24" viewBox="0 -960 960 960" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-<path d="M480-260q75 0 127.5-52.5T660-440q0-75-52.5-127.5T480-620q-75 0-127.5 52.5T300-440q0 75 52.5 127.5T480-260Zm0-80q-42 0-71-29t-29-71q0-42 29-71t71-29q42 0 71 29t29 71q0 42-29 71t-71 29ZM160-120q-33 0-56.5-23.5T80-200v-480q0-33 23.5-56.5T160-760h126l74-80h240l74 80h126q33 0 56.5 23.5T880-680v480q0 33-23.5 56.5T800-120H160Zm0-80h640v-480H638l-73-80H395l-73 80H160v480Zm320-240Z"/>
-</svg>
-</button>
+class ChartManager {
+    constructor(container) {
+        this.chartData = [];
+        this.lastCandle = null;
+        this._loadingSymbol = false;
+        this.indicatorManager = new IndicatorManager(this);
+        this.chartContainer = document.getElementById('chart-container');
+        
+        const savedChartType = localStorage.getItem('chartType') || 'candle';
+        this.currentChartType = savedChartType;
+        console.log('📊 Тип графика:', savedChartType);
+        
+        this.isLoadingMore = false;
+        this.hasMoreData = true;
+        this._priceSubscriptionKey = null;
+        this.currentInterval = localStorage.getItem('lastTimeframe') || CONFIG.defaultInterval;
+        console.log('📊 ChartManager: таймфрейм =', this.currentInterval);
+        this.currentSymbol = CONFIG.defaultSymbol;
+        this.currentExchange = 'binance';
+        this.currentMarketType = 'futures';
+        this._lastWidth = this.chartContainer.clientWidth;
+        this._initPromise = null;
+        this._lastHeight = this.chartContainer.clientHeight;
+        this._savedTimePosition = null;
+        this._lastTimeframe = null;
+        this._symbolChangeCallbacks = [];
+        this._updateScheduled = false;
+        this._lastUpdateTime = 0;
+        this._drawingsUpdateRafId = null;
+        this._pendingUpdates = false;
+        this._lastLineColor = null;
+        this._redrawLoopRunning = false;
+        this._lastRedrawFrame = 0;
+        this._pendingRedraw = false;
+        this._updatePositionRafId = null;
+        this._lastAppliedColor = null;
+        this._isSyncing = false;
+        this._switchingSymbol = false;
+        this._currentFetchController = null;
+        this._updateTimeout = null;
+        this._lastSyncedPrice = null;
+        this._priceChanged = false;
+        this._fullDataLoadTimeout = null;
+        this._autoScalePending = false;
+        this._isVerticalZooming = false;
+        this._priceLineTimer = document.getElementById('priceLineTimer') || null;
+        this._crosshairRafId = null;
+        this._latestCrosshairData = null;
+        this._drawingsRafId = null;
+   
+        this._candleTimeMap = new Map();
+        
+        this._isScrolling = false;
+        this._pendingSetData = false;
+        this._debouncedSetData = this._debouncedSetData.bind(this);
+        this._isScrollingFast = false;
+        this._lastDrawingsCall = 0;
+        this._drawingsFinalUpdateTimeout = null;
+        this._scrollStopTimeout = null;
 
-<button class="alert-history-btn" id="calculatorBtn" title="Калькулятор рисков">
-<svg width="24" height="24" viewBox="0 0 512 512" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-<path d="M56.5 34L455.5 34Q467.3 36.2 473 44.5L478 56.5L478 455.5Q475.8 467.3 467.5 473L455.5 478L56.5 478Q44.7 475.8 39 467.5L34 455.5L34 56.5Q36.2 44.7 44.5 39L56.5 34ZM75 64L73 65L69 70L69 166L70 168L75 171L438 171L440 170L443 166L443 70L442 68L438 64L75 64ZM76 201L73 202L69 207L69 258L70 260L74 263L127 263L131 258L131 207L130 205L125 201L76 201ZM180 201L177 202L173 207L173 258L174 260L178 263L231 263L235 258L235 207L234 205L229 201L180 201ZM284 201L281 202L277 207L277 258L278 260L282 263L335 263L339 258L339 207L338 205L333 201L284 201ZM388 201L384 203L381 207L381 258L382 260L386 263L439 263L443 258L443 207L442 205L437 201L388 201ZM77 293L69 299L69 351L71 354L76 356L125 356L129 354L131 351L131 299L124 293L77 293ZM181 293L173 299L173 351L175 354L180 356L229 356L233 354L235 351L235 299L228 293L181 293ZM285 293L277 299L277 351L279 354L284 356L333 356L337 354L339 351L339 299L332 293L285 293ZM389 293L381 299L381 443L382 445L387 448L438 448L440 447L443 443L443 299L436 293L389 293ZM74 386L69 392L69 443L70 445L75 448L126 448L128 447L131 443L131 392L130 390L127 386L74 386ZM178 386L173 392L173 443L174 445L179 448L230 448L232 447L235 443L235 392L234 390L231 386L178 386ZM282 386L277 392L277 443L278 445L283 448L334 448L336 447L339 443L339 392L338 390L335 386L282 386Z"/>
-<path d="M85 80L426.5 80L427 80.5L427 155L85.5 155L85 154.5L85 80Z"/>
-</svg>
-</button>
-<button class="alert-history-btn" id="collageBtn" title="Коллаж" onclick="window.open('https://donpu333.github.io/View-Pro/photo-collage%20.html', '_blank')">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e3e3e3"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h480L570-480 450-320l-90-120-120 160Zm-40 80v-560 560Z"/></svg>
-</button>
+        // ОПТИМИЗАЦИЯ: Переменные для отслеживания скролла
+        this._lastScrollTime = 0;
+        this._panelsSyncRafId = null;
+        this._lastVisibleRange = null;
 
-<button class="alert-history-btn" id="economicCalendarBtn" title="Экономический календарь">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M200-80q-33 0-56.5-23.5T120-160v-560q0-33 23.5-56.5T200-800h40v-80h80v80h320v-80h80v80h40q33 0 56.5 23.5T840-720v560q0 33-23.5 56.5T760-80H200Zm0-80h560v-400H200v400Zm0-480h560v-80H200v80Zm0 0v-80 80Zm280 240q-17 0-28.5-11.5T440-440q0-17 11.5-28.5T480-480q17 0 28.5 11.5T520-440q0 17-11.5 28.5T480-400Zm-188.5-11.5Q280-423 280-440t11.5-28.5Q303-480 320-480t28.5 11.5Q360-457 360-440t-11.5 28.5Q337-400 320-400t-28.5-11.5ZM640-400q-17 0-28.5-11.5T600-440q0-17 11.5-28.5T640-480q17 0 28.5 11.5T680-440q0 17-11.5 28.5T640-400ZM480-240q-17 0-28.5-11.5T440-280q0-17 11.5-28.5T480-320q17 0 28.5 11.5T520-280q0 17-11.5 28.5T480-240Zm-188.5-11.5Q280-263 280-280t11.5-28.5Q303-320 320-320t28.5 11.5Q360-297 360-280t-11.5 28.5Q337-240 320-240t-28.5-11.5ZM640-240q-17 0-28.5-11.5T600-280q0-17 11.5-28.5T640-320q17 0 28.5 11.5T680-280q0 17-11.5 28.5T640-240Z"/></svg>
-</button>
-<button class="alert-history-btn" id="screenerBtn" title="Скринер" onclick="window.open('https://donpu333.github.io/screener/', '_blank')">
-<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-<path d="m17.5,11c-3.584,0-6.5,2.916-6.5,6.5s2.916,6.5,6.5,6.5,6.5-2.916,6.5-6.5-2.916-6.5-6.5-6.5Zm0,12c-3.032,0-5.5-2.468-5.5-5.5s2.468-5.5,5.5-5.5,5.5,2.468,5.5,5.5-2.468,5.5-5.5,5.5Zm2.939-7.451l.701.713-3.456,3.399c-.217.218-.51.339-.822.339s-.604-.121-.825-.343l-1.85-1.793.695-.719,1.856,1.8c.099.099.157.089.24.007l3.46-3.403Zm-8.416-4.549H4v-1h9.497c-.527.282-1.021.618-1.474,1Zm0,13H0V2.5C0,1.121,1.121,0,2.5,0h13c1.379,0,2.5,1.121,2.5,2.5v6.515c-.166-.01-.332-.015-.5-.015s-.334.005-.5.015V2.5c0-.827-.673-1.5-1.5-1.5H2.5c-.827,0-1.5.673-1.5,1.5v20.5h10.02c.306.36.642.695,1.004,1Zm1.977-18H4v-1h10v1ZM4,15h5v1h-5v-1Z"/>
-</svg>
-</button>
-<button class="alert-history-btn" id="fullscreenBtn" title="Полный экран (P)">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e3e3e3">
-<path d="M120-120v-200h80v120h120v80H120Zm520 0v-80h120v-120h80v200H640ZM120-640v-200h200v80H200v120h-80Zm640 0v-120H640v-80h200v200h-80Z"/>
-</svg>
-</button>
-</div>
-<div class="alert-history-panel" id="alertHistoryPanel">
-<div class="alert-history-header">
-<h3> Алерты</h3>
-<button class="close-history-btn" id="closeHistoryBtn">✕</button>
-</div>
-<div class="alert-history-tabs">
-<button class="history-tab active" data-tab="active">Активные</button>
-<button class="history-tab" data-tab="triggered">Сработанные</button>
-</div>
-<div class="alert-history-content" id="alertHistoryContent">
-<div class="empty-alerts">Нет активных алертов</div>
-</div>
-</div>
-<div class="indicators-panel" id="indicatorsPanel">
-<div class="alert-history-header">
-<h3> Индикаторы</h3>
-<button class="close-history-btn" id="closeIndicatorsBtn">✕</button>
-</div>
-<div class="indicators-list" id="indicatorsList"></div>
-<div class="active-indicators" id="activeIndicators">
-<div class="active-indicators-title">Активные индикаторы</div>
-<div id="activeIndicatorsList"></div>
-</div>
-</div>
-<div class="alert-history-panel" id="telegramPanel" style="display: none;">
-<div class="alert-history-header">
-<h3> Telegram</h3>
-<button class="close-history-btn" id="closeTelegramBtn">✕</button>
-</div>
-<div class="alert-history-content" id="telegramContent"></div>
-</div>
-<div id="chart-container">
-    <div id="chart-container" style="width:100%; height:100%;"></div>
-<div class="drawing-toolbar" id="drawingToolbar">
-<div class="toolbar-header" id="toolbarHeader">
-<div class="toolbar-drag">
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-<circle cx="9" cy="5" r="2"/>
-<circle cx="15" cy="5" r="2"/>
-<circle cx="9" cy="12" r="2"/>
-<circle cx="15" cy="12" r="2"/>
-<circle cx="9" cy="19" r="2"/>
-<circle cx="15" cy="19" r="2"/>
-</svg>
-<span></span>
-</div>
-<button class="toolbar-toggle" id="toolbarToggle" title="Свернуть/развернуть">◀</button>
-<button class="toolbar-orientation" id="toolbarOrientation" title="Горизонтально/Вертикально">⇄</button>
-</div>
-<button class="tool-btn" id="toolTrash" title="Удалить всё 0">
-<svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-</svg>
-<span class="tooltip">Удалить всё 0</span>
-</button>
-<button class="tool-btn" id="toolHorizontalRay" title="Горизонтальный луч (O)">
-<svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 214.5 103 Q 233.8 101.7 241 112.5 L 247 125.5 L 247 133.5 Q 244.5 147 234.5 153 L 220.5 157 L 218.5 156 L 216.5 157 L 205.5 153 L 199 147.5 L 192.5 135 L 191.5 136 L 148.5 136 L 145.5 137 L 141.5 136 L 136.5 137 L 134.5 137 L 91.5 137 L 88.5 138 L 85.5 137 L 81.5 138 L 79.5 137 L 78.5 138 L 64.5 138 L 63 139.5 Q 61.3 150.3 53.5 155 L 41.5 160 L 33.5 160 L 26.5 158 L 17 152 L 12 143.5 L 10 129.5 Q 12.5 116 22.5 110 L 33.5 106 L 41.5 106 L 51.5 110 L 58 115.5 Q 62.4 119.7 63 127 L 95.5 127 L 96.5 126 Q 97.7 128.2 102.5 127 L 105.5 126 L 108.5 127 L 113.5 126 L 115.5 126 L 158.5 126 L 161.5 125 L 164.5 126 L 169.5 125 L 171.5 125 L 193.5 125 L 194 121.5 Q 196.5 113.5 202.5 109 L 214.5 103 Z M 216 114 L 210 117 L 204 126 Q 203 134 206 139 Q 209 145 218 146 L 223 146 L 229 144 Q 235 141 236 133 L 235 123 L 232 118 L 226 114 L 216 114 Z M 35 117 L 29 119 L 23 125 L 21 132 Q 21 141 25 145 L 34 149 L 41 149 L 49 145 L 53 137 L 53 129 L 49 121 L 41 117 L 35 117 Z" />
-</svg>
-<span class="tooltip">Горизонтальный луч O</span>
-</button>
-<button class="tool-btn" id="toolAlert" title="Алерт (i)">
-<svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 126.5 0 L 134.5 1 L 144 6 L 150 17.5 L 150 39.5 L 151.5 41 L 158.5 43 Q 169.8 49.2 178 58.5 Q 187.1 67.9 192 81.5 L 195 93.5 L 195 145.5 Q 197.5 147 196 152.5 L 202 166.5 L 207.5 172 L 219 177 L 225 188.5 L 225 198.5 L 219 210 L 209.5 215 L 204.5 216 L 175 216 L 168 234.5 L 159.5 244 L 147.5 252 L 138.5 255 L 125.5 256 Q 123.7 253.3 117.5 255 L 108.5 252 L 93 240.5 Q 83.7 230.9 81 216 L 51.5 216 L 46.5 215 L 36 208.5 Q 30.1 202.4 31 189.5 Q 32.7 181.7 37.5 177 L 48.5 172 L 54 166.5 L 58 158.5 L 61 145.5 L 61 93.5 L 64 81.5 Q 70.9 63.4 84.5 52 L 97.5 43 L 106 39.5 L 106 17.5 L 112 6 L 121.5 1 L 126.5 0 Z M 126 15 L 124 16 L 120 20 L 121 21 L 120 22 L 120 37 L 125 36 Q 131 34 133 37 L 136 37 L 136 22 L 136 20 Q 134 14 126 15 Z M 120 51 Q 107 53 99 59 L 84 74 L 77 89 L 75 100 L 75 152 L 69 170 L 69 171 L 188 171 L 184 163 L 181 152 L 181 100 Q 178 98 180 92 L 172 74 L 158 59 L 153 56 L 138 51 L 120 51 Z M 51 186 L 49 187 L 45 193 L 47 199 L 51 201 L 206 201 L 208 200 L 211 197 L 210 196 L 211 193 L 211 191 L 206 186 L 51 186 Z M 97 216 L 100 227 Q 107 237 122 241 L 135 241 L 147 236 Q 157 230 160 217 L 97 216 Z" />
-</svg>
-<span class="tooltip">Алерт i </span>
-</button>
-<button class="tool-btn" id="toolTrendLine" title="Трендовая линия">
-<svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 201.5 21 Q 224.5 19.5 233 32.5 L 240 46.5 L 240 59.5 Q 236.8 70.3 229.5 77 Q 221.5 85.5 204.5 85 L 189.5 80 L 80 189.5 L 80 191.5 Q 85.7 198.3 85 211.5 Q 82.8 224.8 74.5 232 L 59.5 240 L 46.5 240 Q 33.8 236.7 27 227.5 L 21 214.5 L 21 201.5 Q 24.2 190.7 31.5 184 Q 39.5 175.5 56.5 176 L 71.5 181 L 181 71.5 L 181 69.5 Q 175.3 62.7 176 49.5 Q 178.4 35.4 187.5 28 L 201.5 21 Z M 205 33 L 198 36 L 191 43 L 188 53 L 191 64 L 198 70 L 209 73 L 219 70 Q 226 66 228 57 Q 229 46 224 41 L 216 34 L 205 33 Z M 53 188 L 43 191 Q 35 195 33 205 Q 32 217 38 222 Q 42 227 50 228 Q 59 229 64 225 L 70 219 L 73 209 L 70 198 L 64 191 L 53 188 Z" />
-</svg>
-<span class="tooltip">Трендовая линия U</span>
-</button>
-<button class="tool-btn" id="toolText" title="Текст">
-<svg width="24" height="24" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 38.5 0 L 217.5 0 L 222 2 L 224 6.5 L 224 69.5 L 220.5 75 L 218.5 76 L 190.5 76 L 186 72.5 L 185 70.5 L 185 46 L 155.5 46 L 155 46.5 L 155 210 L 180.5 210 L 183 212.5 L 184 214.5 L 184 251.5 L 177.5 256 L 78.5 256 L 72 251.5 L 72 214.5 L 75.5 210 L 100.5 210 L 101 209.5 L 101 46 L 71 46 L 71 70.5 L 67.5 75 L 65.5 76 L 37.5 76 L 33 72.5 L 32 69.5 L 32 6.5 L 34 2 L 38.5 0 Z M 46 14 L 46 62 L 47 62 L 57 62 L 57 38 L 58 36 L 64 32 L 109 32 L 112 33 L 115 37 L 115 220 L 109 224 L 86 224 L 86 242 L 170 242 L 170 242 L 170 224 L 148 224 L 145 223 L 141 220 L 141 37 L 148 32 L 193 32 L 196 33 L 199 38 L 199 62 L 210 62 L 210 15 L 210 14 L 46 14 Z" />
-</svg>
-<span class="tooltip">Текст T</span>
-</button>
-<button class="tool-btn" id="toolRuler" title="Линейка">
-<svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 381.5 0 L 389.5 2 L 510 122.5 L 512 130.5 L 509 138.5 L 138.5 509 L 129.5 512 L 122.5 510 L 2 389.5 L 0 381.5 L 3 373.5 L 373.5 3 L 381.5 0 Z M 382 36 L 357 61 L 404 108 L 408 115 Q 409 123 406 127 Q 403 131 397 133 L 392 133 L 385 130 L 337 82 L 311 107 L 336 132 L 339 137 Q 341 146 337 150 Q 334 154 328 156 L 323 156 L 315 152 L 291 128 L 266 152 L 266 154 L 314 202 L 316 206 Q 318 215 314 219 Q 311 224 304 225 L 295 223 L 246 174 L 244 174 L 220 198 L 220 200 L 245 225 L 248 233 L 246 241 L 241 246 L 234 248 L 228 247 L 225 245 L 200 220 L 198 220 L 174 244 L 174 246 L 223 295 L 225 302 L 222 311 L 215 316 Q 206 318 202 314 L 154 266 L 152 266 L 128 290 L 128 292 L 154 318 L 156 323 Q 157 329 154 333 L 146 339 Q 137 341 133 337 L 107 311 L 82 336 L 130 385 L 133 392 Q 134 398 131 402 L 123 408 Q 113 409 109 405 L 61 357 L 36 383 L 131 476 L 476 130 L 382 36 Z" />
-</svg>
-<span class="tooltip">Линейка Y </span>
-</button>
-<button class="tool-btn" id="toolMagnet" title="Магнит (привязка к ценам (Z))">
-<svg width="24" height="24" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 50.5 0 L 59 4 L 64 13.5 L 61 15 L 55.5 6 L 49 3 L 50.5 0 Z" />
-<path fill="currentColor" d="M 23.5 4 Q 31.6 4.4 34 10.5 L 35 13.5 L 20.5 29 Q 18.3 28.3 19 30.5 Q 14.5 33 16 41.5 L 20.5 47 L 29.5 48 L 34.5 45 L 51.5 29 L 59 35.5 L 60 40.5 L 39.5 60 Q 33.8 63.8 24.5 64 L 12.5 60 L 6 54.5 Q 0.5 48 0 36.5 L 2 28.5 L 6 21.5 L 23.5 4 Z M 26 6 L 17 15 L 24 20 L 31 14 L 26 6 Z M 16 17 L 7 26 L 3 38 L 7 51 L 14 57 L 26 61 L 33 60 L 39 57 L 47 50 L 42 43 L 31 51 Q 22 52 18 49 L 13 43 L 13 34 L 21 24 L 16 17 Z M 51 33 L 44 40 L 50 47 L 57 39 L 51 33 Z" />
-<path fill="currentColor" d="M 47 9 Q 53.4 8 55 13.5 Q 56.5 17.9 53.5 17 L 49.5 12 L 47 10.5 L 47 9 Z" />
-</svg>
-<span class="tooltip">Магнит (привязка к ценам (Z))</span>
-</button>
-</div>
-<div class="drawings-container" id="drawingsContainer"></div>
-<!-- Контекстное меню для лучей -->
-<div class="drawing-context-menu" id="drawingContextMenu" style="display: none;">
-<button class="context-menu-btn copy-btn" id="contextCopyBtn" title="Копировать">
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-</svg>
-</button>
-<button class="context-menu-btn settings-btn" id="contextSettingsBtn" title="Настройки">
-<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-<path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Zm56-160q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Z"/>
-</svg>
-</button>
-<button class="context-menu-btn delete-btn" id="contextDeleteBtn" title="Удалить">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-</svg>
-</button>
-</div>
-<!-- Контекстное меню для трендовых линий -->
-<div class="drawing-context-menu" id="trendContextMenu" style="display: none;">
-<button class="context-menu-btn" id="trendExtendRightBtn" title="Продолжить вправо">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 201.5 21 Q 224.5 19.5 233 32.5 L 240 46.5 L 240 59.5 Q 236.8 70.3 229.5 77 Q 221.5 85.5 204.5 85 L 189.5 80 L 80 189.5 L 80 191.5 Q 85.7 198.3 85 211.5 Q 82.8 224.8 74.5 232 L 59.5 240 L 46.5 240 Q 33.8 236.7 27 227.5 L 21 214.5 L 21 201.5 Q 24.2 190.7 31.5 184 Q 39.5 175.5 56.5 176 L 71.5 181 L 181 71.5 L 181 69.5 Q 175.3 62.7 176 49.5 Q 178.4 35.4 187.5 28 L 201.5 21 Z M 205 33 L 198 36 L 191 43 L 188 53 L 191 64 L 198 70 L 209 73 L 219 70 Q 226 66 228 57 Q 229 46 224 41 L 216 34 L 205 33 Z M 53 188 L 43 191 Q 35 195 33 205 Q 32 217 38 222 Q 42 227 50 228 Q 59 229 64 225 L 70 219 L 73 209 L 70 198 L 64 191 L 53 188 Z" />
-</svg>
-</button>
-<button class="context-menu-btn settings-btn" id="trendSettingsBtn" title="Настройки">
-<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-<path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Zm56-160q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Z"/>
-</svg>
-</button>
-<button class="context-menu-btn delete-btn" id="trendDeleteBtn" title="Удалить">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-</svg>
-</button>
-</div>
-<!-- Контекстное меню для алертов -->
-<div class="drawing-context-menu" id="alertContextMenu" style="display: none;">
-<button class="context-menu-btn copy-btn" id="alertContextCopyBtn" title="Копировать цену">
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-</svg>
-</button>
-<button class="context-menu-btn settings-btn" id="alertContextSettingsBtn" title="Настройки">
-<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-<path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Zm56-160q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Z"/>
-</svg>
-</button>
-<button class="context-menu-btn delete-btn" id="alertContextDeleteBtn" title="Удалить">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-</svg>
-</button>
-</div>
-<!-- Контекстное меню для линейки -->
-<div class="drawing-context-menu" id="rulerContextMenu" style="display: none;">
-<button class="context-menu-btn settings-btn" id="rulerSettingsBtn" title="Настройки">
-<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-<path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Zm56-160q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Z"/>
-</svg>
-</button>
-<button class="context-menu-btn delete-btn" id="rulerDeleteBtn" title="Удалить">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-</svg>
-</button>
-</div>
-<!-- Контекстное меню для текста -->
-<div class="drawing-context-menu" id="textContextMenu" style="display: none;">
-<button class="context-menu-btn copy-btn" id="textContextCopyBtn" title="Копировать текст">
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-</svg>
-</button>
-<button class="context-menu-btn settings-btn" id="textContextSettingsBtn" title="Настройки">
-<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-<path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Zm56-160q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Z"/>
-</svg>
-</button>
-<button class="context-menu-btn delete-btn" id="textContextDeleteBtn" title="Удалить">
-<svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z" />
-</svg>
-</button>
-</div>
-<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ЛУЧЕЙ ========== -->
-<div class="drawing-settings-panel" id="drawingSettings">
-    <div class="settings-tabs">
-        <button class="settings-tab active" data-settings-tab="style">Стиль</button>
-        <button class="settings-tab" data-settings-tab="visibility">Видимость</button>
-    </div>
-    <div class="visibility-panel active" id="stylePanel">
-        <!-- Скрытый контейнер для JS (невидимый) -->
-        <div class="current-color-box" id="currentColorBox" style="display:none;"></div>
-        <div class="color-section">
-            <span class="color-label">Цвет линии</span>
-            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
-                <input type="color" class="color-picker-inline" id="colorPickerInline" value="#4A90E2" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
-                <input type="text" class="hex-input" id="hexInputInline" placeholder="#4A90E2" value="#4A90E2" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
-                <button class="add-btn" id="addColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
-            </div>
-            <div class="colors-grid" id="inlineColorsGrid"></div>
-        </div>
-        <!-- остальные настройки (прозрачность, цена, шаблон, толщина) без изменений -->
-        <div class="settings-row" id="colorOpacityRow" style="display: flex; margin-bottom: 15px;">
-            <label>Прозрачность:</label>
-            <input type="range" id="colorOpacity" min="0" max="100" value="100">
-            <span class="value-display" id="colorOpacityValue">100%</span>
-        </div>
-        <div class="settings-row" id="priceInputRow" style="display: flex; margin-bottom: 15px;">
-            <label>Цена:</label>
-            <input type="text" id="settingsPriceInput" value="" placeholder="Введите цену">
-            <button class="apply-price-btn" id="applyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
-        </div>
-        <div id="templateSection" style="display: block;">
-            <div class="template-section" id="templateSectionDefault" style="display: block;">
-                <div class="template-title">Шаблон</div>
-                <select class="template-select" id="templateSelect">
-                    <option value="solid">Сплошная</option>
-                    <option value="dashed">Пунктирная</option>
-                    <option value="dotted">Точечная</option>
-                </select>
-            </div>
-        </div>
-        <div class="settings-row" id="settingThicknessRow">
-            <label>Толщина:</label>
-            <input type="number" id="settingThickness" value="1" min="1" max="10" style="width: 60px;">
-        </div>
-    </div>
-    <div class="visibility-panel" id="visibilityPanel">
-        <div class="visibility-title">Видимость на таймфреймах</div>
-        <div class="timeframe-checkbox-list" id="timeframeCheckboxList"></div>
-        <<div class="visibility-actions">
-    <button class="visibility-btn select-all" id="selectAllTimeframes">Выбрать все</button>
-    <button class="visibility-btn deselect-all" id="deselectAllTimeframes">Снять все</button>
-    <!-- Новая кнопка -->
-    <button class="visibility-btn select-minutes" id="selectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
-</div>
-    </div>
-    <div class="settings-actions">
-        <button id="saveSettings">Сохранить</button>
-        <button class="delete-btn" id="deleteDrawing">Удалить</button>
-    </div>
-</div>
+        // НАСТРОЙКИ ПОДГРУЗКИ ИСТОРИИ
+        this._historyLoadQueue = [];
+        this._preloadThreshold = 400;
+        this._batchSize = 500;
+        this._minLoadDelay = 1000;
+        this._lastHistoryLoadTime = 0;
+        this._pendingHistoryLoad = false;
+        this._historyEndTime = null;
+        this._fetchPromise = null;
 
-<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ТРЕНДОВЫХ ЛИНИЙ ========== -->
-<div class="drawing-settings-panel" id="trendSettings">
-    <div class="settings-tabs">
-        <button class="settings-tab active" data-settings-tab="style">Стиль</button>
-        <button class="settings-tab" data-settings-tab="visibility">Видимость</button>
-    </div>
-    <div class="visibility-panel active" id="trendStylePanel">
-        <div class="current-color-box" id="trendCurrentColorBox" style="display:none;"></div>
-        <div class="color-section">
-            <span class="color-label">Цвет линии</span>
-            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
-                <input type="color" class="color-picker-inline" id="trendColorPickerInline" value="#4A90E2" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
-                <input type="text" class="hex-input" id="trendHexInputInline" placeholder="#4A90E2" value="#4A90E2" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
-                <button class="add-btn" id="trendAddColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
-            </div>
-            <div class="colors-grid" id="trendInlineColorsGrid"></div>
-        </div>
-        <div class="settings-row" id="trendColorOpacityRow" style="display: flex; margin-bottom: 15px;">
-            <label>Прозрачность:</label>
-            <input type="range" id="trendColorOpacity" min="0" max="100" value="100">
-            <span class="value-display" id="trendColorOpacityValue">100%</span>
-        </div>
-        <div id="trendTemplateSection" style="display: block;">
-            <div class="template-section" id="trendTemplateSectionDefault" style="display: block;">
-                <div class="template-title">Шаблон</div>
-                <select class="template-select" id="trendTemplateSelect">
-                    <option value="solid">Сплошная</option>
-                    <option value="dashed">Пунктирная</option>
-                    <option value="dotted">Точечная</option>
-                </select>
-            </div>
-        </div>
-        <div class="settings-row" id="trendSettingThicknessRow">
-            <label>Толщина:</label>
-            <input type="number" id="trendSettingThickness" value="1" min="1" max="10" style="width: 60px;">
-        </div>
-    </div>
-    <div class="visibility-panel" id="trendVisibilityPanel">
-        <div class="visibility-title">Видимость на таймфреймах</div>
-        <div class="timeframe-checkbox-list" id="trendTimeframeCheckboxList"></div>
-        <div class="visibility-actions">
-            <button class="visibility-btn select-all" id="trendSelectAllTimeframes">Выбрать все</button>
-            <button class="visibility-btn deselect-all" id="trendDeselectAllTimeframes">Снять все</button>
-            <button class="visibility-btn select-minutes" id="trendSelectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
-        </div>
-    </div>
-    <div class="settings-actions">
-        <button id="trendSaveSettings">Сохранить</button>
-        <button class="delete-btn" id="trendDeleteDrawing">Удалить</button>
-    </div>
-</div>
+        // ОПТИМИЗИРОВАННОЕ ОКНО ДАННЫХ
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        this._maxCandlesInMemory = isMobile ? 3000 : 8000;
+        this._leftBuffer = isMobile ? 1000 : 3000;
+        this._rightBuffer = isMobile ? 500 : 1500;
+        
+        // ОПТИМИЗАЦИЯ: Дебаунсинг обрезки данных
+        this._trimDebounceTimeout = null;
+        this._trimDebounceDelay = 300; // 300мс задержка перед обрезкой
+        this._pendingTrimParams = null;
+        this._isTrimming = false;
+        
+        // ОПТИМИЗАЦИЯ: Кэш для volume данных
+        this._volumeDataCache = null;
+        this._volumeDataDirty = true;
 
-<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ АЛЕРТОВ ========== -->
-<div class="drawing-settings-panel" id="alertSettings">
-    <div class="settings-tabs">
-        <button class="settings-tab active" data-alert-settings-tab="style">Стиль</button>
-        <button class="settings-tab" data-alert-settings-tab="repeat">Повтор</button>
-        <button class="settings-tab" data-alert-settings-tab="visibility">Видимость</button>
-    </div>
-    <div class="visibility-panel active" id="alertStylePanel">
-        <div class="current-color-box" id="alertCurrentColorBox" style="display:none;"></div>
-        <div class="color-section">
-            <span class="color-label">Цвет линии</span>
-            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
-                <input type="color" class="color-picker-inline" id="alertColorPickerInline" value="#808080" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
-                <input type="text" class="hex-input" id="alertHexInputInline" placeholder="#808080" value="#808080" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
-                <button class="add-btn" id="alertAddColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
-            </div>
-            <div class="colors-grid" id="alertInlineColorsGrid"></div>
-        </div>
-        <div class="settings-row" style="display: flex; margin-bottom: 15px;">
-            <label>Прозрачность:</label>
-            <input type="range" id="alertColorOpacity" min="0" max="100" value="60">
-            <span class="value-display" id="alertColorOpacityValue">60%</span>
-        </div>
-        <div class="settings-row">
-            <label>Цена:</label>
-            <input type="text" id="alertSettingsPriceInput" value="" placeholder="Введите цену">
-            <button class="apply-price-btn" id="alertApplyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
-        </div>
-        <div class="settings-row" style="display: flex; align-items: center;">
-            <label style="width: auto; margin-right: 10px;">Колокольчик:</label>
-            <input type="checkbox" id="alertShowBell" checked style="width: 18px; height: 18px; accent-color: #4A90E2;">
-        </div>
-        <div class="template-section">
-            <div class="template-title">Шаблон линии</div>
-            <select class="template-select" id="alertTemplateSelect">
-                <option value="solid">Сплошная</option>
-                <option value="dashed">Пунктирная</option>
-                <option value="dotted" selected>Точечная</option>
-            </select>
-        </div>
-        <div class="settings-row">
-            <label>Толщина:</label>
-            <input type="number" id="alertSettingThickness" value="1" min="1" max="10" style="width: 60px;">
-        </div>
-    </div>
-    <div class="visibility-panel" id="alertRepeatPanel">
-        <div class="visibility-title">Настройки повторных оповещений</div>
-        <div class="settings-row" style="margin-bottom: 15px;">
-            <label>Количество:</label>
-            <select id="alertRepeatCount" style="flex: 1; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px;">
-                <option value="1">1 раз</option>
-                <option value="3">3 раза</option>
-                <option value="5" selected>5 раз</option>
-                <option value="10">10 раз</option>
-                <option value="Infinity">Бесконечно</option>
-            </select>
-        </div>
-        <div class="settings-row" style="margin-bottom: 15px;">
-            <label>Интервал:</label>
-            <select id="alertRepeatInterval" style="flex: 1; padding: 8px; background: #1E1E1E; border: 1px solid #404040; color: #fff; border-radius: 4px;">
-                <option value="1">1 минута</option>
-                <option value="2">2 минуты</option>
-                <option value="3">3 минуты</option>
-                <option value="5">5 минут</option>
-            </select>
-        </div>
-        <div class="settings-row" style="margin-top: 20px; padding: 10px; background: #2D2D2D; border-radius: 4px;">
-            <span style="color: #B0B0B0; font-size: 11px;">Алерт будет повторяться указанное количество раз с заданным интервалом. После исчерпания лимита алерт автоматически удалится.</span>
-        </div>
-    </div>
-    <div class="visibility-panel" id="alertVisibilityPanel">
-        <div class="visibility-title">Видимость на таймфреймах</div>
-        <div class="timeframe-checkbox-list" id="alertTimeframeCheckboxList"></div>
-        <div class="visibility-actions">
-            <button class="visibility-btn select-all" id="alertSelectAllTimeframes">Выбрать все</button>
-            <button class="visibility-btn deselect-all" id="alertDeselectAllTimeframes">Снять все</button>
-        </div>
-    </div>
-    <div class="settings-actions">
-        <button id="alertSaveSettings">Сохранить</button>
-        <button class="delete-btn" id="alertDeleteDrawing">Удалить</button>
-    </div>
-</div>
+        this._visibilityHandler = () => {
+            if (!document.hidden) {
+                this._syncAfterHidden();
+            }
+        };
+        document.addEventListener('visibilitychange', this._visibilityHandler);
+       
+        this._priceUpdateHandler = null;
 
-<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ЛИНЕЙКИ ========== -->
-<div class="drawing-settings-panel" id="rulerSettingsPanel" style="display: none;">
-    <div class="settings-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <span style="color:#fff;">Настройки линейки</span>
-        <button class="close-settings" style="background:transparent; border:none; color:#B0B0B0; font-size:18px; cursor:pointer;">✕</button>
-    </div>
-    <div class="settings-row">
-        <label>Прозрачность заливки:</label>
-        <input type="range" id="rulerFillOpacity" min="0" max="100" value="25">
-        <span class="value-display" id="rulerFillOpacityValue">25%</span>
-    </div>
-    <div class="settings-actions">
-        <button id="rulerSaveSettings">Сохранить</button>
-        <button class="delete-btn" id="rulerDeleteFromSettings">Удалить</button>
-    </div>
-</div>
+        this.scheduleDrawingsUpdate = this.scheduleDrawingsUpdate.bind(this);
+        this.onVisibleLogicalRangeChange = this.onVisibleLogicalRangeChange.bind(this);
 
-<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ТЕКСТА ========== -->
-<div class="drawing-settings-panel" id="textSettings">
-    <div class="settings-tabs">
-        <button class="settings-tab" data-text-settings-tab="text">Текст</button>
-        <button class="settings-tab active" data-text-settings-tab="style">Стиль</button>
-        <button class="settings-tab" data-text-settings-tab="visibility">Видимость</button>
-    </div>
-    <div class="visibility-panel active" id="textStylePanel">
-        <div class="current-color-box" id="textCurrentColorBox" style="display:none;"></div>
-        <div class="current-color-box" id="textBgColorBox" style="display:none;"></div>
-        <div class="color-section">
-            <span class="color-label">Цвет текста</span>
-            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
-                <input type="color" class="color-picker-inline" id="textColorPickerInline" value="#FFFFFF" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
-                <input type="text" class="hex-input" id="textHexInputInline" placeholder="#FFFFFF" value="#FFFFFF" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
-                <button class="add-btn" id="textAddColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
-            </div>
-            <div class="colors-grid" id="textInlineColorsGrid"></div>
-        </div>
-        <div class="color-section" style="margin-top: 10px;">
-            <span class="color-label">Цвет фона</span>
-            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
-                <input type="color" class="color-picker-inline" id="textBgColorPicker" value="#000000" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
-                <input type="text" class="hex-input" id="textBgHexInput" placeholder="#000000" value="#000000" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
-                <button class="add-btn" id="textBgAddColor" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
-            </div>
-            <div class="colors-grid" id="textBgColorsGrid"></div>
-        </div>
-        <div class="settings-row" style="display: flex; margin-bottom: 15px;">
-            <label>Прозрачность текста:</label>
-            <input type="range" id="textOpacity" min="0" max="100" value="100">
-            <span class="value-display" id="textOpacityValue">100%</span>
-        </div>
-        <div class="settings-row" style="display: flex; margin-bottom: 15px;">
-            <label>Прозрачность фона:</label>
-            <input type="range" id="textBgOpacity" min="0" max="100" value="0">
-            <span class="value-display" id="textBgOpacityValue">0%</span>
-        </div>
-        <div class="settings-row">
-            <label>Размер шрифта:</label>
-            <input type="number" id="textFontSize" value="12" min="8" max="48" style="width: 70px;">
-        </div>
-        <div class="settings-row">
-            <label>Жирный</label>
-            <input type="checkbox" id="textBold" style="width: 18px; height: 18px; accent-color: #4A90E2;">
-        </div>
-    </div>
-    <div class="visibility-panel" id="textEditPanel">
-        <div class="visibility-title">Редактирование текста</div>
-        <div class="settings-row">
-            <textarea id="textContentInput" rows="3" placeholder="Введите текст..." style="width: 100%; background: #1E1E1E; color: #fff; border: 1px solid #404040; border-radius: 4px; padding: 8px; resize: vertical;"></textarea>
-        </div>
-        <div class="settings-row">
-            <span style="color: #B0B0B0; font-size: 11px;">При фокусе поле увеличивается для удобного ввода.</span>
-        </div>
-    </div>
-    <div class="visibility-panel" id="textVisibilityPanel">
-        <div class="visibility-title">Видимость на таймфреймах</div>
-        <div class="timeframe-checkbox-list" id="textTimeframeCheckboxList"></div>
-        <div class="visibility-actions">
-            <button class="visibility-btn select-all" id="textSelectAllTimeframes">Выбрать все</button>
-            <button class="visibility-btn deselect-all" id="textDeselectAllTimeframes">Снять все</button>
-            <button class="visibility-btn select-minutes" id="textSelectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
-        </div>
-    </div>
-    <div class="settings-actions">
-        <button id="textSaveSettings">Сохранить</button>
-        <button class="delete-btn" id="textDeleteDrawing">Удалить</button>
-    </div>
-</div>
-</div>
-<div class="alert-notification" id="alertNotification"></div>
-<audio id="alertSound" preload="auto" style="display: none;">
-<source src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD//8kAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" type="audio/mp3">
-</audio>
-<div class="loading-overlay" id="loadingOverlay">
-<div class="loading-spinner"></div>
-<div class="loading-progress" id="loadingProgress">Загрузка 0%</div>
-</div>
-<div class="candle-stats-overlay" id="candleStatsOverlay">
-<div class="stat-item">
-<span class="stat-label">OTKP:</span>
-<span class="stat-value" id="openValue">—</span>
-</div>
-<div class="stat-item">
-<span class="stat-label">MAKC:</span>
-<span class="stat-value" id="highValue">—</span>
-</div>
-<div class="stat-item">
-<span class="stat-label">МИН:</span>
-<span class="stat-value" id="lowValue">—</span>
-</div>
-<div class="stat-item">
-<span class="stat-label">ЗАКР:</span>
-<span class="stat-value" id="closeValue">—</span>
-</div>
-<div class="stat-item">
-<span class="stat-label">VOL:</span>
-<span class="stat-value" id="volumeValue">—</span>
-</div>
-<div class="stat-item">
-<span class="change-value" id="changeValue">—</span>
-</div>
-</div>
-<div class="chart-footer-buttons">
-<div class="nav-button" id="scrollToLastCandleButton" title="К последней свече"></div>
-<div class="auto-scale-button" id="autoScaleButton" title="Автовыравнивание">A</div>
-</div>
-<!-- Панель настроек индикатора -->
-<div class="drawing-settings-panel" id="indicatorSettings" style="display: none;">
-<div class="settings-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-<span id="indicatorSettingsTitle" style="color:#fff; font-size:14px; font-weight:bold;">Настройки индикатора</span>
-<button class="close-settings" style="background:transparent; border:none; color:#B0B0B0; font-size:18px; cursor:pointer;">✕</button>
-</div>
-<div id="indicatorSettingsContent" class="indicator-settings-content"></div>
-<div class="settings-actions" style="margin-top: 15px;">
-<button id="indicatorSaveSettings">Сохранить</button>
-<button class="delete-btn" id="indicatorDelete">Удалить</button>
-</div>
-</div>
+        // Элементы DOM для кроссхейра (кэшируем для скорости)
+        this.overlay = safeElement('candleStatsOverlay');
+        this.openEl = safeElement('openValue');
+        this.highEl = safeElement('highValue');
+        this.lowEl = safeElement('lowValue');
+        this.closeEl = safeElement('closeValue');
+        this.changeEl = safeElement('changeValue');
+        this.volumeEl = document.getElementById('volumeValue'); // Кэшируем поиск элемента
+        
+        // ОПТИМИЗАЦИЯ: Кэш форматирования и цветов для crosshair
+        this._formatCache = new Map(); 
+        this._lastCrosshairColor = null; 
 
+        this.loadingOverlay = safeElement('loadingOverlay');
+        this.loadingProgress = safeElement('loadingProgress');
+        
+        this.chart = LightweightCharts.createChart(container, {
+            layout: { 
+                background: { color: '#000000' }, 
+                textColor: '#808080'
+            },
+            grid: { 
+                vertLines: { visible: false },
+                horzLines: { visible: false }
+            },
+            crosshair: { 
+                mode: LightweightCharts.CrosshairMode.Normal 
+            },
+            timeScale: { 
+                timeVisible: true, 
+                secondsVisible: false,
+                borderColor: '#333333',
+                barSpacing: 12,
+                minBarSpacing: 1,
+                fixLeftEdge: false,
+                fixRightEdge: false,
+                rightOffset: 10,
+                tickMarkFormatter: (time) => {
+                    const mskTime = time + (3 * 3600);
+                    const date = new Date(mskTime * 1000);
+                    const hours = date.getUTCHours().toString().padStart(2, '0');
+                    const minutes = date.getUTCMinutes().toString().padStart(2, '0');
+                    return `${hours}:${minutes}`;
+                }
+            },
+            rightPriceScale: { 
+                borderColor: '#333333',
+                borderVisible: true,
+                scaleMargins: {
+                    top: 0.1,
+                    bottom: 0.1,
+                },
+                autoScale: false
+            },
+            localization: {
+                timeFormatter: (time) => {
+                    const mskTime = time + (3 * 3600);
+                    const date = new Date(mskTime * 1000);
+                    return date.toLocaleString('ru-RU', {
+                        timeZone: 'UTC',
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                }
+            }
+        });
 
-<script>
+        this.candleSeries = this.chart.addSeries(LightweightCharts.CandlestickSeries, {
+            upColor: CONFIG.colors.bullish,
+            downColor: CONFIG.colors.bearish,
+            borderVisible: false,
+            wickUpColor: CONFIG.colors.bullish,
+            wickDownColor: CONFIG.colors.bearish,
+            priceScaleId: 'right',
+        });
 
+        this.barSeries = this.chart.addSeries(LightweightCharts.BarSeries, {
+            upColor: CONFIG.colors.bullish,
+            downColor: CONFIG.colors.bearish,
+            openVisible: true,
+            thinBars: true,
+            priceScaleId: 'right',
+        });
 
+        this.candleSeries.applyOptions({
+            priceLineVisible: true,
+            lastValueVisible: true,
+            priceLineColor: '#00bcd4',
+            priceLineWidth: 1,
+            priceLineStyle: LightweightCharts.LineStyle.Dashed
+        });
 
+        this.barSeries.applyOptions({
+            priceLineVisible: true,
+            lastValueVisible: true,
+            priceLineColor: '#00bcd4',
+            priceLineWidth: 1,
+            priceLineStyle: LightweightCharts.LineStyle.Dashed
+        });
 
-(function() {
-// ========== БЕЗОПАСНЫЕ ФУНКЦИИ ==========
-class SafeFetcher {
-static async fetchWithRetry(url, options = {}, maxRetries = 3, delay = 1000) {
-let lastError = null;
-for (let attempt = 1; attempt <= maxRetries; attempt++) {
-try {
-const controller = new AbortController();
-const timeoutId = setTimeout(() => controller.abort(), 10000);
-const response = await fetch(url, { ...options, signal: controller.signal });
-clearTimeout(timeoutId);
-if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-const data = await response.json();
-return { success: true, data, error: null };
-} catch (error) {
-lastError = error;
-if (attempt < maxRetries) {
-await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt - 1)));
-}
-}
-}
-return { success: false, data: null, error: lastError };
-}
-}
+        const savedBg = localStorage.getItem('chartBgColor');
+        const savedBullish = localStorage.getItem('chartBullishColor');
+        const savedBearish = localStorage.getItem('chartBearishColor');
 
-const RIGHT_OFFSET = 35;
-
-function safeGet(id) {
-const el = document.getElementById(id);
-if (!el) console.warn(`Элемент ${id} не найден`);
-return el;
-}
-
-// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
-const drawingsContainer = safeGet('drawingsContainer');
-const drawingSettings = safeGet('drawingSettings');
-const currentColorBox = safeGet('currentColorBox');
-const hexInputInline = safeGet('hexInputInline');
-const addColorInline = safeGet('addColorInline');
-const inlineColorsGrid = safeGet('inlineColorsGrid');
-const settingThickness = safeGet('settingThickness');
-const templateSelect = safeGet('templateSelect');
-const magnetBtn = safeGet('toolMagnet');
-const trashBtn = safeGet('toolTrash');
-const alertNotification = safeGet('alertNotification');
-const chartElement = safeGet('chart-container');
-const drawingToolbar = safeGet('drawingToolbar');
-const toolbarHeader = safeGet('toolbarHeader');
-const toolbarToggle = safeGet('toolbarToggle');
-const colorOpacity = safeGet('colorOpacity');
-const colorOpacityRow = safeGet('colorOpacityRow');
-const colorOpacityValue = safeGet('colorOpacityValue');
-const drawingContextMenu = safeGet('drawingContextMenu');
-const contextCopyBtn = safeGet('contextCopyBtn');
-const contextSettingsBtn = safeGet('contextSettingsBtn');
-const contextDeleteBtn = safeGet('contextDeleteBtn');
-const alertHistoryBtn = safeGet('alertHistoryBtn');
-const alertHistoryPanel = safeGet('alertHistoryPanel');
-const closeHistoryBtn = safeGet('closeHistoryBtn');
-const alertHistoryContent = safeGet('alertHistoryContent');
-const historyTabs = document.querySelectorAll('.history-tab');
-const telegramBtn = safeGet('telegramBtn');
-const telegramPanel = safeGet('telegramPanel');
-const closeTelegramBtn = safeGet('closeTelegramBtn');
-const telegramContent = safeGet('telegramContent');
-const indicatorsBtn = safeGet('indicatorsBtn');
-const indicatorsPanel = safeGet('indicatorsPanel');
-const closeIndicatorsBtn = safeGet('closeIndicatorsBtn');
-const indicatorsList = safeGet('indicatorsList');
-const activeIndicatorsList = safeGet('activeIndicatorsList');
-
-let currentHistoryTab = 'active';
-let telegramChatId = localStorage.getItem('telegramChatId') || '';
-let isDraggingToolbar = false;
-let dragToolbarStartX = 0, dragToolbarStartY = 0, dragToolbarStartLeft = 0, dragToolbarStartTop = 0;
-
-window.rayManager = null;
-window.trendLineManager = null;
-window.alertLineManager = null;
-
-// ========== РЕНДЕР СПИСКА АЛЕРТОВ ==========
-window.renderAlertsListUI = function(alertsData) {
-const content = document.getElementById('alertHistoryContent');
-if (!content) return;
-const activeAlerts = alertsData.active || [];
-const triggeredAlerts = alertsData.triggered || [];
-const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
-let html = '';
-if (activeTab === 'active') {
-if (activeAlerts.length === 0) html = '<div class="empty-alerts">Нет активных алертов</div>';
-else {
-html = '<div class="alert-list">';
-activeAlerts.forEach(alert => {
-const priceFormatted = Utils.formatPrice(alert.price);
-const color = alert.options.color;
-html += `<div class="alert-list-item" style="border-left-color: ${color};" data-id="${alert.id}">
-<div><div class="price">${priceFormatted}</div>
-<div class="info"><span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
-<span>Создан: ${new Date().toLocaleTimeString()}</span></div></div>
-<div class="actions"><button class="delete-alert" data-id="${alert.id}" title="Удалить">🗑️</button></div></div>`;
-});
-html += '</div>';
-}
-} else {
-if (triggeredAlerts.length === 0) html = '<div class="empty-alerts">Нет сработавших алертов</div>';
-else {
-html = '<div class="alert-list">';
-triggeredAlerts.forEach(alert => {
-const priceFormatted = Utils.formatPrice(alert.price);
-const color = alert.options.color;
-const timeStr = alert.lastTriggerTime ? new Date(alert.lastTriggerTime).toLocaleTimeString() : 'только что';
-const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}/${alert.triggerLimit === Infinity ? '∞' : alert.triggerLimit})` : '';
-html += `<div class="alert-list-item triggered" style="border-left-color: ${color};" data-id="${alert.id}">
-<div><div class="price">${priceFormatted}${repeatInfo}</div>
-<div class="info"><span>Сработал: ${timeStr}</span></div></div>
-<div class="actions"><button class="delete-alert" data-id="${alert.id}" title="Удалить">🗑️</button></div></div>`;
-});
-html += '</div>';
-}
-}
-content.innerHTML = html;
-content.querySelectorAll('.delete-alert').forEach(btn => {
-btn.addEventListener('click', (e) => {
-e.stopPropagation();
-const id = btn.dataset.id;
-if (window.alertLineManager) window.alertLineManager.deleteAlert(id);
-});
-});
-};
-
-window.renderDrawings = function() {
-if (window.rayManager && typeof window.rayManager._requestRedraw === 'function') window.rayManager._requestRedraw();
-if (window.trendLineManager && typeof window.trendLineManager._requestRedraw === 'function') window.trendLineManager._requestRedraw();
-};
-
-function renderDrawings() { window.renderDrawings(); }
-function saveDrawings() { if (window.rayManager) window.rayManager._saveRays(); }
-function saveColors() { localStorage.setItem('chartColors', JSON.stringify(availableColors)); }
-
-function renderInlineColorsGrid(selectedColor) {
-inlineColorsGrid.innerHTML = '';
-availableColors.forEach(color => {
-const square = document.createElement('div');
-square.className = 'color-square';
-square.style.backgroundColor = color;
-if (color === selectedColor) square.classList.add('selected');
-square.addEventListener('click', () => {
-document.querySelectorAll('.color-square').forEach(s => s.classList.remove('selected'));
-square.classList.add('selected');
-currentColorBox.style.backgroundColor = color;
-hexInputInline.value = color;
-});
-inlineColorsGrid.appendChild(square);
-});
-}
-
-let availableColors = [
-'#4A90E2','#EF5350','#26A69A','#FFA726','#AB47BC','#5C6BC0','#66BB6A','#FF7043',
-'#7E57C2','#42A5F5','#EC407A','#FFCA28','#8D6E63','#B0BEC5','#FFFFFF','#F44336',
-'#E91E63','#9C27B0','#673AB7','#3F51B5','#2196F3','#03A9F4','#00BCD4','#009688','#4CAF50'
-];
-try {
-const savedColors = localStorage.getItem('chartColors');
-if (savedColors) availableColors = JSON.parse(savedColors);
-} catch(e) {}
-
-addColorInline.addEventListener('click', () => {
-let hex = hexInputInline.value.trim();
-if (!hex.startsWith('#')) hex = '#' + hex;
-if (/^#[0-9A-F]{6}$/i.test(hex)) {
-if (!availableColors.includes(hex)) {
-availableColors.push(hex);
-saveColors();
-renderInlineColorsGrid(hex);
-}
-currentColorBox.style.backgroundColor = hex;
-}
-});
-
-colorOpacity.addEventListener('input', function() { colorOpacityValue.textContent = this.value + '%'; });
-let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
-let toolbarRafId = null; // Для плавности
-
-
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ИСПРАВЛЕННАЯ ТОЧНОСТЬ) ==========
-toolbarHeader.addEventListener('mousedown', (e) => {
-    // Игнорируем клики по кнопкам управления
-    if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) return;
-    
-    isDraggingToolbar = true;
-    
-    const containerRect = chartElement.getBoundingClientRect();
-    const toolbarRect = drawingToolbar.getBoundingClientRect();
-    
-    // Сохраняем начальные координаты ОТНОСИТЕЛЬНО контейнера графика, а не экрана
-    dragToolbarStartLeft = toolbarRect.left - containerRect.left;
-    dragToolbarStartTop = toolbarRect.top - containerRect.top;
-    
-    dragToolbarStartX = e.clientX;
-    dragToolbarStartY = e.clientY;
-    
-    toolbarWidth = drawingToolbar.offsetWidth;
-    toolbarHeight = drawingToolbar.offsetHeight;
-
-    document.body.style.userSelect = 'none';
-    document.body.style.webkitUserSelect = 'none';
-    toolbarHeader.style.cursor = 'grabbing';
-    e.preventDefault();
-});
-
-document.addEventListener('mousemove', (e) => {
-    if (!isDraggingToolbar) return;
-
-    if (!toolbarRafId) {
-        toolbarRafId = requestAnimationFrame(() => {
-            const deltaX = e.clientX - dragToolbarStartX;
-            const deltaY = e.clientY - dragToolbarStartY;
+        if (savedBg) {
+            this.chart.applyOptions({ layout: { background: { color: savedBg } } });
+        }
+        if (savedBullish && savedBearish) {
+            CONFIG.colors.bullish = savedBullish;
+            CONFIG.colors.bearish = savedBearish;
+            this.bullishColor = savedBullish;
+            this.bearishColor = savedBearish;
             
-            let newLeft = dragToolbarStartLeft + deltaX;
-            let newTop = dragToolbarStartTop + deltaY;
+            this.candleSeries.applyOptions({
+                upColor: savedBullish,
+                downColor: savedBearish,
+                wickUpColor: savedBullish,
+                wickDownColor: savedBearish
+            });
             
-            const containerRect = chartElement.getBoundingClientRect();
+            this.barSeries.applyOptions({
+                upColor: savedBullish,
+                downColor: savedBearish
+            });
+        }
+
+        if (typeof LightweightCharts !== 'undefined') {
+            try {
+                this.volumeSeries = this.chart.addSeries(LightweightCharts.HistogramSeries, {
+                    priceScaleId: 'volume',
+                    priceFormat: { type: 'volume' },
+                    color: '#26a69a',
+                    lineWidth: 1,
+                    lastValueVisible: false,     
+                    priceLineVisible: false,     
+                    title: ''
+                });
+                
+                const volumeScale = this.chart.priceScale('volume');
+                if (volumeScale) {
+                    volumeScale.applyOptions({
+                        scaleMargins: { top: 0.78, bottom: 0 },
+                        visible: true,
+                        borderVisible: true,
+                    });
+                }
+                
+                this.bullishColor = CONFIG.colors.bullish;
+                this.bearishColor = CONFIG.colors.bearish;
+                
+                console.log('✅ Volume series создан с отдельной шкалой');
+            } catch (e) {
+                console.warn('⚠️ Не удалось создать Volume:', e);
+                this.volumeSeries = null;
+            }
+        }
+
+        const isCandle = this.currentChartType === 'candle';
+        this.candleSeries.applyOptions({ visible: isCandle });
+        this.barSeries.applyOptions({ visible: !isCandle });
+
+        this.chart.subscribeCrosshairMove(this.onCrosshairMove.bind(this));
+
+        this.setupOptimizedSubscriptions();
+        this.setupEventListeners();
+
+        this.alertTimers = new Map();
+        this.currentRealPrice = null;
+
+        setTimeout(() => {
+            this.priceManager = window.priceManagerInstance;
+            if (this.priceManager) this._subscribeToPrice();
+        }, 200);
+
+        (async () => {
+            const CACHE_VERSION = '2';
+            const savedVersion = localStorage.getItem('candleCacheVersion');
+            if (savedVersion !== CACHE_VERSION) {
+                await this.clearOldCaches();
+                localStorage.setItem('candleCacheVersion', CACHE_VERSION);
+                console.log('✅ Кэш свечей обновлён до версии', CACHE_VERSION);
+            }
+        })();
+
+        this._initPromise = (async () => {
+            await this.waitForReady();
+            this._updateMainChartHeight();
             
-            // Ограничиваем границами контейнера (отступ 5px со всех сторон)
-            newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, newLeft));
-            newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, newTop)); // Убрали жесткий min 60
+            const panelsContainer = document.getElementById('indicator-panels-container');
+            if (panelsContainer) {
+                const observer = new ResizeObserver(() => {
+                    this._updateMainChartHeight();
+                });
+                observer.observe(panelsContainer);
+            }
             
-            drawingToolbar.style.left = newLeft + 'px';
-            drawingToolbar.style.top = newTop + 'px';
+            console.log('✅ ChartManager полностью инициализирован');
+        })();
+     
+        this._setupPanelsSync();
+        this._startNewCandleChecker();
+
+        this._bgInterval = setInterval(() => {
+            if (window.wsManager?.wsKline?.readyState === WebSocket.OPEN) {
+                window.wsManager.wsKline.send(JSON.stringify({ type: 'ping' }));
+            }
+            if (window.wsManager?.wsTrade?.readyState === WebSocket.OPEN) {
+                window.wsManager.wsTrade.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 30000);
+    }
+
+    _rebuildTimeMap() {
+        this._candleTimeMap.clear();
+        for (let i = 0; i < this.chartData.length; i++) {
+            this._candleTimeMap.set(this.chartData[i].time, i);
+        }
+    }
+
+    _addToTimeMap(time, index) {
+        this._candleTimeMap.set(time, index);
+    }
+
+    _removeFromTimeMap(time) {
+        this._candleTimeMap.delete(time);
+    }
+
+    scheduleDrawingsUpdate(forceHighPriority = false) {
+        // ⚡ ОПТИМИЗАЦИЯ: Полный стоп отрисовки, если вкладка не активна
+        if (document.hidden) return;
+        if (this._isVerticalZooming) return;
+        
+        const now = performance.now();
+        let delay;
+        
+        if (forceHighPriority) {
+            delay = 0;
+        } else if (this._isScrollingFast) {
+            delay = 50;
+        } else if (this._isScrolling) {
+            delay = 100;
+        } else {
+            delay = 150;
+        }
+
+        if (now - (this._lastDrawingsCall || 0) < delay) {
+            if (!this._drawingsFinalUpdateTimeout) {
+                this._drawingsFinalUpdateTimeout = setTimeout(() => {
+                    this._drawingsFinalUpdateTimeout = null;
+                    if (window.renderDrawings) window.renderDrawings();
+                }, delay);
+            }
+            return;
+        }
+        this._lastDrawingsCall = now;
+
+        if (this._drawingsUpdateRafId === null && window.renderDrawings) {
+            this._drawingsUpdateRafId = requestAnimationFrame(() => {
+                window.renderDrawings();
+                this._drawingsUpdateRafId = null;
+            });
+        }
+    }
+
+    requestDrawingsRedraw() {
+        // ⚡ ОПТИМИЗАЦИЯ: Не планируем перерисовку рисунков в скрытой вкладке
+        if (document.hidden || this._isScrolling || this._isScrollingFast) return;
+        
+        if (this._drawingsRafId !== null) return;
+        this._drawingsRafId = requestAnimationFrame(() => {
+            this._drawingsRafId = null;
             
-            toolbarRafId = null;
+            if (this.rayManager?._applyRedrawIfNeeded) this.rayManager._applyRedrawIfNeeded();
+            if (this.trendLineManager?._requestRedraw) this.trendLineManager._requestRedraw();
+            if (this.rulerLineManager?._requestRedraw) this.rulerLineManager._requestRedraw();
+            if (this.alertLineManager?._applyRedrawsIfNeeded) this.alertLineManager._applyRedrawsIfNeeded();
+            if (this.textManager?._requestRedraw) this.textManager._requestRedraw();
         });
     }
-});
 
-document.addEventListener('mouseup', () => {
-    if (isDraggingToolbar) {
-        isDraggingToolbar = false;
-        toolbarHeader.style.cursor = 'grab';
-        
-        document.body.style.userSelect = '';
-        document.body.style.webkitUserSelect = '';
-        
-        if (toolbarRafId) {
-            cancelAnimationFrame(toolbarRafId);
-            toolbarRafId = null;
-        }
-        
-        // Сохраняем точные относительные координаты в момент отпускания мыши
-        localStorage.setItem('drawingToolbarLeft', drawingToolbar.style.left);
-        localStorage.setItem('drawingToolbarTop', drawingToolbar.style.top);
+    _startNewCandleChecker() {
+        const check = () => {
+            // ⚡ ОПТИМИЗАЦИЯ: Если вкладка скрыта, проверяем новую свечу реже (раз в 2 сек), 
+            // чтобы не грузить CPU. При возврате на вкладку _syncAfterHidden() всё синхронизирует.
+            if (document.hidden) {
+                setTimeout(check, 2000);
+                return;
+            }
+
+            if (!this.chartData.length || !this.currentInterval) {
+                setTimeout(check, 1000);
+                return;
+            }
+            
+            const stepMap = {
+                '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+                '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+                '1d': 86400, '1w': 604800, '1M': 2592000
+            };
+            const step = stepMap[this.currentInterval] || 3600;
+            const nowSec = Math.floor(Date.now() / 1000);
+            
+            let aligned;
+            if (this.currentInterval === '1w') {
+                const now = new Date(nowSec * 1000);
+                const dayOfWeek = now.getUTCDay();
+                const daysToMonday = dayOfWeek === 0 ? 1 : (8 - dayOfWeek) % 7;
+                const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysToMonday));
+                aligned = Math.floor(monday.getTime() / 1000);
+            } else if (this.currentInterval === '1M') {
+                const now = new Date(nowSec * 1000);
+                const firstDayOfNextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+                aligned = Math.floor(firstDayOfNextMonth.getTime() / 1000);
+            } else {
+                aligned = Math.floor(nowSec / step) * step;
+            }
+            
+            const last = this.chartData[this.chartData.length - 1];
+            
+            if (last && aligned > last.time && aligned <= nowSec) {
+                const newCandle = {
+                    time: aligned,
+                    open: last.close,
+                    high: last.close,
+                    low: last.close,
+                    close: last.close,
+                    volume: 0
+                };
+                this._createNewCandle(newCandle);
+            }
+            
+            setTimeout(check, 500);
+        };
+        check();
     }
-});
-
-toolbarToggle.addEventListener('click', () => {
-    drawingToolbar.classList.toggle('collapsed');
-    toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
-    setTimeout(() => {
-        toolbarWidth = drawingToolbar.offsetWidth;
-        toolbarHeight = drawingToolbar.offsetHeight;
-    }, 50);
-});
-
-// ResizeObserver: теперь он НЕ сбивает сохраненную позицию, а только корректирует её, 
-// если окно браузера уменьшилось и панель "вылезла" за границы.
-const chartContainerForToolbar = document.getElementById('chart-container');
-if (chartContainerForToolbar && window.ResizeObserver) {
-    const toolbarObserver = new ResizeObserver(() => {
-        if (!drawingToolbar) return;
-        const containerRect = chartContainerForToolbar.getBoundingClientRect();
+       async _syncAfterHidden() {
+        if (!this.chartData.length || !this.currentSymbol) return;
         
-        toolbarWidth = drawingToolbar.offsetWidth;
-        toolbarHeight = drawingToolbar.offsetHeight;
+        this._isScrolling = false;
+        this._isScrollingFast = false;
+        this._isSyncing = false;
+
+        try {
+            const ts = this.chart.timeScale();
+            const range = ts.getVisibleLogicalRange();
+            if (range) {
+                ts.setVisibleLogicalRange({ from: range.from - 0.0001, to: range.to - 0.0001 });
+                requestAnimationFrame(() => ts.setVisibleLogicalRange(range));
+            }
+        } catch(e) {}
+
+        try {
+            const freshCandles = await this.fetchKlines(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 2
+            );
+            
+            if (freshCandles && freshCandles.length > 0) {
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                
+                freshCandles.forEach(freshCandle => {
+                    const idx = this._candleTimeMap.get(freshCandle.time);
+                    
+                    if (idx !== undefined) {
+                        this.chartData[idx] = freshCandle;
+                        activeSeries.update(freshCandle);
+                    } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
+                        this.chartData.push(freshCandle);
+                        this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
+                        activeSeries.update(freshCandle);
+                    }
+                    
+                    if (this.volumeSeries) {
+                        this.volumeSeries.update({
+                            time: freshCandle.time,
+                            value: freshCandle.volume,
+                            color: freshCandle.close >= freshCandle.open ? this.bullishColor : this.bearishColor
+                        });
+                    }
+                });
+                
+                this.lastCandle = this.chartData[this.chartData.length - 1];
+                this.currentRealPrice = this.lastCandle.close;
+            }
+        } catch (e) {}
+
+        this._updatePageTitle();
+        this.scheduleUpdatePosition();
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+        this.scheduleDrawingsUpdate(true);
+        this.requestDrawingsRedraw();
+        if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
+    }
+    _setupPanelsSync() {
+        if (!this.chart) return;
         
-        // Читаем текущие значения из style (они там уже сохранены или восстановлены)
-        let currentLeft = parseFloat(drawingToolbar.style.left) || 20;
-        let currentTop = parseFloat(drawingToolbar.style.top) || 60;
+        const mainChart = this.chart;
+        let crosshairUpdateScheduled = false;
+        let lastCrosshairParam = null;
         
-        // Корректируем ТОЛЬКО если панель вылезла за границы из-за уменьшения окна
-        let newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, currentLeft));
-        let newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, currentTop)); 
+        const syncCrosshairToPanels = (param) => {
+            if (!mainChart || !param) return;
+            const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
+            if (!panels) return;
+            
+            panels.forEach((panel) => {
+                if (!panel.chart || panel.isCollapsed) return;
+                try {
+                    if (!param.time || !param.point) { panel.chart.clearCrosshairPosition(); return; }
+                    let targetSeries = null;
+                    panel.series.forEach((series) => { targetSeries = series; });
+                    if (!targetSeries) { panel.chart.clearCrosshairPosition(); return; }
+                    const dataPoint = param.seriesData.get(targetSeries);
+                    if (dataPoint) {
+                        panel.chart.setCrosshairPosition(param.time, dataPoint.value, param.point.x);
+                    } else {
+                        panel.chart.clearCrosshairPosition();
+                    }
+                } catch(e) {}
+            });
+        };
         
-       // Применяем изменения только если они действительно нужны (чтобы не перезаписывать хорошую позицию)
-if (newLeft !== currentLeft || newTop !== currentTop) {
-    drawingToolbar.style.left = newLeft + 'px';
-    drawingToolbar.style.top = newTop + 'px';
-    localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
-    localStorage.setItem('drawingToolbarTop', newTop + 'px');  // ← была пропущена )
-
-        }
-    });
-    toolbarObserver.observe(chartContainerForToolbar);
-}
-
-// ========== TELEGRAM ==========
-function saveTelegramChatId(id) {
-telegramChatId = id;
-localStorage.setItem('telegramChatId', id);
-renderTelegramPanel();
-}
-
-function renderTelegramPanel() {
-const html = `<div class="telegram-connect"><h4>Подключение Telegram</h4>
-<div class="telegram-step"><p>1. Перейдите в бота и нажмите Start</p>
-<a href="https://t.me/ALLERT1ALERT_BOT" target="_blank" style="color: #B0B0B0; background: #404040; border: 1px solid #404040; display: inline-block; padding: 12px 25px; border-radius: 6px; text-decoration: none; font-size: 16px; margin-bottom: 15px; font-weight: bold;">ПОДКЛЮЧИТЬСЯ</a>
-<p>2. Введи свой Telegram ID</p>
-<div class="input-group"><input type="text" id="telegramIdInput" placeholder="Например: 123456789" value="${telegramChatId || ''}"></div>
-<button id="saveTelegramBtn">Сохранить ID</button>
-<div id="telegramStatus" class="telegram-status ${telegramChatId ? 'success' : ''}">${telegramChatId ? '✅ Telegram подключен! ID: ' + telegramChatId : ''}</div>
-</div></div>`;
-telegramContent.innerHTML = html;
-const saveBtn = document.getElementById('saveTelegramBtn');
-const input = document.getElementById('telegramIdInput');
-const status = document.getElementById('telegramStatus');
-if (saveBtn) {
-saveBtn.addEventListener('click', () => {
-const id = input.value.trim();
-if (id) {
-saveTelegramChatId(id);
-status.textContent = `✅ Telegram подключен! ID: ${id}`;
-status.className = 'telegram-status success';
-}
-});
-}
-}
-
-// ========== ИНДИКАТОРЫ ==========
-function renderIndicatorsList() {
-if (!indicatorsList) return;
-const currentIndicatorsList = (window.IndicatorFactory && window.IndicatorFactory.getIndicatorsList)
-? window.IndicatorFactory.getIndicatorsList() : [];
-if (currentIndicatorsList.length === 0) return;
-const categories = {};
-currentIndicatorsList.forEach(ind => {
-if (!categories[ind.category]) categories[ind.category] = [];
-categories[ind.category].push(ind);
-});
-let html = '';
-Object.keys(categories).forEach(category => {
-html += `<div class="indicators-category"><div class="indicators-category-title">${category}</div>`;
-categories[category].forEach(ind => {
-html += `<div class="indicator-item" data-id="${ind.id}">
-<span class="indicator-name" style="border-left: 3px solid ${ind.color}; padding-left: 8px;">${ind.name}</span>
-<span class="indicator-type">${category}</span></div>`;
-});
-html += `</div>`;
-});
-indicatorsList.innerHTML = html;
-indicatorsList.querySelectorAll('.indicator-item').forEach(item => {
-item.addEventListener('click', () => {
-const id = item.dataset.id;
-if (window.chartManagerInstance) window.chartManagerInstance.addIndicator(id);
-});
-});
-}
-
-function renderActiveIndicatorsUI(indicators) {
-const activeIndicatorsList = document.getElementById('activeIndicatorsList');
-if (!activeIndicatorsList) return;
-let html = '';
-if (!indicators || indicators.length === 0) {
-html = '<div class="empty-alerts" style="padding: 20px;">Нет активных индикаторов</div>';
-} else {
-indicators.forEach((indicator) => {
-let name = 'Индикатор';
-let color = '#4A90E2';
-let isVisible = indicator.visible !== false;
-if (indicator.data && indicator.data.name) name = indicator.data.name;
-else if (indicator.type) {
-const typeNames = { 'sma20':'SMA 20','sma50':'SMA 50','ema20':'EMA 20','rsi14':'RSI 14','macd':'MACD','volume':'Volume' };
-name = typeNames[indicator.type] || indicator.type;
-}
-if (indicator.settings && indicator.settings.color) color = indicator.settings.color;
-else if (indicator.data && indicator.data.color) color = indicator.data.color;
-const eyeIcon = isVisible ?
-`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>` :
-`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2"/></svg>`;
-html += `<div class="active-indicator-item" style="border-left-color: ${color}; opacity: ${isVisible ? 1 : 0.5};" data-id="${indicator.id}">
-<span class="active-indicator-name">${name}</span>
-<div class="active-indicator-actions">
-<button class="eye-indicator" data-id="${indicator.id}" title="${isVisible ? 'Скрыть' : 'Показать'}">${eyeIcon}</button>
-<button class="settings-indicator" data-id="${indicator.id}" title="Настройки">
-<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
-<path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Z"/>
-</svg>
-</button>
-<button class="delete-indicator" data-id="${indicator.id}" title="Удалить">
-<svg width="14" height="14" viewBox="0 0 256 256" fill="none"><path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/></svg>
-</button>
-</div></div>`;
-});
-}
-activeIndicatorsList.innerHTML = html;
-activeIndicatorsList.querySelectorAll('.eye-indicator').forEach(btn => {
-btn.addEventListener('click', (e) => {
-e.stopPropagation();
-const id = btn.dataset.id;
-const indicator = indicators.find(i => i.id == id);
-if (indicator && window.chartManagerInstance && window.chartManagerInstance.indicatorManager) {
-window.chartManagerInstance.indicatorManager.toggleIndicatorVisibility(indicator);
-}
-});
-});
-activeIndicatorsList.querySelectorAll('.settings-indicator').forEach(btn => {
-btn.addEventListener('click', (e) => {
-e.stopPropagation();
-const id = btn.dataset.id;
-const indicator = indicators.find(i => i.id == id);
-if (indicator && window.chartManagerInstance && window.chartManagerInstance.indicatorManager) {
-window.chartManagerInstance.indicatorManager.showIndicatorSettings(indicator);
-}
-});
-});
-activeIndicatorsList.querySelectorAll('.delete-indicator').forEach(btn => {
-btn.addEventListener('click', (e) => {
-e.stopPropagation();
-const id = btn.dataset.id;
-const index = indicators.findIndex(i => i.id == id);
-if (index !== -1 && window.chartManagerInstance && window.chartManagerInstance.indicatorManager) {
-window.chartManagerInstance.indicatorManager.removeIndicator(index);
-}
-});
-});
-}
-window.renderActiveIndicatorsUI = renderActiveIndicatorsUI;
-
-// ========== ОБРАБОТЧИКИ КНОПОК ПАНЕЛЕЙ ==========
-indicatorsBtn.addEventListener('click', (e) => {
-const rect = indicatorsBtn.getBoundingClientRect();
-if (indicatorsPanel.style.display === 'block') { indicatorsPanel.style.display = 'none'; }
-else {
-alertHistoryPanel.style.display = 'none';
-telegramPanel.style.display = 'none';
-indicatorsPanel.style.top = (rect.bottom + 5) + 'px';
-indicatorsPanel.style.right = (window.innerWidth - rect.right) + 'px';
-renderIndicatorsList();
-if (window.chartManagerInstance && window.chartManagerInstance.indicatorManager) {
-renderActiveIndicatorsUI(window.chartManagerInstance.indicatorManager.activeIndicators);
-}
-indicatorsPanel.style.display = 'block';
-}
-});
-
-closeIndicatorsBtn.addEventListener('click', () => { indicatorsPanel.style.display = 'none'; });
-
-alertHistoryBtn.addEventListener('click', (e) => {
-const rect = alertHistoryBtn.getBoundingClientRect();
-if (alertHistoryPanel.style.display === 'block') { alertHistoryPanel.style.display = 'none'; }
-else {
-telegramPanel.style.display = 'none';
-indicatorsPanel.style.display = 'none';
-alertHistoryPanel.style.top = (rect.bottom + 5) + 'px';
-alertHistoryPanel.style.right = (window.innerWidth - rect.right) + 'px';
-alertHistoryPanel.style.display = 'block';
-}
-});
-
-closeHistoryBtn.addEventListener('click', () => { alertHistoryPanel.style.display = 'none'; });
-
-telegramBtn.addEventListener('click', (e) => {
-const rect = telegramBtn.getBoundingClientRect();
-if (telegramPanel.style.display === 'block') { telegramPanel.style.display = 'none'; }
-else {
-alertHistoryPanel.style.display = 'none';
-indicatorsPanel.style.display = 'none';
-telegramPanel.style.top = (rect.bottom + 5) + 'px';
-telegramPanel.style.right = (window.innerWidth - rect.right) + 'px';
-renderTelegramPanel();
-telegramPanel.style.display = 'block';
-}
-});
-
-closeTelegramBtn.addEventListener('click', () => { telegramPanel.style.display = 'none'; });
-
-historyTabs.forEach(tab => {
-tab.addEventListener('click', () => {
-historyTabs.forEach(t => t.classList.remove('active'));
-tab.classList.add('active');
-currentHistoryTab = tab.dataset.tab;
-if (window.alertLineManager) window.alertLineManager._updateAlertsListUI();
-});
-});
-
-document.addEventListener('click', (e) => {
-if (!alertHistoryPanel.contains(e.target) && e.target !== alertHistoryBtn && !alertHistoryBtn.contains(e.target) &&
-!telegramPanel.contains(e.target) && e.target !== telegramBtn && !telegramBtn.contains(e.target) &&
-!indicatorsPanel.contains(e.target) && e.target !== indicatorsBtn && !indicatorsBtn.contains(e.target)) {
-alertHistoryPanel.style.display = 'none';
-telegramPanel.style.display = 'none';
-indicatorsPanel.style.display = 'none';
-}
-});
-
-renderInlineColorsGrid('#4A90E2');
-
-let tickerPanelInstance = null;
-setTimeout(() => {
-if (window.app && window.app.tickerPanel) tickerPanelInstance = window.app.tickerPanel;
-else if (window.tickerPanel) tickerPanelInstance = window.tickerPanel;
-}, 1000);
-
-window.addEventListener('beforeunload', () => {
-if (tickerPanelInstance && typeof tickerPanelInstance.cleanup === 'function') tickerPanelInstance.cleanup();
-});
-
-document.addEventListener('visibilitychange', () => {
-if (!document.hidden) {
-if (window.wsManager && window.chartManagerInstance) {
-window.wsManager.updateSymbolAndTimeframe(
-window.chartManagerInstance.currentSymbol,
-window.chartManagerInstance.currentInterval,
-window.chartManagerInstance.currentExchange,
-window.chartManagerInstance.currentMarketType
-);
-}
-}
-});
-
-// ========== ЦВЕТА ДЛЯ СЕТКИ ==========
-const colorPalette = [
-'#000000','#0A1929','#1E1E1E','#2D2D2D','#14171C',
-'#00bcd4','#4CAF50','#26A69A','#66BB6A','#00E5FF',
-'#f23645','#FF5252','#EF5350','#F44336','#D32F2F',
-'#4A90E2','#9C27B0','#FF9800','#795548','#607D8B'
-];
-
-// ============================================================
-// ========= initChartColorPanel — С НОВЫМИ COLOR PICKER =======
-// ============================================================
-function initChartColorPanel() {
-const panel = document.getElementById('chartColorPanel');
-const openBtn = document.getElementById('openChartColorPanel');
-const tabs = document.querySelectorAll('[data-color-tab]');
-const tabContents = document.querySelectorAll('.color-tab-content');
-
-// Заполняем сетки цветов
-fillColorGrid('bgColorsGrid', colorPalette.slice(0, 8), '#000000');
-fillColorGrid('bullishColorsGrid', ['#00bcd4','#4CAF50','#26A69A','#66BB6A','#00E5FF','#4A90E2','#9C27B0','#FF9800'], '#00bcd4');
-fillColorGrid('bearishColorsGrid', ['#f23645','#FF5252','#EF5350','#F44336','#D32F2F','#E91E63','#9C27B0','#795548'], '#f23645');
-fillColorGrid('separatorColorsGrid', ['#808080','#404040','#606060','#A0A0A0','#FFFFFF','#FF9800','#4A90E2','#333333'], '#808080');
-
-// Загружаем сохраненные цвета
-loadSavedColors();
-loadSeparatorSettings();
-
-// Открытие панели
-openBtn.addEventListener('click', (e) => {
-e.stopPropagation();
-panel.style.display = 'block';
-});
-
-// Переключение вкладок
-tabs.forEach(tab => {
-tab.addEventListener('click', () => {
-tabs.forEach(t => {
-t.style.background = '#2D2D2D';
-t.style.borderColor = '#404040';
-t.style.color = '#B0B0B0';
-});
-tab.style.background = '#4A4A4A';
-tab.style.borderColor = '#888888';
-tab.style.color = '#FFFFFF';
-const tabId = tab.dataset.colorTab;
-tabContents.forEach(content => {
-content.classList.remove('active');
-content.style.display = 'none';
-});
-document.getElementById(`tab-${tabId}`).classList.add('active');
-document.getElementById(`tab-${tabId}`).style.display = 'block';
-});
-});
-
-// === ✅ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ <input type="color"> ===
-const colorPickerBindings = [
-{ picker: 'bgColorPicker',        box: 'bgCurrentColor',        grid: 'bgColorsGrid',        storageKey: 'chartBgColor' },
-{ picker: 'bullishColorPicker',   box: 'bullishCurrentColor',   grid: 'bullishColorsGrid',   storageKey: 'chartBullishColor' },
-{ picker: 'bearishColorPicker',   box: 'bearishCurrentColor',   grid: 'bearishColorsGrid',   storageKey: 'chartBearishColor' },
-{ picker: 'separatorColorPicker', box: 'separatorCurrentColor', grid: 'separatorColorsGrid', storageKey: 'separatorColor' }
-];
-
-colorPickerBindings.forEach(({ picker, box, grid, storageKey }) => {
-const el = document.getElementById(picker);
-if (!el) return;
-el.addEventListener('input', (e) => {
-const color = e.target.value;
-const boxEl = document.getElementById(box);
-if (boxEl) boxEl.style.backgroundColor = color;
-// Подсветка квадрата в сетке
-document.querySelectorAll(`#${grid} .color-square`).forEach(s => {
-const sqColor = s.style.backgroundColor;
-const sqHex = rgbToHex(sqColor);
-s.style.border = (sqColor === color || sqHex.toLowerCase() === color.toLowerCase())
-? '2px solid #4A90E2' : '1px solid transparent';
-});
-// Мгновенное сохранение
-localStorage.setItem(storageKey, color);
-// Применение к графику
-const bg = document.getElementById('bgColorPicker').value;
-const bullish = document.getElementById('bullishColorPicker').value;
-const bearish = document.getElementById('bearishColorPicker').value;
-applyColorsToChart(bg, bullish, bearish);
-// Если это разделитель — обновляем сразу
-if (picker === 'separatorColorPicker' && window._dailySeparator) {
-window._dailySeparator.updateSettings({
-enabled: document.getElementById('separatorsEnabled').checked,
-color: color,
-style: document.getElementById('separatorLineStyle').value,
-width: parseInt(document.getElementById('separatorLineWidth').value),
-opacity: parseInt(document.getElementById('separatorOpacity').value) / 100
-});
-}
-});
-});
-
-// Обработчики слайдеров разделителя
-document.getElementById('separatorLineWidth').addEventListener('input', function() {
-document.getElementById('separatorWidthValue').textContent = this.value + 'px';
-});
-document.getElementById('separatorOpacity').addEventListener('input', function() {
-document.getElementById('separatorOpacityValue').textContent = this.value + '%';
-});
-
-// ✅ Сохранение
-document.getElementById('saveChartColors').addEventListener('click', () => {
-const bgHex = document.getElementById('bgColorPicker').value;
-const bullishHex = document.getElementById('bullishColorPicker').value;
-const bearishHex = document.getElementById('bearishColorPicker').value;
-localStorage.setItem('chartBgColor', bgHex);
-localStorage.setItem('chartBullishColor', bullishHex);
-localStorage.setItem('chartBearishColor', bearishHex);
-
-const sepEnabled = document.getElementById('separatorsEnabled').checked;
-const sepColor = document.getElementById('separatorColorPicker').value;
-const sepStyle = document.getElementById('separatorLineStyle').value;
-const sepWidth = document.getElementById('separatorLineWidth').value;
-const sepOpacity = document.getElementById('separatorOpacity').value;
-localStorage.setItem('separatorEnabled', sepEnabled);
-localStorage.setItem('separatorColor', sepColor);
-localStorage.setItem('separatorStyle', sepStyle);
-localStorage.setItem('separatorWidth', sepWidth);
-localStorage.setItem('separatorOpacity', sepOpacity);
-
-if (window._dailySeparator) {
-window._dailySeparator.updateSettings({
-enabled: sepEnabled, color: sepColor, style: sepStyle,
-width: parseInt(sepWidth), opacity: parseInt(sepOpacity) / 100
-});
-}
-applyColorsToChart(bgHex, bullishHex, bearishHex);
-panel.style.display = 'none';
-});
-
-// ✅ Сброс — С СОХРАНЕНИЕМ СРАЗУ
-document.getElementById('resetChartColors').addEventListener('click', () => {
-// Сброс DOM
-document.getElementById('bgCurrentColor').style.backgroundColor = '#000000';
-document.getElementById('bgColorPicker').value = '#000000';
-document.getElementById('bullishCurrentColor').style.backgroundColor = '#00bcd4';
-document.getElementById('bullishColorPicker').value = '#00bcd4';
-document.getElementById('bearishCurrentColor').style.backgroundColor = '#f23645';
-document.getElementById('bearishColorPicker').value = '#f23645';
-document.getElementById('separatorsEnabled').checked = true;
-document.getElementById('separatorCurrentColor').style.backgroundColor = '#808080';
-document.getElementById('separatorColorPicker').value = '#808080';
-document.getElementById('separatorLineStyle').value = 'dashed';
-document.getElementById('separatorLineWidth').value = 1;
-document.getElementById('separatorWidthValue').textContent = '1px';
-document.getElementById('separatorOpacity').value = 30;
-document.getElementById('separatorOpacityValue').textContent = '30%';
-
-// ✅ СОХРАНЕНИЕ ДЕФОЛТОВ В localStorage
-localStorage.setItem('chartBgColor', '#000000');
-localStorage.setItem('chartBullishColor', '#00bcd4');
-localStorage.setItem('chartBearishColor', '#f23645');
-localStorage.setItem('separatorEnabled', 'true');
-localStorage.setItem('separatorColor', '#808080');
-localStorage.setItem('separatorStyle', 'dashed');
-localStorage.setItem('separatorWidth', '1');
-localStorage.setItem('separatorOpacity', '30');
-
-// ✅ ПРИМЕНЕНИЕ К ГРАФИКУ СРАЗУ
-applyColorsToChart('#000000', '#00bcd4', '#f23645');
-
-if (window._dailySeparator) {
-window._dailySeparator.updateSettings({
-enabled: true, color: '#808080', style: 'dashed', width: 1, opacity: 0.3
-});
-}
-
-// ✅ ЗАКРЫВАЕМ ПАНЕЛЬ
-panel.style.display = 'none';
-});
-
-// Применять настройки разделителя СРАЗУ при изменении
-setTimeout(function() {
-document.getElementById('separatorColorPicker').addEventListener('input', applySeparatorNow);
-document.getElementById('separatorColorsGrid').addEventListener('click', function() { setTimeout(applySeparatorNow, 50); });
-document.getElementById('separatorLineStyle').addEventListener('change', applySeparatorNow);
-document.getElementById('separatorLineWidth').addEventListener('input', applySeparatorNow);
-document.getElementById('separatorOpacity').addEventListener('input', applySeparatorNow);
-document.getElementById('separatorsEnabled').addEventListener('change', applySeparatorNow);
-function applySeparatorNow() {
-if (!window._dailySeparator) return;
-const enabled = document.getElementById('separatorsEnabled').checked;
-const color = document.getElementById('separatorColorPicker').value;
-const style = document.getElementById('separatorLineStyle').value;
-const width = parseInt(document.getElementById('separatorLineWidth').value);
-const opacity = parseInt(document.getElementById('separatorOpacity').value) / 100;
-window._dailySeparator.updateSettings({ enabled, color, style, width, opacity });
-}
-}, 1000);
-
-loadSeparatorSettings();
-
-// Закрытие при клике вне панели
-document.addEventListener('click', (e) => {
-if (!panel.contains(e.target) && !openBtn.contains(e.target) && panel.style.display === 'block') {
-panel.style.display = 'none';
-}
-});
-}
-
-// ========== ЛОГИКА ВКЛАДКИ СЕССИЙ ==========
-document.getElementById('sessionsEnabled')?.addEventListener('change', function() {
-if (!window._sessionHighlighter) return;
-window._sessionHighlighter.updateSettings({ enabled: this.checked });
-});
-
-document.getElementById('sessionOpacity')?.addEventListener('input', function() {
-const percent = parseInt(this.value);
-document.getElementById('sessionOpacityValue').textContent = percent + '%';
-if (!window._sessionHighlighter) return;
-window._sessionHighlighter.updateSettings({ opacity: percent / 100 });
-});
-
-// ✅ Живое обновление color picker'ов сессий
-['Asian', 'European', 'American'].forEach(name => {
-const picker = document.getElementById(`session${name}Color`);
-if (picker) {
-picker.addEventListener('input', function() {
-const colorBox = document.getElementById(`session${name}ColorBox`);
-if (colorBox) colorBox.style.backgroundColor = this.value;
-const lower = name.toLowerCase();
-if (window._sessionHighlighter) {
-window._sessionHighlighter.updateSettings({ colors: { [lower]: this.value } });
-}
-const saved = JSON.parse(localStorage.getItem('sessionSettings') || '{}');
-saved.colors = saved.colors || {};
-saved.colors[lower] = this.value;
-localStorage.setItem('sessionSettings', JSON.stringify(saved));
-});
-}
-});
-
-// Загрузка сохраненных настроек сессий при старте
-function loadSessionSettings() {
-const saved = localStorage.getItem('sessionSettings');
-if (!saved) return;
-const s = JSON.parse(saved);
-if (s.enabled === false) document.getElementById('sessionsEnabled').checked = false;
-if (s.opacity) {
-document.getElementById('sessionOpacity').value = s.opacity * 100;
-document.getElementById('sessionOpacityValue').textContent = Math.round(s.opacity * 100) + '%';
-}
-if (s.colors) {
-if (s.colors.asian) {
-document.getElementById('sessionAsianColor').value = s.colors.asian;
-document.getElementById('sessionAsianColorBox').style.backgroundColor = s.colors.asian;
-}
-if (s.colors.european) {
-document.getElementById('sessionEuropeanColor').value = s.colors.european;
-document.getElementById('sessionEuropeanColorBox').style.backgroundColor = s.colors.european;
-}
-if (s.colors.american) {
-document.getElementById('sessionAmericanColor').value = s.colors.american;
-document.getElementById('sessionAmericanColorBox').style.backgroundColor = s.colors.american;
-}
-}
-if (window._sessionHighlighter && s.colors) {
-window._sessionHighlighter.updateSettings({ colors: s.colors });
-}
-}
-loadSessionSettings();
-
-// Загрузка настроек разделителя
-function loadSeparatorSettings() {
-const sepEnabled = localStorage.getItem('separatorEnabled') !== 'false';
-const sepColor = localStorage.getItem('separatorColor') || '#808080';
-const sepStyle = localStorage.getItem('separatorStyle') || 'dashed';
-const sepWidth = localStorage.getItem('separatorWidth') || '1';
-const sepOpacity = localStorage.getItem('separatorOpacity') || '30';
-document.getElementById('separatorsEnabled').checked = sepEnabled;
-document.getElementById('separatorCurrentColor').style.backgroundColor = sepColor;
-document.getElementById('separatorColorPicker').value = sepColor;
-document.getElementById('separatorLineStyle').value = sepStyle;
-document.getElementById('separatorLineWidth').value = sepWidth;
-document.getElementById('separatorWidthValue').textContent = sepWidth + 'px';
-document.getElementById('separatorOpacity').value = sepOpacity;
-document.getElementById('separatorOpacityValue').textContent = sepOpacity + '%';
-}
-
-// ✅ fillColorGrid — С СОХРАНЕНИЕМ И ПРИМЕНЕНИЕМ ПРИ КЛИКЕ
-function fillColorGrid(gridId, colors, selectedColor) {
-const grid = document.getElementById(gridId);
-if (!grid) return;
-grid.innerHTML = '';
-colors.forEach(color => {
-const square = document.createElement('div');
-square.className = 'color-square';
-square.style.backgroundColor = color;
-square.style.width = '24px';
-square.style.height = '24px';
-square.style.borderRadius = '3px';
-square.style.cursor = 'pointer';
-square.style.border = color === selectedColor ? '2px solid #4A90E2' : '1px solid transparent';
-square.addEventListener('click', () => {
-document.querySelectorAll(`#${gridId} .color-square`).forEach(s => {
-s.style.border = '1px solid transparent';
-});
-square.style.border = '2px solid #4A90E2';
-
-if (gridId === 'bgColorsGrid') {
-document.getElementById('bgCurrentColor').style.backgroundColor = color;
-document.getElementById('bgColorPicker').value = color;
-localStorage.setItem('chartBgColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
-applyColorsToChart(color,
-document.getElementById('bullishColorPicker').value,
-document.getElementById('bearishColorPicker').value);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
-} else if (gridId === 'bullishColorsGrid') {
-document.getElementById('bullishCurrentColor').style.backgroundColor = color;
-document.getElementById('bullishColorPicker').value = color;
-localStorage.setItem('chartBullishColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
-applyColorsToChart(
-document.getElementById('bgColorPicker').value,
-color,
-document.getElementById('bearishColorPicker').value);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
-} else if (gridId === 'bearishColorsGrid') {
-document.getElementById('bearishCurrentColor').style.backgroundColor = color;
-document.getElementById('bearishColorPicker').value = color;
-localStorage.setItem('chartBearishColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
-applyColorsToChart(
-document.getElementById('bgColorPicker').value,
-document.getElementById('bullishColorPicker').value,
-color);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
-} else if (gridId === 'separatorColorsGrid') {
-document.getElementById('separatorCurrentColor').style.backgroundColor = color;
-document.getElementById('separatorColorPicker').value = color;
-localStorage.setItem('separatorColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
-if (window._dailySeparator) {
-window._dailySeparator.updateSettings({
-enabled: document.getElementById('separatorsEnabled').checked,
-color: color,
-style: document.getElementById('separatorLineStyle').value,
-width: parseInt(document.getElementById('separatorLineWidth').value),
-opacity: parseInt(document.getElementById('separatorOpacity').value) / 100
-});
-}
-}
-});
-grid.appendChild(square);
-});
-}
-
-function loadSavedColors() {
-const bgColor = localStorage.getItem('chartBgColor') || '#000000';
-const bullishColor = localStorage.getItem('chartBullishColor') || '#00bcd4';
-const bearishColor = localStorage.getItem('chartBearishColor') || '#f23645';
-document.getElementById('bgCurrentColor').style.backgroundColor = bgColor;
-document.getElementById('bgColorPicker').value = bgColor;
-document.getElementById('bullishCurrentColor').style.backgroundColor = bullishColor;
-document.getElementById('bullishColorPicker').value = bullishColor;
-document.getElementById('bearishCurrentColor').style.backgroundColor = bearishColor;
-document.getElementById('bearishColorPicker').value = bearishColor;
-applyColorsToChart(bgColor, bullishColor, bearishColor);
-}
-
-function applyColorsToChart(bg, bullish, bearish) {
-if (window.chartManagerInstance) {
-window.chartManagerInstance.chart.applyOptions({
-layout: { background: { color: bg } }
-});
-if (window.chartManagerInstance.candleSeries) {
-window.chartManagerInstance.candleSeries.applyOptions({
-upColor: bullish, downColor: bearish, wickUpColor: bullish, wickDownColor: bearish
-});
-}
-if (window.chartManagerInstance.barSeries) {
-window.chartManagerInstance.barSeries.applyOptions({ upColor: bullish, downColor: bearish });
-}
-const cm = window.chartManagerInstance;
-const lastCandle = cm.chartData?.[cm.chartData.length - 1];
-const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-const lineColor = isBullish ? bullish : bearish;
-const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-if (series && cm.currentRealPrice) series.applyOptions({ priceLineColor: lineColor });
-if (window.chartManagerInstance.volumeSeries) {
-const currentData = window.chartManagerInstance.chartData;
-if (currentData && currentData.length > 0) {
-const volumeData = currentData.map(candle => ({
-time: candle.time, value: candle.volume,
-color: candle.close >= candle.open ? bullish : bearish
-}));
-window.chartManagerInstance.volumeSeries.setData(volumeData);
-}
-}
-window.chartManagerInstance.bullishColor = bullish;
-window.chartManagerInstance.bearishColor = bearish;
-if (window.rulerLineManager) {
-window.rulerLineManager._rulers.forEach(item => {
-if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
-});
-}
-}
-}
-
-function rgbToHex(rgb) {
-if (!rgb) return '#000000';
-if (rgb.startsWith('#')) return rgb;
-const match = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-if (!match) return rgb;
-return '#' + ((1 << 24) + (parseInt(match[1]) << 16) + (parseInt(match[2]) << 8) + parseInt(match[3])).toString(16).slice(1);
-}
-
-document.addEventListener('DOMContentLoaded', initChartColorPanel);
-
-// ✅ applySessionColor — через color picker
-window.applySessionColor = function(sessionName) {
-const capital = sessionName.charAt(0).toUpperCase() + sessionName.slice(1);
-const picker = document.getElementById(`session${capital}Color`);
-const box = document.getElementById(`session${capital}ColorBox`);
-if (!picker || !box) return;
-const color = picker.value;
-box.style.backgroundColor = color;
-if (window._sessionHighlighter) {
-window._sessionHighlighter.updateSettings({ colors: { [sessionName]: color } });
-}
-const saved = JSON.parse(localStorage.getItem('sessionSettings') || '{}');
-saved.colors = saved.colors || {};
-saved.colors[sessionName] = color;
-localStorage.setItem('sessionSettings', JSON.stringify(saved));
-};
-})();
-
-// ========== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ ЦВЕТОВОЙ СЕТКИ С УДАЛЕНИЕМ (для рисовалок) ==========
-function createColorGrid(gridId, colorBoxId, colorPickerId, hexInputId, selectedColor, addBtnId) {
-const grid = document.getElementById(gridId);
-if (!grid) return;
-const defaultColors = [
-'#4A90E2','#EF5350','#26A69A','#FFA726','#AB47BC','#5C6BC0',
-'#66BB6A','#FF7043','#7E57C2','#42A5F5','#EC407A','#FFCA28',
-'#8D6E63','#B0BEC5','#FFFFFF','#F44336','#E91E63','#9C27B0',
-'#673AB7','#3F51B5','#2196F3','#03A9F4','#00BCD4','#009688','#4CAF50'
-];
-let colors = [];
-try {
-const saved = localStorage.getItem(`colorGrid_${gridId}`);
-colors = saved ? JSON.parse(saved) : [...defaultColors];
-} catch(e) { colors = [...defaultColors]; }
-grid.innerHTML = '';
-colors.forEach(c => {
-const s = document.createElement('div');
-s.className = 'color-square';
-s.style.backgroundColor = c;
-if (c === selectedColor) s.classList.add('selected');
-const delBtn = document.createElement('span');
-delBtn.className = 'delete-color';
-delBtn.innerHTML = '×';
-delBtn.onclick = (e) => {
-e.stopPropagation();
-s.remove();
-colors = colors.filter(col => col !== c);
-localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
-};
-s.appendChild(delBtn);
-s.onclick = () => {
-grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
-s.classList.add('selected');
-const colorBox = document.getElementById(colorBoxId);
-const hexInput = document.getElementById(hexInputId);
-const colorPicker = document.getElementById(colorPickerId);
-if (colorBox) colorBox.style.backgroundColor = c;
-if (hexInput) hexInput.value = c;
-// ✅ Триггерим событие input на color picker для мгновенного применения
-if (colorPicker) {
-colorPicker.value = c;
-colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
-}
-};
-grid.appendChild(s);
-});
-const addBtn = document.getElementById(addBtnId);
-const hexInput = document.getElementById(hexInputId);
-if (addBtn && hexInput) {
-addBtn.onclick = () => {
-let hex = hexInput.value.trim();
-if (!hex.startsWith('#')) hex = '#' + hex;
-if (/^#[0-9A-F]{6}$/i.test(hex)) {
-if (!colors.includes(hex)) {
-colors.push(hex);
-localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
-}
-const s = document.createElement('div');
-s.className = 'color-square';
-s.style.backgroundColor = hex;
-const delBtn = document.createElement('span');
-delBtn.className = 'delete-color';
-delBtn.innerHTML = '×';
-delBtn.onclick = (e) => {
-e.stopPropagation();
-s.remove();
-colors = colors.filter(col => col !== hex);
-localStorage.setItem(`colorGrid_${gridId}`, JSON.stringify(colors));
-};
-s.appendChild(delBtn);
-s.onclick = () => {
-grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
-s.classList.add('selected');
-const colorBox = document.getElementById(colorBoxId);
-const hexInput2 = document.getElementById(hexInputId);
-const colorPicker = document.getElementById(colorPickerId);
-if (colorBox) colorBox.style.backgroundColor = hex;
-if (hexInput2) hexInput2.value = hex;
-// ✅ Триггерим событие input на color picker для мгновенного применения
-if (colorPicker) {
-colorPicker.value = hex;
-colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
-}
-};
-grid.appendChild(s);
-grid.querySelectorAll('.color-square').forEach(q => q.classList.remove('selected'));
-s.classList.add('selected');
-const colorBox = document.getElementById(colorBoxId);
-if (colorBox) colorBox.style.backgroundColor = hex;
-}
-};
-}
-}
-
-// Горячая клавиша Tab
-(function() {
-let isToolbarVisible = true;
-document.addEventListener('keydown', function(e) {
-if (e.key === 'Tab') {
-if (document.activeElement.tagName !== 'INPUT' &&
-document.activeElement.tagName !== 'TEXTAREA' &&
-document.activeElement.tagName !== 'SELECT') {
-e.preventDefault();
-const drawingToolbar = document.getElementById('drawingToolbar');
-const toolbarToggle = document.getElementById('toolbarToggle');
-if (!drawingToolbar || !toolbarToggle) return;
-if (isToolbarVisible) {
-drawingToolbar.classList.add('collapsed');
-toolbarToggle.textContent = '▶';
-isToolbarVisible = false;
-} else {
-drawingToolbar.classList.remove('collapsed');
-toolbarToggle.textContent = '◀';
-isToolbarVisible = true;
-}
-}
-}
-});
-const toolbarToggleBtn = document.getElementById('toolbarToggle');
-if (toolbarToggleBtn) {
-toolbarToggleBtn.addEventListener('click', function() {
-const drawingToolbar = document.getElementById('drawingToolbar');
-isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
-});
-}
-})();
-</script>
-<!-- СКРИПТ ПОЛНОЭКРАННОГО РЕЖИМА -->
-<style>
-.fullscreen-mode .ticker-panel {
-display: none !important;
-}
-.fullscreen-mode #chart-container {
-right: 0 !important;
-width: 100vw !important;
-left: 0 !important;
-}
-</style>
-<script>
-(function() {
-const fullscreenBtn = document.getElementById('fullscreenBtn');
-const body = document.body;
-
-function toggleFullscreen() {
-if (!document.fullscreenElement) {
-document.documentElement.requestFullscreen().catch(err => {
-console.error('Ошибка перехода в полный экран:', err);
-});
-} else {
-document.exitFullscreen();
-}
-}
-
-if (fullscreenBtn) {
-fullscreenBtn.addEventListener('click', toggleFullscreen);
-}
-
-document.addEventListener('fullscreenchange', function() {
-if (fullscreenBtn) {
-fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
-}
-if (document.fullscreenElement) {
-body.classList.add('fullscreen-mode');
-} else {
-body.classList.remove('fullscreen-mode');
-}
-});
-
-document.addEventListener('keydown', function(e) {
-const isPKey = e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З';
-if (isPKey) {
-const activeTag = document.activeElement.tagName;
-if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA' && activeTag !== 'SELECT') {
-e.preventDefault();
-e.stopPropagation();
-toggleFullscreen();
-}
-}
-});
-})();
-</script>
-
-<!-- СКРИПТ ДЛЯ СКРИНШОТА -->
-<script>
-function takeChartScreenshot() {
-const element = document.documentElement;
-let symbol = 'UNKNOWN';
-let timeframe = 'UNKNOWN';
-const pairDisplay = document.getElementById('pairDisplay');
-const currentTfBadge = document.getElementById('currentTfBadge');
-
-if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
-if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
-
-if (window.chartManagerInstance) {
-if (window.chartManagerInstance.currentSymbol) {
-symbol = window.chartManagerInstance.currentSymbol;
-}
-if (window.chartManagerInstance.currentInterval) {
-const interval = window.chartManagerInstance.currentInterval;
-const tfMap = {
-'1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-'1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
-'1d': '1D', '1w': '1W', '1M': '1M'
-};
-timeframe = tfMap[interval] || interval;
-}
-}
-
-const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-const filename = `${cleanSymbol}_${timeframe}.png`;
-const originalOverflow = document.body.style.overflow;
-document.body.style.overflow = 'hidden';
-
-html2canvas(element, {
-scale: 2,
-logging: false,
-allowTaint: false,
-useCORS: true,
-backgroundColor: '#000000',
-windowWidth: window.innerWidth,
-windowHeight: window.innerHeight
-}).then((canvas) => {
-document.body.style.overflow = originalOverflow;
-const link = document.createElement('a');
-link.download = filename;
-link.href = canvas.toDataURL('image/png');
-link.click();
-}).catch((error) => {
-document.body.style.overflow = originalOverflow;
-console.error('❌ Ошибка html2canvas:', error);
-});
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-const screenshotBtn = document.getElementById('toolScreenshot');
-if (screenshotBtn) {
-screenshotBtn.addEventListener('click', function(e) {
-e.preventDefault();
-e.stopPropagation();
-takeChartScreenshot();
-});
-}
-
-document.addEventListener('keydown', function(e) {
-if (e.key === 's' || e.key === 'S') {
-if (document.activeElement.tagName !== 'INPUT' &&
-document.activeElement.tagName !== 'TEXTAREA' &&
-document.activeElement.tagName !== 'SELECT') {
-e.preventDefault();
-takeChartScreenshot();
-}
-}
-});
-});
-
-// ✅ ВОССТАНОВЛЕНИЕ ПОЗИЦИИ И ОРИЕНТАЦИИ ПАНЕЛИ ПРИ ЗАГРУЗКЕ
-(function() {
-    const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
-    const drawingToolbar = document.getElementById('drawingToolbar');
-    
-    if (!toolbarOrientationBtn || !drawingToolbar) return;
-
-    // 1. Восстанавливаем ориентацию
-    const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
-    if (savedOrientation === 'vertical') {
-        drawingToolbar.classList.add('vertical');
-        toolbarOrientationBtn.textContent = '⇅';
-    } else {
-        toolbarOrientationBtn.textContent = '⇄';
+        mainChart.subscribeCrosshairMove((param) => {
+            lastCrosshairParam = param;
+            if (!crosshairUpdateScheduled) {
+                crosshairUpdateScheduled = true;
+                requestAnimationFrame(() => {
+                    syncCrosshairToPanels(lastCrosshairParam);
+                    crosshairUpdateScheduled = false;
+                });
+            }
+        });
     }
 
-    // 2. Восстанавливаем позицию СТРОГО из localStorage (без сбросов)
-    const savedLeft = localStorage.getItem('drawingToolbarLeft');
-    const savedTop = localStorage.getItem('drawingToolbarTop');
+    // =========================================================================
+    // ОПТИМИЗИРОВАННЫЕ МЕТОДЫ СКРОЛЛА (ГЛАВНОЕ ИСПРАВЛЕНИЕ ЛАГОВ)
+    // =========================================================================
+    setupOptimizedSubscriptions() {
+        this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+            const now = performance.now();
+            this._isScrollingFast = (now - this._lastScrollTime) < 40;
+            this._isScrolling = true;
+            this._lastScrollTime = now;
+            this._lastVisibleRange = range;
 
-    if (savedLeft) drawingToolbar.style.left = savedLeft;
-    if (savedTop) drawingToolbar.style.top = savedTop;
+            // Сбрасываем таймер остановки скролла
+            clearTimeout(this._scrollStopTimeout);
+            this._scrollStopTimeout = setTimeout(() => {
+                this._isScrolling = false;
+                this._isScrollingFast = false;
+                
+                // ТЯЖЕЛЫЕ операции выполняем ТОЛЬКО после остановки скролла!
+                this._applyPendingTrim();
+                this.onVisibleLogicalRangeChange(this._lastVisibleRange); // Загрузка истории
+                this.scheduleDrawingsUpdate(true); // Высокий приоритет отрисовки рисунков
+                this.requestDrawingsRedraw();
+            }, 150); // 150мс - оптимальная задержка для плавности
 
-    // 3. Обработчик кнопки ориентации (с обновлением кэша размеров)
-    toolbarOrientationBtn.addEventListener('click', (e) => {
-        e.stopPropagation(); // Предотвращаем всплытие, чтобы не сработал drag
-        drawingToolbar.classList.toggle('vertical');
+            // 1. Синхронизация панелей (легкая операция, но через RAF)
+            if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
+                if (!this._panelsSyncRafId) {
+                    this._panelsSyncRafId = requestAnimationFrame(() => {
+                        this._isSyncing = true;
+                        const panels = this.indicatorManager.panelManager.panels;
+                        panels.forEach((panel) => {
+                            if (panel.chart && !panel.isCollapsed) {
+                                try { 
+                                    panel.chart.timeScale().setVisibleLogicalRange(range); 
+                                } catch(e) {}
+                            }
+                        });
+                        this._isSyncing = false;
+                        this._panelsSyncRafId = null;
+                    });
+                }
+            }
+
+            // 2. Обновление рисунков (уже имеет встроенный RAF-троттлинг)
+            this.scheduleDrawingsUpdate();
+        });
         
-        if (drawingToolbar.classList.contains('vertical')) {
-            toolbarOrientationBtn.textContent = '⇅';
-            localStorage.setItem('drawingToolbarOrientation', 'vertical');
-        } else {
-            toolbarOrientationBtn.textContent = '⇄';
-            localStorage.setItem('drawingToolbarOrientation', 'horizontal');
+        // Пассивный слушатель колеса мыши для улучшения отклика браузера
+        this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
+    }
+
+    setupMaximumSubscriptions() {
+        this.setupOptimizedSubscriptions();
+    }
+    // =========================================================================
+
+    setupEventListeners() {
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if (this.chart) {
+                    const width = this.chartContainer.clientWidth;
+                    const height = this.chartContainer.clientHeight;
+                    this.chart.applyOptions({ width, height });
+                    if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                    if (this._updateMainChartHeight) this._updateMainChartHeight();
+                    setTimeout(() => this.scrollToLast(), 50);
+                }
+                if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
+                this.scheduleDrawingsUpdate(true);
+            }, 100);
+        });
+
+        this.chartContainer.addEventListener('mouseleave', () => {
+            if (this.overlay) this.overlay.classList.remove('visible');
+            this._latestCrosshairData = null;
+            if (this._crosshairRafId) { cancelAnimationFrame(this._crosshairRafId); this._crosshairRafId = null; }
+            try { this.chart.clearCrosshairPosition(); } catch(e) {}
+        });
+    }
+
+    setChartType(type) {
+        if (!this.chart) return;
+        
+        this.currentChartType = type;
+        localStorage.setItem('chartType', type);
+        
+        if (type === 'candle') {
+            if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
+            if (this.barSeries) this.barSeries.applyOptions({ visible: false });
+        } else if (type === 'bar') {
+            if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
+            if (this.barSeries) this.barSeries.applyOptions({ visible: true });
+        }
+        
+        if (this.barSeries) {
+            this.barSeries.applyOptions({ upColor: CONFIG.colors.bullish, downColor: CONFIG.colors.bearish });
+        }
+        
+        if (this.timerManager?.reattach) this.timerManager.reattach();
+        
+        if (this.indicatorManager?.activeIndicators) {
+            this.indicatorManager.activeIndicators.forEach(indicator => {
+                try { indicator.createSeries(); } catch (e) {}
+            });
         }
         
         setTimeout(() => {
-            if (typeof toolbarWidth !== 'undefined') toolbarWidth = drawingToolbar.offsetWidth;
-            if (typeof toolbarHeight !== 'undefined') toolbarHeight = drawingToolbar.offsetHeight;
+            if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+            if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+            if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+            if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+            if (window.textManager) window.textManager.syncWithNewTimeframe();
         }, 50);
-    });
-})();
-</script>
-
-<script>
-(function() {
-function positionButtons() {
-const buttons = document.querySelector('.chart-footer-buttons');
-const panelsContainer = document.getElementById('indicator-panels-container');
-if (!buttons) return;
-
-let offset = 20;
-if (panelsContainer) {
-const rect = panelsContainer.getBoundingClientRect();
-if (rect.height > 0) {
-offset += rect.height;
-}
-}
-buttons.style.bottom = offset + 'px';
-}
-
-setTimeout(positionButtons, 500);
-
-const panels = document.getElementById('indicator-panels-container');
-if (panels && window.ResizeObserver) {
-const resizeObserver = new ResizeObserver(() => {
-requestAnimationFrame(positionButtons);
-});
-resizeObserver.observe(panels);
-}
-
-const mainContainer = document.getElementById('chart-container') || document.body;
-const mutationObserver = new MutationObserver(() => {
-requestAnimationFrame(positionButtons);
-});
-mutationObserver.observe(mainContainer, {
-childList: true,
-subtree: true,
-attributes: true
-});
-
-window.addEventListener('resize', positionButtons);
-})();
-</script>
-
-<!-- ПОДКЛЮЧЕНИЕ ВНЕШНИХ СКРИПТОВ -->
-<script src="./Config.js"></script>
-<script src="./Utils.js"></script>
-<script src="./TFLabels.js"></script>
-<script src="./IndexedDBStorage.js"></script>
-<script src="./DataFetcher.js"></script>
-<script src="./SafeHelpers.js"></script>
-<script src="./SafeElement.js"></script>
-<script src="./IndicatorWorker.js"></script>
-<script src="./BaseIndicator.js"></script>
-<script src="./IndicatorRegistry.js"></script>
-<script src="./Indicators.js"></script>
-<script src="./PriceManager.js"></script>
-<script src="./PrecisionHelper.js"></script>
-<script src="./TimerManager.js"></script>
-<script src="./ChartManager.js"></script>
-<script src="./WebSocketManager.js"></script>
-<script src="./TimeframeManager.js"></script>
-
-
-<script src="./DrawingManagers.js"></script>
-<script src="./IndicatorPanelManager.js"></script>
-<script src="./IndicatorManager.js"></script>
-<script src="./ticker/TickerStorage.js"></script>
-<script src="./ticker/TickerRenderer.js"></script>
-<script src="./ticker/TickerModal.js"></script>
-<script src="./ticker/TickerEvents.js"></script>
-<script src="./ticker/watchlistManager.js"></script>
-<script src="./ticker/TickerPanel.js"></script>
-<script src="./AppCoordinator.js"></script>
-<script src="./calculator.js"></script>
-<script src="./DailySeparator.js"></script>
-<script src="./SessionHighlighter.js"></script>
-<script>
-(function() {
-async function main() {
-window.app = new window.AppCoordinator();
-}
-if (document.readyState === 'loading') {
-document.addEventListener('DOMContentLoaded', main);
-} else {
-main();
-}
-})();
-</script>
-
-<script>
-(function() {
-document.addEventListener('keydown', function(e) {
-if (e.code === 'Digit0' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-e.preventDefault();
-const trashBtn = document.getElementById('toolTrash');
-if (trashBtn) {
-trashBtn.click();
-}
-}
-});
-})();
-</script>
-
-<script>
-(function() {
-const toolbar = document.getElementById('drawingToolbar');
-if (!toolbar) return;
-toolbar.addEventListener('mousedown', (e) => {
-e.stopPropagation();
-});
-toolbar.addEventListener('click', (e) => {
-e.stopPropagation();
-});
-toolbar.addEventListener('mouseup', (e) => {
-e.stopPropagation();
-});
-})();
-</script>
-
-<!-- ========== COLOR PICKER'Ы ДЛЯ РИСОВАЛОК (СИНХРОНИЗАЦИЯ) ========== -->
-<script>
-(function() {
-const colorPickerBindings = [
-{ picker: 'colorPickerInline',      hexInput: 'hexInputInline',      addBtn: 'addColorInline' },
-{ picker: 'trendColorPickerInline', hexInput: 'trendHexInputInline', addBtn: 'trendAddColorInline' },
-{ picker: 'alertColorPickerInline', hexInput: 'alertHexInputInline', addBtn: 'alertAddColorInline' },
-{ picker: 'textColorPickerInline',  hexInput: 'textHexInputInline',  addBtn: 'textAddColorInline' },
-{ picker: 'textBgColorPicker',      hexInput: 'textBgHexInput',      addBtn: 'textBgAddColor' }
-];
-
-colorPickerBindings.forEach(({ picker, hexInput, addBtn }) => {
-const pickerEl = document.getElementById(picker);
-const hexEl = document.getElementById(hexInput);
-const addBtnEl = document.getElementById(addBtn);
-
-if (pickerEl && hexEl) {
-// При выборе цвета в палитре — обновляем hex-input
-pickerEl.addEventListener('input', (e) => {
-hexEl.value = e.target.value;
-});
-// При изменении hex-input — обновляем палитру
-hexEl.addEventListener('input', (e) => {
-let hex = e.target.value.trim();
-if (!hex.startsWith('#')) hex = '#' + hex;
-if (/^#[0-9A-F]{6}$/i.test(hex)) {
-pickerEl.value = hex;
-}
-});
-// При нажатии "Добавить" — синхронизируем палитру с hex-input
-if (addBtnEl) {
-addBtnEl.addEventListener('click', () => {
-let hex = hexEl.value.trim();
-if (!hex.startsWith('#')) hex = '#' + hex;
-if (/^#[0-9A-F]{6}$/i.test(hex)) {
-pickerEl.value = hex;
-}
-});
-}
-}
-});
-console.log('✅ Color picker\'ы для рисовалок синхронизированы');
-})();
-</script>
-
-<script>
-    
-(function() {
-    // Функция для применения цвета к выбранному объекту
-    function applyColorToSelected(manager, color) {
-    if (!manager) return false;
-    
-    // 🔥 ПРАВИЛЬНЫЕ ИМЕНА СВОЙСТВ (с подчёркиванием!)
-    const selected = manager._selectedRay || manager._selectedLine || manager._selectedAlert || manager._selectedText;
-    if (!selected) return false;
-    
-    // Определяем, где хранится цвет
-    if (selected.options) {
-        selected.options.color = color;
-    } else if (selected.color !== undefined) {
-        selected.color = color;
-    } else {
-        return false;
+        
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries) {
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+            const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+            activeSeries.applyOptions({
+                priceLineVisible: true, lastValueVisible: true,
+                priceLineColor: lineColor, priceLineWidth: 1,
+                priceLineStyle: LightweightCharts.LineStyle.Dashed
+            });
+        }
     }
-    
-    // Перерисовка
-    if (manager._requestRedraw) manager._requestRedraw();
-    
-    // Сохранение
-    if (manager._saveRays) manager._saveRays();
-    if (manager._saveTrends) manager._saveTrends();
-    if (manager._saveAlerts) manager._saveAlerts();
-    if (manager._saveTexts) manager._saveTexts();
-    if (manager.saveState) manager.saveState();
-    
-    console.log('✅ Цвет применён к объекту:', color);
-    return true;
-}
 
-    // Ждём, пока менеджеры будут созданы
-    function setupColorPickers() {
-        // Проверяем, что хотя бы один менеджер уже создан
-        if (!window.rayManager && !window.trendLineManager && !window.alertLineManager && !window.textManager) {
-            console.log('⏳ Ожидание инициализации менеджеров рисования...');
-            setTimeout(setupColorPickers, 300);
+    scheduleUpdate() {
+        if (this._updateScheduled) return;
+        this._updateScheduled = true;
+        requestAnimationFrame(() => {
+            this._performUpdate();
+            this._updateScheduled = false;
+            this._lastUpdateTime = Date.now();
+        });
+    }
+
+    scheduleUpdatePosition() {
+        if (this._updatePositionRafId === null) {
+            this._updatePositionRafId = requestAnimationFrame(() => {
+                this.updatePriceLineTimerPosition();
+                this._updatePositionRafId = null;
+            });
+        }
+    }
+
+    updatePriceLineTimerPosition() {
+        if (!this.priceLineTimer) {
+            this.priceLineTimer = document.getElementById('priceLineTimer');
+            if (!this.priceLineTimer) return;
+        }
+        if (!this.lastCandle) return;
+        
+        const price = this.currentRealPrice || this.lastCandle.close;
+        if (!price || isNaN(price)) return;
+        
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (!activeSeries) return;
+        
+        const coordinate = activeSeries.priceToCoordinate(price);
+        if (coordinate !== null && !isNaN(coordinate)) {
+            const containerRect = this.chartContainer.getBoundingClientRect();
+            let topPosition = coordinate + containerRect.top;
+            const timerHeight = this.priceLineTimer.offsetHeight || 30;
+            topPosition = Math.max(5, Math.min(window.innerHeight - timerHeight - 5, topPosition));
+            this.priceLineTimer.style.top = topPosition + 'px';
+            this.priceLineTimer.style.right = '10px';
+            
+            const isBullish = this.lastCandle ? Utils.isBullish(this.lastCandle.open, this.lastCandle.close) : true;
+            this.priceLineTimer.classList.remove('bullish', 'bearish');
+            this.priceLineTimer.classList.add(isBullish ? 'bullish' : 'bearish');
+        }
+    }
+
+    _performUpdate() {
+        if (!this.chartData.length) return;
+        
+        const cachedPrecision = localStorage.getItem(`precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`);
+        if (cachedPrecision) {
+            this.applyPriceFormat(parseInt(cachedPrecision));
+        } else {
+            this.applyPriceFormat(this._inferPrecisionFromData());
+        }
+        
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        const isBullishByCandle = lastCandle ? lastCandle.close >= lastCandle.open : true;
+        const lineColorByCandle = isBullishByCandle ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+        const price = this.getCurrentPrice() ?? this.currentRealPrice;
+
+        if (price !== null) {
+            this._syncPriceLine(price);
+        } else {
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (series) {
+                series.applyOptions({ priceLineSource: lastCandle.close, priceLineColor: lineColorByCandle });
+            }
+            this._lastAppliedColor = lineColorByCandle;
+        }
+
+        if (this.timerManager) {
+            const prim = this.timerManager._primitive;
+            if (prim) {
+                if (price !== null) {
+                    if (prim.setPrice) prim.setPrice(price);
+                } else {
+                    if (prim.setPrice && lastCandle) prim.setPrice(lastCandle.close);
+                    if (prim.setColor) prim.setColor(lineColorByCandle);
+                }
+            }
+            this.timerManager.start(this.currentInterval);
+        }
+        this.scheduleUpdatePosition();
+    }
+
+    _syncPriceLine(price) {
+        if (!price) return;
+        
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (!series) return;
+        
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (!lastCandle) return;
+        
+        lastCandle.close = price;
+        if (price > lastCandle.high) lastCandle.high = price;
+        if (price < lastCandle.low) lastCandle.low = price;
+        
+        const isBullish = price >= lastCandle.open;
+        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+        
+        this.currentRealPrice = price;
+        this._lastAppliedColor = lineColor;
+        this.lastCandle = lastCandle;
+        
+        series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
+        series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
+        
+        const prim = this.timerManager?._primitive;
+        if (prim) {
+            if (prim.setPrice) prim.setPrice(price);
+            if (prim.setColor) prim.setColor(lineColor);
+            if (prim.isEnabled()) prim.requestRedraw();
+        }
+        
+        this.scheduleUpdatePosition();
+        this._updatePageTitle();
+        this.requestDrawingsRedraw();
+    }
+
+    updateLastCandle(candle) {
+        if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
+        
+        try {
+            if (!this._isValidCandle(candle)) {
+                const sanitized = this._sanitizeCandle(candle);
+                if (!sanitized) return;
+                candle = sanitized;
+            }
+            
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            const existingIndex = this._candleTimeMap.get(candle.time);
+            
+            if (existingIndex !== undefined) {
+                this.chartData[existingIndex] = candle;
+            } else if (!lastCandle || candle.time > lastCandle.time) {
+                this.chartData.push(candle);
+                this._addToTimeMap(candle.time, this.chartData.length - 1);
+            } else {
+                return;
+            }
+            
+            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (activeSeries) {
+                activeSeries.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
+            }
+            
+            this.currentRealPrice = candle.close;
+            this.lastCandle = candle;
+            
+            const isBullish = candle.close >= candle.open;
+            const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+            
+            if (lineColor !== this._lastAppliedColor) {
+                this._lastAppliedColor = lineColor;
+                if (activeSeries) activeSeries.applyOptions({ priceLineColor: lineColor });
+            }
+            
+            if (this.timerManager?._primitive) {
+                if (this.timerManager._primitive.setPrice) this.timerManager._primitive.setPrice(candle.close);
+                if (this.timerManager._primitive.setColor) this.timerManager._primitive.setColor(lineColor);
+                if (this.timerManager._primitive.isEnabled()) this.timerManager._primitive.requestRedraw();
+            }
+            
+            if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
+            
+         if (this.volumeSeries) {
+    this.volumeSeries.update({ 
+        time: candle.time, 
+        // 👇 ИЗМЕНЕНО
+        value: candle.quoteVolume || 0, 
+        color: isBullish ? this.bullishColor : this.bearishColor 
+    });
+}
+            
+            this._priceChanged = true;
+            this._volumeDataDirty = true;
+        } catch (e) {
+            console.error('❌ Ошибка в updateLastCandle:', e);
+        }
+    }
+
+    async waitForChartReady() {
+        await new Promise(resolve => {
+            const check = () => {
+                const ts = this.chart?.timeScale();
+                if (ts && ts.getVisibleRange()) resolve();
+                else requestAnimationFrame(check);
+            };
+            check();
+        });
+        await new Promise(r => setTimeout(r, 50));
+    }
+
+    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
+        console.log(`📊 setDataQuick: ${data.length} свечей для ${symbol}`);
+
+        if (data.length === 0) {
+            console.warn('⚠️ Нет данных для загрузки');
             return;
         }
 
-        console.log('✅ Менеджеры рисования готовы, активируем пикеры');
+        if (this.candleSeries) this.candleSeries.setData([]);
+        if (this.barSeries) this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
+        this.chartData = [];
+        this.lastCandle = null;
+        this._candleTimeMap.clear();
+        this._volumeDataCache = null;
+        this._volumeDataDirty = true;
+        this._isTrimming = false;
 
-        // Обработчики для всех пикеров
-        document.querySelectorAll('.color-picker-inline').forEach(picker => {
-            picker.addEventListener('input', function(e) {
-                const color = e.target.value;
-                const hexInput = this.closest('.color-picker-row').querySelector('.hex-input');
-                if (hexInput) hexInput.value = color;
+        const seenTimes = new Set();
+        let noDupes = data.filter(c => {
+            if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
+            if (seenTimes.has(c.time)) return false;
+            seenTimes.add(c.time);
+            return true;
+        });
+        noDupes = noDupes.filter(c => this._isValidCandle(c));
+        data = noDupes;
 
-                const panel = this.closest('.drawing-settings-panel');
-                if (!panel) return;
-                const panelId = panel.id;
+        if (data.length === 0) {
+            console.error('❌ setDataQuick: после фильтрации не осталось валидных свечей!');
+            return;
+        }
 
-                let applied = false;
-                switch (panelId) {
-                    case 'drawingSettings':
-                        applied = applyColorToSelected(window.rayManager, color);
-                        break;
-                    case 'trendSettings':
-                        applied = applyColorToSelected(window.trendLineManager, color);
-                        break;
-                    case 'alertSettings':
-                        applied = applyColorToSelected(window.alertLineManager, color);
-                        break;
-                    case 'textSettings':
-                        applied = applyColorToSelected(window.textManager, color);
-                        break;
-                    default:
-                        break;
+        data.sort((a, b) => a.time - b.time);
+
+        this.chartData = data;
+        this._rebuildTimeMap();
+
+        this.currentInterval = interval;
+        this.currentSymbol = symbol;
+        this.currentExchange = exchange;
+        this.currentMarketType = marketType;
+        this.hasMoreData = true;
+        this._historyEndTime = data[0].time;
+        this.lastCandle = data[data.length - 1];
+
+        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+        const inferredPrecision = this._inferPrecisionFromData();
+
+        if (cachedPrecision) {
+            this.applyPriceFormat(parseInt(cachedPrecision));
+        } else {
+            this.applyPriceFormat(inferredPrecision);
+            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
+        }
+
+        this.candleSeries.setData(this.chartData);
+        this.barSeries.setData(this.chartData);
+
+        if (this.volumeSeries && this.chartData.length > 0) {
+            const volumeData = this._buildVolumeData(this.chartData);
+            this.volumeSeries.setData(volumeData);
+            this._volumeDataDirty = false;
+        }
+
+        if (this.indicatorManager) {
+            this.indicatorManager.restorePendingIndicators();
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.indicatorManager.updateAllIndicators();
+                    this.indicatorManager.loadIndicators();
+                });
+            });
+        }
+
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        const isBullishByCandle = lastCandle ? lastCandle.close >= lastCandle.open : true;
+        const lineColorByCandle = isBullishByCandle ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series) {
+            series.applyOptions({ priceLineColor: lineColorByCandle });
+            this._lastAppliedColor = lineColorByCandle;
+        }
+
+        if (this.timerManager) this.timerManager.start(this.currentInterval);
+
+        this.scrollToLast();
+        this.autoScale();
+        this.scheduleUpdatePosition();
+        this._updatePageTitle();
+
+        getPrecisionFromExchange(symbol, exchange, marketType)
+            .then(precision => {
+                if (this.currentSymbol === symbol) {
+                    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                    this.applyPriceFormat(precision);
+                }
+            })
+            .catch(() => {});
+
+        requestAnimationFrame(() => {
+            if (window.renderDrawings) window.renderDrawings();
+        });
+
+        this._notifySymbolChange();
+        this._lastTimeframe = interval;
+
+        if (!window._dailySeparator) window._dailySeparator = new DailySeparator(this);
+        else window._dailySeparator.redraw();
+        
+        if (!window._sessionHighlighter) window._sessionHighlighter = new SessionHighlighter(this);
+
+        this.isLoadingMore = false;
+        this._pendingHistoryLoad = false;
+        this._lastHistoryLoadTime = 0;
+        console.log('✅ setDataQuick завершен, история готова к загрузке');
+    }
+
+    loadDrawingsForCurrentSymbol() {
+        Promise.allSettled([
+            window.rayManager?.loadRays?.(),
+            window.trendLineManager?.loadTrendLines?.(),
+            window.rulerLineManager?.loadRulers?.(),
+            window.alertLineManager?.loadAlerts?.(),
+            window.textManager?.loadTexts?.()
+        ]).then(() => this.requestDrawingsRedraw());
+    }
+
+    onCrosshairMove(param) {
+        if (!this.overlay) this.overlay = safeElement('candleStatsOverlay');
+        
+        if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
+            if (this.overlay) this.overlay.classList.remove('visible');
+            this._latestCrosshairData = null;
+            return;
+        }
+
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const candle = param.seriesData.get(activeSeries);
+        
+        if (candle) {
+            const isBullish = candle.close >= candle.open;
+            const change = Utils.calculateChange(candle.open, candle.close);
+            const changeNum = parseFloat(change);
+            const index = this._candleTimeMap.get(param.time);
+           
+const vol = index !== undefined ? (this.chartData[index].quoteVolume || 0) : 0;
+            this._latestCrosshairData = {
+                open: candle.open, high: candle.high, low: candle.low, close: candle.close,
+                change: (changeNum > 0 ? '+' : '') + change + '%',
+                volume: Utils.formatVolume(vol),
+                cls: isBullish ? 'bullish' : 'bearish', visible: true
+            };
+        } else {
+            this._latestCrosshairData = { visible: false };
+        }
+        
+        if (!this._crosshairRafId) {
+            this._crosshairRafId = requestAnimationFrame(() => {
+                this._applyCrosshairDOM();
+                this._crosshairRafId = null;
+            });
+        }
+    }
+
+    _applyCrosshairDOM() {
+        const data = this._latestCrosshairData;
+        if (!data || !data.visible) {
+            if (this.overlay) this.overlay.classList.remove('visible');
+            return;
+        }
+
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const precision = series?.options()?.priceFormat?.precision ?? 2;
+        
+        const formatWithPrecision = (value) => {
+            if (value === undefined || value === null || isNaN(value)) return '—';
+            const key = `${value}_${precision}`;
+            
+            if (!this._formatCache.has(key)) {
+                this._formatCache.set(key, Number(value).toFixed(precision));
+                // LRU-подобная очистка: удаляем самый старый элемент, если кэш > 100
+                if (this._formatCache.size > 100) {
+                    this._formatCache.delete(this._formatCache.keys().next().value);
+                }
+            }
+            return this._formatCache.get(key);
+        };
+
+        const bullishColor = this.bullishColor || CONFIG?.colors?.bullish || '#26a69a';
+        const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
+        const color = data.cls === 'bullish' ? bullishColor : bearishColor;
+
+        // ⚡ ОПТИМИЗАЦИЯ: Обновляем цвет ТОЛЬКО если он реально изменился
+        if (this._lastCrosshairColor !== color) {
+            this._lastCrosshairColor = color;
+            
+            if (this.openEl) this.openEl.style.color = color;
+            if (this.highEl) this.highEl.style.color = color;
+            if (this.lowEl) this.lowEl.style.color = color;
+            if (this.closeEl) this.closeEl.style.color = color;
+            if (this.changeEl) this.changeEl.style.color = color;
+            if (this.volumeEl) this.volumeEl.style.color = color;
+        }
+
+        const baseClass = `stat-value ${data.cls}`;
+        const changeClass = `change-value ${data.cls}`;
+
+        // ⚡ ОПТИМИЗАЦИЯ: Обновляем текст и классы только при изменении
+        if (this.openEl) {
+            const newText = formatWithPrecision(data.open);
+            if (this.openEl.textContent !== newText) this.openEl.textContent = newText;
+            if (this.openEl.className !== baseClass) this.openEl.className = baseClass;
+        }
+        
+        if (this.highEl) {
+            const newText = formatWithPrecision(data.high);
+            if (this.highEl.textContent !== newText) this.highEl.textContent = newText;
+            if (this.highEl.className !== baseClass) this.highEl.className = baseClass;
+        }
+        
+        if (this.lowEl) {
+            const newText = formatWithPrecision(data.low);
+            if (this.lowEl.textContent !== newText) this.lowEl.textContent = newText;
+            if (this.lowEl.className !== baseClass) this.lowEl.className = baseClass;
+        }
+        
+        if (this.closeEl) {
+            const newText = formatWithPrecision(data.close);
+            if (this.closeEl.textContent !== newText) this.closeEl.textContent = newText;
+            if (this.closeEl.className !== baseClass) this.closeEl.className = baseClass;
+        }
+        
+        if (this.changeEl) {
+            if (this.changeEl.textContent !== data.change) this.changeEl.textContent = data.change;
+            if (this.changeEl.className !== changeClass) this.changeEl.className = changeClass;
+        }
+
+        if (this.volumeEl) {
+            if (this.volumeEl.textContent !== data.volume) this.volumeEl.textContent = data.volume;
+            if (this.volumeEl.className !== baseClass) this.volumeEl.className = baseClass;
+        }
+
+        if (this.overlay && !this.overlay.classList.contains('visible')) {
+            this.overlay.classList.add('visible');
+        }
+    }
+
+    updateRealPrice(price) { this._syncPriceLine(price); }
+
+    scrollToLast() {
+        if (this.chart && this.chartData.length > 0) this.chart.timeScale().scrollToRealTime();
+    }
+
+    _debouncedSetData() {
+        if (this._pendingSetData) return;
+        this._pendingSetData = true;
+        clearTimeout(this._setDataTimeout);
+        this._setDataTimeout = setTimeout(() => {
+            this._pendingSetData = false;
+            const timeScale = this.chart.timeScale();
+            const visibleRange = timeScale.getVisibleLogicalRange();
+            const savedRange = visibleRange ? { from: visibleRange.from, to: visibleRange.to } : null;
+            this.candleSeries.setData(this.chartData);
+            this.barSeries.setData(this.chartData);
+            if (savedRange) timeScale.setVisibleLogicalRange(savedRange);
+        }, 100);
+    }
+
+    clearChart() {
+        if (this.candleSeries) this.candleSeries.setData([]);
+        if (this.barSeries) this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
+        this.chartData = [];
+        this.lastCandle = null;
+        this._volumeDataCache = null;
+        this._volumeDataDirty = true;
+        this._isTrimming = false;
+        const priceScale = this.chart.priceScale('right');
+        if (priceScale) priceScale.applyOptions({ autoScale: true });
+    }
+
+    autoScale() {
+        if (!this.chart || this.chartData.length === 0) return;
+        const priceScale = this.chart.priceScale('right');
+        if (!priceScale) return;
+        if (this._autoScalePending) return;
+        this._autoScalePending = true;
+        priceScale.applyOptions({ autoScale: true, scaleMargins: { top: 0.1, bottom: 0.1 } });
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                priceScale.applyOptions({ autoScale: false });
+                this._autoScalePending = false;
+            });
+        });
+    }
+
+    getLastCandle() { return this.lastCandle; }
+    getChart() { return this.chart; }
+    setCurrentInterval(interval) { this.currentInterval = interval; }
+
+    _updateMainChartHeight() {
+        if (!this.chart) return;
+        const chartContainer = document.getElementById('chart-container');
+        const panelsContainer = document.getElementById('indicator-panels-container');
+        if (!chartContainer) return;
+
+        const availableHeight = window.innerHeight - 48;
+        const panelsHeight = panelsContainer ? panelsContainer.offsetHeight : 0;
+        let newChartHeight = availableHeight - panelsHeight;
+        if (newChartHeight < 200) newChartHeight = 200;
+        
+        chartContainer.style.height = newChartHeight + 'px';
+        chartContainer.style.maxHeight = newChartHeight + 'px';
+        if (panelsContainer) {
+            panelsContainer.style.position = 'absolute';
+            panelsContainer.style.top = newChartHeight + 'px';
+            panelsContainer.style.bottom = 'auto';
+        }
+        const width = chartContainer.clientWidth;
+        this.chart.resize(width, newChartHeight);
+        const volumeScale = this.chart.priceScale('volume');
+        if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    }
+
+    _resizeIndicatorPanels() {
+        const chartContainer = document.getElementById('chart-container');
+        if (!chartContainer) return;
+        const width = chartContainer.clientWidth;
+        if (this.indicatorManager?.panelManager) {
+            this.indicatorManager.panelManager.resize(width);
+            this._updateMainChartHeight();
+        }
+    }
+
+    addIndicator(type) {
+        const result = this.indicatorManager.addIndicator(type);
+        setTimeout(() => this._updateMainChartHeight(), 50);
+        return result;
+    }
+
+    removeIndicatorByType(type) { return this.indicatorManager.removeIndicator(type); }
+    clearAllIndicators() { this.indicatorManager.clearAllIndicators(); }
+    updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
+    restoreIndicators() { this.indicatorManager.loadIndicators(); }
+
+    _subscribeToPrice() {
+        if (!this.priceManager) { setTimeout(() => this._subscribeToPrice(), 100); return; }
+
+        if (this._priceSubscriptionKey && this._priceUpdateHandler) {
+            this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
+            this._priceUpdateHandler = null;
+            this._priceSubscriptionKey = null;
+        }
+
+        const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
+        this._priceSubscriptionKey = key;
+
+        this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
+            if (document.hidden || this._switchingSymbol) return;
+            if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
+            this._syncPriceLine(price);
+        };
+
+        this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+
+        const cachedPrice = this.priceManager.getPrice(key);
+        if (cachedPrice !== null && cachedPrice !== undefined && !isNaN(cachedPrice)) {
+            this.currentRealPrice = cachedPrice;
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            if (lastCandle) {
+                const isBullish = cachedPrice >= lastCandle.open;
+                this._lastAppliedColor = isBullish
+                    ? (this.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
+                    : (this.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
+            }
+            if (this.timerManager?.forceColorUpdate) this.timerManager.forceColorUpdate();
+        }
+    }
+
+    setSymbol(symbol) {
+        if (this.currentSymbol === symbol) return;
+        const oldSymbol = this.currentSymbol;
+        if (this.priceManager && this._priceUpdateHandler) {
+            this.priceManager.unsubscribe(oldSymbol, this._priceUpdateHandler);
+            this._priceUpdateHandler = null;
+        }
+        this.currentSymbol = symbol;
+        this._subscribeToPrice();
+    }
+
+    _inferPrecisionFromData() {
+        if (!this.chartData || this.chartData.length === 0) return 2;
+        const lastPrice = this.chartData[this.chartData.length - 1].close;
+        if (!lastPrice || lastPrice === 0) return 2;
+        const str = lastPrice.toString();
+        if (str.includes('.')) {
+            const decimals = str.split('.')[1].length;
+            return Math.min(decimals, 8);
+        }
+        return 2;
+    }
+
+    applyPriceFormat(precision) {
+        try {
+            if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
+                precision = this._inferPrecisionFromData();
+            }
+            const minMove = Math.pow(10, -precision);
+            const priceFormat = { type: 'price', precision: precision, minMove: minMove };
+            if (this.candleSeries) this.candleSeries.applyOptions({ priceFormat });
+            if (this.barSeries) this.barSeries.applyOptions({ priceFormat });
+            const priceScale = this.chart.priceScale('right');
+            if (priceScale) priceScale.applyOptions({ priceFormat: priceFormat });
+            return precision;
+        } catch (error) {
+            console.error('❌ КРИТИЧЕСКАЯ ОШИБКА applyPriceFormat:', error);
+            return this._inferPrecisionFromData();
+        }
+    }
+
+    _isValidCandle(candle) {
+        if (!candle || typeof candle !== 'object') return false;
+        if (typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return false;
+        const ohlcFields = ['open', 'high', 'low', 'close'];
+        for (const field of ohlcFields) {
+            const val = candle[field];
+            if (typeof val !== 'number' || isNaN(val) || !isFinite(val)) return false;
+        }
+        if (candle.high < candle.low) return false;
+        if (candle.open > candle.high || candle.open < candle.low || candle.close > candle.high || candle.close < candle.low) return false;
+        if (candle.volume !== undefined && candle.volume !== null) {
+            if (typeof candle.volume !== 'number' || isNaN(candle.volume) || candle.volume < 0) return false;
+        }
+        return true;
+    }
+
+    _sanitizeCandle(candle) {
+        if (!candle) return null;
+        const clean = { ...candle };
+        const fields = ['open', 'high', 'low', 'close'];
+        const validValues = fields.filter(f => typeof clean[f] === 'number' && !isNaN(clean[f]) && isFinite(clean[f]));
+        if (validValues.length === 0) return null;
+        const avgValue = validValues.reduce((s, f) => s + clean[f], 0) / validValues.length;
+        for (const field of fields) {
+            if (typeof clean[field] !== 'number' || isNaN(clean[field]) || !isFinite(clean[field])) clean[field] = avgValue;
+        }
+        if (typeof clean.volume !== 'number' || isNaN(clean.volume) || clean.volume < 0) clean.volume = 0;
+        const ohlc = [clean.open, clean.high, clean.low, clean.close];
+        clean.high = Math.max(...ohlc);
+        clean.low = Math.min(...ohlc);
+        return clean;
+    }
+
+    _createNewCandle(candle) {
+        if (!candle || !candle.time) return;
+        if (this._candleTimeMap.has(candle.time)) return;
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (lastCandle && candle.time <= lastCandle.time) return;
+        
+        this.chartData.push(candle);
+        this._addToTimeMap(candle.time, this.chartData.length - 1);
+        this.lastCandle = candle;
+        this.currentRealPrice = candle.close;
+
+        const isBullish = candle.close >= candle.open;
+        this._lastAppliedColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+        
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series) {
+            series.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
+        }
+        if (this.volumeSeries) {
+            this.volumeSeries.update({ time: candle.time, value: candle.volume || 0, color: isBullish ? this.bullishColor : this.bearishColor });
+        }
+        if (this.timerManager) {
+            this.timerManager.forceColorUpdate();
+            this.timerManager.start(this.currentInterval);
+        }
+        this._priceChanged = true;
+        this._volumeDataDirty = true;
+    }
+
+ _buildVolumeData(data) {
+    const bullishColor = this.bullishColor || CONFIG.colors.bullish || '#26a69a';
+    const bearishColor = this.bearishColor || CONFIG.colors.bearish || '#ef5350';
+    
+    if (this._volumeDataCache && !this._volumeDataDirty && data === this.chartData) {
+        return this._volumeDataCache;
+    }
+    
+    const volumeData = new Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+        const c = data[i];
+        volumeData[i] = {
+            time: c.time,
+            // 👇 ИЗМЕНЕНО: используем quoteVolume (USDT) вместо volume (монеты)
+            value: c.quoteVolume || 0, 
+            color: c.close >= c.open ? bullishColor : bearishColor
+        };
+    }
+    
+    if (data === this.chartData) {
+        this._volumeDataCache = volumeData;
+        this._volumeDataDirty = false;
+    }
+    
+    return volumeData;
+}
+
+    // ОПТИМИЗИРОВАННОЕ ОБНОВЛЕНИЕ ОБЪЕМОВ
+    _updateVolumeOptimized() {
+        if (!this.volumeSeries || !this.chartData.length) return;
+        
+        if (this._volumeDataDirty) {
+            const volumeData = this._buildVolumeData(this.chartData);
+            this.volumeSeries.setData(volumeData);
+            this._volumeDataDirty = false;
+        }
+    }
+
+    async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null) {
+        if (this._fetchPromise) { try { await this._fetchPromise; } catch(e) {} }
+        if (this._currentFetchController) this._currentFetchController.abort();
+        this._currentFetchController = new AbortController();
+
+        const bybitIntervalMap = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '6h': '360', '12h': '720', '1d': 'D', '1w': 'W', '1M': 'M' };
+
+        let url;
+        if (exchange === 'binance') {
+            url = marketType === 'futures'
+                ? `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+                : `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+            if (endTime) url += `&endTime=${endTime}`;
+        } else {
+            const bybitInt = bybitIntervalMap[interval] || interval;
+            const cat = marketType === 'futures' ? 'linear' : 'spot';
+            url = `https://api.bybit.com/v5/market/kline?category=${cat}&symbol=${symbol}&interval=${bybitInt}&limit=${limit}`;
+            if (endTime) url += `&end=${endTime}`;
+        }
+
+        console.log(`🌐 fetchKlines: limit=${limit}${endTime ? ' endTime=' + new Date(endTime).toISOString() : ''}`);
+
+        this._fetchPromise = (async () => {
+            try {
+                const response = await fetch(url, { signal: this._currentFetchController.signal });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+
+                let rawCandles;
+                if (exchange === 'binance') {
+                    rawCandles = data.map(item => ({
+                        time: Math.floor(item[0] / 1000), open: parseFloat(item[1]),
+                        high: parseFloat(item[2]), low: parseFloat(item[3]),
+                        close: parseFloat(item[4]), volume: parseFloat(item[5]),
+                        quoteVolume: parseFloat(item[7])
+                    }));
+                } else {
+                    if (data.retCode !== 0) throw new Error(data.retMsg);
+                    rawCandles = data.result.list.map(item => ({
+                        time: Math.floor(parseInt(item[0]) / 1000), open: parseFloat(item[1]),
+                        high: parseFloat(item[2]), low: parseFloat(item[3]),
+                        close: parseFloat(item[4]), volume: parseFloat(item[5] || 0),
+                        quoteVolume: parseFloat(item[6] || 0)
+                    })).filter(c => c !== null).reverse();
                 }
                 
-                // Если не удалось применить (нет выбранного объекта) — запоминаем цвет для будущих объектов
-                if (!applied) {
-                    const manager = window[panelId === 'drawingSettings' ? 'rayManager' :
-                                     panelId === 'trendSettings' ? 'trendLineManager' :
-                                     panelId === 'alertSettings' ? 'alertLineManager' :
-                                     panelId === 'textSettings' ? 'textManager' : null];
-                    if (manager) {
-                        manager._pendingColor = color;
-                        console.log(`💡 Цвет ${color} сохранён как дефолтный для ${panelId}`);
-                    }
-                }
-            });
-        });
+                const seenTimes = new Set();
+                const noDupes = rawCandles.filter(c => { if (seenTimes.has(c.time)) return false; seenTimes.add(c.time); return true; });
+                const validCandles = noDupes.filter(c => this._isValidCandle(c));
+                validCandles.sort((a, b) => a.time - b.time);
+                
+                console.log(`✅ fetchKlines: получено ${validCandles.length} свечей`);
+                return validCandles;
+            } catch (error) {
+                if (error.name === 'AbortError') console.log('🛑 fetchKlines прерван');
+                else console.error('❌ Ошибка fetchKlines:', error);
+                return [];
+            } finally {
+                this._currentFetchController = null;
+                this._fetchPromise = null;
+            }
+        })();
 
-        // Синхронизация пикера при вводе hex
-        document.querySelectorAll('.hex-input').forEach(hexInput => {
-            hexInput.addEventListener('input', function(e) {
-                let hex = e.target.value.trim();
-                if (!hex.startsWith('#')) hex = '#' + hex;
-                if (/^#[0-9A-F]{6}$/i.test(hex)) {
-                    const picker = this.closest('.color-picker-row').querySelector('.color-picker-inline');
-                    if (picker) {
-                        picker.value = hex;
-                        picker.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                }
-            });
-        });
-
-        console.log('✅ Мгновенное применение цвета для рисовалок активировано');
+        return this._fetchPromise;
     }
 
-    // Запускаем после загрузки DOM
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', setupColorPickers);
-    } else {
-        setupColorPickers();
-    }
-})();
-</script>
-
-<script>
-// ========== МГНОВЕННОЕ ПРИМЕНЕНИЕ НАСТРОЕК РИСОВАЛОК ==========
-(function() {
-    
-    // Универсальная функция для мгновенного применения
-    function bindInstantApply(config) {
-        const el = document.getElementById(config.elementId);
-        if (!el) {
-            console.log('❌ Элемент не найден:', config.elementId);
-            return;
+    _updatePageTitle() {
+        const symbol = this.currentSymbol || '';
+        let price = this.currentRealPrice;
+        if (!price && this.lastCandle) price = this.lastCandle.close;
+        if (!price && this.chartData?.length > 0) price = this.chartData[this.chartData.length - 1].close;
+        
+        if (!symbol) { document.title = 'График'; return; }
+        
+        if (price != null && !isNaN(price) && price > 0) {
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            const precision = series?.options()?.priceFormat?.precision || 2;
+            const lastCandle = this.chartData?.[this.chartData.length - 1];
+            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+            const arrow = isBullish ? '▲' : '▼';
+            document.title = `${arrow} ${symbol} ${price.toFixed(precision)}`;
+        } else {
+            document.title = `${symbol}`;
         }
-        
-        el.addEventListener(config.eventType, function() {
-            // Ищем менеджер
-            const manager = window[config.managerName];
-            if (!manager) return;
-            
-            // Ищем выбранный объект
-            const selected = manager[config.selectedProp];
-            if (!selected) return;
-            
-            // Получаем значение
-            let value;
-            if (this.type === 'checkbox') {
-                value = this.checked;
-            } else if (this.type === 'range') {
-                value = parseInt(this.value) / 100;
-            } else if (this.type === 'number') {
-                value = parseInt(this.value) || 1;
-            } else {
-                value = this.value;
-            }
-            
-            // Обновляем свойство объекта
-            const target = selected.options || selected;
-            target[config.optionKey] = value;
-            
-            // Обновляем отображение процентов
-            const displayEl = document.getElementById(config.displayId);
-            if (displayEl && this.type === 'range') {
-                displayEl.textContent = this.value + '%';
-            }
-            
-            // Применяем к примитиву
-            if (selected.primitive && config.applyToPrimitive) {
-                config.applyToPrimitive(selected.primitive, value, this);
-            }
-            
-            // Перерисовка
-            if (manager._requestRedraw) manager._requestRedraw();
-            
-            // Сохранение
-            if (manager[config.saveMethod]) manager[config.saveMethod]();
-            
-            console.log('✅ Применено:', config.optionKey, '=', value);
-        });
     }
 
-    // ========== НАСТРОЙКИ ДЛЯ КАЖДОГО ЭЛЕМЕНТА ==========
-    const bindings = [
-        // === ЛУЧИ ===
-        {
-            elementId: 'settingThickness', eventType: 'input',
-            managerName: 'rayManager', selectedProp: '_selectedRay',
-            optionKey: 'lineWidth', saveMethod: '_saveRays',
-            applyToPrimitive: (p, v) => p.applyOptions({ lineWidth: v })
-        },
-        {
-            elementId: 'colorOpacity', eventType: 'input',
-            managerName: 'rayManager', selectedProp: '_selectedRay',
-            optionKey: 'opacity', saveMethod: '_saveRays',
-            displayId: 'colorOpacityValue'
-        },
-        {
-            elementId: 'templateSelect', eventType: 'change',
-            managerName: 'rayManager', selectedProp: '_selectedRay',
-            optionKey: 'lineStyle', saveMethod: '_saveRays',
-            applyToPrimitive: (p, v) => {
-                const map = { solid: 0, dotted: 1, dashed: 2 };
-                p.applyOptions({ lineStyle: map[v] || 0 });
-            }
-        },
-        
-        // === ТРЕНДОВЫЕ ЛИНИИ ===
-        {
-            elementId: 'trendSettingThickness', eventType: 'input',
-            managerName: 'trendLineManager', selectedProp: '_selectedLine',
-            optionKey: 'lineWidth', saveMethod: '_saveTrends',
-            applyToPrimitive: (p, v) => p.applyOptions({ lineWidth: v })
-        },
-        {
-            elementId: 'trendColorOpacity', eventType: 'input',
-            managerName: 'trendLineManager', selectedProp: '_selectedLine',
-            optionKey: 'opacity', saveMethod: '_saveTrends',
-            displayId: 'trendColorOpacityValue'
-        },
-        {
-            elementId: 'trendTemplateSelect', eventType: 'change',
-            managerName: 'trendLineManager', selectedProp: '_selectedLine',
-            optionKey: 'lineStyle', saveMethod: '_saveTrends',
-            applyToPrimitive: (p, v) => {
-                const map = { solid: 0, dotted: 1, dashed: 2 };
-                p.applyOptions({ lineStyle: map[v] || 0 });
-            }
-        },
-        
-        // === АЛЕРТЫ ===
-        {
-            elementId: 'alertSettingThickness', eventType: 'input',
-            managerName: 'alertLineManager', selectedProp: '_selectedAlert',
-            optionKey: 'lineWidth', saveMethod: '_saveAlerts',
-            applyToPrimitive: (p, v) => p.applyOptions({ lineWidth: v })
-        },
-        {
-            elementId: 'alertColorOpacity', eventType: 'input',
-            managerName: 'alertLineManager', selectedProp: '_selectedAlert',
-            optionKey: 'opacity', saveMethod: '_saveAlerts',
-            displayId: 'alertColorOpacityValue'
-        },
-        {
-            elementId: 'alertTemplateSelect', eventType: 'change',
-            managerName: 'alertLineManager', selectedProp: '_selectedAlert',
-            optionKey: 'lineStyle', saveMethod: '_saveAlerts',
-            applyToPrimitive: (p, v) => {
-                const map = { solid: 0, dotted: 1, dashed: 2 };
-                p.applyOptions({ lineStyle: map[v] || 0 });
-            }
-        },
-        
-        // === ТЕКСТ ===
-        {
-            elementId: 'textFontSize', eventType: 'input',
-            managerName: 'textManager', selectedProp: '_selectedText',
-            optionKey: 'fontSize', saveMethod: '_saveTexts',
-            applyToPrimitive: (p, v) => p.applyOptions({ fontSize: v })
-        },
-        {
-            elementId: 'textBold', eventType: 'change',
-            managerName: 'textManager', selectedProp: '_selectedText',
-            optionKey: 'bold', saveMethod: '_saveTexts',
-            applyToPrimitive: (p, v) => p.applyOptions({ bold: v })
-        },
-        {
-            elementId: 'textOpacity', eventType: 'input',
-            managerName: 'textManager', selectedProp: '_selectedText',
-            optionKey: 'opacity', saveMethod: '_saveTexts',
-            displayId: 'textOpacityValue'
-        },
-        {
-            elementId: 'textBgOpacity', eventType: 'input',
-            managerName: 'textManager', selectedProp: '_selectedText',
-            optionKey: 'backgroundOpacity', saveMethod: '_saveTexts',
-            displayId: 'textBgOpacityValue'
+    async switchSymbol(symbol, exchange, marketType) {
+        if (this._switchingSymbol) { console.warn('⚠️ Переключение уже выполняется'); return; }
+        this._switchingSymbol = true;
+
+        try {
+            console.log(`🔄 ПЕРЕКЛЮЧЕНИЕ: ${this.currentSymbol} → ${symbol}`);
+            this._abortAllProcesses();
+
+            this.candleSeries.setData([]);
+            this.barSeries.setData([]);
+            if (this.volumeSeries) this.volumeSeries.setData([]);
+            this.chartData = [];
+            this.lastCandle = null;
+            this._candleTimeMap.clear();
+            this.currentRealPrice = null;
+            this._lastAppliedColor = null;
+            this._historyLoadQueue = [];
+            this._pendingHistoryLoad = false;
+            this._historyEndTime = null;
+            this.isLoadingMore = false;
+            this._lastHistoryLoadTime = 0;
+            this._fetchPromise = null;
+            this._volumeDataCache = null;
+            this._volumeDataDirty = true;
+            this._isTrimming = false;
+
+            this.currentSymbol = symbol;
+            this.currentExchange = exchange;
+            this.currentMarketType = marketType;
+
+            const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+            if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision));
+
+            let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
+            let isFromCache = !!candles;
+            if (!isFromCache) candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+            if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
+
+            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
+
+            if (!isFromCache) this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
+
+            this._subscribeToPrice();
+            this.loadDrawingsForCurrentSymbol();
+
+            if (this.timerManager) { this.timerManager.destroy(); this.timerManager.start(this.currentInterval); }
+
+            localStorage.setItem('lastSymbol', symbol);
+            localStorage.setItem('lastExchange', exchange);
+            localStorage.setItem('lastMarketType', marketType);
+            this._notifySymbolChange();
+
+            if (isFromCache) this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
+        } catch (error) {
+            console.error('❌ Ошибка переключения:', error);
+        } finally {
+            this._switchingSymbol = false;
         }
-    ];
+    }
 
-    // Назначаем все обработчики
-    bindings.forEach(bindInstantApply);
+    updateColorsForSettings(bullishColor, bearishColor) {
+        CONFIG.colors.bullish = bullishColor;
+        CONFIG.colors.bearish = bearishColor;
+        this.bullishColor = bullishColor;
+        this.bearishColor = bearishColor;
+        
+        this.candleSeries.applyOptions({ upColor: bullishColor, downColor: bearishColor, wickUpColor: bullishColor, wickDownColor: bearishColor });
+        this.barSeries.applyOptions({ upColor: bullishColor, downColor: bearishColor });
+        this._syncLineAndTimerColor();
+        
+        this._volumeDataDirty = true;
+        if (this.volumeSeries && this.chartData.length > 0) {
+            this._updateVolumeOptimized();
+        }
+    }
 
-    // ====== ЛИНЕЙКА (особый случай) ======
-    const rulerOpacity = document.getElementById('rulerFillOpacity');
-    if (rulerOpacity) {
-        rulerOpacity.addEventListener('input', function() {
-            const val = parseInt(this.value) / 100;
-            const displayEl = document.getElementById('rulerFillOpacityValue');
-            if (displayEl) displayEl.textContent = this.value + '%';
-            
-            if (window.rulerLineManager) {
-                const rulers = window.rulerLineManager._rulers || [];
-                rulers.forEach(function(r) {
-                    r.fillOpacity = val;
-                    if (r.primitive && r.primitive.requestRedraw) {
-                        r.primitive.requestRedraw();
-                    }
+    _syncLineAndTimerColor() {
+        if (!this.chartData || this.chartData.length === 0) return;
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (!lastCandle) return;
+        let price = this.currentRealPrice;
+        if (!price || isNaN(price)) price = lastCandle.close;
+        
+        const isBullish = price >= lastCandle.open;
+        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+        
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series && price) series.applyOptions({ priceLineColor: lineColor, priceLineSource: price });
+        
+        if (this.timerManager) {
+            const prim = this.timerManager._primitive;
+            if (prim) {
+                if (prim.setColor) prim.setColor(lineColor);
+                if (prim.setPrice && price) prim.setPrice(price);
+                if (prim.isEnabled()) prim.requestRedraw();
+            }
+            if (this.timerManager.forceColorUpdate) this.timerManager.forceColorUpdate();
+        }
+        this._lastAppliedColor = lineColor;
+    }
+
+    _abortAllProcesses() {
+        if (this.priceManager && this._priceUpdateHandler) {
+            this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
+            this._priceUpdateHandler = null;
+        }
+        if (this.timerManager) this.timerManager.destroy();
+        this._loadingSymbol = false;
+        this.isLoadingMore = false;
+        this._updateScheduled = false;
+        this._pendingUpdates = false;
+        this._pendingRedraw = false;
+        if (this._drawingsUpdateRafId) { cancelAnimationFrame(this._drawingsUpdateRafId); this._drawingsUpdateRafId = null; }
+        if (this._updatePositionRafId) { cancelAnimationFrame(this._updatePositionRafId); this._updatePositionRafId = null; }
+        if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
+        if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
+        if (this._trimDebounceTimeout) { clearTimeout(this._trimDebounceTimeout); this._trimDebounceTimeout = null; }
+        this._fetchPromise = null;
+        this._volumeDataDirty = true;
+        this._isTrimming = false;
+    }
+
+    getCurrentPrice() {
+        if (this.priceManager) { const price = this.priceManager.getPrice(this.currentSymbol); if (price !== null && !isNaN(price)) return price; }
+        if (this.currentRealPrice !== null && this.currentRealPrice !== undefined && !isNaN(this.currentRealPrice)) return this.currentRealPrice;
+        return null;
+    }
+
+    saveCurrentTimePosition() {
+        if (!this.chart || !this.chartData.length) return null;
+        const timeScale = this.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (visibleRange) {
+            const firstVisibleIndex = Math.floor(visibleRange.from);
+            if (firstVisibleIndex >= 0 && firstVisibleIndex < this.chartData.length) return this.chartData[firstVisibleIndex].time;
+        }
+        return null;
+    }
+
+    scrollToTime(time) {
+        if (!this.chart || !time) return;
+        const timeScale = this.chart.timeScale();
+        const currentRange = timeScale.getVisibleLogicalRange();
+        if (!currentRange) return;
+        const targetIndex = this.chartData.findIndex(c => c.time >= time);
+        if (targetIndex !== -1) {
+            const visibleBars = currentRange.to - currentRange.from;
+            timeScale.setVisibleLogicalRange({ from: Math.max(0, targetIndex - 10), to: Math.max(0, targetIndex - 10) + visibleBars });
+        } else {
+            this.scrollToLast();
+        }
+    }
+
+    getCurrentSymbolKey() { return `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`; }
+
+    updatePricePrecision(symbol, exchange, marketType) {
+        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+        if (cachedPrecision) { this.applyPriceFormat(parseInt(cachedPrecision)); return; }
+        this.applyPriceFormat(this._inferPrecisionFromData());
+        getPrecisionFromExchange(symbol, exchange, marketType)
+            .then(precision => { this.applyPriceFormat(precision); localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision); })
+            .catch(() => {});
+    }
+
+    forceRedraw() {
+        if (!this.chart || !this.chartData.length) return;
+        const width = this.chartContainer.clientWidth;
+        const height = this.chartContainer.clientHeight;
+        this.chart.resize(width + 1, height);
+        this.chart.resize(width, height);
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+    }
+
+    _subscribeToSymbolChange(callback) {
+        this._symbolChangeCallbacks = this._symbolChangeCallbacks || [];
+        this._symbolChangeCallbacks.push(callback);
+    }
+
+    _notifySymbolChange() {
+        if (this._symbolChangeCallbacks) this._symbolChangeCallbacks.forEach(cb => cb());
+    }
+
+    loadSymbolData(symbol, exchange, marketType) {
+        const isSameSymbol = (symbol === this.currentSymbol);
+        const isTimeframeChange = isSameSymbol && (this.currentInterval !== this._lastTimeframe);
+        if (isTimeframeChange) this._savedTimePosition = this.saveCurrentTimePosition();
+        if (this._loadingSymbol) return;
+        this._loadingSymbol = true;
+        this.setSymbol(symbol);
+        if (this.loadingOverlay) { this.loadingOverlay.classList.add('visible'); if (this.loadingProgress) this.loadingProgress.textContent = 'Загрузка...'; }
+    }
+
+    async saveCandlesToCache(symbol, exchange, marketType, interval, candles) {
+        if (!candles || candles.length === 0) return;
+        const CACHE_VERSION = '2';
+        const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
+        const cacheData = { key, symbol, exchange, marketType, interval, data: candles, lastUpdate: Date.now(), firstCandleTime: candles[0].time, lastCandleTime: candles[candles.length - 1].time, count: candles.length, version: CACHE_VERSION };
+        if (!window.db) return;
+        try {
+            if (!window.dbReady) {
+                await new Promise(resolve => {
+                    const check = setInterval(() => { if (window.dbReady) { clearInterval(check); resolve(); } }, 100);
+                    setTimeout(() => { clearInterval(check); resolve(); }, 2000);
                 });
-                window.rulerLineManager._saveRulers();
             }
-        });
+            await window.db.put('candles', cacheData);
+        } catch (error) { console.warn('❌ Ошибка сохранения свечей в кэш:', error); }
+    }
+    
+    async loadCandlesFromCache(symbol, exchange, marketType, interval) {
+        const CACHE_VERSION = '2';
+        const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
+        if (!window.db) return null;
+        try {
+            const cached = await window.db.get('candles', key);
+            if (!cached) return null;
+            if (cached.version !== CACHE_VERSION) { await window.db.delete('candles', key); return null; }
+            const CACHE_DURATION = 5 * 60 * 1000;
+            if (Date.now() - cached.lastUpdate > CACHE_DURATION) return null;
+            return cached.data;
+        } catch (error) { return null; }
     }
 
-    console.log('🚀 Обработчики мгновенного применения НАЗНАЧЕНЫ!');
-})();
-
-
-
-</script>
-<script>
-document.addEventListener('mousedown', function(e) {
-    // Не даём графику снять выделение с линии, когда мы кликаем внутри панели настроек
-    if (e.target.closest('#trendSettings') ||
-        e.target.closest('#textSettings') ||
-        e.target.closest('#rulerSettingsPanel')) {
-        e.stopPropagation();
+    async clearOldCaches() {
+        const CACHE_VERSION = '2';
+        try {
+            const allCandles = await window.db.getAll('candles');
+            for (const cache of allCandles) { if (!cache.version || cache.version !== CACHE_VERSION) await window.db.delete('candles', cache.key); }
+        } catch (e) { console.warn('Ошибка очистки кэша свечей:', e); }
     }
-}, true);
-</script>
-<script>
-// ========== СОЗДАНИЕ ОКНА КАЛЕНДАРЯ ==========
-(function() {
-    // Создаём плавающее окно
-    var floatingWindow = document.createElement('div');
-    floatingWindow.id = 'floatingCalendar';
-    floatingWindow.style.cssText = 'display:none;position:fixed;width:420px;height:550px;background:#1E1E1E;border:1px solid #404040;border-radius:8px;z-index:10001;box-shadow:0 8px 32px rgba(0,0,0,0.6);flex-direction:column;left:50%;top:50%;transform:translate(-50%,-50%);';
-    
-    floatingWindow.innerHTML = '<div id="calendarHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#2D2D2D;border-bottom:1px solid #404040;border-radius:8px 8px 0 0;cursor:move;color:#FFFFFF;font-size:13px;font-weight:bold;">' +
-        '<span>📅 Экономический календарь</span>' +
-        '<div style="display:flex;gap:5px;">' +
-        '<button id="minimizeCalendarBtn" style="background:transparent;border:none;color:#B0B0B0;font-size:16px;cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;" title="Свернуть">─</button>' +
-        '<button id="closeCalendarBtn" style="background:transparent;border:none;color:#B0B0B0;font-size:16px;cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;" title="Закрыть">✕</button>' +
-        '</div></div>' +
-        '<div id="calendarBody" style="flex:1;overflow:hidden;border-radius:0 0 8px 8px;">' +
-        '<div id="economicCalendarWidget" style="width:100%;height:100%;"></div>' +
-        '</div>';
-    
-    document.body.appendChild(floatingWindow);
-    console.log('✅ Окно календаря создано');
-    
-    // Загрузка виджета
-    var calendarLoaded = false;
-    
-    function loadCalendar() {
-        if (calendarLoaded) return;
-        calendarLoaded = true;
-        console.log('📅 Загружаю виджет календаря...');
+
+    async clearOldCandlesCache(maxAge = 24 * 60 * 60 * 1000) {
+        try {
+            const allCandles = await window.db.getAll('candles');
+            const now = Date.now();
+            for (const cached of allCandles) { if (now - cached.lastUpdate > maxAge) await window.db.delete('candles', cached.key); }
+        } catch (error) { console.warn('❌ Ошибка очистки кэша свечей:', error); }
+    }
+
+    async waitForReady() {
+        let attempts = 0;
+        const maxAttempts = 50;
+        while (attempts < maxAttempts) {
+            if (this.chart && this.candleSeries && this.chartData && this.chartData.length > 0 && this.chart.timeScale()?.getVisibleRange()) return true;
+            await new Promise(r => setTimeout(r, 100));
+            attempts++;
+        }
+        return false;
+    }
+
+    async waitForSeriesReady() { return this.waitForReady(); }
+
+    timeToCoordinate(time) { try { return this.chart.timeScale().timeToCoordinate(time); } catch (e) { return null; } }
+    coordinateToTime(coordinate) { try { return this.chart.timeScale().coordinateToTime(coordinate); } catch (e) { return null; } }
+    priceToCoordinate(price) { try { const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries; return series.priceToCoordinate(price); } catch (e) { return null; } }
+
+    timeToCoordinateWithFallback(time) {
+        let coord = this.timeToCoordinate(time);
+        if (coord !== null) return coord;
+        const data = this.chartData;
+        if (!data || !data.length) return null;
+        const firstCandle = data[0];
+        const lastCandle = data[data.length - 1];
+        const firstX = this.timeToCoordinate(firstCandle.time);
+        const lastX = this.timeToCoordinate(lastCandle.time);
+        if (firstX === null || lastX === null) return null;
+        const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
+        if (time < firstCandle.time) return firstX - (firstCandle.time - time) * pixelsPerMs;
+        else return lastX + (time - lastCandle.time) * pixelsPerMs;
+    }
+
+    priceToCoordinateWithFallback(price) { return this.priceToCoordinate(price); }
+    timeToLogical(time) { if (!this.chartData || !this.chartData.length) return null; const index = this._candleTimeMap.get(time); return index !== undefined ? index : null; }
+    coordinateToPrice(coordinate) { try { const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries; return series.coordinateToPrice(coordinate); } catch (e) { return null; } }
+
+    onVisibleLogicalRangeChange(range) {
+        if (!range || !this.chartData.length) return;
         
-        var script = document.createElement('script');
-        script.type = 'text/javascript';
-        script.async = true;
-        script.setAttribute('data-type', 'calendar-widget');
-        script.src = 'https://www.tradays.com/c/js/widgets/calendar/widget.js?v=15';
-        script.textContent = JSON.stringify({
-            width: '100%',
-            height: '100%',
-            mode: '1',
-            fw: 'html',
-            lang: 'ru',
-            theme: 1
-        });
+        const fromIndex = Math.max(0, Math.floor(range.from));
         
-        var container = document.getElementById('economicCalendarWidget');
-        if (container) {
-            container.appendChild(script);
+        if (fromIndex < this._preloadThreshold && this.hasMoreData && !this.isLoadingMore) {
+            this._loadHistoryAsync();
+        }
+        
+        this._scheduleTrim(range);
+    }
+
+    // =========================================================================
+    // ОПТИМИЗИРОВАННАЯ ОБРЕЗКА ДАННЫХ (ГЛАВНОЕ ИСПРАВЛЕНИЕ ЛАГОВ)
+    // =========================================================================
+    _scheduleTrim(range) {
+        if (this._isTrimming || this.isLoadingMore) return;
+        
+        const fromIndex = Math.max(0, Math.floor(range.from));
+        const toIndex = Math.min(this.chartData.length - 1, Math.ceil(range.to));
+        
+        this._pendingTrimParams = { fromIndex, toIndex };
+        
+        if (this._trimDebounceTimeout) {
+            clearTimeout(this._trimDebounceTimeout);
+        }
+        
+        // УБРАНО: мгновенный вызов _performTrimNow. 
+        // Теперь обрезка ВСЕГДА ждет окончания скролла (debounce), что гарантирует плавность.
+        this._trimDebounceTimeout = setTimeout(() => {
+            this._applyPendingTrim();
+            this._trimDebounceTimeout = null;
+        }, this._trimDebounceDelay);
+    }
+
+    _applyPendingTrim() {
+        if (this._pendingTrimParams && !this._isTrimming) {
+            const { fromIndex, toIndex } = this._pendingTrimParams;
+            this._performTrimNow(fromIndex, toIndex);
+            this._pendingTrimParams = null;
         }
     }
-    
-    // Перетаскивание
-    var isDragging = false, startX, startY, startLeft, startTop;
-    
-    document.getElementById('calendarHeader').addEventListener('mousedown', function(e) {
-        if (e.target.tagName === 'BUTTON') return;
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        var rect = floatingWindow.getBoundingClientRect();
-        startLeft = rect.left;
-        startTop = rect.top;
-        floatingWindow.style.transform = 'none';
-        floatingWindow.style.left = startLeft + 'px';
-        floatingWindow.style.top = startTop + 'px';
-        e.preventDefault();
-    });
-    
-    document.addEventListener('mousemove', function(e) {
-        if (!isDragging) return;
-        floatingWindow.style.left = (startLeft + e.clientX - startX) + 'px';
-        floatingWindow.style.top = (startTop + e.clientY - startY) + 'px';
-    });
-    
-    document.addEventListener('mouseup', function() { isDragging = false; });
-    
-    // Кнопки
-    var minimized = false;
-    document.getElementById('minimizeCalendarBtn').addEventListener('click', function() {
-        var body = document.getElementById('calendarBody');
-        minimized = !minimized;
-        body.style.display = minimized ? 'none' : 'block';
-        this.innerHTML = minimized ? '□' : '─';
-    });
-    
-    document.getElementById('closeCalendarBtn').addEventListener('click', function() {
-        floatingWindow.style.display = 'none';
-    });
-    
-    // Обработчик кнопки в тулбаре
-    var btn = document.getElementById('economicCalendarBtn');
-    if (btn) {
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (floatingWindow.style.display === 'none') {
-                floatingWindow.style.display = 'flex';
-                loadCalendar();
-            } else {
-                floatingWindow.style.display = 'none';
+
+    _performTrimNow(fromIndex, toIndex) {
+        if (this._isTrimming || this.isLoadingMore) return;
+        // Добавлена проверка: не обрезаем, если не скроллим и данных в пределах нормы
+        if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
+        
+        const keepFrom = Math.max(0, fromIndex - this._leftBuffer);
+        const keepTo = Math.min(this.chartData.length, toIndex + this._rightBuffer);
+        
+        const leftTrim = keepFrom;
+        const rightTrim = this.chartData.length - keepTo;
+        
+        if (leftTrim === 0 && rightTrim === 0) return;
+        
+        this._isTrimming = true;
+        
+        try {
+            // 1. Обрезаем данные
+            this.chartData = this.chartData.slice(keepFrom, keepTo);
+            this._rebuildTimeMap();
+            this._volumeDataDirty = true;
+            
+            const timeScale = this.chart.timeScale();
+            const currentRange = timeScale.getVisibleLogicalRange();
+            
+            // 2. ОПТИМИЗАЦИЯ: Обновляем ТОЛЬКО активную серию, а не все подряд
+            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (activeSeries) {
+                activeSeries.setData(this.chartData);
             }
-        });
-        console.log('✅ Обработчик кнопки календаря добавлен');
-    } else {
-        console.log('❌ Кнопка economicCalendarBtn не найдена');
-    }
-})();
-</script>
-<script>
-setTimeout(function() {
-    var btn = document.getElementById('autoScaleButton');
-    if (btn && window.chartManagerInstance) {
-        btn.onclick = function() {
-            window.chartManagerInstance.manualAutoScale();
             
-            // Визуальная обратная связь
-            btn.classList.add('active');
-            setTimeout(() => btn.classList.remove('active'), 300);
-        };
-        console.log('✅ Кнопка A прикручена к manualAutoScale()');
-    } else {
-        console.log('❌ Не нашли кнопку или менеджер');
-    }
-}, 1000);
-</script>
-
-<script>
-(function() {
-    function updateOHLCContrast() {
-        const bgColor = localStorage.getItem('chartBgColor') || '#000000';
-        const overlay = document.getElementById('candleStatsOverlay');
-        
-        const hex = bgColor.replace('#', '');
-        const r = parseInt(hex.substr(0, 2), 16);
-        const g = parseInt(hex.substr(2, 2), 16);
-        const b = parseInt(hex.substr(4, 2), 16);
-        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-        
-        const isLight = brightness > 128;
-        
-        // ====== 1. OVERLAY ======
-        if (overlay) {
-            const labelColor = isLight ? '#333333' : '#B0B0B0';
-            const shadow = isLight 
-                ? '0 0 3px rgba(255,255,255,0.9), 1px 1px 2px rgba(255,255,255,0.7)'
-                : '0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8)';
+            this._updateVolumeOptimized();
             
-            overlay.querySelectorAll('.stat-label').forEach(el => {
-                el.style.color = labelColor;
-                el.style.textShadow = shadow;
-            });
-            
-            overlay.querySelectorAll('.stat-value, .change-value').forEach(el => {
-                el.style.textShadow = shadow;
-            });
-        }
-        
-        // ====== 2. CROSSHAIR — ПУНКТИР ======
-        if (window.chartManagerInstance && window.chartManagerInstance.chart) {
-            const chart = window.chartManagerInstance.chart;
-            
-            const crosshairColor = isLight ? '#333333' : '#9598A1';
-            const crosshairLabelBg = isLight ? '#FFFFFF' : '#333333';
-            const borderColor = isLight ? '#888888' : '#333333';
-            const textColor = isLight ? '#333333' : '#808080';
-            
-           chart.applyOptions({
-    crosshair: {
-        vertLine: {
-            color: crosshairColor,
-            width: 1,
-            style: LightweightCharts.LineStyle.LargeDashed,  // 🔥 КРУПНЫЙ пунктир как в TradingView
-            labelBackgroundColor: crosshairLabelBg
-        },
-        horzLine: {
-            color: crosshairColor,
-            width: 1,
-            style: LightweightCharts.LineStyle.LargeDashed,  // 🔥 КРУПНЫЙ пунктир как в TradingView
-            labelBackgroundColor: crosshairLabelBg
-        }
-    },
-    timeScale: {
-        borderColor: borderColor,
-        tickColor: textColor
-    },
-    rightPriceScale: {
-        borderColor: borderColor,
-        textColor: textColor
-    }
-});
-        }
-    }
-    
-    setTimeout(updateOHLCContrast, 500);
-    
-    const originalApply = window.applyColorsToChart;
-    if (typeof originalApply === 'function') {
-        window.applyColorsToChart = function(bg, bullish, bearish) {
-            originalApply(bg, bullish, bearish);
-            setTimeout(updateOHLCContrast, 50);
-        };
-    }
-    
-    const bgPicker = document.getElementById('bgColorPicker');
-    if (bgPicker) bgPicker.addEventListener('input', () => setTimeout(updateOHLCContrast, 50));
-    
-    const bgGrid = document.getElementById('bgColorsGrid');
-    if (bgGrid) bgGrid.addEventListener('click', () => setTimeout(updateOHLCContrast, 50));
-    
-    const resetBtn = document.getElementById('resetChartColors');
-    if (resetBtn) resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
-    
-    console.log('✅ Адаптация OHLC + Crosshair (пунктир) активирована');
-})();
-</script>
-<script>
-(function() {
-    // Функция для обновления цветов при переключении типа графика
-    function updateChartTypeColors() {
-        if (!window.chartManagerInstance) return;
-        
-        const cm = window.chartManagerInstance;
-        const bullishColor = localStorage.getItem('chartBullishColor') || '#00bcd4';
-        const bearishColor = localStorage.getItem('chartBearishColor') || '#f23645';
-        
-        // Применяем цвета к активной серии
-        if (cm.currentChartType === 'candle' && cm.candleSeries) {
-            cm.candleSeries.applyOptions({
-                upColor: bullishColor,
-                downColor: bearishColor,
-                wickUpColor: bullishColor,
-                wickDownColor: bearishColor
-            });
-        } else if (cm.currentChartType === 'bar' && cm.barSeries) {
-            cm.barSeries.applyOptions({
-                upColor: bullishColor,
-                downColor: bearishColor
-            });
-        }
-        
-        // Обновляем цвет линии цены
-        const lastCandle = cm.chartData?.[cm.chartData.length - 1];
-        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-        const lineColor = isBullish ? bullishColor : bearishColor;
-        const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-        
-        if (activeSeries && cm.currentRealPrice) {
-            activeSeries.applyOptions({ priceLineColor: lineColor });
-        }
-        
-        // Обновляем объёмы
-        if (cm.volumeSeries && cm.chartData && cm.chartData.length > 0) {
-            const volumeData = cm.chartData.map(candle => ({
-                time: candle.time,
-                value: candle.volume,
-                color: candle.close >= candle.open ? bullishColor : bearishColor
-            }));
-            cm.volumeSeries.setData(volumeData);
-        }
-    }
-    
-    // Отслеживаем переключение типа графика
-    const candleBtn = document.getElementById('candleBtn');
-    const barBtn = document.getElementById('barBtn');
-    
-    if (candleBtn) {
-        candleBtn.addEventListener('click', function() {
-            setTimeout(updateChartTypeColors, 100);
-        });
-    }
-    
-    if (barBtn) {
-        barBtn.addEventListener('click', function() {
-            setTimeout(updateChartTypeColors, 100);
-        });
-    }
-    
-    // Также обновляем при изменении данных графика
-    const originalApplyColors = window.applyColorsToChart;
-    if (typeof originalApplyColors === 'function') {
-        window.applyColorsToChart = function(bg, bullish, bearish) {
-            originalApplyColors(bg, bullish, bearish);
-            setTimeout(updateChartTypeColors, 50);
-        };
-    }
-    
-    console.log('✅ Исправление подсветки баров/свечей активировано');
-})();
-</script>
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const btn = document.getElementById('premisesBtn');
-        if (!btn) return;
-
-        // Создаём оверлей с iframe
-        const overlay = document.createElement('div');
-        overlay.id = 'premisesOverlay';
-        overlay.style.cssText = `
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 9999;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        `;
-        overlay.innerHTML = `
-            <div style="
-                background: #1E1E1E;
-                border-radius: 12px;
-                width: 100%;
-                max-width: 1200px;
-                height: 90vh;
-                max-height: 90vh;
-                position: relative;
-                overflow: hidden;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-                border: 1px solid rgba(33,150,243,0.2);
-            ">
-                <button id="premisesCloseBtn" style="
-                    position: absolute;
-                    top: 10px;
-                    right: 15px;
-                    background: none;
-                    border: none;
-                    color: #9CA3AF;
-                    font-size: 28px;
-                    cursor: pointer;
-                    z-index: 10;
-                ">✕</button>
-                <iframe src="./premises.html" style="
-                    width: 100%;
-                    height: 100%;
-                    border: none;
-                    background: #1E1E1E;
-                "></iframe>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-
-        // Открытие
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            overlay.style.display = 'flex';
-            // Перезагружаем iframe при каждом открытии (опционально)
-            const iframe = overlay.querySelector('iframe');
-            if (iframe) iframe.src = './premises.html';
-        });
-
-        // Закрытие
-        document.getElementById('premisesCloseBtn').addEventListener('click', function() {
-            overlay.style.display = 'none';
-        });
-        overlay.addEventListener('click', function(e) {
-            if (e.target === overlay) overlay.style.display = 'none';
-        });
-
-        // Закрытие по Escape
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && overlay.style.display === 'flex') {
-                overlay.style.display = 'none';
+            // 3. Корректируем видимый диапазон, чтобы график не "прыгал"
+            if (currentRange && leftTrim > 0) {
+                timeScale.setVisibleLogicalRange({
+                    from: Math.max(0, currentRange.from - leftTrim),
+                    to: Math.max(1, currentRange.to - leftTrim)
+                });
             }
-        });
-    });
-</script>
+            
+            // 4. Индикаторы обновляем асинхронно, чтобы не блокировать основной поток
+            if (leftTrim > 0 || rightTrim > 0) {
+                requestAnimationFrame(() => {
+                    if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                });
+            }
+        } catch (e) {
+            console.error('❌ Ошибка обрезки данных:', e);
+        } finally {
+            this._isTrimming = false;
+        }
+    }
+    // =========================================================================
 
-</body>
-</html>
+    async _loadHistoryAsync() {
+        if (this.isLoadingMore || !this.hasMoreData) return;
+        
+        const now = Date.now();
+        if (now - this._lastHistoryLoadTime < this._minLoadDelay) return;
+        
+        this.isLoadingMore = true;
+        this._lastHistoryLoadTime = now;
+        
+        try {
+            const oldestCandle = this.chartData[0];
+            if (!oldestCandle) { this.isLoadingMore = false; return; }
+            
+            const endTime = (oldestCandle.time * 1000) - 1;
+            
+            const olderCandles = await this.fetchKlines(
+                this.currentSymbol, this.currentExchange, this.currentMarketType,
+                this.currentInterval, this._batchSize, endTime
+            );
+            
+            if (!olderCandles || olderCandles.length === 0) {
+                this.hasMoreData = false;
+                this.isLoadingMore = false;
+                return;
+            }
+            
+            const existingTimes = new Set();
+            for (let i = 0; i < this.chartData.length; i++) existingTimes.add(this.chartData[i].time);
+            
+            const uniqueOlder = [];
+            for (let i = 0; i < olderCandles.length; i++) {
+                if (!existingTimes.has(olderCandles[i].time)) uniqueOlder.push(olderCandles[i]);
+            }
+            
+            if (uniqueOlder.length > 0) {
+                const timeScale = this.chart.timeScale();
+                const currentRange = timeScale.getVisibleLogicalRange();
+                const addedCount = uniqueOlder.length;
+                
+                this.chartData = [...uniqueOlder, ...this.chartData];
+                
+                if (this.chartData.length > this._maxCandlesInMemory) {
+                    this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
+                }
+                
+                this._rebuildTimeMap();
+                this._volumeDataDirty = true;
+                
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                if (activeSeries) activeSeries.setData(this.chartData);
+                
+                if (currentRange) {
+                    timeScale.setVisibleLogicalRange({
+                        from: currentRange.from + addedCount,
+                        to: currentRange.to + addedCount
+                    });
+                }
+                
+                this._updateVolumeOptimized();
+                
+                requestAnimationFrame(() => {
+                    if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                    this.scheduleDrawingsUpdate(true);
+                });
+            }
+            
+            if (olderCandles.length < this._batchSize) {
+                this.hasMoreData = false;
+            }
+        } catch (e) {
+            console.error('❌ Ошибка загрузки истории:', e);
+        } finally {
+            setTimeout(() => { this.isLoadingMore = false; }, this._minLoadDelay);
+        }
+    }
+
+    async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
+        try {
+            if (symbol !== this.currentSymbol || exchange !== this.currentExchange) return;
+            const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, 100);
+            if (!freshCandles || freshCandles.length === 0) return;
+            if (symbol !== this.currentSymbol) return;
+
+            const lastCachedTime = this.chartData.length > 0 ? this.chartData[this.chartData.length - 1].time : 0;
+            const lastFreshTime = freshCandles[freshCandles.length - 1].time;
+            
+            if (lastFreshTime > lastCachedTime) {
+                const newCandles = freshCandles.filter(c => c.time > lastCachedTime);
+                this.chartData.push(...newCandles);
+                this._rebuildTimeMap();
+                this._volumeDataDirty = true;
+                
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                if (activeSeries) activeSeries.setData(this.chartData);
+                
+                this._updateVolumeOptimized();
+                
+                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                this.scrollToLast();
+            }
+        } catch (error) { console.warn('⚠️ Ошибка фонового обновления:', error); }
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.ChartManager = ChartManager;
+}
