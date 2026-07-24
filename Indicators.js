@@ -282,7 +282,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._updateTimeout = null;
         this._fallbackTimer = null;
         this._currentApiInterval = '1h';
-        this._decimals = 2;
+        this._decimals = null;
         this._wasDragged = false;
         
         this._setupEventHandlers();
@@ -351,7 +351,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         wrapper.addEventListener('click', (e) => {
             if (this._wasDragged || e.target.id === 'multiatr-close') return;
             if (this.metrics.atr > 0) {
-                navigator.clipboard.writeText(this.metrics.atr.toFixed(this._decimals)).then(() => {
+                navigator.clipboard.writeText(this.metrics.atr.toFixed(this._getPriceDecimals())).then(() => {
                     const val = document.getElementById('matr-val');
                     if(val) { val.style.color = '#22E00F'; setTimeout(() => val.style.color = '#FFFFFF', 400); }
                 }).catch(() => {});
@@ -460,47 +460,46 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: progress, remaining: Math.max(0, 100 - progress), remainingPoints: Math.max(0, atr - distFromOpen), trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
     }
     
-  updateMetrics() {
-    if (this._updateTimeout) clearTimeout(this._updateTimeout);
-    
-    try {
-        const chartManager = this.manager?.chartManager;
-        const data = chartManager?.chartData;
+    updateMetrics() {
+        if (this._updateTimeout) clearTimeout(this._updateTimeout);
         
-        if (!data?.length) return;
-
-        const rawInterval = chartManager.currentInterval || '60';
-        const newApiInterval = this._normalizeInterval(rawInterval);
-        
-        if (this._currentApiInterval !== newApiInterval) {
-            this._currentApiInterval = newApiInterval;
-            this.metrics.atr = 0; 
-        }
-        
-        const actualPeriod = this.getActualPeriod(this._currentApiInterval);
-        
-        if (data.length >= actualPeriod + 1) {
-            const newMetrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
-            newMetrics._actualPeriod = actualPeriod;
+        try {
+            const chartManager = this.manager?.chartManager;
+            const data = chartManager?.chartData;
             
-            // Рендерим ТОЛЬКО если метрики изменились
-            if (newMetrics.atr !== this.metrics.atr || 
-                newMetrics.remaining !== this.metrics.remaining ||
-                this._currentApiInterval !== newApiInterval) {
-                this.metrics = newMetrics;
-                this.renderWidget();
-            } else {
-                this.metrics = newMetrics; // обновляем без рендера
+            if (!data?.length) return;
+
+            const rawInterval = chartManager.currentInterval || '60';
+            const newApiInterval = this._normalizeInterval(rawInterval);
+            
+            if (this._currentApiInterval !== newApiInterval) {
+                this._currentApiInterval = newApiInterval;
+                this.metrics.atr = 0; 
             }
-        } else {
-            this.metrics.atr = 0;
-            this.metrics._actualPeriod = actualPeriod;
-            this.renderWidget();
+            
+            const actualPeriod = this.getActualPeriod(this._currentApiInterval);
+            
+            if (data.length >= actualPeriod + 1) {
+                const newMetrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
+                newMetrics._actualPeriod = actualPeriod;
+                
+                if (newMetrics.atr !== this.metrics.atr || 
+                    newMetrics.remaining !== this.metrics.remaining ||
+                    this._currentApiInterval !== newApiInterval) {
+                    this.metrics = newMetrics;
+                    this.renderWidget();
+                } else {
+                    this.metrics = newMetrics;
+                }
+            } else {
+                this.metrics.atr = 0;
+                this.metrics._actualPeriod = actualPeriod;
+                this.renderWidget();
+            }
+        } catch (e) { 
+            console.error('ATR error:', e); 
         }
-    } catch (e) { 
-        console.error('ATR error:', e); 
     }
-}
 
     _setupEventHandlers() {
         const chartManager = this.manager?.chartManager;
@@ -510,31 +509,31 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._startSmartFallbackTimer();
     }
     
-  _onChartDataUpdate() {
-    if (this._updateTimeout) clearTimeout(this._updateTimeout);
-    this._updateTimeout = setTimeout(() => {
-        this.updateMetrics();
-    }, 100);
-}
-
-_startSmartFallbackTimer() {
-    if (this._fallbackTimer) return;
-    let lastDataLength = 0;
-    let lastClose = 0;
-    this._fallbackTimer = setInterval(() => {
-        const cm = this.manager?.chartManager;
-        if (!cm?.chartData?.length) return;
-        const data = cm.chartData;
-        const lastCandle = data[data.length - 1];
-        
-        // Обновляем ТОЛЬКО если изменились данные или закрытие
-        if (data.length !== lastDataLength || lastCandle.close !== lastClose) {
-            lastDataLength = data.length;
-            lastClose = lastCandle.close;
+    _onChartDataUpdate() {
+        if (this._updateTimeout) clearTimeout(this._updateTimeout);
+        this._updateTimeout = setTimeout(() => {
             this.updateMetrics();
-        }
-    }, 500); // 500мс вместо 1000 — более отзывчиво
-}
+        }, 100);
+    }
+
+    _startSmartFallbackTimer() {
+        if (this._fallbackTimer) return;
+        let lastDataLength = 0;
+        let lastClose = 0;
+        this._fallbackTimer = setInterval(() => {
+            const cm = this.manager?.chartManager;
+            if (!cm?.chartData?.length) return;
+            const data = cm.chartData;
+            const lastCandle = data[data.length - 1];
+            
+            if (data.length !== lastDataLength || lastCandle.close !== lastClose) {
+                lastDataLength = data.length;
+                lastClose = lastCandle.close;
+                this.updateMetrics();
+            }
+        }, 500);
+    }
+
     destroy() {
         if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
@@ -545,6 +544,27 @@ _startSmartFallbackTimer() {
         this._removeAllSeries(); this.manager = null;
     }
     
+    _getPriceDecimals() {
+        try {
+            const data = this.manager?.chartManager?.chartData;
+            if (data && data.length > 0) {
+                const last = data[data.length - 1];
+                let maxDecimals = 2;
+                [last.open, last.high, last.low, last.close].forEach(price => {
+                    if (price && price > 0) {
+                        const str = price.toString();
+                        if (str.includes('.')) {
+                            const decimals = str.split('.')[1].length;
+                            if (decimals > maxDecimals) maxDecimals = decimals;
+                        }
+                    }
+                });
+                return maxDecimals;
+            }
+        } catch(e) {}
+        return 2;
+    }
+    
     renderWidget() {
         const wrapper = document.getElementById('multiatr-widget');
         if (!wrapper) return;
@@ -553,24 +573,16 @@ _startSmartFallbackTimer() {
 
         const m = this.metrics;
         const displayTF = this._displayInterval(this._currentApiInterval || '1h');
-        
-        if (!this._decimals) {
-            this._decimals = 2;
-            try {
-                const chartData = this.manager?.chartManager?.chartData;
-                if (chartData && chartData.length > 0) {
-                    const last = chartData[chartData.length - 1];
-                    [last.open, last.high, last.low, last.close].forEach(p => {
-                        const s = p.toString();
-                        if (s.includes('.')) { const d = s.split('.')[1].replace(/0+$/, '').length; if (d > this._decimals) this._decimals = d; }
-                    });
-                }
-            } catch(e) {}
-        }
-        
-        const formatATR = (v) => (!v || v === 0) ? '...' : v.toFixed(this._decimals);
-        const remColor = m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
+        const decimals = this._getPriceDecimals();
         const periodDisplay = m._actualPeriod || this.getActualPeriod(this._currentApiInterval);
+
+        const formatATR = (v) => {
+            if (!v || v === 0) return '...';
+            if (v < 0.0001) return v.toPrecision(4);
+            return v.toFixed(decimals);
+        };
+        
+        const remColor = m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
 
         wrapper.innerHTML = `
             <span style="color:#AAA">⭐</span>
@@ -680,7 +692,6 @@ _startSmartFallbackTimer() {
         this.settings.minute1TF = document.getElementById('minute1TF')?.value || '1';
         this.settings.minute1ATRPeriod = parseInt(document.getElementById('minute1ATRPeriod')?.value || 1);
         
-        this._decimals = null; 
         this._saveSettings();
         this.updateMetrics();
         super.applySettingsFromForm();
