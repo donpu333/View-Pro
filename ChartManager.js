@@ -387,13 +387,14 @@ class ChartManager {
         });
     }
 
-        _startNewCandleChecker() {
+    _startNewCandleChecker() {
         const check = () => {
-            // ❌ УДАЛИ ЭТОТ БЛОК:
-            // if (document.hidden) {
-            //     setTimeout(check, 2000);
-            //     return;
-            // }
+            // ⚡ ОПТИМИЗАЦИЯ: Если вкладка скрыта, проверяем новую свечу реже (раз в 2 сек), 
+            // чтобы не грузить CPU. При возврате на вкладку _syncAfterHidden() всё синхронизирует.
+            if (document.hidden) {
+                setTimeout(check, 2000);
+                return;
+            }
 
             if (!this.chartData.length || !this.currentInterval) {
                 setTimeout(check, 1000);
@@ -441,15 +442,12 @@ class ChartManager {
         };
         check();
     }
-        async _syncAfterHidden() {
+       async _syncAfterHidden() {
         if (!this.chartData.length || !this.currentSymbol) return;
         
         this._isScrolling = false;
         this._isScrollingFast = false;
         this._isSyncing = false;
-        
-        // Сбрасываем флаг, так как мы синхронизируемся
-        this._pendingBackgroundUpdate = false;
 
         try {
             const ts = this.chart.timeScale();
@@ -461,16 +459,12 @@ class ChartManager {
         } catch(e) {}
 
         try {
-            // ⚠️ ГЛАВНОЕ ИСПРАВЛЕНИЕ: 100 вместо 2. 
-            // Это гарантирует, что мы закроем любую "дыру" в данных, 
-            // пока вкладка была неактивна, и график не "прыгнет".
             const freshCandles = await this.fetchKlines(
-                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 100
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 2
             );
             
             if (freshCandles && freshCandles.length > 0) {
                 const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                const lastMemoryTime = this.chartData[this.chartData.length - 1].time;
                 
                 freshCandles.forEach(freshCandle => {
                     const idx = this._candleTimeMap.get(freshCandle.time);
@@ -478,7 +472,7 @@ class ChartManager {
                     if (idx !== undefined) {
                         this.chartData[idx] = freshCandle;
                         activeSeries.update(freshCandle);
-                    } else if (freshCandle.time > lastMemoryTime) {
+                    } else if (freshCandle.time > this.chartData[this.chartData.length - 1].time) {
                         this.chartData.push(freshCandle);
                         this._addToTimeMap(freshCandle.time, this.chartData.length - 1);
                         activeSeries.update(freshCandle);
@@ -487,7 +481,7 @@ class ChartManager {
                     if (this.volumeSeries) {
                         this.volumeSeries.update({
                             time: freshCandle.time,
-                            value: freshCandle.quoteVolume || freshCandle.volume || 0,
+                            value: freshCandle.volume,
                             color: freshCandle.close >= freshCandle.open ? this.bullishColor : this.bearishColor
                         });
                     }
