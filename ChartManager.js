@@ -89,6 +89,9 @@ class ChartManager {
         this._volumeDataCache = null;
         this._volumeDataDirty = true;
 
+        // Флаг накопленных обновлений
+        this._pendingBackgroundUpdate = false;
+
         this._visibilityHandler = () => {
             if (!document.hidden) {
                 this._syncAfterHidden();
@@ -755,7 +758,7 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    _syncPriceLine(price) {
+    _syncPriceLine(price, background = false) {
         if (!price) return;
         
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -763,7 +766,8 @@ class ChartManager {
         
         const lastCandle = this.chartData[this.chartData.length - 1];
         if (!lastCandle) return;
-        
+
+        // 1. Обновляем модель данных (всегда, даже в фоне)
         lastCandle.close = price;
         if (price > lastCandle.high) lastCandle.high = price;
         if (price < lastCandle.low) lastCandle.low = price;
@@ -775,7 +779,15 @@ class ChartManager {
         this._lastAppliedColor = lineColor;
         this.lastCandle = lastCandle;
         
+        // 2. Пушим в LightweightCharts (работает даже в фоне)
         series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
+
+        // 3. Всё, что трогает DOM / RAF / отрисовку — пропускаем в фоне
+        if (background) {
+            this._pendingBackgroundUpdate = true;
+            return;
+        }
+        
         series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
         
         const prim = this.timerManager?._primitive;
@@ -1223,9 +1235,11 @@ const vol = index !== undefined ? (this.chartData[index].quoteVolume || 0) : 0;
         this._priceSubscriptionKey = key;
 
         this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
-            if (document.hidden || this._switchingSymbol) return;
+            if (this._switchingSymbol) return;
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
-            this._syncPriceLine(price);
+            
+            // Передаём флаг фона: данные обновляем ВСЕГДА, UI — только на активной вкладке
+            this._syncPriceLine(price, document.hidden);
         };
 
         this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
