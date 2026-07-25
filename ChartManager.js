@@ -1153,46 +1153,31 @@ class ChartManager {
     clearAllIndicators() { this.indicatorManager.clearAllIndicators(); }
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
-
-    _subscribeToPrice() {
-        if (!this.priceManager) {
-            setTimeout(() => this._subscribeToPrice(), 100);
-            return;
-        }
-
-        if (this._priceSubscriptionKey && this._priceUpdateHandler) {
-            this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
-            this._priceUpdateHandler = null;
-            this._priceSubscriptionKey = null;
-        }
-
-        const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
-        this._priceSubscriptionKey = key;
-
-        // ✅ УБРАНА проверка document.hidden
-        this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
-            if (this._switchingSymbol) return;
-            if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
-            this._syncPriceLine(price);
-        };
-
-        this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
-
-        const cachedPrice = this.priceManager.getPrice(key);
-        if (cachedPrice !== null && cachedPrice !== undefined && !isNaN(cachedPrice)) {
-            this.currentRealPrice = cachedPrice;
-            this._syncPriceLine(cachedPrice);
-
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            if (lastCandle) {
-                const isBullish = cachedPrice >= lastCandle.open;
-                this._lastAppliedColor = isBullish
-                    ? (this.bullishColor || CONFIG?.colors?.bullish || '#26a69a')
-                    : (this.bearishColor || CONFIG?.colors?.bearish || '#ef5350');
-            }
-            if (this.timerManager?.forceColorUpdate) this.timerManager.forceColorUpdate();
-        }
+_subscribeToPrice() {
+    if (!this.priceManager) {
+        setTimeout(() => this._subscribeToPrice(), 100);
+        return;
     }
+
+    if (this._priceSubscriptionKey && this._priceUpdateHandler) {
+        this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
+        this._priceUpdateHandler = null;
+        this._priceSubscriptionKey = null;
+    }
+
+    const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
+    this._priceSubscriptionKey = key;
+
+    this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
+        if (this._switchingSymbol) return;
+        if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
+        // НЕ вызываем _syncPriceLine — пусть WebSocketManager обновляет цену
+        this.currentRealPrice = price;
+        this._updatePageTitle();
+    };
+
+    this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+}
 
     setSymbol(symbol) {
         if (this.currentSymbol === symbol) return;
