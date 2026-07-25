@@ -10,6 +10,7 @@ class WebSocketManager {
         this.currentMarketType = 'futures';
         this.retryCount = 0;
         this.lastHiddenTime = null;
+        this.isConnected = false;
         this.binanceSpotOnlyTokens = ['BTCDOMUSDT', 'DEFIUSDT', 'ALTUSDT', 'NFTUSDT', 'TOPCOINSUSDT'];
         
         this._initWorker();
@@ -25,101 +26,130 @@ class WebSocketManager {
         });
     }
 
-    // ========== СОЗДАНИЕ WORKER (только WebSocket, без логики) ==========
+    // ========== СОЗДАНИЕ WORKER ==========
     _initWorker() {
-       const workerCode = `
-    var ws = null;
-    var pendingUrl = null;
-    var bufferedMessages = [];
-    var MAX_BUFFER = 5000;
+        // Код воркера пишем как обычную строку, без шаблонных литералов
+        const workerCode = [
+            "var ws = null;",
+            "var pingInterval = null;",
+            "var bufferedMessages = [];",
+            "var MAX_BUFFER = 5000;",
+            "var currentUrl = null;",
+            "var reconnectAttempts = 0;",
+            "var maxReconnectDelay = 30000;",
+            "",
+            "function scheduleReconnect(delay) {",
+            "    setTimeout(function() {",
+            "        if (currentUrl) {",
+            "            openSocket(currentUrl);",
+            "        }",
+            "    }, delay);",
+            "}",
+            "",
+            "function openSocket(wsUrl) {",
+            "    if (ws) {",
+            "        try { ws.onclose = null; ws.close(1000); } catch(e) {}",
+            "        ws = null;",
+            "    }",
+            "",
+            "    try {",
+            "        ws = new WebSocket(wsUrl);",
+            "    } catch(e) {",
+            "        self.postMessage({ type: 'error', error: 'Failed: ' + e.message });",
+            "        scheduleReconnect(3000);",
+            "        return;",
+            "    }",
+            "",
+            "    ws.onopen = function() {",
+            "        reconnectAttempts = 0;",
+            "        self.postMessage({ type: 'open' });",
+            "",
+            "        if (wsUrl.indexOf('bybit') !== -1) {",
+            "            clearInterval(pingInterval);",
+            "            pingInterval = setInterval(function() {",
+            "                if (ws && ws.readyState === WebSocket.OPEN) {",
+            "                    try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}",
+            "                }",
+            "            }, 20000);",
+            "        }",
+            "    };",
+            "",
+            "    ws.onmessage = function(event) {",
+            "        bufferedMessages.push({",
+            "            data: event.data,",
+            "            timestamp: Date.now()",
+            "        });",
+            "        if (bufferedMessages.length > MAX_BUFFER) {",
+            "            bufferedMessages = bufferedMessages.slice(-MAX_BUFFER / 2);",
+            "        }",
+            "        self.postMessage({ type: 'message', data: event.data });",
+            "    };",
+            "",
+            "    ws.onclose = function(event) {",
+            "        clearInterval(pingInterval);",
+            "        ws = null;",
+            "",
+            "        if (event.code === 1000) {",
+            "            self.postMessage({ type: 'close', code: event.code, reason: 'Normal' });",
+            "            return;",
+            "        }",
+            "",
+            "        if (event.code === 1008) {",
+            "            self.postMessage({ type: 'close', code: event.code, reason: event.reason });",
+            "            return;",
+            "        }",
+            "",
+            "        reconnectAttempts++;",
+            "        var delay = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);",
+            "        self.postMessage({ type: 'reconnect_scheduled', delay: delay });",
+            "        scheduleReconnect(delay);",
+            "    };",
+            "",
+            "    ws.onerror = function(error) {};",
+            "}",
+            "",
+            "self.onmessage = function(event) {",
+            "    var msg = event.data;",
+            "",
+            "    if (msg.type === 'connect') {",
+            "        currentUrl = msg.url;",
+            "        reconnectAttempts = 0;",
+            "        openSocket(currentUrl);",
+            "    } else if (msg.type === 'send') {",
+            "        if (ws && ws.readyState === WebSocket.OPEN) {",
+            "            ws.send(msg.data);",
+            "        }",
+            "    } else if (msg.type === 'close') {",
+            "        currentUrl = null;",
+            "        clearInterval(pingInterval);",
+            "        if (ws) {",
+            "            ws.onclose = null;",
+            "            ws.close(1000, 'User disconnect');",
+            "            ws = null;",
+            "        }",
+            "    } else if (msg.type === 'get_buffer') {",
+            "        self.postMessage({",
+            "            type: 'buffer',",
+            "            messages: bufferedMessages.slice()",
+            "        });",
+            "    }",
+            "};"
+        ].join('\n');
 
-    function openSocket(wsUrl) {
-        try {
-            ws = new WebSocket(wsUrl);
-
-            ws.onopen = function() {
-                self.postMessage({ type: 'open' });
-            };
-
-            ws.onmessage = function(event) {
-                bufferedMessages.push({
-                    data: event.data,
-                    timestamp: Date.now()
-                });
-                if (bufferedMessages.length > MAX_BUFFER) {
-                    bufferedMessages = bufferedMessages.slice(-MAX_BUFFER / 2);
-                }
-                self.postMessage({ type: 'message', data: event.data });
-            };
-
-            ws.onclose = function(event) {
-                // Если есть ожидающий URL – открываем новый сокет
-                if (pendingUrl) {
-                    var url = pendingUrl;
-                    pendingUrl = null;
-                    openSocket(url);
-                } else {
-                    // Иначе сообщаем основному потоку о закрытии
-                    self.postMessage({ type: 'close', code: event.code, reason: event.reason });
-                }
-            };
-
-            ws.onerror = function(error) {
-                self.postMessage({ type: 'error', error: error.type || 'Unknown' });
-            };
-        } catch(e) {
-            self.postMessage({ type: 'error', error: 'Failed: ' + e.message });
-        }
-    }
-
-    function connect(wsUrl) {
-        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-            // Сохраняем URL и инициируем закрытие – новый сокет откроется в onclose
-            pendingUrl = wsUrl;
-            ws.close(1000, 'Reconnecting');
-        } else {
-            // Нет активного сокета – открываем сразу
-            openSocket(wsUrl);
-        }
-    }
-
-    self.onmessage = function(event) {
-        var msg = event.data;
-        
-        if (msg.type === 'connect') {
-            connect(msg.url);
-        } else if (msg.type === 'send') {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(msg.data);
-            }
-        } else if (msg.type === 'close') {
-            pendingUrl = null;  // отменяем ожидание
-            if (ws) {
-                ws.onclose = null;
-                ws.close(1000, 'User disconnect');
-                ws = null;
-            }
-        } else if (msg.type === 'get_buffer') {
-            self.postMessage({
-                type: 'buffer',
-                messages: bufferedMessages.slice()
-            });
-        }
-    };
-`;
         const blob = new Blob([workerCode], { type: 'application/javascript' });
         const workerUrl = URL.createObjectURL(blob);
         this.worker = new Worker(workerUrl);
         URL.revokeObjectURL(workerUrl);
-        
+
         const self = this;
-        
+
         this.worker.onmessage = function(event) {
             const msg = event.data;
-            
+
             if (msg.type === 'open') {
                 console.log('✅ Worker WS открыт');
-                // Ваш оригинальный код ws.onopen
+                self.isConnected = true;
+
                 if (self.currentExchange === 'bybit') {
                     const bybitInterval = self.getExchangeInterval(self.currentInterval, self.currentExchange);
                     const bybitSymbol = self.formatSymbol(self.currentSymbol, self.currentExchange);
@@ -131,21 +161,11 @@ class WebSocketManager {
                         type: 'send',
                         data: JSON.stringify({ op: 'subscribe', args: args })
                     });
-
-                    self.pingInterval = setInterval(function() {
-                        self.worker.postMessage({
-                            type: 'send',
-                            data: JSON.stringify({ op: 'ping' })
-                        });
-                    }, 20000);
                 }
             }
             else if (msg.type === 'message') {
-                // Ваш оригинальный код ws.onmessage
                 try {
-                    if (self.currentSymbol !== self.currentSymbol) return;
                     const raw = JSON.parse(msg.data);
-
                     if (raw.op === 'pong') return;
 
                     if (self.currentExchange === 'binance') {
@@ -173,38 +193,26 @@ class WebSocketManager {
                 }
             }
             else if (msg.type === 'close') {
-                if (self.pingInterval) { clearInterval(self.pingInterval); self.pingInterval = null; }
-
-                if (msg.code === 1000) return;
-
+                self.isConnected = false;
                 if (msg.code === 1008) {
                     if (self.currentExchange === 'binance' && self.currentMarketType === 'futures') {
                         if (self.binanceSpotOnlyTokens.includes(self.currentSymbol.toUpperCase())) {
                             console.warn('⚠️ 1008: Переключение на SPOT.');
                             self.currentMarketType = 'spot';
                             self.connect(self.currentSymbol, self.currentInterval, self.currentExchange, 'spot');
-                            return;
                         }
                     }
-                    console.error('🚫 WS 1008: Символ не найден');
-                    return;
                 }
-
-                self.retryCount++;
-                const delay = Math.min(3000 * Math.pow(2, self.retryCount - 1), 30000);
-                console.warn('❌ WS ОБРЫВ. Переподключение через ' + (delay/1000) + 'с...');
-                self.reconnectTimer = setTimeout(function() {
-                    self.connect(self.currentSymbol, self.currentInterval, self.currentExchange, self.currentMarketType);
-                }, delay);
+            }
+            else if (msg.type === 'reconnect_scheduled') {
+                console.log('🔄 WS переподключится через ' + (msg.delay / 1000) + 'с');
             }
             else if (msg.type === 'buffer') {
-                // Применяем буферизированные сообщения
                 const messages = msg.messages || [];
-                for (var i = 0; i < messages.length; i++) {
+                for (let i = 0; i < messages.length; i++) {
                     try {
                         const raw = JSON.parse(messages[i].data);
                         if (raw.op === 'pong') continue;
-                        
                         if (self.currentExchange === 'binance' && raw.stream) {
                             const payload = raw.data;
                             if (raw.stream.includes('@kline')) {
@@ -216,11 +224,18 @@ class WebSocketManager {
                     } catch(e) {}
                 }
             }
+            else if (msg.type === 'error') {
+                console.error('💥 WS error:', msg.error);
+            }
         };
+
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
     }
 
-    // ========== ВСЕ ОСТАЛЬНЫЕ МЕТОДЫ ОСТАВЛЯЕМ КАК БЫЛИ ==========
-    
+    // ========== ОРИГИНАЛЬНЫЕ МЕТОДЫ ==========
     getExchangeInterval(interval, exchange) {
         if (exchange === 'bybit') {
             const map = {
@@ -287,7 +302,6 @@ class WebSocketManager {
         this.retryCount = 0;
     }
 
-    // Ваши оригинальные обработчики (БЕЗ ИЗМЕНЕНИЙ)
     _handleBinanceKline(payload, symbol) {
         const k = payload.k;
         if (!k) return;
