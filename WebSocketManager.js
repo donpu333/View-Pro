@@ -256,17 +256,17 @@ class WebSocketManager {
         this.worker.postMessage({ type: 'connect', url: wsUrl });
     }
 
+    // === ОБРАБОТЧИКИ: ТОЛЬКО ПАРСИНГ И ПЕРЕДАЧА В CHART MANAGER ===
+
     _handleBinanceKline(payload, symbol) {
         const k = payload.k;
         if (!k) return;
         
         const cm = this.chartManager;
-        if (!cm || cm.currentSymbol !== symbol || !cm.chartData) return;
+        if (!cm || cm.currentSymbol !== symbol) return;
 
-        const candleTime = Math.floor(k.t / 1000);
-        const lastCandle = cm.chartData[cm.chartData.length - 1];
         const candle = {
-            time: candleTime,
+            time: Math.floor(k.t / 1000),
             open: parseFloat(k.o),
             high: parseFloat(k.h),
             low: parseFloat(k.l),
@@ -274,24 +274,10 @@ class WebSocketManager {
             volume: parseFloat(k.v)
         };
 
-        if (lastCandle && candleTime > lastCandle.time) {
-            const exists = cm.chartData.some(c => c.time === candleTime);
-            if (!exists) {
-                cm.chartData.push(candle);
-                cm.lastCandle = candle;
-
-                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-                if (series) series.setData(cm.chartData);
-
-                if (cm.volumeSeries) {
-                    cm.volumeSeries.update({
-                        time: candle.time,
-                        value: candle.volume || 0,
-                        color: candle.close >= candle.open ? cm.bullishColor : cm.bearishColor
-                    });
-                }
-
-                if (cm.timerManager) cm.timerManager.start(this.currentInterval);
+        if (cm.chartData && cm.chartData.length > 0) {
+            const lastTime = cm.chartData[cm.chartData.length - 1].time;
+            if (candle.time > lastTime && cm.timerManager) {
+                cm.timerManager.start(this.currentInterval);
             }
         }
 
@@ -313,7 +299,7 @@ class WebSocketManager {
         const k = data.data[0];
         
         const cm = this.chartManager;
-        if (!cm || cm.currentSymbol !== symbol || !cm.chartData) return;
+        if (!cm || cm.currentSymbol !== symbol) return;
 
         const candle = {
             time: Math.floor(k.start / 1000),
@@ -324,26 +310,10 @@ class WebSocketManager {
             volume: parseFloat(k.volume)
         };
 
-        const lastCandle = cm.chartData[cm.chartData.length - 1];
-
-        if (lastCandle && candle.time > lastCandle.time) {
-            const exists = cm.chartData.some(c => c.time === candle.time);
-            if (!exists) {
-                cm.chartData.push(candle);
-                cm.lastCandle = candle;
-
-                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-                if (series) series.setData(cm.chartData);
-
-                if (cm.volumeSeries) {
-                    cm.volumeSeries.update({
-                        time: candle.time,
-                        value: candle.volume || 0,
-                        color: candle.close >= candle.open ? cm.bullishColor : cm.bearishColor
-                    });
-                }
-
-                if (cm.timerManager) cm.timerManager.start(this.currentInterval);
+        if (cm.chartData && cm.chartData.length > 0) {
+            const lastTime = cm.chartData[cm.chartData.length - 1].time;
+            if (candle.time > lastTime && cm.timerManager) {
+                cm.timerManager.start(this.currentInterval);
             }
         }
 
@@ -360,6 +330,8 @@ class WebSocketManager {
             cm._syncPriceLine(price);
         }
     }
+
+    // === ПУБЛИЧНЫЕ МЕТОДЫ ===
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         this.connect(symbol, interval, exchange, marketType);
