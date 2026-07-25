@@ -242,7 +242,7 @@ class WebSocketManager {
     // чтобы setDataQuick успел отрисовать исторические свечи
     setTimeout(() => {
         this.worker.postMessage({ type: 'connect', url: wsUrl });
-    }, 300);
+    }, 200);
 }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
