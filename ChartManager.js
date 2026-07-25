@@ -713,7 +713,6 @@ class ChartManager {
     const lastCandle = this.chartData[this.chartData.length - 1];
     if (!lastCandle) return;
     
-    // Мгновенное обновление как на бирже
     lastCandle.close = price;
     if (price > lastCandle.high) lastCandle.high = price;
     if (price < lastCandle.low) lastCandle.low = price;
