@@ -1469,17 +1469,7 @@ _subscribeToPrice() {
                 ).catch(() => {});
             }
 
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            if (lastCandle) {
-                this._syncPriceLine(lastCandle.close);
-            }
-
-            this._subscribeToPrice();
-
-            const currentPrice = this.getCurrentPrice();
-            if (currentPrice != null && lastCandle && currentPrice !== lastCandle.close) {
-                this._syncPriceLine(currentPrice);
-            }
+          
 
             this.loadDrawingsForCurrentSymbol();
 
