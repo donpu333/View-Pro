@@ -2,15 +2,14 @@ class WebSocketManager {
     constructor(chartManager) {
         this.chartManager = chartManager;
         this.worker = null;
-        this.reconnectTimer = null;
-        this.pingInterval = null;
+        this.lastHiddenTime = null;
+        this.isConnected = false;
+        
         this.currentSymbol = 'BTCUSDT';
         this.currentInterval = '1h';
         this.currentExchange = 'binance';
         this.currentMarketType = 'futures';
-        this.retryCount = 0;
-        this.lastHiddenTime = null;
-        this.isConnected = false;
+        
         this.binanceSpotOnlyTokens = ['BTCDOMUSDT', 'DEFIUSDT', 'ALTUSDT', 'NFTUSDT', 'TOPCOINSUSDT'];
         
         this._initWorker();
@@ -26,121 +25,109 @@ class WebSocketManager {
         });
     }
 
-    // ========== СОЗДАНИЕ WORKER ==========
     _initWorker() {
-        // Код воркера пишем как обычную строку, без шаблонных литералов
-        const workerCode = [
-            "var ws = null;",
-            "var pingInterval = null;",
-            "var bufferedMessages = [];",
-            "var MAX_BUFFER = 5000;",
-            "var currentUrl = null;",
-            "var reconnectAttempts = 0;",
-            "var maxReconnectDelay = 30000;",
-            "",
-            "function scheduleReconnect(delay) {",
-            "    setTimeout(function() {",
-            "        if (currentUrl) {",
-            "            openSocket(currentUrl);",
-            "        }",
-            "    }, delay);",
-            "}",
-            "",
-            "function openSocket(wsUrl) {",
-            "    if (ws) {",
-            "        try { ws.onclose = null; ws.close(1000); } catch(e) {}",
-            "        ws = null;",
-            "    }",
-            "",
-            "    try {",
-            "        ws = new WebSocket(wsUrl);",
-            "    } catch(e) {",
-            "        self.postMessage({ type: 'error', error: 'Failed: ' + e.message });",
-            "        scheduleReconnect(3000);",
-            "        return;",
-            "    }",
-            "",
-            "    ws.onopen = function() {",
-            "        reconnectAttempts = 0;",
-            "        self.postMessage({ type: 'open' });",
-            "",
-            "        if (wsUrl.indexOf('bybit') !== -1) {",
-            "            clearInterval(pingInterval);",
-            "            pingInterval = setInterval(function() {",
-            "                if (ws && ws.readyState === WebSocket.OPEN) {",
-            "                    try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}",
-            "                }",
-            "            }, 20000);",
-            "        }",
-            "    };",
-            "",
-            "    ws.onmessage = function(event) {",
-            "        bufferedMessages.push({",
-            "            data: event.data,",
-            "            timestamp: Date.now()",
-            "        });",
-            "        if (bufferedMessages.length > MAX_BUFFER) {",
-            "            bufferedMessages = bufferedMessages.slice(-MAX_BUFFER / 2);",
-            "        }",
-            "        self.postMessage({ type: 'message', data: event.data });",
-            "    };",
-            "",
-            "    ws.onclose = function(event) {",
-            "        clearInterval(pingInterval);",
-            "        ws = null;",
-            "",
-            "        if (event.code === 1000) {",
-            "            self.postMessage({ type: 'close', code: event.code, reason: 'Normal' });",
-            "            return;",
-            "        }",
-            "",
-            "        if (event.code === 1008) {",
-            "            self.postMessage({ type: 'close', code: event.code, reason: event.reason });",
-            "            return;",
-            "        }",
-            "",
-            "        reconnectAttempts++;",
-            "        var delay = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);",
-            "        self.postMessage({ type: 'reconnect_scheduled', delay: delay });",
-            "        scheduleReconnect(delay);",
-            "    };",
-            "",
-            "    ws.onerror = function(error) {};",
-            "}",
-            "",
-            "self.onmessage = function(event) {",
-            "    var msg = event.data;",
-            "",
-            "    if (msg.type === 'connect') {",
-            "        currentUrl = msg.url;",
-            "        reconnectAttempts = 0;",
-            "        openSocket(currentUrl);",
-            "    } else if (msg.type === 'send') {",
-            "        if (ws && ws.readyState === WebSocket.OPEN) {",
-            "            ws.send(msg.data);",
-            "        }",
-            "    } else if (msg.type === 'close') {",
-            "        currentUrl = null;",
-            "        clearInterval(pingInterval);",
-            "        if (ws) {",
-            "            ws.onclose = null;",
-            "            ws.close(1000, 'User disconnect');",
-            "            ws = null;",
-            "        }",
-            "    } else if (msg.type === 'get_buffer') {",
-            "        self.postMessage({",
-            "            type: 'buffer',",
-            "            messages: bufferedMessages.slice()",
-            "        });",
-            "    }",
-            "};"
-        ].join('\n');
+        const workerCode = `
+            let ws = null;
+            let pingInterval = null;
+            let bufferedMessages = [];
+            const MAX_BUFFER = 5000;
+            let currentUrl = null;
+            let reconnectAttempts = 0;
+            const maxReconnectDelay = 30000;
+
+            function scheduleReconnect(delay) {
+                setTimeout(() => {
+                    if (currentUrl) openSocket(currentUrl);
+                }, delay);
+            }
+
+            function openSocket(wsUrl) {
+                if (ws) {
+                    try { ws.onclose = null; ws.close(1000); } catch(e) {}
+                    ws = null;
+                }
+
+                try {
+                    ws = new WebSocket(wsUrl);
+                } catch(e) {
+                    self.postMessage({ type: 'error', error: 'Failed: ' + e.message });
+                    scheduleReconnect(3000);
+                    return;
+                }
+
+                ws.onopen = () => {
+                    reconnectAttempts = 0;
+                    self.postMessage({ type: 'open' });
+
+                    if (wsUrl.includes('bybit')) {
+                        clearInterval(pingInterval);
+                        pingInterval = setInterval(() => {
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}
+                            }
+                        }, 20000);
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    bufferedMessages.push({ data: event.data, timestamp: Date.now() });
+                    if (bufferedMessages.length > MAX_BUFFER) {
+                        bufferedMessages = bufferedMessages.slice(-MAX_BUFFER / 2);
+                    }
+                    self.postMessage({ type: 'message', data: event.data });
+                };
+
+                ws.onclose = (event) => {
+                    clearInterval(pingInterval);
+                    ws = null;
+
+                    if (event.code === 1000 || event.code === 1008) {
+                        self.postMessage({ type: 'close', code: event.code, reason: event.reason || 'Normal' });
+                        return;
+                    }
+
+                    reconnectAttempts++;
+                    const delay = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+                    self.postMessage({ type: 'reconnect_scheduled', delay: delay });
+                    scheduleReconnect(delay);
+                };
+
+                ws.onerror = () => {};
+            }
+
+            self.onmessage = (event) => {
+                const msg = event.data;
+
+                if (msg.type === 'connect') {
+                    bufferedMessages = []; 
+                    currentUrl = msg.url;
+                    reconnectAttempts = 0;
+                    openSocket(currentUrl);
+                } else if (msg.type === 'send') {
+                    if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.data);
+                } else if (msg.type === 'close') {
+                    currentUrl = null;
+                    clearInterval(pingInterval);
+                    if (ws) {
+                        ws.onclose = null;
+                        ws.close(1000, 'User disconnect');
+                        ws = null;
+                    }
+                } else if (msg.type === 'get_buffer') {
+                    self.postMessage({ type: 'buffer', messages: bufferedMessages.slice() });
+                }
+            };
+        `;
 
         const blob = new Blob([workerCode], { type: 'application/javascript' });
         const workerUrl = URL.createObjectURL(blob);
         this.worker = new Worker(workerUrl);
         URL.revokeObjectURL(workerUrl);
 
+        this._bindWorkerEvents();
+    }
+
+    _bindWorkerEvents() {
         const self = this;
 
         this.worker.onmessage = function(event) {
@@ -164,33 +151,7 @@ class WebSocketManager {
                 }
             }
             else if (msg.type === 'message') {
-                try {
-                    const raw = JSON.parse(msg.data);
-                    if (raw.op === 'pong') return;
-
-                    if (self.currentExchange === 'binance') {
-                        if (raw.stream) {
-                            const streamName = raw.stream;
-                            const payload = raw.data;
-                            if (streamName.includes('@kline')) {
-                                self._handleBinanceKline(payload, self.currentSymbol);
-                            } else if (streamName.includes('@trade')) {
-                                self._handleBinanceTrade(payload, self.currentSymbol);
-                            }
-                        }
-                    }
-                    else if (self.currentExchange === 'bybit') {
-                        if (raw.topic) {
-                            if (raw.topic.startsWith('kline.')) {
-                                self._handleBybitKline(raw, self.currentSymbol);
-                            } else if (raw.topic.startsWith('publicTrade.')) {
-                                self._handleBybitTrade(raw, self.currentSymbol);
-                            }
-                        }
-                    }
-                } catch(e) {
-                    console.warn('⚠️ Ошибка обработки WS сообщения:', e);
-                }
+                self._processRawMessage(msg.data);
             }
             else if (msg.type === 'close') {
                 self.isConnected = false;
@@ -210,32 +171,38 @@ class WebSocketManager {
             else if (msg.type === 'buffer') {
                 const messages = msg.messages || [];
                 for (let i = 0; i < messages.length; i++) {
-                    try {
-                        const raw = JSON.parse(messages[i].data);
-                        if (raw.op === 'pong') continue;
-                        if (self.currentExchange === 'binance' && raw.stream) {
-                            const payload = raw.data;
-                            if (raw.stream.includes('@kline')) {
-                                self._handleBinanceKline(payload, self.currentSymbol);
-                            } else if (raw.stream.includes('@trade')) {
-                                self._handleBinanceTrade(payload, self.currentSymbol);
-                            }
-                        }
-                    } catch(e) {}
+                    self._processRawMessage(messages[i].data);
                 }
             }
             else if (msg.type === 'error') {
                 console.error('💥 WS error:', msg.error);
             }
         };
-
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
     }
 
-    // ========== ОРИГИНАЛЬНЫЕ МЕТОДЫ ==========
+    _processRawMessage(rawDataStr) {
+        try {
+            const raw = JSON.parse(rawDataStr);
+            if (raw.op === 'pong') return;
+
+            if (this.currentExchange === 'binance' && raw.stream) {
+                const payload = raw.data;
+                if (raw.stream.includes('@kline')) {
+                    this._handleBinanceKline(payload, this.currentSymbol);
+                } else if (raw.stream.includes('@trade')) {
+                    this._handleBinanceTrade(payload, this.currentSymbol);
+                }
+            }
+            else if (this.currentExchange === 'bybit' && raw.topic) {
+                if (raw.topic.startsWith('kline.')) {
+                    this._handleBybitKline(raw, this.currentSymbol);
+                } else if (raw.topic.startsWith('publicTrade.')) {
+                    this._handleBybitTrade(raw, this.currentSymbol);
+                }
+            }
+        } catch(e) {}
+    }
+
     getExchangeInterval(interval, exchange) {
         if (exchange === 'bybit') {
             const map = {
@@ -249,23 +216,18 @@ class WebSocketManager {
     }
 
     formatSymbol(symbol, exchange) {
-        const cleanSymbol = symbol.trim();
-        return exchange === 'bybit' ? cleanSymbol.toUpperCase() : cleanSymbol.toLowerCase();
+        return exchange === 'bybit' ? symbol.trim().toUpperCase() : symbol.trim().toLowerCase();
     }
 
     connect(symbol, interval, exchange, marketType) {
-        if (!symbol) symbol = this.currentSymbol || 'BTCUSDT';
-        if (!exchange) exchange = this.currentExchange || 'binance';
-        if (!marketType) marketType = this.currentMarketType || 'futures';
-        if (!interval) interval = this.currentInterval || '1h';
-
-        symbol = symbol.trim();
-        interval = interval.trim().toLowerCase();
+        symbol = symbol || this.currentSymbol || 'BTCUSDT';
+        exchange = exchange || this.currentExchange || 'binance';
+        marketType = marketType || this.currentMarketType || 'futures';
+        interval = (interval || this.currentInterval || '1h').trim().toLowerCase();
 
         if (exchange === 'binance' && marketType === 'futures' && this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
             console.warn('⚠️ Символ ' + symbol + ' недоступен на фьючерсах Binance. Автопереключение на SPOT.');
             marketType = 'spot';
-            this.currentMarketType = 'spot';
         }
 
         this.currentSymbol = symbol;
@@ -273,76 +235,36 @@ class WebSocketManager {
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
 
-        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
-
-        let wsUrl;
         const formattedSymbol = this.formatSymbol(symbol, exchange);
+        let wsUrl;
 
         if (exchange === 'binance') {
             const baseUrl = marketType === 'spot'
                 ? 'wss://data-stream.binance.com/stream'
                 : 'wss://fstream.binance.com/stream';
-            const streams = formattedSymbol + '@kline_' + interval + '/' + formattedSymbol + '@trade';
-            wsUrl = baseUrl + '?streams=' + streams;
+            const streams = `${formattedSymbol}@kline_${interval}/${formattedSymbol}@trade`;
+            wsUrl = `${baseUrl}?streams=${streams}`;
         } else if (exchange === 'bybit') {
-            const category = (marketType === 'spot') ? 'spot' : (marketType === 'futures' || marketType === 'linear') ? 'linear' : marketType;
-            wsUrl = 'wss://stream.bybit.com/v5/public/' + category;
-        } else {
-            wsUrl = 'wss://' + exchange + '.com/ws';
+            const category = marketType === 'spot' ? 'spot' : 'linear';
+            wsUrl = `wss://stream.bybit.com/v5/public/${category}`;
         }
 
-        console.log('🔌 Подключаюсь к комбинированному WS: ' + wsUrl);
+        console.log('🔌 Подключаюсь к WS: ' + wsUrl);
         
-        if (!this.worker) {
-            this._initWorker();
-        }
+        if (!this.worker) this._initWorker();
         
         this.worker.postMessage({ type: 'connect', url: wsUrl });
-        this.retryCount = 0;
     }
 
     _handleBinanceKline(payload, symbol) {
         const k = payload.k;
         if (!k) return;
+        
         const cm = this.chartManager;
-        if (!cm || cm.currentSymbol !== symbol) return;
+        if (!cm || cm.currentSymbol !== symbol || !cm.chartData) return;
 
         const candleTime = Math.floor(k.t / 1000);
-        const lastCandle = cm.chartData ? cm.chartData[cm.chartData.length - 1] : null;
-
-        if (lastCandle && candleTime > lastCandle.time) {
-            const exists = cm.chartData.some(function(c) { return c.time === candleTime; });
-            if (!exists) {
-                const newCandle = {
-                    time: candleTime,
-                    open: parseFloat(k.o),
-                    high: parseFloat(k.h),
-                    low: parseFloat(k.l),
-                    close: parseFloat(k.c),
-                    volume: parseFloat(k.v)
-                };
-                cm.chartData.push(newCandle);
-                cm.lastCandle = newCandle;
-
-                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-                if (series) series.setData(cm.chartData);
-
-                if (cm.volumeSeries) {
-                    const volData = cm.chartData.map(function(c) {
-                        return {
-                            time: c.time,
-                            value: c.volume || 0,
-                            color: c.close >= c.open ? cm.bullishColor : cm.bearishColor
-                        };
-                    });
-                    cm.volumeSeries.setData(volData);
-                }
-
-                if (cm.timerManager) cm.timerManager.start(this.currentInterval);
-            }
-        }
-
+        const lastCandle = cm.chartData[cm.chartData.length - 1];
         const candle = {
             time: candleTime,
             open: parseFloat(k.o),
@@ -351,12 +273,35 @@ class WebSocketManager {
             close: parseFloat(k.c),
             volume: parseFloat(k.v)
         };
+
+        if (lastCandle && candleTime > lastCandle.time) {
+            const exists = cm.chartData.some(c => c.time === candleTime);
+            if (!exists) {
+                cm.chartData.push(candle);
+                cm.lastCandle = candle;
+
+                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+                if (series) series.setData(cm.chartData);
+
+                if (cm.volumeSeries) {
+                    cm.volumeSeries.update({
+                        time: candle.time,
+                        value: candle.volume || 0,
+                        color: candle.close >= candle.open ? cm.bullishColor : cm.bearishColor
+                    });
+                }
+
+                if (cm.timerManager) cm.timerManager.start(this.currentInterval);
+            }
+        }
+
         cm.updateLastCandle(candle);
     }
 
     _handleBinanceTrade(payload, symbol) {
         const price = parseFloat(payload.p);
         if (isNaN(price)) return;
+        
         const cm = this.chartManager;
         if (cm && cm.currentSymbol === symbol && cm._syncPriceLine) {
             cm._syncPriceLine(price);
@@ -366,6 +311,10 @@ class WebSocketManager {
     _handleBybitKline(data, symbol) {
         if (!data.data || !data.data.length) return;
         const k = data.data[0];
+        
+        const cm = this.chartManager;
+        if (!cm || cm.currentSymbol !== symbol || !cm.chartData) return;
+
         const candle = {
             time: Math.floor(k.start / 1000),
             open: parseFloat(k.open),
@@ -374,16 +323,38 @@ class WebSocketManager {
             close: parseFloat(k.close),
             volume: parseFloat(k.volume)
         };
-        const cm = this.chartManager;
-        if (cm && cm.currentSymbol === symbol) {
-            cm.updateLastCandle(candle);
+
+        const lastCandle = cm.chartData[cm.chartData.length - 1];
+
+        if (lastCandle && candle.time > lastCandle.time) {
+            const exists = cm.chartData.some(c => c.time === candle.time);
+            if (!exists) {
+                cm.chartData.push(candle);
+                cm.lastCandle = candle;
+
+                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+                if (series) series.setData(cm.chartData);
+
+                if (cm.volumeSeries) {
+                    cm.volumeSeries.update({
+                        time: candle.time,
+                        value: candle.volume || 0,
+                        color: candle.close >= candle.open ? cm.bullishColor : cm.bearishColor
+                    });
+                }
+
+                if (cm.timerManager) cm.timerManager.start(this.currentInterval);
+            }
         }
+
+        cm.updateLastCandle(candle);
     }
 
     _handleBybitTrade(data, symbol) {
         if (!data.data || !data.data.length) return;
         const price = parseFloat(data.data[0].p);
         if (isNaN(price)) return;
+        
         const cm = this.chartManager;
         if (cm && cm.currentSymbol === symbol && cm._syncPriceLine) {
             cm._syncPriceLine(price);
@@ -395,8 +366,6 @@ class WebSocketManager {
     }
 
     closeAll() {
-        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
-        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
         if (this.worker) {
             this.worker.postMessage({ type: 'close' });
         }
