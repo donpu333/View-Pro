@@ -206,39 +206,44 @@ class WebSocketManager {
         return exchange === 'bybit' ? symbol.trim().toUpperCase() : symbol.trim().toLowerCase();
     }
 
-    connect(symbol, interval, exchange, marketType) {
-        symbol = (symbol || this.currentSymbol).trim();
-        exchange = exchange || this.currentExchange;
-        marketType = marketType || this.currentMarketType;
-        interval = (interval || this.currentInterval).trim().toLowerCase();
-        
-        if (exchange === 'binance' && marketType === 'futures' && this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
-            marketType = 'spot';
-        }
-        
-        this.currentSymbol = symbol;
-        this.currentInterval = interval;
-        this.currentExchange = exchange;
-        this.currentMarketType = marketType;
-        this.retryCount = 0;
-        
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-        
-        const fs = this.formatSymbol(symbol, exchange);
-        let wsUrl;
-        if (exchange === 'binance') {
-            wsUrl = (marketType === 'spot' ? 'wss://data-stream.binance.com/stream' : 'wss://fstream.binance.com/stream') +
-                    '?streams=' + fs + '@kline_' + interval + '/' + fs + '@trade';
-        } else {
-            wsUrl = 'wss://stream.bybit.com/v5/public/' + (marketType === 'spot' ? 'spot' : 'linear');
-        }
-        
-        if (!this.worker) this._initWorker();
-        this.worker.postMessage({ type: 'connect', url: wsUrl });
+   connect(symbol, interval, exchange, marketType) {
+    symbol = (symbol || this.currentSymbol).trim();
+    exchange = exchange || this.currentExchange;
+    marketType = marketType || this.currentMarketType;
+    interval = (interval || this.currentInterval).trim().toLowerCase();
+    
+    if (exchange === 'binance' && marketType === 'futures' && this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
+        marketType = 'spot';
     }
+    
+    this.currentSymbol = symbol;
+    this.currentInterval = interval;
+    this.currentExchange = exchange;
+    this.currentMarketType = marketType;
+    this.retryCount = 0;
+    
+    if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+    }
+    
+    const fs = this.formatSymbol(symbol, exchange);
+    let wsUrl;
+    if (exchange === 'binance') {
+        wsUrl = (marketType === 'spot' ? 'wss://data-stream.binance.com/stream' : 'wss://fstream.binance.com/stream') +
+                '?streams=' + fs + '@kline_' + interval + '/' + fs + '@trade';
+    } else {
+        wsUrl = 'wss://stream.bybit.com/v5/public/' + (marketType === 'spot' ? 'spot' : 'linear');
+    }
+    
+    if (!this.worker) this._initWorker();
+    
+    // Задержка перед подключением WebSocket,
+    // чтобы setDataQuick успел отрисовать исторические свечи
+    setTimeout(() => {
+        this.worker.postMessage({ type: 'connect', url: wsUrl });
+    }, 300);
+}
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         this.connect(symbol, interval, exchange, marketType);
