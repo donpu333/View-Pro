@@ -704,102 +704,111 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    _syncPriceLine(price) {
-        if (!price) return;
-        
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series) return;
+   _syncPriceLine(price) {
+    if (!price) return;
+    
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series) return;
+    
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    // Мгновенное обновление как на бирже
+    lastCandle.close = price;
+    if (price > lastCandle.high) lastCandle.high = price;
+    if (price < lastCandle.low) lastCandle.low = price;
+    
+    const isBullish = price >= lastCandle.open;
+    const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+    
+    this.currentRealPrice = price;
+    this._lastAppliedColor = lineColor;
+    this.lastCandle = lastCandle;
+    
+    series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
+    series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
+    
+    const prim = this.timerManager?._primitive;
+    if (prim) {
+        if (prim.setPrice) prim.setPrice(price);
+        if (prim.setColor) prim.setColor(lineColor);
+        if (prim.isEnabled()) prim.requestRedraw();
+    }
+    
+    this.scheduleUpdatePosition();
+    this._updatePageTitle();
+    this.requestDrawingsRedraw();
+}
+updateLastCandle(candle) {
+    if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
+    
+    try {
+        if (!this._isValidCandle(candle)) {
+            const sanitized = this._sanitizeCandle(candle);
+            if (!sanitized) return;
+            candle = sanitized;
+        }
         
         const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
+        const existingIndex = this._candleTimeMap.get(candle.time);
         
-        lastCandle.close = price;
-        if (price > lastCandle.high) lastCandle.high = price;
-        if (price < lastCandle.low) lastCandle.low = price;
-        
-        const isBullish = price >= lastCandle.open;
-        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
-        
-        this.currentRealPrice = price;
-        this._lastAppliedColor = lineColor;
-        this.lastCandle = lastCandle;
-        
-        series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
-        series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-        
-        const prim = this.timerManager?._primitive;
-        if (prim) {
-            if (prim.setPrice) prim.setPrice(price);
-            if (prim.setColor) prim.setColor(lineColor);
-            if (prim.isEnabled()) prim.requestRedraw();
+        if (existingIndex !== undefined) {
+            // Свеча уже существует. Kline может прислать устаревшие high/low.
+            // Сохраняем текущие high/low если они экстремальнее (обновлены через трейды).
+            const existing = this.chartData[existingIndex];
+            existing.open = candle.open;
+            existing.close = candle.close;
+            existing.volume = candle.volume;
+            // high/low берём максимальные/минимальные из kline и текущих
+            existing.high = Math.max(existing.high, candle.high);
+            existing.low = Math.min(existing.low, candle.low);
+            candle = existing;
+            this.chartData[existingIndex] = candle;
+        } else if (!lastCandle || candle.time > lastCandle.time) {
+            this.chartData.push(candle);
+            this._addToTimeMap(candle.time, this.chartData.length - 1);
+        } else {
+            return;
         }
         
-        this.scheduleUpdatePosition();
-        this._updatePageTitle();
-        this.requestDrawingsRedraw();
-    }
-
-    updateLastCandle(candle) {
-        if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
-        
-        try {
-            if (!this._isValidCandle(candle)) {
-                const sanitized = this._sanitizeCandle(candle);
-                if (!sanitized) return;
-                candle = sanitized;
-            }
-            
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            const existingIndex = this._candleTimeMap.get(candle.time);
-            
-            if (existingIndex !== undefined) {
-                this.chartData[existingIndex] = candle;
-            } else if (!lastCandle || candle.time > lastCandle.time) {
-                this.chartData.push(candle);
-                this._addToTimeMap(candle.time, this.chartData.length - 1);
-            } else {
-                return;
-            }
-            
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (activeSeries) {
-                activeSeries.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
-            }
-            
-            this.currentRealPrice = candle.close;
-            this.lastCandle = candle;
-            
-            const isBullish = candle.close >= candle.open;
-            const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-            
-            if (lineColor !== this._lastAppliedColor) {
-                this._lastAppliedColor = lineColor;
-                if (activeSeries) activeSeries.applyOptions({ priceLineColor: lineColor });
-            }
-            
-            if (this.timerManager?._primitive) {
-                if (this.timerManager._primitive.setPrice) this.timerManager._primitive.setPrice(candle.close);
-                if (this.timerManager._primitive.setColor) this.timerManager._primitive.setColor(lineColor);
-                if (this.timerManager._primitive.isEnabled()) this.timerManager._primitive.requestRedraw();
-            }
-            
-            if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
-            
-            if (this.volumeSeries) {
-                this.volumeSeries.update({ 
-                    time: candle.time, 
-                    value: candle.quoteVolume || 0, 
-                    color: isBullish ? this.bullishColor : this.bearishColor 
-                });
-            }
-            
-            this._priceChanged = true;
-            this._volumeDataDirty = true;
-        } catch (e) {
-            console.error('❌ Ошибка в updateLastCandle:', e);
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries) {
+            activeSeries.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
         }
+        
+        this.currentRealPrice = candle.close;
+        this.lastCandle = candle;
+        
+        const isBullish = candle.close >= candle.open;
+        const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+        
+        if (lineColor !== this._lastAppliedColor) {
+            this._lastAppliedColor = lineColor;
+            if (activeSeries) activeSeries.applyOptions({ priceLineColor: lineColor });
+        }
+        
+        if (this.timerManager?._primitive) {
+            if (this.timerManager._primitive.setPrice) this.timerManager._primitive.setPrice(candle.close);
+            if (this.timerManager._primitive.setColor) this.timerManager._primitive.setColor(lineColor);
+            if (this.timerManager._primitive.isEnabled()) this.timerManager._primitive.requestRedraw();
+        }
+        
+        if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
+        
+        if (this.volumeSeries) {
+            this.volumeSeries.update({ 
+                time: candle.time, 
+                value: candle.quoteVolume || candle.volume || 0, 
+                color: isBullish ? this.bullishColor : this.bearishColor 
+            });
+        }
+        
+        this._priceChanged = true;
+        this._volumeDataDirty = true;
+    } catch (e) {
+        console.error('❌ Ошибка в updateLastCandle:', e);
     }
-
+}
     async waitForChartReady() {
         await new Promise(resolve => {
             const check = () => {
