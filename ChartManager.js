@@ -1516,6 +1516,14 @@ const vol = index !== undefined ? (this.chartData[index].quoteVolume || 0) : 0;
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
 
+        // 🚀 ЗАПУСКАЕМ WebSocket ДЛЯ НОВОГО ТИКЕРА ПАРАЛЛЕЛЬНО (максимально рано)
+        // Это сократит задержку появления живой цены до минимума.
+        if (window.wsManager && window.wsManager.updateSymbolAndTimeframe) {
+            window.wsManager.updateSymbolAndTimeframe(
+                symbol, this.currentInterval, exchange, marketType
+            );
+        }
+
         // Загрузка точности цены из кэша
         const cachedPrecision = localStorage.getItem(
             `precision_${symbol}_${exchange}_${marketType}`
@@ -1546,14 +1554,19 @@ const vol = index !== undefined ? (this.chartData[index].quoteVolume || 0) : 0;
             ).catch(() => {});
         }
 
-        // Подписка на обновления цены в реальном времени
+        // ✅ ЯВНО УСТАНАВЛИВАЕМ ЛИНИЮ ЦЕНЫ ПО ПОСЛЕДНЕЙ СВЕЧЕ (мгновенный визуал)
+        const lastCandle = this.chartData[this.chartData.length - 1];
+        if (lastCandle) {
+            this._syncPriceLine(lastCandle.close);
+        }
+
+        // Подписка на обновления цены через PriceManager (будет получать данные из WebSocket)
         this._subscribeToPrice();
 
-        // ✅ ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ ЦЕНЫ ПОСЛЕ ПОДПИСКИ
-        // Гарантирует, что линия цены сразу отобразится на графике,
-        // даже если _priceUpdateHandler был проигнорирован из-за _switchingSymbol.
+        // ✅ ДОПОЛНИТЕЛЬНАЯ СТРАХОВКА: если PriceManager уже успел получить цену,
+        // применяем её (сработает, если подписка сработала мгновенно)
         const currentPrice = this.getCurrentPrice();
-        if (currentPrice != null) {
+        if (currentPrice != null && currentPrice !== lastCandle.close) {
             this._syncPriceLine(currentPrice);
         }
 
