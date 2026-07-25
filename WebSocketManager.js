@@ -171,7 +171,15 @@ class WebSocketManager {
             else if (msg.type === 'buffer') {
                 const messages = msg.messages || [];
                 for (let i = 0; i < messages.length; i++) {
-                    self._processRawMessage(messages[i].data);
+                    const rawData = messages[i].data;
+                    
+                    // Блокируем ВСЕ трейды из буфера при возврате вкладки
+                    if (typeof rawData === 'string' && 
+                        (rawData.includes('@trade') || rawData.includes('publicTrade'))) {
+                        continue;
+                    }
+                    
+                    self._processRawMessage(rawData);
                 }
             }
             else if (msg.type === 'error') {
@@ -186,18 +194,33 @@ class WebSocketManager {
             if (raw.op === 'pong') return;
 
             if (this.currentExchange === 'binance' && raw.stream) {
+                // Извлекаем символ строго из данных биржи
+                const msgSymbol = (raw.data && raw.data.s) ? raw.data.s.toUpperCase() : null;
+                if (!msgSymbol) return; 
+
                 const payload = raw.data;
                 if (raw.stream.includes('@kline')) {
-                    this._handleBinanceKline(payload, this.currentSymbol);
+                    this._handleBinanceKline(payload, msgSymbol);
                 } else if (raw.stream.includes('@trade')) {
-                    this._handleBinanceTrade(payload, this.currentSymbol);
+                    this._handleBinanceTrade(payload, msgSymbol);
                 }
             }
             else if (this.currentExchange === 'bybit' && raw.topic) {
+                // Извлекаем символ строго из топика Bybit
+                const parts = raw.topic.split('.');
+                let msgSymbol = null;
+                if (raw.topic.startsWith('kline.') && parts.length >= 3) {
+                    msgSymbol = parts[2].toUpperCase();
+                } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
+                    msgSymbol = parts[1].toUpperCase();
+                }
+                
+                if (!msgSymbol) return;
+
                 if (raw.topic.startsWith('kline.')) {
-                    this._handleBybitKline(raw, this.currentSymbol);
+                    this._handleBybitKline(raw, msgSymbol);
                 } else if (raw.topic.startsWith('publicTrade.')) {
-                    this._handleBybitTrade(raw, this.currentSymbol);
+                    this._handleBybitTrade(raw, msgSymbol);
                 }
             }
         } catch(e) {}
@@ -256,14 +279,13 @@ class WebSocketManager {
         this.worker.postMessage({ type: 'connect', url: wsUrl });
     }
 
-    // === ОБРАБОТЧИКИ: ТОЛЬКО ПАРСИНГ И ПЕРЕДАЧА В CHART MANAGER ===
-
-    _handleBinanceKline(payload, symbol) {
+    _handleBinanceKline(payload, msgSymbol) {
         const k = payload.k;
         if (!k) return;
         
         const cm = this.chartManager;
-        if (!cm || cm.currentSymbol !== symbol) return;
+        // ФИКС: toUpperCase() защищает от рассинхрона регистров
+        if (!cm || cm.currentSymbol.toUpperCase() !== msgSymbol) return;
 
         const candle = {
             time: Math.floor(k.t / 1000),
@@ -284,22 +306,23 @@ class WebSocketManager {
         cm.updateLastCandle(candle);
     }
 
-    _handleBinanceTrade(payload, symbol) {
+    _handleBinanceTrade(payload, msgSymbol) {
         const price = parseFloat(payload.p);
         if (isNaN(price)) return;
         
         const cm = this.chartManager;
-        if (cm && cm.currentSymbol === symbol && cm._syncPriceLine) {
+        if (cm && cm.currentSymbol.toUpperCase() === msgSymbol && cm._syncPriceLine) {
             cm._syncPriceLine(price);
         }
     }
 
-    _handleBybitKline(data, symbol) {
+    _handleBybitKline(data, msgSymbol) {
         if (!data.data || !data.data.length) return;
         const k = data.data[0];
         
         const cm = this.chartManager;
-        if (!cm || cm.currentSymbol !== symbol) return;
+        // ФИКС: toUpperCase() защищает от рассинхрона регистров
+        if (!cm || cm.currentSymbol.toUpperCase() !== msgSymbol) return;
 
         const candle = {
             time: Math.floor(k.start / 1000),
@@ -320,18 +343,16 @@ class WebSocketManager {
         cm.updateLastCandle(candle);
     }
 
-    _handleBybitTrade(data, symbol) {
+    _handleBybitTrade(data, msgSymbol) {
         if (!data.data || !data.data.length) return;
         const price = parseFloat(data.data[0].p);
         if (isNaN(price)) return;
         
         const cm = this.chartManager;
-        if (cm && cm.currentSymbol === symbol && cm._syncPriceLine) {
+        if (cm && cm.currentSymbol.toUpperCase() === msgSymbol && cm._syncPriceLine) {
             cm._syncPriceLine(price);
         }
     }
-
-    // === ПУБЛИЧНЫЕ МЕТОДЫ ===
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         this.connect(symbol, interval, exchange, marketType);
