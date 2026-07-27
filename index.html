@@ -2944,77 +2944,112 @@ setTimeout(function() {
 })();
 </script>
 <script>
+// ===== ПРОСТОЙ ФИКС ПОДСВЕТКИ =====
 (function() {
-    // Функция для обновления цветов при переключении типа графика
-    function updateChartTypeColors() {
-        if (!window.chartManagerInstance) return;
-        
+    // Функция которая реально пересоздаёт серию
+    function forceRedrawChart() {
         const cm = window.chartManagerInstance;
+        if (!cm || !cm.chart) return;
+        
+        const data = cm.chartData || [];
+        if (!data.length) return;
+        
         const bullishColor = localStorage.getItem('chartBullishColor') || '#00bcd4';
         const bearishColor = localStorage.getItem('chartBearishColor') || '#f23645';
+        const type = cm.currentChartType || 'candle';
         
-        // Применяем цвета к активной серии
-        if (cm.currentChartType === 'candle' && cm.candleSeries) {
-            cm.candleSeries.applyOptions({
+        // Сохраняем текущую позицию
+        const visibleRange = cm.chart.timeScale().getVisibleRange();
+        
+        // Удаляем старую серию
+        if (cm.currentSeries) {
+            cm.chart.removeSeries(cm.currentSeries);
+            cm.currentSeries = null;
+        }
+        if (cm.candleSeries) {
+            cm.chart.removeSeries(cm.candleSeries);
+            cm.candleSeries = null;
+        }
+        if (cm.barSeries) {
+            cm.chart.removeSeries(cm.barSeries);
+            cm.barSeries = null;
+        }
+        
+        // Создаём новую серию с правильными цветами
+        if (type === 'candle') {
+            cm.candleSeries = cm.chart.addCandlestickSeries({
                 upColor: bullishColor,
                 downColor: bearishColor,
                 wickUpColor: bullishColor,
-                wickDownColor: bearishColor
+                wickDownColor: bearishColor,
+                borderVisible: false
             });
-        } else if (cm.currentChartType === 'bar' && cm.barSeries) {
-            cm.barSeries.applyOptions({
+            cm.candleSeries.setData(data);
+            cm.currentSeries = cm.candleSeries;
+        } else {
+            cm.barSeries = cm.chart.addBarSeries({
                 upColor: bullishColor,
                 downColor: bearishColor
             });
+            cm.barSeries.setData(data);
+            cm.currentSeries = cm.barSeries;
         }
         
-        // Обновляем цвет линии цены
-        const lastCandle = cm.chartData?.[cm.chartData.length - 1];
-        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-        const lineColor = isBullish ? bullishColor : bearishColor;
-        const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-        
-        if (activeSeries && cm.currentRealPrice) {
-            activeSeries.applyOptions({ priceLineColor: lineColor });
+        // Восстанавливаем позицию
+        if (visibleRange) {
+            cm.chart.timeScale().setVisibleRange(visibleRange);
+        } else {
+            cm.chart.timeScale().fitContent();
         }
         
-        // Обновляем объёмы
-        if (cm.volumeSeries && cm.chartData && cm.chartData.length > 0) {
-            const volumeData = cm.chartData.map(candle => ({
+        // Обновляем volume
+        if (cm.volumeSeries && data.length) {
+            const volumeData = data.map(candle => ({
                 time: candle.time,
                 value: candle.volume,
                 color: candle.close >= candle.open ? bullishColor : bearishColor
             }));
             cm.volumeSeries.setData(volumeData);
         }
+        
+        console.log(`✅ График перерисован (${type})`);
     }
     
-    // Отслеживаем переключение типа графика
+    // Вешаем на кнопки
     const candleBtn = document.getElementById('candleBtn');
     const barBtn = document.getElementById('barBtn');
     
     if (candleBtn) {
         candleBtn.addEventListener('click', function() {
-            setTimeout(updateChartTypeColors, 100);
+            const cm = window.chartManagerInstance;
+            if (cm) cm.currentChartType = 'candle';
+            setTimeout(forceRedrawChart, 50);
         });
     }
     
     if (barBtn) {
         barBtn.addEventListener('click', function() {
-            setTimeout(updateChartTypeColors, 100);
+            const cm = window.chartManagerInstance;
+            if (cm) cm.currentChartType = 'bar';
+            setTimeout(forceRedrawChart, 50);
         });
     }
     
-    // Также обновляем при изменении данных графика
+    // При изменении цветов
     const originalApplyColors = window.applyColorsToChart;
     if (typeof originalApplyColors === 'function') {
         window.applyColorsToChart = function(bg, bullish, bearish) {
             originalApplyColors(bg, bullish, bearish);
-            setTimeout(updateChartTypeColors, 50);
+            setTimeout(forceRedrawChart, 100);
         };
     }
     
-    console.log('✅ Исправление подсветки баров/свечей активировано');
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(forceRedrawChart, 1000);
+    });
+    
+    console.log('✅ Фикс подсветки активирован');
 })();
 </script>
 <script>
