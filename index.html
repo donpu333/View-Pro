@@ -2000,45 +2000,142 @@ left: 0 !important;
 </style>
 <script>
 (function() {
-const fullscreenBtn = document.getElementById('fullscreenBtn');
-const body = document.body;
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const body = document.body;
+    const chartContainer = document.getElementById('chart-container');
+    let resizeTimeout = null;
+    let isResizing = false;
 
-function toggleFullscreen() {
-if (!document.fullscreenElement) {
-document.documentElement.requestFullscreen().catch(err => {
-console.error('Ошибка перехода в полный экран:', err);
-});
-} else {
-document.exitFullscreen();
-}
-}
+    // Кроссбраузерная функция запроса полного экрана
+    function requestFullscreen(elem) {
+        if (elem.requestFullscreen) return elem.requestFullscreen();
+        if (elem.webkitRequestFullscreen) return elem.webkitRequestFullscreen(); // Safari
+        if (elem.msRequestFullscreen) return elem.msRequestFullscreen(); // IE/Edge
+    }
 
-if (fullscreenBtn) {
-fullscreenBtn.addEventListener('click', toggleFullscreen);
-}
+    function exitFullscreen() {
+        if (document.exitFullscreen) return document.exitFullscreen();
+        if (document.webkitExitFullscreen) return document.webkitExitFullscreen(); // Safari
+        if (document.msExitFullscreen) return document.msExitFullscreen();
+    }
 
-document.addEventListener('fullscreenchange', function() {
-if (fullscreenBtn) {
-fullscreenBtn.style.backgroundColor = document.fullscreenElement ? '#4A4A4A' : '';
-}
-if (document.fullscreenElement) {
-body.classList.add('fullscreen-mode');
-} else {
-body.classList.remove('fullscreen-mode');
-}
-});
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            requestFullscreen(document.documentElement).catch(err => {
+                console.error('Ошибка перехода в полный экран:', err);
+            });
+        } else {
+            exitFullscreen();
+        }
+    }
 
-document.addEventListener('keydown', function(e) {
-const isPKey = e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З';
-if (isPKey) {
-const activeTag = document.activeElement.tagName;
-if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA' && activeTag !== 'SELECT') {
-e.preventDefault();
-e.stopPropagation();
-toggleFullscreen();
-}
-}
-});
+    function smoothRedraw() {
+        if (isResizing) return;
+        isResizing = true;
+        
+        requestAnimationFrame(() => {
+            try {
+                const cm = window.chartManagerInstance;
+                if (!cm || !cm.chart) {
+                    isResizing = false;
+                    return;
+                }
+                
+                const container = chartContainer || document.getElementById('chart-container');
+                if (!container) {
+                    isResizing = false;
+                    return;
+                }
+                
+                const rect = container.getBoundingClientRect();
+                const width = rect.width || container.clientWidth || window.innerWidth;
+                const height = rect.height || container.clientHeight || window.innerHeight - 100;
+                
+                if (width < 100 || height < 100) {
+                    isResizing = false;
+                    return;
+                }
+                
+                // Изменяем размер и подгоняем масштаб
+                cm.chart.resize(width, Math.max(height, 200));
+                cm.chart.timeScale().fitContent();
+                
+                // Легкая перерисовка объектов
+                const managers = ['rayManager', 'trendLineManager', 'alertLineManager', 'rulerLineManager'];
+                managers.forEach(managerName => {
+                    const manager = window[managerName];
+                    if (manager && typeof manager._requestRedraw === 'function') {
+                        manager._requestRedraw();
+                    }
+                });
+                
+                console.log('✅ График адаптирован к размеру');
+            } catch (e) {
+                console.warn('⚠️ Ошибка при перерисовке:', e);
+            } finally {
+                // Гарантированный сброс флага в любом случае
+                isResizing = false;
+            }
+        });
+    }
+
+    function handleFullscreenChange() {
+        const isFullscreen = !!document.fullscreenElement;
+        
+        if (fullscreenBtn) {
+            fullscreenBtn.style.backgroundColor = isFullscreen ? '#4A4A4A' : '';
+        }
+        
+        if (isFullscreen) {
+            body.classList.add('fullscreen-mode');
+        } else {
+            body.classList.remove('fullscreen-mode');
+        }
+        
+        if (resizeTimeout) {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = null;
+        }
+        
+        // Небольшая задержка нужна, чтобы браузер успел применить CSS-переходы полного экрана
+        resizeTimeout = setTimeout(() => {
+            smoothRedraw();
+            resizeTimeout = null;
+        }, isFullscreen ? 150 : 200);
+    }
+
+    // Назначаем обработчики
+    if (fullscreenBtn) {
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Для Safari
+
+    // Оптимизированный обработчик resize
+    let resizeTimer = null;
+    window.addEventListener('resize', function() {
+        // УДАЛИТЕ эту строку, если график должен ресайзиться и в обычном режиме:
+        // if (!document.fullscreenElement) return; 
+        
+        if (resizeTimer) {
+            cancelAnimationFrame(resizeTimer);
+        }
+        
+        resizeTimer = requestAnimationFrame(() => {
+            smoothRedraw();
+            resizeTimer = null;
+        });
+    });
+
+    // При возвращении на вкладку
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden && document.fullscreenElement) {
+            setTimeout(smoothRedraw, 150);
+        }
+    });
+
+    console.log('✅ Полноэкранный режим и ресайз оптимизированы');
 })();
 </script>
 
