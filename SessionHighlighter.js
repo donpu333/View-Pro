@@ -3,6 +3,7 @@ class SessionHighlighter {
         this._cm = chartManager;
         this._primitive = null;
         this._requestUpdate = null;
+        this._attachTimeout = null;
         
         const saved = localStorage.getItem('sessionSettings');
         if (saved) {
@@ -12,30 +13,24 @@ class SessionHighlighter {
                 this._opacity = s.opacity || 0.15;
                 this._colors = s.colors || {};
             } catch(e) {
-                this._enabled = true;
-                this._opacity = 0.15;
-                this._colors = {};
+                this._enabled = true; this._opacity = 0.15; this._colors = {};
             }
         } else {
-            this._enabled = true;
-            this._opacity = 0.15;
-            this._colors = {};
+            this._enabled = true; this._opacity = 0.15; this._colors = {};
         }
 
         this.sessions = [
-            { name: 'asian',    startUTC: 0,  endUTC: 9,  color: this._colors.asian || '#FF9800' }, 
-            { name: 'european', startUTC: 7,  endUTC: 16, color: this._colors.european || '#2196F3' }, 
+            { name: 'asian', startUTC: 0, endUTC: 9, color: this._colors.asian || '#FF9800' }, 
+            { name: 'european', startUTC: 7, endUTC: 16, color: this._colors.european || '#2196F3' }, 
             { name: 'american', startUTC: 13, endUTC: 24, color: this._colors.american || '#E040FB' }
         ];
-        
-        setTimeout(() => this._attach(), 1500);
+        this._attach();
     }
 
     _attach() {
-        if (this._primitive) return; // уже прикреплён
-        
+        if (this._primitive) return;
         if (!this._cm || !this._cm.chart) {
-            setTimeout(() => this._attach(), 500);
+            this._attachTimeout = setTimeout(() => this._attach(), 500);
             return;
         }
         const series = this._cm.currentChartType === 'candle' ? this._cm.candleSeries : this._cm.barSeries;
@@ -49,16 +44,12 @@ class SessionHighlighter {
             updateAllViews: () => {},
             requestRedraw: () => { if (self._requestUpdate) self._requestUpdate(); }
         };
-        
         series.attachPrimitive(this._primitive);
-        console.log('✅ SessionHighlighter: ПРИКРЕПЛЕН');
     }
 
     _getSessionForHour(utcHour) {
         for (let i = this.sessions.length - 1; i >= 0; i--) {
-            if (utcHour >= this.sessions[i].startUTC && utcHour < this.sessions[i].endUTC) {
-                return this.sessions[i];
-            }
+            if (utcHour >= this.sessions[i].startUTC && utcHour < this.sessions[i].endUTC) return this.sessions[i];
         }
         return null;
     }
@@ -72,13 +63,10 @@ class SessionHighlighter {
 
     _draw(target) {
         if (!this._enabled) return;
-        
         const tf = this._cm.currentInterval;
         if (['1d', '1w', '1M'].includes(tf)) return;
-        
         const data = this._cm.chartData;
         if (!data || data.length < 2) return;
-        
         const timeScale = this._cm.chart.timeScale();
         const visibleRange = timeScale.getVisibleLogicalRange();
         if (!visibleRange) return;
@@ -91,13 +79,11 @@ class SessionHighlighter {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
             const canvasHeight = scope.mediaSize.height * vpr;
-
             let candleWidthPixels = 0;
 
             for (let i = fromIdx; i <= toIdx; i++) {
                 const candle = data[i];
                 const utcHour = new Date(candle.time * 1000).getUTCHours();
-                
                 const session = this._getSessionForHour(utcHour);
                 if (!session) continue;
 
@@ -106,20 +92,12 @@ class SessionHighlighter {
 
                 if (candleWidthPixels === 0 && i + 1 <= toIdx) {
                     const nextX = timeScale.timeToCoordinate(data[i + 1].time);
-                    if (nextX !== null) {
-                        candleWidthPixels = Math.abs(nextX - xCenter) * 2;
-                    }
+                    if (nextX !== null) candleWidthPixels = Math.abs(nextX - xCenter) * 2;
                 }
-                
                 if (candleWidthPixels === 0) candleWidthPixels = 10 * hpr;
 
                 ctx.fillStyle = this._hexToRgba(session.color, this._opacity);
-                ctx.fillRect(
-                    (xCenter - candleWidthPixels / 2) * hpr, 
-                    0, 
-                    candleWidthPixels * hpr, 
-                    canvasHeight
-                );
+                ctx.fillRect((xCenter - candleWidthPixels / 2) * hpr, 0, candleWidthPixels * hpr, canvasHeight);
             }
         });
     }
@@ -133,33 +111,31 @@ class SessionHighlighter {
             if (settings.colors.european) this.sessions[1].color = settings.colors.european;
             if (settings.colors.american) this.sessions[2].color = settings.colors.american;
         }
-        localStorage.setItem('sessionSettings', JSON.stringify({ 
-            enabled: this._enabled, 
-            opacity: this._opacity, 
-            colors: this._colors 
-        }));
-        this._reattach();
+        localStorage.setItem('sessionSettings', JSON.stringify({ enabled: this._enabled, opacity: this._opacity, colors: this._colors }));
+        if (this._primitive && this._primitive.requestRedraw) this._primitive.requestRedraw();
     }
 
-    _reattach() {
-        const series = this._cm.currentChartType === 'candle' ? this._cm.candleSeries : this._cm.barSeries;
-        if (!series) return;
-        
-        if (this._primitive) {
+    reattach() {
+        if (this._primitive && this._cm && this._cm.chart) {
+            const series = this._cm.currentChartType === 'candle' ? this._cm.candleSeries : this._cm.barSeries;
             try { series.detachPrimitive(this._primitive); } catch(e) {}
-            this._primitive = null;
         }
-        
+        this._primitive = null;
         this._attach();
     }
 
-    redraw() {
-        if (this._primitive && this._primitive.requestRedraw) {
-            this._primitive.requestRedraw();
+    destroy() {
+        if (this._attachTimeout) { clearTimeout(this._attachTimeout); this._attachTimeout = null; }
+        if (this._primitive && this._cm && this._cm.chart) {
+            const series = this._cm.currentChartType === 'candle' ? this._cm.candleSeries : this._cm.barSeries;
+            try { series.detachPrimitive(this._primitive); } catch(e) {}
         }
+        this._primitive = null;
+        this._requestUpdate = null;
+    }
+
+    redraw() {
+        if (this._primitive && this._primitive.requestRedraw) this._primitive.requestRedraw();
     }
 }
-
-if (typeof window !== 'undefined') {
-    window.SessionHighlighter = SessionHighlighter;
-}
+if (typeof window !== 'undefined') window.SessionHighlighter = SessionHighlighter;
