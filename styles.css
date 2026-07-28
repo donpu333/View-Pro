@@ -3209,15 +3209,3 @@ input:checked + .slider:before { transform: translateX(22px); }
     opacity: 1;
     visibility: visible;
 }
-#candleStatsOverlay,
-#priceLineTimer,
-#loadingOverlay,
-#loadingProgress {
-    pointer-events: none; /* Мышь будет "проходить" сквозь эти элементы прямо к графику */
-}
-
-/* Если внутри оверлея есть кнопки, для них нужно вернуть кликабельность: */
-#candleStatsOverlay button, 
-#loadingOverlay button {
-    pointer-events: auto;
-}
