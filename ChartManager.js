@@ -46,7 +46,8 @@ class ChartManager {
         this._crosshairRafId = null;
         this._latestCrosshairData = null;
         this._drawingsRafId = null;
-   
+  
+this._tempCandleUpdate = { time: 0, open: 0, high: 0, low: 0, close: 0 };
         this._candleTimeMap = new Map();
         
         this._isScrolling = false;
@@ -265,15 +266,9 @@ class ChartManager {
         return el ? el : { classList: { add: () => {}, remove: () => {} }, textContent: '', style: {} };
     }
 
-         destroy() {
-        this._abortAllProcesses();
         
-        // 🚀 ОЧИСТКА ГЛОБАЛЬНЫХ СЛУШАТЕЛЕЙ (КРИТИЧЕСКИ ВАЖНО для предотвращения залипания и утечек)
-        if (this._forceReleaseHandler) {
-            window.removeEventListener('mouseup', this._forceReleaseHandler);
-            window.removeEventListener('blur', this._forceReleaseHandler);
-            this._forceReleaseHandler = null;
-        }
+       destroy() {
+        this._abortAllProcesses();
         
         // 🚀 ОЧИСТКА ОВЕРЛЕЕВ (СЕССИИ И РАЗДЕЛИТЕЛЬ ДНЕЙ)
         if (window._dailySeparator && typeof window._dailySeparator.destroy === 'function') {
@@ -454,7 +449,7 @@ class ChartManager {
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
-        setupEventListeners() {
+          setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
@@ -479,33 +474,22 @@ class ChartManager {
             try { this.chart.clearCrosshairPosition(); } catch(e) {}
         });
 
-        // 🚀 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Глобальный сброс залипания графика
-        const forceReleaseChart = () => {
-            if (!this.chart) return;
-            try {
-                // 1. Принудительно "отжимаем" кнопку мыши в настройках LWC
-                this.chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
-                
-                // 2. Возвращаем настройку обратно в следующем кадре, чтобы скролл продолжил работать
-                requestAnimationFrame(() => {
-                    if (this.chart) {
-                        this.chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
-                    }
-                });
-                
-                // 3. Сбрасываем курсор
-                this.chart.clearCrosshairPosition();
-            } catch(e) {
-                // Игнорируем ошибки, если график уже уничтожен
-            }
-        };
-
-        // Слушаем на ВЕСЬ WINDOW, а не только на контейнер графика
-        window.addEventListener('mouseup', forceReleaseChart);
-        window.addEventListener('blur', forceReleaseChart); // На случай Alt+Tab или клика вне окна
-
-        // Также чистим за собой при уничтожении
-        this._forceReleaseHandler = forceReleaseChart;
+        // 🚀 ДОБАВЛЕНО: Глобальный сброс перетаскивания при потере фокуса окна (Alt+Tab, клик вне браузера)
+        window.addEventListener('blur', () => {
+            // Принудительно отменяем перетаскивание во всех менеджерах рисования
+            if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
+            if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
+            if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
+            if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
+            if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
+            
+            // Сбрасываем зависший курсор и состояние графика
+            try { 
+                this.chart?.clearCrosshairPosition(); 
+                // Если используется кастомный примитив, сбрасываем его состояние
+                if (this.chart?.unsubscribeClick) { /* доп. очистка если нужна */ }
+            } catch(e) {}
+        });
     }
 
         setChartType(type) {
@@ -672,13 +656,12 @@ class ChartManager {
     this.lastCandle = lastCandle;
     
     // 2. МГНОВЕННО: свеча + линия цены (цвет синхронизирован)
-    series.update({ 
-        time: lastCandle.time, 
-        open: lastCandle.open, 
-        high: lastCandle.high, 
-        low: lastCandle.low, 
-        close: price 
-    });
+   this._tempCandleUpdate.time = lastCandle.time;
+this._tempCandleUpdate.open = lastCandle.open;
+this._tempCandleUpdate.high = lastCandle.high;
+this._tempCandleUpdate.low = lastCandle.low;
+this._tempCandleUpdate.close = price;
+series.update(this._tempCandleUpdate);
     
     // ✅ МГНОВЕННО обновляем цвет линии (без троттлинга)
     series.applyOptions({ 
@@ -707,73 +690,107 @@ class ChartManager {
     }
 }
 
-  updateLastCandle(candle) {
-    if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
-    
-    try {
-        if (!this._isValidCandle(candle)) {
-            const sanitized = this._sanitizeCandle(candle);
-            if (!sanitized) return;
-            candle = sanitized;
+       updateLastCandle(candle) {
+        if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
+        
+        try {
+            if (!this._isValidCandle(candle)) {
+                const sanitized = this._sanitizeCandle(candle);
+                if (!sanitized) return;
+                candle = sanitized;
+            }
+            
+            // 1. ВСЕГДА берем актуальную последнюю свечу напрямую из конца массива
+            const currentLastCandle = this.chartData[this.chartData.length - 1];
+
+            // 2. СЦЕНАРИЙ А: Это обновление ТЕКУЩЕЙ последней свечи (самый частый случай)
+            if (currentLastCandle && candle.time === currentLastCandle.time) {
+                currentLastCandle.close = candle.close;
+                currentLastCandle.high = Math.max(currentLastCandle.high, candle.high);
+                currentLastCandle.low = Math.min(currentLastCandle.low, candle.low);
+                currentLastCandle.open = candle.open;
+                currentLastCandle.volume = candle.volume;
+                
+                this.lastCandle = currentLastCandle; // Жестко синхронизируем ссылку
+            } 
+            // 3. СЦЕНАРИЙ Б: Это НОВАЯ свеча
+            else if (!currentLastCandle || candle.time > currentLastCandle.time) {
+                this.chartData.push(candle);
+                this._addToTimeMap(candle.time, this.chartData.length - 1);
+                this.lastCandle = candle; // Теперь это последняя свеча
+            } 
+            // 4. СЦЕНАРИЙ В: Это историческая свеча (обновление в прошлом)
+            else {
+                const existingIndex = this._candleTimeMap.get(candle.time);
+                if (existingIndex !== undefined) {
+                    const existing = this.chartData[existingIndex];
+                    existing.open = candle.open;
+                    existing.close = candle.close;
+                    existing.volume = candle.volume;
+                    existing.high = Math.max(existing.high, candle.high);
+                    existing.low = Math.min(existing.low, candle.low);
+                    
+                    // 🚀 ВАЖНО: Обновляем только график, НО НЕ ТРОГАЕМ this.lastCandle!
+                    const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                    if (activeSeries) {
+                        this._tempCandleUpdate.time = existing.time;
+                        this._tempCandleUpdate.open = existing.open;
+                        this._tempCandleUpdate.high = existing.high;
+                        this._tempCandleUpdate.low = existing.low;
+                        this._tempCandleUpdate.close = existing.close;
+                        activeSeries.update(this._tempCandleUpdate);
+                    }
+                }
+                // Выходим из функции, так как это не последняя свеча, UI обновлять не нужно
+                return; 
+            }
+            
+            // --- ДАЛЕЕ КОД ВЫПОЛНЯЕТСЯ ТОЛЬКО ДЛЯ ПОСЛЕДНЕЙ (АКТУАЛЬНОЙ) СВЕЧИ ---
+            
+            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (activeSeries && this.lastCandle) {
+                this._tempCandleUpdate.time = this.lastCandle.time;
+                this._tempCandleUpdate.open = this.lastCandle.open;
+                this._tempCandleUpdate.high = this.lastCandle.high;
+                this._tempCandleUpdate.low = this.lastCandle.low;
+                this._tempCandleUpdate.close = this.lastCandle.close;
+                
+                activeSeries.update(this._tempCandleUpdate);
+                
+                const isBullish = this.lastCandle.close >= this.lastCandle.open;
+                const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+                
+                if (lineColor !== this._lastAppliedColor) {
+                    this._lastAppliedColor = lineColor;
+                    activeSeries.applyOptions({ priceLineColor: lineColor });
+                }
+            }
+            
+            this.currentRealPrice = this.lastCandle.close;
+            
+            if (this.timerManager?._primitive) {
+                if (this.timerManager._primitive.setPrice) this.timerManager._primitive.setPrice(this.currentRealPrice);
+                if (this.timerManager._primitive.setColor) this.timerManager._primitive.setColor(this._lastAppliedColor);
+                if (this.timerManager._primitive.isEnabled()) this.timerManager._primitive.requestRedraw();
+            }
+            
+            if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
+            
+            if (this.volumeSeries && this.lastCandle) {
+                this.volumeSeries.update({ 
+                    time: this.lastCandle.time, 
+                    value: this.lastCandle.quoteVolume || this.lastCandle.volume || 0, 
+                    color: (this.lastCandle.close >= this.lastCandle.open) ? this.bullishColor : this.bearishColor 
+                });
+            }
+            
+            this._priceChanged = true;
+            this._volumeDataDirty = true;
+            
+        } catch (e) {
+            console.error('❌ Ошибка в updateLastCandle:', e);
         }
-        
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        const existingIndex = this._candleTimeMap.get(candle.time);
-        
-        if (existingIndex !== undefined) {
-            const existing = this.chartData[existingIndex];
-            existing.open = candle.open;
-            existing.close = candle.close;
-            existing.volume = candle.volume;
-            existing.high = Math.max(existing.high, candle.high);
-            existing.low = Math.min(existing.low, candle.low);
-            candle = existing;
-            this.chartData[existingIndex] = candle;
-        } else if (!lastCandle || candle.time > lastCandle.time) {
-            this.chartData.push(candle);
-            this._addToTimeMap(candle.time, this.chartData.length - 1);
-        } else {
-            return;
-        }
-        
-        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (activeSeries) {
-            activeSeries.update({ time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
-        }
-        
-        this.currentRealPrice = candle.close;
-        this.lastCandle = candle;
-        
-        const isBullish = candle.close >= candle.open;
-        const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-        
-        if (lineColor !== this._lastAppliedColor) {
-            this._lastAppliedColor = lineColor;
-            if (activeSeries) activeSeries.applyOptions({ priceLineColor: lineColor });
-        }
-        
-        if (this.timerManager?._primitive) {
-            if (this.timerManager._primitive.setPrice) this.timerManager._primitive.setPrice(candle.close);
-            if (this.timerManager._primitive.setColor) this.timerManager._primitive.setColor(lineColor);
-            if (this.timerManager._primitive.isEnabled()) this.timerManager._primitive.requestRedraw();
-        }
-        
-        if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
-        
-        if (this.volumeSeries) {
-            this.volumeSeries.update({ 
-                time: candle.time, 
-                value: candle.quoteVolume || candle.volume || 0, 
-                color: isBullish ? this.bullishColor : this.bearishColor 
-            });
-        }
-        
-        this._priceChanged = true;
-        this._volumeDataDirty = true;
-    } catch (e) {
-        console.error('❌ Ошибка в updateLastCandle:', e);
     }
-}
     async waitForChartReady() {
         await new Promise(resolve => {
             const check = () => {
@@ -814,8 +831,12 @@ class ChartManager {
 
         data.sort((a, b) => a.time - b.time);
 
-        this.chartData = data;
-        this._rebuildTimeMap();
+      // СТАЛО:
+this.chartData = data;
+this._candleTimeMap.clear();
+for (let i = 0; i < data.length; i++) {
+    this._candleTimeMap.set(data[i].time, i);
+}
 
         this.currentInterval = interval;
         this.currentSymbol = symbol;
@@ -1039,7 +1060,56 @@ class ChartManager {
         this._syncPriceLine(price); 
     }
     
-    scrollToLast() { if (this.chart && this.chartData.length > 0) this.chart.timeScale().scrollToRealTime(); }
+     scrollToLast(enableRealTime = true) {
+        if (!this.chart || this.chartData.length === 0) {
+            console.warn('⚠️ scrollToLast: График не готов или нет данных');
+            return false;
+        }
+
+        try {
+            // 1. Жестко синхронизируем lastCandle с реальным концом массива
+            this.lastCandle = this.chartData[this.chartData.length - 1];
+            
+            const timeScale = this.chart.timeScale();
+            if (!timeScale) {
+                console.warn('⚠️ scrollToLast: timeScale недоступен');
+                return false;
+            }
+
+            // 2. Пытаемся использовать встроенный scrollToRealTime
+            if (enableRealTime) {
+                timeScale.scrollToRealTime();
+            } else {
+                // Если не нужно включать real-time, просто прокручиваем к последней свече
+                const lastCandleTime = this.lastCandle.time;
+                const currentRange = timeScale.getVisibleLogicalRange();
+                if (currentRange) {
+                    const visibleBars = currentRange.to - currentRange.from;
+                    const lastIndex = this.chartData.length - 1;
+                    timeScale.setVisibleLogicalRange({
+                        from: Math.max(0, lastIndex - visibleBars + 1),
+                        to: lastIndex + 1
+                    });
+                }
+            }
+
+            // 3. Гарантируем, что последняя свеча отрисована корректно
+            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (activeSeries && this.lastCandle) {
+                this._tempCandleUpdate.time = this.lastCandle.time;
+                this._tempCandleUpdate.open = this.lastCandle.open;
+                this._tempCandleUpdate.high = this.lastCandle.high;
+                this._tempCandleUpdate.low = this.lastCandle.low;
+                this._tempCandleUpdate.close = this.lastCandle.close;
+                activeSeries.update(this._tempCandleUpdate);
+            }
+
+            return true;
+        } catch (e) {
+            console.error('❌ Ошибка в scrollToLast:', e);
+            return false;
+        }
+    }
 
     _debouncedSetData() {
         if (this._pendingSetData) return;
@@ -1734,7 +1804,7 @@ class ChartManager {
         }
     }
 
-    _performTrimNow(fromIndex, toIndex) {
+      _performTrimNow(fromIndex, toIndex) {
         if (this._isTrimming || this.isLoadingMore) return;
         if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
         
@@ -1747,6 +1817,7 @@ class ChartManager {
         this._isTrimming = true;
         
         try {
+            // 1. Создаем НОВЫЙ массив. Старые ссылки на объекты могут стать неактуальными.
             this.chartData = this.chartData.slice(keepFrom, keepTo);
             this._rebuildTimeMap();
             this._volumeDataDirty = true;
@@ -1769,15 +1840,21 @@ class ChartManager {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                 });
             }
+
+            // 🚀 КРИТИЧЕСКИ ВАЖНО: После создания нового массива (.slice) 
+            // жестко привязываем lastCandle к реальному последнему элементу нового массива.
+            // Это предотвращает рассинхронизацию при возврате из истории.
+            this.lastCandle = this.chartData[this.chartData.length - 1];
+
         } catch (e) {
             console.error('❌ Ошибка обрезки данных:', e);
         } finally {
             this._isTrimming = false;
         }
     }
-
-    async _loadHistoryAsync() {
+     async _loadHistoryAsync() {
         if (this.isLoadingMore || !this.hasMoreData) return;
+        
         const now = Date.now();
         if (now - this._lastHistoryLoadTime < 1500) return; 
         
@@ -1786,9 +1863,21 @@ class ChartManager {
         
         try {
             const oldestCandle = this.chartData[0];
-            if (!oldestCandle) { this.isLoadingMore = false; return; }
+            if (!oldestCandle) { 
+                this.hasMoreData = false;
+                this.isLoadingMore = false;
+                return; 
+            }
+            
             const endTime = (oldestCandle.time * 1000) - 1;
-            const olderCandles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, this._batchSize, endTime);
+            const olderCandles = await this.fetchKlines(
+                this.currentSymbol, 
+                this.currentExchange, 
+                this.currentMarketType, 
+                this.currentInterval, 
+                this._batchSize, 
+                endTime
+            );
             
             if (!olderCandles || olderCandles.length === 0) {
                 this.hasMoreData = false;
@@ -1796,9 +1885,8 @@ class ChartManager {
                 return;
             }
             
-            const firstOldTime = olderCandles[0].time;
-            const existingTimes = new Set(this.chartData.slice(0, 100).map(c => c.time));
-            const uniqueOlder = olderCandles.filter(c => !existingTimes.has(c.time) && c.time < firstOldTime);
+            const oldestExistingTime = this.chartData[0].time;
+            const uniqueOlder = olderCandles.filter(c => c.time < oldestExistingTime);
             
             if (uniqueOlder.length > 0) {
                 const timeScale = this.chart.timeScale();
@@ -1812,6 +1900,11 @@ class ChartManager {
                 }
                 
                 this._rebuildTimeMap();
+                
+                // 🚀 КРИТИЧЕСКИ ВАЖНАЯ СТРАХОВКА: 
+                // После любых манипуляций с массивом (.slice или ...) обновляем ссылку
+                this.lastCandle = this.chartData[this.chartData.length - 1];
+                
                 this._volumeDataDirty = true;
                 this._lastVolumeUpdateIndex = -1;
                 
@@ -1819,7 +1912,10 @@ class ChartManager {
                 if (activeSeries) activeSeries.setData(this.chartData);
                 
                 if (currentRange) {
-                    timeScale.setVisibleLogicalRange({ from: currentRange.from + addedCount, to: currentRange.to + addedCount });
+                    timeScale.setVisibleLogicalRange({ 
+                        from: currentRange.from + addedCount, 
+                        to: currentRange.to + addedCount 
+                    });
                 }
                 
                 requestAnimationFrame(() => {
@@ -1827,14 +1923,18 @@ class ChartManager {
                     this.scheduleDrawingsUpdate(true);
                 });
             }
-            if (olderCandles.length < this._batchSize) this.hasMoreData = false;
+            
+            if (olderCandles.length < this._batchSize) {
+                this.hasMoreData = false;
+            }
+            
         } catch (e) {
             console.error('❌ Ошибка загрузки истории:', e);
+            this.hasMoreData = false;
         } finally {
             this.isLoadingMore = false;
         }
     }
-
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange) return;
