@@ -40,7 +40,7 @@ class WatchlistManager {
             if (this._dbReady) {
                 try {
                     const data = await window.db.get('settings', 'watchlists');
-                    if (data?.value) saved = data.value;
+                    if (data && data.value) saved = data.value;
                 } catch (e) {}
             }
             if (!saved) {
@@ -49,7 +49,7 @@ class WatchlistManager {
                     try { saved = JSON.parse(localData); } catch (e) { localStorage.removeItem('watchlists'); }
                 }
             }
-            if (saved?.lists) {
+            if (saved && saved.lists) {
                 this.lists = new Map(Object.entries(saved.lists));
                 this.listOrder = saved.listOrder || ['default'];
                 this.activeListId = saved.activeListId || 'default';
@@ -58,22 +58,22 @@ class WatchlistManager {
                     this._listSorts = new Map(Object.entries(saved.listSorts));
                 }
                 
-                for (const [id, list] of this.lists) {
+                this.lists.forEach(function(list) {
                     if (!list.flags) list.flags = {};
                     if (!list.favorites) list.favorites = [];
-                }
+                });
                 
                 if (this.lists.has('default')) {
                     const defaultList = this.lists.get('default');
                     
                     if (saved.globalFlags && Object.keys(defaultList.flags).length === 0) {
                         defaultList.flags = saved.globalFlags;
-                        console.log(`🔄 Миграция флагов: ${Object.keys(saved.globalFlags).length} шт.`);
+                        console.log('🔄 Миграция флагов: ' + Object.keys(saved.globalFlags).length + ' шт.');
                     }
                     
                     if (saved.globalFavorites && defaultList.favorites.length === 0) {
                         defaultList.favorites = saved.globalFavorites;
-                        console.log(`🔄 Миграция звёзд: ${saved.globalFavorites.length} шт.`);
+                        console.log('🔄 Миграция звёзд: ' + saved.globalFavorites.length + ' шт.');
                     }
                 }
             }
@@ -92,10 +92,10 @@ class WatchlistManager {
 
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
-            this.tickerPanel.state.customSymbols = [...activeList.symbols];
-            this.tickerPanel.state.flags = { ...(activeList.flags || {}) };
-            this.tickerPanel.state.favorites = [...(activeList.favorites || [])];
-            console.log(`📦 Загружен "${activeList.name}": ${activeList.symbols.length} символов, ${Object.keys(activeList.flags || {}).length} флагов, ${(activeList.favorites || []).length} звёзд`);
+            this.tickerPanel.state.customSymbols = activeList.symbols.slice();
+            this.tickerPanel.state.flags = Object.assign({}, activeList.flags || {});
+            this.tickerPanel.state.favorites = (activeList.favorites || []).slice();
+            console.log('📦 Загружен "' + activeList.name + '": ' + activeList.symbols.length + ' символов, ' + Object.keys(activeList.flags || {}).length + ' флагов, ' + (activeList.favorites || []).length + ' звёзд');
         } else {
             this.tickerPanel.state.customSymbols = [];
             this.tickerPanel.state.flags = {};
@@ -118,7 +118,7 @@ class WatchlistManager {
     saveToStorage() {
         if (this._destroyed) return;
         if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
-        this._saveDebounceTimer = setTimeout(() => this._saveNow(), 300);
+        this._saveDebounceTimer = setTimeout(this._saveNow.bind(this), 300);
     }
 
     saveToStorageImmediate() {
@@ -132,10 +132,10 @@ class WatchlistManager {
         
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
-            this.tickerPanel.state.customSymbols = [...activeList.symbols];
-            activeList.symbols = [...this.tickerPanel.state.customSymbols];
-            activeList.flags = { ...this.tickerPanel.state.flags };
-            activeList.favorites = [...this.tickerPanel.state.favorites];
+            this.tickerPanel.state.customSymbols = activeList.symbols.slice();
+            activeList.symbols = this.tickerPanel.state.customSymbols.slice();
+            activeList.flags = Object.assign({}, this.tickerPanel.state.flags);
+            activeList.favorites = this.tickerPanel.state.favorites.slice();
         }
         
         const listSortsObj = Object.fromEntries(this._listSorts);
@@ -155,17 +155,17 @@ class WatchlistManager {
         if (!list) return;
         const panelSymbols = this.tickerPanel.state.customSymbols;
         if (panelSymbols.length === 0) return;
-        if (JSON.stringify([...list.symbols].sort()) === JSON.stringify([...panelSymbols].sort())) return;
-        list.symbols = [...panelSymbols];
+        if (JSON.stringify(list.symbols.slice().sort()) === JSON.stringify(panelSymbols.slice().sort())) return;
+        list.symbols = panelSymbols.slice();
         this.renderCache.delete(this.activeListId);
         this.renderDropdown();
     }
 
     async createList(name) {
         await this._initPromise;
-        const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const id = 'wl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
         this.lists.set(id, { 
-            name: name || `Список ${this.lists.size}`, 
+            name: name || 'Список ' + this.lists.size, 
             symbols: [], 
             isDefault: false,
             flags: {},
@@ -184,7 +184,7 @@ class WatchlistManager {
         await this._initPromise;
         if (listId === 'default' || !this.lists.has(listId)) return false;
         this.lists.delete(listId);
-        this.listOrder = this.listOrder.filter(id => id !== listId);
+        this.listOrder = this.listOrder.filter(function(id) { return id !== listId; });
         this.renderCache.delete(listId);
         this._listSorts.delete(listId);
         if (this.activeListId === listId) await this.activateList('default');
@@ -205,7 +205,7 @@ class WatchlistManager {
     }
 
     async activateList(listId) {
-        if (this.tickerPanel?._suppressWatchlistLoad) {
+        if (this.tickerPanel && this.tickerPanel._suppressWatchlistLoad) {
             console.log('⏸️ activateList(): ПРОПУЩЕНО — идёт массовое добавление');
             return;
         }
@@ -220,20 +220,20 @@ class WatchlistManager {
 
         const oldList = this.lists.get(this.activeListId);
         if (oldList) {
-            oldList.symbols = [...this.tickerPanel.state.customSymbols];
-            oldList.flags = { ...this.tickerPanel.state.flags };
-            oldList.favorites = [...this.tickerPanel.state.favorites];
+            oldList.symbols = this.tickerPanel.state.customSymbols.slice();
+            oldList.flags = Object.assign({}, this.tickerPanel.state.flags);
+            oldList.favorites = this.tickerPanel.state.favorites.slice();
             this.renderCache.delete(this.activeListId);
         }
 
         this.activeListId = listId;
         this._switchCooldown = true;
-        setTimeout(() => { this._switchCooldown = false; }, 500);
+        setTimeout(function(self) { self._switchCooldown = false; }, 500, this);
 
         const newList = this.lists.get(listId);
         if (newList) {
-            this.tickerPanel.state.flags = { ...(newList.flags || {}) };
-            this.tickerPanel.state.favorites = [...(newList.favorites || [])];
+            this.tickerPanel.state.flags = Object.assign({}, newList.flags || {});
+            this.tickerPanel.state.favorites = (newList.favorites || []).slice();
         }
 
         await this.loadSymbolsFromList(listId);
@@ -251,17 +251,18 @@ class WatchlistManager {
             const firstKey = newList.symbols[0];
             const parts = firstKey.split(':');
             if (parts.length === 3) {
-                const [symbol, exchange, marketType] = parts;
-                if (this.tickerPanel.coordinator?.chartManager) {
+                const symbol = parts[0];
+                const exchange = parts[1];
+                const marketType = parts[2];
+                if (this.tickerPanel.coordinator && this.tickerPanel.coordinator.chartManager) {
                     this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
                 }
-                setTimeout(() => {
-                    this.tickerPanel.focusOnSymbol?.(symbol, exchange, marketType);
-                }, 100);
+                setTimeout(function(self) {
+                    if (self.tickerPanel.focusOnSymbol) self.tickerPanel.focusOnSymbol(symbol, exchange, marketType);
+                }, 100, this);
             }
         }
 
-        // ✅ Запускаем немедленную загрузку цен для нового списка
         this.fetchPricesForActiveList();
     }
 
@@ -288,11 +289,11 @@ class WatchlistManager {
     _updateHeaderIcons() {
         const sortBy = this.tickerPanel.state.sortBy;
         const sortDirection = this.tickerPanel.state.sortDirection;
-        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+        document.querySelectorAll('.table-header span[data-sort] i').forEach(function(icon) {
             icon.className = 'fas fa-sort';
             icon.style.display = 'inline-block';
         });
-        const activeHeader = document.querySelector(`.table-header span[data-sort="${sortBy}"]`);
+        const activeHeader = document.querySelector('.table-header span[data-sort="' + sortBy + '"]');
         if (activeHeader) {
             const icon = activeHeader.querySelector('i');
             if (icon) {
@@ -304,25 +305,22 @@ class WatchlistManager {
         }
     }
 
-    // ✅ Ускорено: таймер уменьшен до 500 мс и убран renderTickerList
     _schedulePriceLoadForList(symbols) {
         if (!symbols || symbols.length === 0) return;
         if (this._priceLoadTimer) clearTimeout(this._priceLoadTimer);
         this._priceLoadTimer = setTimeout(async () => {
             this._priceLoadTimer = null;
             await this.fetchPricesForActiveList();
-            // renderTickerList убран — цены обновятся через updatePriceElements
         }, 500);
     }
 
     async fetchPricesForActiveList() {
-        if (this.tickerPanel?._suppressWatchlistLoad) return false;
+        if (this.tickerPanel && this.tickerPanel._suppressWatchlistLoad) return false;
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
         
-        // ✅ Запускаем REST немедленно
-        if (this.tickerPanel?.pollRestData) {
-            this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
+        if (this.tickerPanel && this.tickerPanel.pollRestData) {
+            this.tickerPanel.pollRestData().catch(function(e) { console.warn('pollRestData:', e); });
         }
         return true;
     }
@@ -333,26 +331,36 @@ class WatchlistManager {
 
         this.tickerPanel.tickers = [];
         this.tickerPanel.tickersMap.clear();
-        this.tickerPanel.tickerElements?.clear();
+        if (this.tickerPanel.tickerElements) this.tickerPanel.tickerElements.clear();
         this.tickerPanel.renderer.displayedTickers = [];
         this.tickerPanel.renderer.totalItems = list.symbols.length;
         this.tickerPanel.filterCache = null;
-        this.tickerPanel.state.customSymbols = [...list.symbols];
-        this.tickerPanel.state.flags = { ...(list.flags || {}) };
-        this.tickerPanel.state.favorites = [...(list.favorites || [])];
+        this.tickerPanel.state.customSymbols = list.symbols.slice();
+        this.tickerPanel.state.flags = Object.assign({}, list.flags || {});
+        this.tickerPanel.state.favorites = (list.favorites || []).slice();
 
         const container = document.getElementById('tickerListContainer');
         if (container) { container.innerHTML = ''; container.scrollTop = 0; }
 
-        for (const symbolKey of list.symbols) {
+        for (let i = 0; i < list.symbols.length; i++) {
+            const symbolKey = list.symbols[i];
             const parts = symbolKey.split(':');
             if (parts.length !== 3) continue;
-            const [symbol, exchange, marketType] = parts;
+            const symbol = parts[0];
+            const exchange = parts[1];
+            const marketType = parts[2];
             const flag = this.tickerPanel.state.flags[symbolKey] || null;
             const t = {
-                symbol, price: 0, change: 0, volume: 0,
-                trades: null, custom: true, prevPrice: 0,
-                exchange, marketType, flag
+                symbol: symbol,
+                price: 0,
+                change: 0,
+                volume: 0,
+                trades: null,
+                custom: true,
+                prevPrice: 0,
+                exchange: exchange,
+                marketType: marketType,
+                flag: flag
             };
             this.tickerPanel.tickers.push(t);
             this.tickerPanel.tickersMap.set(symbolKey, t);
@@ -365,7 +373,7 @@ class WatchlistManager {
         await this._initPromise;
         const list = this.lists.get(listId);
         if (!list) return false;
-        const key = `${symbol}:${exchange}:${marketType}`;
+        const key = symbol + ':' + exchange + ':' + marketType;
         if (list.symbols.includes(key)) return false;
         list.symbols.push(key);
         this.renderCache.delete(listId);
@@ -387,13 +395,13 @@ class WatchlistManager {
         await this._initPromise;
         const list = this.lists.get(this.activeListId);
         if (!list) return;
-        const key = `${symbol}:${exchange}:${marketType}`;
+        const key = symbol + ':' + exchange + ':' + marketType;
         const before = list.symbols.length;
-        list.symbols = list.symbols.filter(s => s !== key);
+        list.symbols = list.symbols.filter(function(s) { return s !== key; });
         
         if (list.flags && list.flags[key]) delete list.flags[key];
         if (list.favorites) {
-            list.favorites = list.favorites.filter(s => s !== symbol);
+            list.favorites = list.favorites.filter(function(s) { return s !== symbol; });
         }
         
         if (list.symbols.length !== before) {
@@ -450,39 +458,36 @@ class WatchlistManager {
         const dropdown = container.querySelector('.wl-dropdown-menu');
         if (dropdown) {
             let html = '';
-            this.listOrder.forEach(listId => {
-                const list = this.lists.get(listId);
+            const self = this;
+            this.listOrder.forEach(function(listId) {
+                const list = self.lists.get(listId);
                 if (!list) return;
-                const isActive = listId === this.activeListId;
-                html += `
-                    <div class="wl-dropdown-item ${isActive ? 'active' : ''}" data-list-id="${listId}">
-                       <span class="wl-item-name">${this.escapeHtml(list.name)}</span>
-                       <span class="wl-item-count">${list.symbols.length}</span>
-                       <span class="wl-item-actions">
-                            ${!list.isDefault ? `<span class="wl-item-edit" data-action="edit" title="Переименовать">✎</span>` : ''}
-                            ${!list.isDefault ? `<span class="wl-item-delete" data-action="delete" title="Удалить">×</span>` : ''}
-                        </span>
-                    </div>
-                `;
+                const isActive = listId === self.activeListId;
+                html += '<div class="wl-dropdown-item' + (isActive ? ' active' : '') + '" data-list-id="' + listId + '">' +
+                    '<span class="wl-item-name">' + self.escapeHtml(list.name) + '</span>' +
+                    '<span class="wl-item-count">' + list.symbols.length + '</span>' +
+                    '<span class="wl-item-actions">' +
+                        (!list.isDefault ? '<span class="wl-item-edit" data-action="edit" title="Переименовать">✎</span>' : '') +
+                        (!list.isDefault ? '<span class="wl-item-delete" data-action="delete" title="Удалить">×</span>' : '') +
+                    '</span>' +
+                '</div>';
             });
 
-            html += `
-                <div class="wl-dropdown-divider"></div>
-                <div class="wl-dropdown-item wl-add-item" data-action="add">+ Создать новый список</div>
-            `;
+            html += '<div class="wl-dropdown-divider"></div>' +
+                '<div class="wl-dropdown-item wl-add-item" data-action="add">+ Создать новый список</div>';
 
             dropdown.innerHTML = html;
 
-            dropdown.querySelectorAll('.wl-dropdown-item[data-list-id]').forEach(item => {
-                item.addEventListener('click', (e) => {
-                    if (e.target.closest('[data-action="edit"]')) { e.stopPropagation(); this.editListPrompt(item.dataset.listId); return; }
-                    if (e.target.closest('[data-action="delete"]')) { e.stopPropagation(); this.deleteListPrompt(item.dataset.listId); return; }
-                    this.activateList(item.dataset.listId);
+            dropdown.querySelectorAll('.wl-dropdown-item[data-list-id]').forEach(function(item) {
+                item.addEventListener('click', function(e) {
+                    if (e.target.closest('[data-action="edit"]')) { e.stopPropagation(); self.editListPrompt(item.dataset.listId); return; }
+                    if (e.target.closest('[data-action="delete"]')) { e.stopPropagation(); self.deleteListPrompt(item.dataset.listId); return; }
+                    self.activateList(item.dataset.listId);
                 });
             });
 
             const addBtn = dropdown.querySelector('[data-action="add"]');
-            if (addBtn) addBtn.addEventListener('click', () => this.createListPrompt());
+            if (addBtn) addBtn.addEventListener('click', function() { self.createListPrompt(); });
         }
     }
 
@@ -493,31 +498,31 @@ class WatchlistManager {
             container = document.createElement('div');
             container.id = 'watchlistDropdown';
             container.className = 'wl-dropdown-container';
-            container.innerHTML = `
-                <div class="wl-dropdown-btn">
-                    <span class="wl-btn-text">Основной</span>
-                    <span class="wl-btn-count">0</span>
-                    <svg class="wl-btn-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                </div>
-                <div class="wl-dropdown-menu"></div>
-            `;
-            const tabsContainer = tickerPanel?.querySelector('.tabs-container');
+            container.innerHTML = '<div class="wl-dropdown-btn">' +
+                '<span class="wl-btn-text">Основной</span>' +
+                '<span class="wl-btn-count">0</span>' +
+                '<svg class="wl-btn-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                    '<polyline points="6 9 12 15 18 9"></polyline>' +
+                '</svg>' +
+            '</div>' +
+            '<div class="wl-dropdown-menu"></div>';
+            
+            const tabsContainer = tickerPanel ? tickerPanel.querySelector('.tabs-container') : null;
             if (tabsContainer) tabsContainer.parentNode.insertBefore(container, tabsContainer);
-            else tickerPanel?.insertBefore(container, tickerPanel.firstChild);
+            else if (tickerPanel) tickerPanel.insertBefore(container, tickerPanel.firstChild);
             this.bindDropdownEvents(container);
         }
         this.renderDropdown();
     }
 
     bindDropdownEvents(container) {
-        container.querySelector('.wl-dropdown-btn').addEventListener('click', (e) => { e.stopPropagation(); this.toggleDropdown(); });
+        const self = this;
+        container.querySelector('.wl-dropdown-btn').addEventListener('click', function(e) { e.stopPropagation(); self.toggleDropdown(); });
         if (this._outsideClickListener) {
             document.removeEventListener('click', this._outsideClickListener);
         }
-        this._outsideClickListener = (e) => {
-            if (!container.contains(e.target)) this.closeDropdown();
+        this._outsideClickListener = function(e) {
+            if (!container.contains(e.target)) self.closeDropdown();
         };
         document.addEventListener('click', this._outsideClickListener);
     }
@@ -537,7 +542,10 @@ class WatchlistManager {
 
     createListPrompt() {
         const name = prompt('Название нового списка:');
-        if (name && name.trim()) this.createList(name.trim()).then(newId => this.activateList(newId));
+        if (name && name.trim()) {
+            const self = this;
+            this.createList(name.trim()).then(function(newId) { self.activateList(newId); });
+        }
     }
 
     editListPrompt(listId) {
@@ -550,7 +558,7 @@ class WatchlistManager {
     deleteListPrompt(listId) {
         const list = this.lists.get(listId);
         if (!list) return;
-        if (confirm(`Удалить список «${list.name}»?`)) this.deleteList(listId);
+        if (confirm('Удалить список «' + list.name + '»?')) this.deleteList(listId);
     }
 
     escapeHtml(text) {
@@ -570,11 +578,8 @@ class WatchlistManager {
     }
 }
 
-const toastStyles = document.createElement('style');
-toastStyles.textContent = `
-    @keyframes wl-toast-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes wl-toast-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); } }
-`;
+var toastStyles = document.createElement('style');
+toastStyles.textContent = '@keyframes wl-toast-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } } @keyframes wl-toast-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); } }';
 document.head.appendChild(toastStyles);
 
 if (typeof window !== 'undefined') {
