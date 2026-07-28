@@ -29,7 +29,6 @@ class TickerPanel {
             console.error('❌ PriceManager не найден!');
         }
         
-        // ✅ Единый обработчик цен от PriceManager
         this._pmPriceHandler = (price, symbol, exchange, marketType) => {
             this._onPriceUpdate(symbol, price, exchange, marketType);
         };
@@ -55,6 +54,7 @@ class TickerPanel {
         
         this._isBulkAdding = false;
         this._suppressWatchlistLoad = false;
+        this._restDebounceTimer = null;
         
         this._rowDomCache = new Map();
         this._subscribedSymbols = new Set();
@@ -284,21 +284,12 @@ class TickerPanel {
         if (!ticker) return;
         if (ticker.price === price) return;
 
-        const oldPrice = ticker.price || price;
-        ticker.prevPrice = oldPrice;
+        ticker.prevPrice = ticker.price || price;
         ticker.price = price;
-        ticker._flashDir = price > oldPrice ? 'up' : 'down';
-        const flashTime = Date.now();
-        ticker._flashTime = flashTime;
-        ticker._lastUpdateTime = flashTime;
+        ticker._lastUpdateTime = Date.now();
 
-        if (!this._blockDOMUpdates) {
-            if (this.renderer?.updatePriceForSymbol) {
-                this.renderer.updatePriceForSymbol(compositeKey, price, ticker.change);
-            } else {
-                this.updatePriceElements();
-            }
-            this._flashUpdatedRows(flashTime);
+        if (!this._blockDOMUpdates && this.renderer) {
+            this.renderer.updatePriceForSymbol(compositeKey, price, ticker.change);
         }
     }
 
@@ -372,8 +363,6 @@ class TickerPanel {
         });
     }
 
-    // ==================== ПОДКЛЮЧЕНИЕ К PRICEMANAGER ====================
-    
     _syncToPriceManager() {
         if (!window.priceManagerInstance) return;
         let count = 0;
@@ -414,6 +403,7 @@ class TickerPanel {
             return null;
         };
 
+        // ✅ ИСПРАВЛЕНО: убран renderTickerList, только updatePriceElements
         this._processRestQueue = async () => {
             if (this._isRestRunning) return;
             this._isRestRunning = true;
@@ -432,8 +422,7 @@ class TickerPanel {
             }
             console.log(`✅ REST завершён (${count} запросов)`);
             if (!this._blockDOMUpdates) {
-                this.renderTickerList();
-                this.updatePriceElements?.();
+                this.renderer.updatePriceElements?.();
             }
         };
 
@@ -474,8 +463,9 @@ class TickerPanel {
 
             await this._processRestQueue();
             console.log(`💰 Загружено ${this.tickersMap.size} тикеров с ценами!`);
+            // ✅ ИСПРАВЛЕНО: убран renderTickerList, только updatePriceElements
             if (!this._blockDOMUpdates) {
-                setTimeout(() => { this.filterCache = null; this.renderTickerList(); this.updateModalCount?.(); }, 50);
+                setTimeout(() => { this.renderer.updatePriceElements?.(); this.updateModalCount?.(); }, 50);
             }
         };
 
@@ -489,8 +479,6 @@ class TickerPanel {
         }, TICKER_TIMINGS.REST_POLL_INTERVAL);
 
         this.pollRestData = loadAllData;
-
-        // ✅ Подключаем TickerPanel к PriceManager для живых обновлений
         this._syncToPriceManager();
     }
 
@@ -510,34 +498,6 @@ class TickerPanel {
 
     _clearDomCache() {
         this._rowDomCache.clear();
-    }
-
-    _flashUpdatedRows(flashTime) {
-        if (!this._rowDomCache || this._rowDomCache.size === 0) return;
-        const rowsToUpdate = [];
-        for (const [key, ticker] of this.tickersMap.entries()) {
-            if (ticker && ticker._flashTime === flashTime) {
-                const row = this._rowDomCache.get(key);
-                if (row) {
-                    rowsToUpdate.push({ row, dir: ticker._flashDir });
-                }
-                delete ticker._flashTime;
-                delete ticker._flashDir;
-            }
-        }
-        if (rowsToUpdate.length > 0) {
-            requestAnimationFrame(() => {
-                rowsToUpdate.forEach(({ row, dir }) => {
-                    row.classList.remove('price-flash-up', 'price-flash-down');
-                    row.classList.add(dir === 'up' ? 'price-flash-up' : 'price-flash-down');
-                });
-                setTimeout(() => {
-                    rowsToUpdate.forEach(({ row }) => {
-                        row.classList.remove('price-flash-up', 'price-flash-down');
-                    });
-                }, TICKER_TIMINGS.FLASH_DURATION);
-            });
-        }
     }
 
     clearAllSymbols() {
@@ -631,7 +591,6 @@ class TickerPanel {
         this.tickersMap.set(key, newTicker);
         if (!this.state.customSymbols.includes(key)) this.state.customSymbols.push(key);
         
-        // ✅ Подписка на PriceManager
         if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
             window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
             this._subscribedSymbols.add(key);
@@ -640,7 +599,6 @@ class TickerPanel {
         this.filterCache = null;
         if (render) this.renderTickerList();
         
-        // ✅ ИСПРАВЛЕНО: СРАЗУ тянем данные для нового символа, не ждём общего REST
         if (!skipInitialFetch && !this._isBulkAdding) {
             this.fetchInitialDataForSymbol(symbol, exchange, marketType);
             setTimeout(() => {
@@ -670,7 +628,6 @@ class TickerPanel {
                 this.tickersMap.set(key, newTicker);
                 addedKeys.push(key);
                 
-                // ✅ Подписка батча на PriceManager
                 if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
                     window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
                     this._subscribedSymbols.add(key);
@@ -698,12 +655,15 @@ class TickerPanel {
         this.tickerElements.clear();
         this.renderTickerList();
         
-        // ✅ ИСПРАВЛЕНО: СРАЗУ тянем данные для всех новых символов
         addedKeys.forEach(key => {
             const [sym, ex, mt] = key.split(':');
             this.fetchInitialDataForSymbol(sym, ex, mt);
         });
-        setTimeout(() => { if (this.pollRestData) this.pollRestData(); }, 1000);
+        
+        if (this._restDebounceTimer) clearTimeout(this._restDebounceTimer);
+        this._restDebounceTimer = setTimeout(() => { 
+            if (this.pollRestData) this.pollRestData(); 
+        }, 1000);
     }
 
     async fetchBatchSnapshots(symbols) {
@@ -768,43 +728,37 @@ class TickerPanel {
     _updateTickerFromBinance(data, marketType) {
         const key = `${data.symbol}:binance:${marketType}`;
         const ticker = this.tickersMap.get(key);
-        if (ticker) {
-            const oldPrice = ticker.price;
-            const newPrice = parseFloat(data.lastPrice) || 0;
-            ticker.price = newPrice;
-            ticker.change = parseFloat(data.priceChangePercent) || 0;
-            ticker.volume = parseFloat(data.quoteVolume) || 0;
-            ticker.trades = parseInt(data.count) || 0;
-            
-            if (oldPrice && oldPrice !== newPrice && !this._blockDOMUpdates) {
-                ticker._flashDir = newPrice > oldPrice ? 'up' : 'down';
-                const flashTime = Date.now();
-                ticker._flashTime = flashTime;
-                ticker._lastUpdateTime = flashTime;
-                this.updatePriceElements();
-                this._flashUpdatedRows(flashTime);
-            }
+        if (!ticker) return;
+
+        const oldPrice = ticker.price || 0;
+        const newPrice = parseFloat(data.lastPrice) || 0;
+        
+        ticker.prevPrice = oldPrice;
+        ticker.price = newPrice;
+        ticker.change = parseFloat(data.priceChangePercent) || 0;
+        ticker.volume = parseFloat(data.quoteVolume) || 0;
+        ticker.trades = parseInt(data.count) || 0;
+        
+        if (!this._blockDOMUpdates) {
+            this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
         }
     }
 
     _updateTickerFromBybit(data, marketType) {
         const key = `${data.symbol}:bybit:${marketType}`;
         const ticker = this.tickersMap.get(key);
-        if (ticker) {
-            const oldPrice = ticker.price;
-            const newPrice = parseFloat(data.lastPrice) || 0;
-            ticker.price = newPrice;
-            ticker.change = parseFloat(data.price24hPcnt) * 100 || 0;
-            ticker.volume = parseFloat(data.volume24h) * newPrice || 0;
-            
-            if (oldPrice && oldPrice !== newPrice && !this._blockDOMUpdates) {
-                ticker._flashDir = newPrice > oldPrice ? 'up' : 'down';
-                const flashTime = Date.now();
-                ticker._flashTime = flashTime;
-                ticker._lastUpdateTime = flashTime;
-                this.updatePriceElements();
-                this._flashUpdatedRows(flashTime);
-            }
+        if (!ticker) return;
+
+        const oldPrice = ticker.price || 0;
+        const newPrice = parseFloat(data.lastPrice) || 0;
+        
+        ticker.prevPrice = oldPrice;
+        ticker.price = newPrice;
+        ticker.change = parseFloat(data.price24hPcnt) * 100 || 0;
+        ticker.volume = parseFloat(data.volume24h) * newPrice || 0;
+        
+        if (!this._blockDOMUpdates) {
+            this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
         }
     }
 
@@ -829,7 +783,7 @@ class TickerPanel {
                 ticker.change = parseFloat(d.price24hPcnt) * 100; 
                 ticker.volume = parseFloat(d.turnover24h) || parseFloat(d.volume24h) * parseFloat(d.lastPrice);
             }
-            if (!this._blockDOMUpdates) this.updatePriceElements(); 
+            if (!this._blockDOMUpdates) this.renderer.updatePriceElements(); 
         } catch (error) { 
             console.warn(`⚠️ Не удалось загрузить ${symbol}:`, error); 
         }
@@ -1036,7 +990,7 @@ class TickerPanel {
         });
         
         menu.querySelector('[data-action="copy"]').onclick = () => {
-            navigator.clipboard.writeText(symbol);
+            navigator.clipboard.writeText(symbol).catch(() => {});
             menu.style.display = 'none';
         };
         
@@ -1047,7 +1001,7 @@ class TickerPanel {
                 const sym = item.dataset.symbol;
                 const ex = item.dataset.exchange;
                 const mt = item.dataset.marketType;
-                if (this.watchlistManager) {
+                if (this.watchlistManager && listId) {
                     const added = await this.watchlistManager.addSymbolToList(listId, sym, ex, mt);
                     const notif = document.getElementById('alertNotification');
                     if (notif) {
@@ -1065,7 +1019,7 @@ class TickerPanel {
         const flagMenu = document.getElementById('flagContextMenu');
         if (flagMenu) flagMenu.style.display = 'none';
     }
-    
+
     handleDoubleClick(e) {
         const flag = e.target.closest('.flag'); 
         if (!flag) return; 
