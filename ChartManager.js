@@ -265,8 +265,15 @@ class ChartManager {
         return el ? el : { classList: { add: () => {}, remove: () => {} }, textContent: '', style: {} };
     }
 
-       destroy() {
+         destroy() {
         this._abortAllProcesses();
+        
+        // 🚀 ОЧИСТКА ГЛОБАЛЬНЫХ СЛУШАТЕЛЕЙ (КРИТИЧЕСКИ ВАЖНО для предотвращения залипания и утечек)
+        if (this._forceReleaseHandler) {
+            window.removeEventListener('mouseup', this._forceReleaseHandler);
+            window.removeEventListener('blur', this._forceReleaseHandler);
+            this._forceReleaseHandler = null;
+        }
         
         // 🚀 ОЧИСТКА ОВЕРЛЕЕВ (СЕССИИ И РАЗДЕЛИТЕЛЬ ДНЕЙ)
         if (window._dailySeparator && typeof window._dailySeparator.destroy === 'function') {
@@ -445,7 +452,7 @@ class ChartManager {
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
-       setupEventListeners() {
+        setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
@@ -470,22 +477,33 @@ class ChartManager {
             try { this.chart.clearCrosshairPosition(); } catch(e) {}
         });
 
-        // 🚀 ДОБАВЛЕНО: Глобальный сброс перетаскивания при потере фокуса окна (Alt+Tab, клик вне браузера)
-        window.addEventListener('blur', () => {
-            // Принудительно отменяем перетаскивание во всех менеджерах рисования
-            if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
-            if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
-            if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
-            if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
-            if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
-            
-            // Сбрасываем зависший курсор и состояние графика
-            try { 
-                this.chart?.clearCrosshairPosition(); 
-                // Если используется кастомный примитив, сбрасываем его состояние
-                if (this.chart?.unsubscribeClick) { /* доп. очистка если нужна */ }
-            } catch(e) {}
-        });
+        // 🚀 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Глобальный сброс залипания графика
+        const forceReleaseChart = () => {
+            if (!this.chart) return;
+            try {
+                // 1. Принудительно "отжимаем" кнопку мыши в настройках LWC
+                this.chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
+                
+                // 2. Возвращаем настройку обратно в следующем кадре, чтобы скролл продолжил работать
+                requestAnimationFrame(() => {
+                    if (this.chart) {
+                        this.chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
+                    }
+                });
+                
+                // 3. Сбрасываем курсор
+                this.chart.clearCrosshairPosition();
+            } catch(e) {
+                // Игнорируем ошибки, если график уже уничтожен
+            }
+        };
+
+        // Слушаем на ВЕСЬ WINDOW, а не только на контейнер графика
+        window.addEventListener('mouseup', forceReleaseChart);
+        window.addEventListener('blur', forceReleaseChart); // На случай Alt+Tab или клика вне окна
+
+        // Также чистим за собой при уничтожении
+        this._forceReleaseHandler = forceReleaseChart;
     }
 
         setChartType(type) {
