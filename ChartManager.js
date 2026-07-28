@@ -265,8 +265,18 @@ class ChartManager {
         return el ? el : { classList: { add: () => {}, remove: () => {} }, textContent: '', style: {} };
     }
 
-    destroy() {
+       destroy() {
         this._abortAllProcesses();
+        
+        // 🚀 ОЧИСТКА ОВЕРЛЕЕВ (СЕССИИ И РАЗДЕЛИТЕЛЬ ДНЕЙ)
+        if (window._dailySeparator && typeof window._dailySeparator.destroy === 'function') {
+            window._dailySeparator.destroy();
+            window._dailySeparator = null;
+        }
+        if (window._sessionHighlighter && typeof window._sessionHighlighter.destroy === 'function') {
+            window._sessionHighlighter.destroy();
+            window._sessionHighlighter = null;
+        }
         
         if (this._pingInterval) {
             clearInterval(this._pingInterval);
@@ -292,7 +302,6 @@ class ChartManager {
         this._symbolChangeCallbacks = [];
         console.log('✅ ChartManager полностью уничтожен, утечек памяти нет');
     }
-
     _rebuildTimeMap() {
         this._candleTimeMap.clear();
         for (let i = 0; i < this.chartData.length; i++) {
@@ -462,7 +471,7 @@ class ChartManager {
         });
     }
 
-    setChartType(type) {
+        setChartType(type) {
         if (!this.chart) return;
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
@@ -504,6 +513,14 @@ class ChartManager {
                 priceLineColor: lineColor, priceLineWidth: 1,
                 priceLineStyle: LightweightCharts.LineStyle.Dashed
             });
+        }
+
+        // 🚀 КРИТИЧЕСКИ ВАЖНО: перепривязка примитивов к новой видимой серии
+        if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
+            window._dailySeparator.reattach();
+        }
+        if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
+            window._sessionHighlighter.reattach();
         }
     }
 
@@ -837,10 +854,20 @@ class ChartManager {
         this._notifySymbolChange();
         this._lastTimeframe = interval;
 
-        if (!window._dailySeparator) window._dailySeparator = new (window.DailySeparator || function(){})();
-        else if (window._dailySeparator.redraw) window._dailySeparator.redraw();
+              // ✅ ИСПРАВЛЕНИЕ: Передаем this (chartManager) в конструкторы!
+        if (!window._dailySeparator && window.DailySeparator) {
+            window._dailySeparator = new window.DailySeparator(this);
+        }
+        if (window._dailySeparator && window._dailySeparator.redraw) {
+            window._dailySeparator.redraw();
+        }
         
-        if (!window._sessionHighlighter) window._sessionHighlighter = new (window.SessionHighlighter || function(){})();
+        if (!window._sessionHighlighter && window.SessionHighlighter) {
+            window._sessionHighlighter = new window.SessionHighlighter(this);
+        }
+        if (window._sessionHighlighter && window._sessionHighlighter.redraw) {
+            window._sessionHighlighter.redraw();
+        }
 
         this.isLoadingMore = false;
         this._pendingHistoryLoad = false;
