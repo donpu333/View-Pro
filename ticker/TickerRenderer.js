@@ -17,6 +17,8 @@ class TickerRenderer {
 
         this.SCROLL_BUFFER = 10;
         this._formatCache = new Map();
+        this._formatKeys = [];
+        this._formatCacheMaxSize = 2000;
     }
 
     _escapeHtml(str) {
@@ -61,11 +63,10 @@ class TickerRenderer {
         priceEl.textContent = newPrice;
         const colorClass = ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '';
         
-        priceEl.className = `ticker-price ${colorClass}`;
+        priceEl.className = 'ticker-price ' + colorClass;
 
         if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
             const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-            
             priceEl.classList.remove('flash-up', 'flash-down');
             void priceEl.offsetWidth;
             priceEl.classList.add(flashClass);
@@ -86,10 +87,9 @@ class TickerRenderer {
         let domUpdates = 0;
 
         for (const [key, el] of this.tickerElements.entries()) {
-            // ✅ Убрана проверка el.style.display === 'none' — обновляем все элементы
             if (!el || !el.isConnected) continue;
 
-            const ticker = this.parent.tickersMap?.get(key);
+            const ticker = this.parent.tickersMap && this.parent.tickersMap.get(key);
             if (!ticker) continue;
 
             const els = el._cachedEls || {};
@@ -106,7 +106,7 @@ class TickerRenderer {
             const newChange = this.formatChange(ticker.change) + '%';
             if (changeEl && changeEl.textContent !== newChange) {
                 changeEl.textContent = newChange;
-                changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
+                changeEl.className = 'ticker-change ' + (ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '');
                 domUpdates++;
             }
 
@@ -123,17 +123,16 @@ class TickerRenderer {
             }
         }
 
-        if (this.parent?.debugMode && domUpdates > 0) {
-            console.log(`🔄 Обновлено ${domUpdates} DOM-элементов`);
+        if (this.parent && this.parent.debugMode && domUpdates > 0) {
+            console.log('🔄 Обновлено ' + domUpdates + ' DOM-элементов');
         }
     }
 
-    // ✅ Убрана проверка el.style.display === 'none' — обновляем даже скрытые элементы
     updatePriceForSymbol(key, price, change) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
 
-        const ticker = this.parent.tickersMap?.get(key);
+        const ticker = this.parent.tickersMap && this.parent.tickersMap.get(key);
         if (!ticker) return;
 
         const els = el._cachedEls || {};
@@ -146,30 +145,35 @@ class TickerRenderer {
             const newChange = this.formatChange(ticker.change) + '%';
             if (els.change.textContent !== newChange) {
                 els.change.textContent = newChange;
-                els.change.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
+                els.change.className = 'ticker-change ' + (ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '');
             }
         }
     }
 
     sortTickers(tickers) {
-        const arrayToSort = tickers || this.parent?.tickers;
+        const arrayToSort = tickers || this.parent.tickers;
         if (!arrayToSort || !Array.isArray(arrayToSort)) {
-            if (this.parent?.debugMode) console.warn('⚠️ sortTickers: нет данных');
+            if (this.parent && this.parent.debugMode) console.warn('⚠️ sortTickers: нет данных');
             return [];
         }
-        if (!this.parent?.state?.sortBy) return [...arrayToSort];
+        if (!this.parent || !this.parent.state || !this.parent.state.sortBy) return arrayToSort.slice();
 
         const sortBy = this.parent.state.sortBy;
         const direction = this.parent.state.sortDirection === 'asc' ? 1 : -1;
-        return [...arrayToSort].sort((a, b) => this._compareTickers(a, b, sortBy, direction));
+        return arrayToSort.slice().sort((a, b) => this._compareTickers(a, b, sortBy, direction));
     }
 
     getFilteredTickers() {
-        const state = this.parent?.state;
+        const state = this.parent && this.parent.state;
         if (!state) return [];
 
-        const cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
-        if (this.parent.filterCache?.key === cacheKey) {
+        const cacheKey = (state.marketFilter || 'all') + ':' + 
+                        (state.exchangeFilter || 'all') + ':' + 
+                        (state.activeTab || 'all') + ':' + 
+                        (state.sortBy || 'volume') + ':' + 
+                        (state.sortDirection || 'desc');
+        
+        if (this.parent.filterCache && this.parent.filterCache.key === cacheKey) {
             return this.parent.filterCache.result;
         }
 
@@ -181,16 +185,16 @@ class TickerRenderer {
             switch (state.activeTab) {
                 case 'favorites': {
                     const favSet = new Set(state.favorites || []);
-                    result = Array.from(map.values()).filter(t => favSet.has(t.symbol));
+                    result = Array.from(map.values()).filter(function(t) { return favSet.has(t.symbol); });
                     break;
                 }
                 case 'flags': {
                     const flags = state.flags || {};
                     const flagTab = state.activeFlagTab;
                     result = Object.entries(flags)
-                        .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
-                        .map(([key]) => map.get(key))
-                        .filter(t => t !== undefined);
+                        .filter(function(entry) { return entry[1] && (!flagTab || entry[1] === flagTab); })
+                        .map(function(entry) { return map.get(entry[0]); })
+                        .filter(function(t) { return t !== undefined; });
                     break;
                 }
                 default: {
@@ -198,17 +202,17 @@ class TickerRenderer {
                     if (sourceKeys.length === 0) {
                         result = Array.from(map.values());
                     } else {
-                        let filteredKeys = [...sourceKeys];
+                        let filteredKeys = sourceKeys.slice();
                         if (state.marketFilter && state.marketFilter !== 'all') {
-                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                            filteredKeys = filteredKeys.filter(function(k) { return k.endsWith(':' + state.marketFilter); });
                         }
                         if (state.exchangeFilter && state.exchangeFilter !== 'all') {
-                            filteredKeys = filteredKeys.filter(k => {
+                            filteredKeys = filteredKeys.filter(function(k) {
                                 const parts = k.split(':');
                                 return parts[1] === state.exchangeFilter;
                             });
                         }
-                        result = filteredKeys.map(key => map.get(key)).filter(t => t !== undefined);
+                        result = filteredKeys.map(function(key) { return map.get(key); }).filter(function(t) { return t !== undefined; });
                     }
                     break;
                 }
@@ -216,14 +220,14 @@ class TickerRenderer {
 
             const sortBy = state.sortBy || 'volume';
             const direction = state.sortDirection === 'asc' ? 1 : -1;
-            result.sort((a, b) => this._compareTickers(a, b, sortBy, direction));
+            result.sort(function(a, b) { return this._compareTickers(a, b, sortBy, direction); }.bind(this));
 
         } catch (error) {
             console.error('❌ getFilteredTickers error:', error);
-            result = Array.from(this.parent.tickersMap?.values() || []);
+            result = Array.from(this.parent.tickersMap ? this.parent.tickersMap.values() : []);
         }
 
-        this.parent.filterCache = { key: cacheKey, result };
+        this.parent.filterCache = { key: cacheKey, result: result };
         return result;
     }
 
@@ -259,7 +263,7 @@ class TickerRenderer {
     renderTickerList() {
         const flagTabs = document.getElementById('flagTabs');
         if (flagTabs) {
-            flagTabs.classList.toggle('show', this.parent?.state?.activeTab === 'flags');
+            flagTabs.classList.toggle('show', this.parent && this.parent.state && this.parent.state.activeTab === 'flags');
         }
 
         const container = document.getElementById('tickerListContainer');
@@ -279,7 +283,7 @@ class TickerRenderer {
         if (oldItems) oldItems.remove();
         if (oldSpacer) oldSpacer.remove();
 
-        if (this.parent?._rowDomCache) {
+        if (this.parent && this.parent._rowDomCache) {
             this.parent._rowDomCache.clear();
         }
         this.tickerElements.clear();
@@ -305,15 +309,15 @@ class TickerRenderer {
         this.renderVisibleTickers();
 
         let ticking = false;
-        this._scrollHandler = () => {
+        this._scrollHandler = function() {
             if (!ticking) {
-                requestAnimationFrame(() => {
+                requestAnimationFrame(function() {
                     this.renderVisibleTickers();
                     ticking = false;
-                });
+                }.bind(this));
                 ticking = true;
             }
-        };
+        }.bind(this);
         container.addEventListener('scroll', this._scrollHandler);
     }
 
@@ -336,7 +340,7 @@ class TickerRenderer {
             const ticker = this.displayedTickers[i];
             if (!ticker) continue;
 
-            const key = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
+            const key = ticker.symbol + ':' + ticker.exchange + ':' + ticker.marketType;
             visibleKeys.add(key);
 
             let el = this.tickerElements.get(key);
@@ -357,15 +361,15 @@ class TickerRenderer {
                 el.style.display = '';
 
                 if (!isNewElement) {
-                    const priceEl = el._cachedEls?.price;
-                    const changeEl = el._cachedEls?.change;
-                    const volumeEl = el._cachedEls?.volume;
-                    const tradesEl = el._cachedEls?.trades;
+                    const priceEl = el._cachedEls && el._cachedEls.price;
+                    const changeEl = el._cachedEls && el._cachedEls.change;
+                    const volumeEl = el._cachedEls && el._cachedEls.volume;
+                    const tradesEl = el._cachedEls && el._cachedEls.trades;
 
                     if (priceEl) this._updatePriceWithAnimation(priceEl, ticker);
                     if (changeEl) {
                         changeEl.textContent = this.formatChange(ticker.change) + '%';
-                        changeEl.className = `ticker-change ${ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : ''}`;
+                        changeEl.className = 'ticker-change ' + (ticker.change > 0 ? 'positive' : ticker.change < 0 ? 'negative' : '');
                     }
                     if (volumeEl) volumeEl.textContent = this.formatVolume(ticker.volume);
                     if (tradesEl) tradesEl.textContent = this.formatTrades(ticker.trades);
@@ -375,7 +379,7 @@ class TickerRenderer {
                     fragment.appendChild(el);
                 }
             } catch (error) {
-                console.error(`❌ Ошибка рендера тикера ${ticker.symbol}:`, error);
+                console.error('❌ Ошибка рендера тикера ' + ticker.symbol + ':', error);
             }
         }
 
@@ -383,21 +387,24 @@ class TickerRenderer {
             itemsContainer.appendChild(fragment);
         }
 
-        for (const [key, el] of this.tickerElements.entries()) {
+        this.tickerElements.forEach(function(el, key) {
             if (!visibleKeys.has(key) && el.style.display !== 'none') {
                 el.style.display = 'none';
             }
-        }
+        });
     }
 
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
         div.className = 'ticker-item';
-        if (ticker.symbol === this.parent?.state?.currentSymbol &&
-            ticker.exchange === this.parent?.state?.currentExchange &&
-            ticker.marketType === this.parent?.state?.currentMarketType) {
+        
+        if (this.parent && this.parent.state &&
+            ticker.symbol === this.parent.state.currentSymbol &&
+            ticker.exchange === this.parent.state.currentExchange &&
+            ticker.marketType === this.parent.state.currentMarketType) {
             div.classList.add('active');
         }
+        
         div.dataset.symbol = ticker.symbol;
         div.dataset.exchange = ticker.exchange;
         div.dataset.marketType = ticker.marketType;
@@ -413,11 +420,13 @@ class TickerRenderer {
             ticker.prevPrice = ticker.price;
         }
 
-        const flagKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
-        const flag = this.parent?.state?.flags?.[flagKey] || null;
-        const flagHTML = flag ? `<div class="flag flag-${flag}"></div>` : '<div class="flag-placeholder"></div>';
+        const flagKey = ticker.symbol + ':' + ticker.exchange + ':' + ticker.marketType;
+        const flags = this.parent && this.parent.state && this.parent.state.flags ? this.parent.state.flags : {};
+        const flag = flags[flagKey] || null;
+        const flagHTML = flag ? '<div class="flag flag-' + flag + '"></div>' : '<div class="flag-placeholder"></div>';
 
-        const isFavorite = this.parent?.state?.favorites?.includes(ticker.symbol) ? 'favorite' : '';
+        const favorites = this.parent && this.parent.state ? (this.parent.state.favorites || []) : [];
+        const isFavorite = favorites.includes(ticker.symbol) ? 'favorite' : '';
         const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
         const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
 
@@ -428,21 +437,20 @@ class TickerRenderer {
         }
         rawName = rawName.substring(0, 3);
         const displayName = this._escapeHtml(rawName);
+        const escapedSymbol = this._escapeHtml(ticker.symbol);
 
         const priceClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
 
-        div.innerHTML = `
-            <div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;">
-                ${flagHTML}
-                <sup class="market-sup ${markerClass}" style="font-size:7px;font-weight:bold;margin-right:2px;flex-shrink:0;">${markerLetter}</sup>
-                <span class="symbol-text" title="${this._escapeHtml(ticker.symbol)}" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${displayName}</span>
-                <span class="star ${isFavorite}" data-symbol="${this._escapeHtml(ticker.symbol)}" title="Избранное" style="flex-shrink:0;margin-left:2px;">★</span>
-            </div>
-            <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatPrice(ticker.price)}</div>
-            <div class="ticker-change ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatChange(ticker.change)}%</div>
-            <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatVolume(ticker.volume)}</div>
-            <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatTrades(ticker.trades)}</div>
-        `;
+        div.innerHTML = '<div class="ticker-name" style="display:flex;align-items:center;gap:4px;overflow:hidden;">' +
+            flagHTML +
+            '<sup class="market-sup ' + markerClass + '" style="font-size:7px;font-weight:bold;margin-right:2px;flex-shrink:0;">' + markerLetter + '</sup>' +
+            '<span class="symbol-text" title="' + escapedSymbol + '" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">' + displayName + '</span>' +
+            '<span class="star ' + isFavorite + '" data-symbol="' + escapedSymbol + '" title="Избранное" style="flex-shrink:0;margin-left:2px;">★</span>' +
+            '</div>' +
+            '<div class="ticker-price ' + priceClass + '" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">' + this.formatPrice(ticker.price) + '</div>' +
+            '<div class="ticker-change ' + priceClass + '" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">' + this.formatChange(ticker.change) + '%</div>' +
+            '<div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">' + this.formatVolume(ticker.volume) + '</div>' +
+            '<div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">' + this.formatTrades(ticker.trades) + '</div>';
 
         div._cachedEls = {
             price: div.querySelector('.ticker-price'),
@@ -451,12 +459,21 @@ class TickerRenderer {
             trades: div.querySelector('.ticker-trades')
         };
 
-        const cacheKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
-        if (this.parent?._rowDomCache) {
+        const cacheKey = ticker.symbol + ':' + ticker.exchange + ':' + ticker.marketType;
+        if (this.parent && this.parent._rowDomCache) {
             this.parent._rowDomCache.set(cacheKey, div);
         }
 
         return div;
+    }
+
+    _setFormatCache(key, value) {
+        if (this._formatKeys.length >= this._formatCacheMaxSize) {
+            const oldest = this._formatKeys.shift();
+            this._formatCache.delete(oldest);
+        }
+        this._formatCache.set(key, value);
+        this._formatKeys.push(key);
     }
 
     formatPrice(price) {
@@ -476,8 +493,7 @@ class TickerRenderer {
             if (parts[1].length < 2) str += '0'.repeat(2 - parts[1].length);
         }
         
-        this._formatCache.set(key, str);
-        if (this._formatCache.size > 5000) this._formatCache.clear();
+        this._setFormatCache(key, str);
         return str;
     }
 
@@ -487,8 +503,7 @@ class TickerRenderer {
         if (this._formatCache.has(key)) return this._formatCache.get(key);
 
         const result = (change > 0 ? '+' : '') + change.toFixed(2);
-        this._formatCache.set(key, result);
-        if (this._formatCache.size > 5000) this._formatCache.clear();
+        this._setFormatCache(key, result);
         return result;
     }
 
@@ -504,8 +519,7 @@ class TickerRenderer {
         else if (volume < 1) result = volume.toFixed(4);
         else result = volume.toFixed(2);
         
-        this._formatCache.set(key, result);
-        if (this._formatCache.size > 5000) this._formatCache.clear();
+        this._setFormatCache(key, result);
         return result;
     }
 
@@ -520,8 +534,7 @@ class TickerRenderer {
         else if (trades > 1e3) result = (trades / 1e3).toFixed(1) + 'K';
         else result = trades.toString();
         
-        this._formatCache.set(key, result);
-        if (this._formatCache.size > 5000) this._formatCache.clear();
+        this._setFormatCache(key, result);
         return result;
     }
 
@@ -530,7 +543,7 @@ class TickerRenderer {
         if (!parent) return;
 
         if (parent._sortClickHandler) {
-            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+            document.querySelectorAll('.table-header span[data-sort]').forEach(function(header) {
                 header.removeEventListener('click', parent._sortClickHandler);
             });
         }
@@ -543,7 +556,7 @@ class TickerRenderer {
         parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : 'volume';
         parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) ? savedSortDir : 'desc';
 
-        parent._sortClickHandler = (e) => {
+        parent._sortClickHandler = function(e) {
             e.stopPropagation();
             const header = e.currentTarget;
             const sortBy = header.dataset.sort;
@@ -558,13 +571,14 @@ class TickerRenderer {
             localStorage.setItem('tickerSortBy', parent.state.sortBy);
             localStorage.setItem('tickerSortDir', parent.state.sortDirection);
 
-            if (parent.watchlistManager?._saveSortForList) {
+            if (parent.watchlistManager && parent.watchlistManager._saveSortForList) {
                 parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
             }
 
-            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+            document.querySelectorAll('.table-header span[data-sort] i').forEach(function(icon) {
                 icon.className = 'fas fa-sort';
             });
+            
             const icon = header.querySelector('i');
             if (icon) {
                 icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
@@ -574,7 +588,7 @@ class TickerRenderer {
             parent.renderTickerList();
         };
 
-        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+        document.querySelectorAll('.table-header span[data-sort]').forEach(function(header) {
             header.addEventListener('click', parent._sortClickHandler);
             if (header.dataset.sort === 'flag') {
                 const icon = header.querySelector('i');
@@ -582,7 +596,7 @@ class TickerRenderer {
             }
         });
 
-        const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
+        const activeHeader = document.querySelector('.table-header span[data-sort="' + parent.state.sortBy + '"]');
         if (activeHeader) {
             const icon = activeHeader.querySelector('i');
             if (icon) {
@@ -595,11 +609,11 @@ class TickerRenderer {
     destroy() {
         if (this._scrollHandler) {
             const container = document.getElementById('tickerListContainer');
-            container?.removeEventListener('scroll', this._scrollHandler);
+            if (container) container.removeEventListener('scroll', this._scrollHandler);
             this._scrollHandler = null;
         }
         this.tickerElements.clear();
-        if (this.parent?._rowDomCache) {
+        if (this.parent && this.parent._rowDomCache) {
             this.parent._rowDomCache.clear();
         }
         if (this._updatePriceRaf) cancelAnimationFrame(this._updatePriceRaf);
