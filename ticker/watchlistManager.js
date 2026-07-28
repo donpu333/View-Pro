@@ -54,18 +54,15 @@ class WatchlistManager {
                 this.listOrder = saved.listOrder || ['default'];
                 this.activeListId = saved.activeListId || 'default';
                 
-                // ✅ Загружаем сортировки
                 if (saved.listSorts) {
                     this._listSorts = new Map(Object.entries(saved.listSorts));
                 }
                 
-                // ✅ МИГРИРУЕМ старые списки: добавляем поля flags и favorites
                 for (const [id, list] of this.lists) {
                     if (!list.flags) list.flags = {};
                     if (!list.favorites) list.favorites = [];
                 }
                 
-                // ✅ МИГРИРУЕМ глобальные флаги и звёзды в дефолтный список
                 if (this.lists.has('default')) {
                     const defaultList = this.lists.get('default');
                     
@@ -133,7 +130,6 @@ class WatchlistManager {
     async _saveNow() {
         if (!this._loaded || this._destroyed) return;
         
-        // ✅ СИНХРОНИЗИРУЕМ все данные активного списка перед сохранением
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
@@ -218,12 +214,10 @@ class WatchlistManager {
         if (!this.lists.has(listId)) return;
         if (this.activeListId === listId) { this.closeDropdown(); return; }
 
-        // ✅ СОХРАНЯЕМ сортировку
         if (this.activeListId) {
             this._saveSortForList(this.activeListId);
         }
 
-        // ✅ СОХРАНЯЕМ все данные старого списка
         const oldList = this.lists.get(this.activeListId);
         if (oldList) {
             oldList.symbols = [...this.tickerPanel.state.customSymbols];
@@ -236,7 +230,6 @@ class WatchlistManager {
         this._switchCooldown = true;
         setTimeout(() => { this._switchCooldown = false; }, 500);
 
-        // ✅ ЗАГРУЖАЕМ все данные нового списка
         const newList = this.lists.get(listId);
         if (newList) {
             this.tickerPanel.state.flags = { ...(newList.flags || {}) };
@@ -268,6 +261,7 @@ class WatchlistManager {
             }
         }
 
+        // ✅ Запускаем немедленную загрузку цен для нового списка
         this.fetchPricesForActiveList();
     }
 
@@ -310,23 +304,24 @@ class WatchlistManager {
         }
     }
 
+    // ✅ Ускорено: таймер уменьшен до 500 мс и убран renderTickerList
     _schedulePriceLoadForList(symbols) {
         if (!symbols || symbols.length === 0) return;
         if (this._priceLoadTimer) clearTimeout(this._priceLoadTimer);
         this._priceLoadTimer = setTimeout(async () => {
             this._priceLoadTimer = null;
-            if (this.tickerPanel._isRestRunning) return;
             await this.fetchPricesForActiveList();
-            this.tickerPanel.filterCache = null;
-            this.tickerPanel.renderTickerList();
-        }, 1000);
+            // renderTickerList убран — цены обновятся через updatePriceElements
+        }, 500);
     }
 
     async fetchPricesForActiveList() {
         if (this.tickerPanel?._suppressWatchlistLoad) return false;
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
-        if (this.tickerPanel?.pollRestData && !this.tickerPanel._isRestRunning) {
+        
+        // ✅ Запускаем REST немедленно
+        if (this.tickerPanel?.pollRestData) {
             this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
         }
         return true;
@@ -396,7 +391,6 @@ class WatchlistManager {
         const before = list.symbols.length;
         list.symbols = list.symbols.filter(s => s !== key);
         
-        // ✅ Удаляем флаг и звезду этого символа
         if (list.flags && list.flags[key]) delete list.flags[key];
         if (list.favorites) {
             list.favorites = list.favorites.filter(s => s !== symbol);
