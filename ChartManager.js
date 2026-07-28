@@ -445,7 +445,7 @@ class ChartManager {
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
-    setupEventListeners() {
+       setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
@@ -468,6 +468,23 @@ class ChartManager {
             this._latestCrosshairData = null;
             if (this._crosshairRafId) { cancelAnimationFrame(this._crosshairRafId); this._crosshairRafId = null; }
             try { this.chart.clearCrosshairPosition(); } catch(e) {}
+        });
+
+        // 🚀 ДОБАВЛЕНО: Глобальный сброс перетаскивания при потере фокуса окна (Alt+Tab, клик вне браузера)
+        window.addEventListener('blur', () => {
+            // Принудительно отменяем перетаскивание во всех менеджерах рисования
+            if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
+            if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
+            if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
+            if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
+            if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
+            
+            // Сбрасываем зависший курсор и состояние графика
+            try { 
+                this.chart?.clearCrosshairPosition(); 
+                // Если используется кастомный примитив, сбрасываем его состояние
+                if (this.chart?.unsubscribeClick) { /* доп. очистка если нужна */ }
+            } catch(e) {}
         });
     }
 
