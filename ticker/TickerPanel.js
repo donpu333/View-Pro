@@ -820,34 +820,110 @@ class TickerPanel {
         }
     }
 
-    removeSymbol(symbol, exchange, marketType) {
-        if (!symbol) return;
-        const key = `${symbol}:${exchange}:${marketType}`;
-        delete this.state.flags[key];
-        this.tickers = this.tickers.filter(t => !(t.symbol === symbol && t.exchange === exchange && t.marketType === marketType));
-        this.tickersMap.delete(key);
-        this._rowDomCache.delete(key);
-        this._subscribedSymbols.delete(key);
-        this.state.customSymbols = this.state.customSymbols.filter(s => s !== key);
-        this.state.favorites = this.state.favorites.filter(s => s !== symbol);
+   removeSymbol(symbol, exchange, marketType) {
+    if (!symbol) return;
+    const key = `${symbol}:${exchange}:${marketType}`;
+    
+    // ✅ 1. Проверяем, был ли удаляемый тикер текущим выбранным
+    const wasCurrentSymbol = (
+        this.state.currentSymbol === symbol && 
+        this.state.currentExchange === exchange && 
+        this.state.currentMarketType === marketType
+    );
+    
+    // ✅ 2. Если да — находим следующий тикер ДО удаления
+    let nextTicker = null;
+    if (wasCurrentSymbol) {
+        // Ищем в отфильтрованном списке (который видит пользователь)
+        const filteredTickers = this.renderer.getFilteredTickers();
+        const currentIndex = filteredTickers.findIndex(t => 
+            t.symbol === symbol && t.exchange === exchange && t.marketType === marketType
+        );
         
-        if (window.priceManagerInstance && this._pmPriceHandler) {
-            window.priceManagerInstance.unsubscribe(key, this._pmPriceHandler);
+        if (currentIndex !== -1) {
+            // Берём тикер ниже (как в TradingView)
+            if (currentIndex + 1 < filteredTickers.length) {
+                nextTicker = filteredTickers[currentIndex + 1];
+            }
+            // Если удаляем последний — берём предыдущий
+            else if (currentIndex > 0) {
+                nextTicker = filteredTickers[currentIndex - 1];
+            }
         }
-        
-        if (this.watchlistManager) { 
-            this.watchlistManager.removeSymbolFromActiveList(symbol, exchange, marketType); 
-            this.watchlistManager.renderDropdown(); 
-        }
-        this.saveState();
-        if (this.state.currentSymbol === symbol && this.state.currentExchange === exchange && this.state.currentMarketType === marketType) { 
-            this.state.currentSymbol = ''; 
-            this.state.currentExchange = 'binance'; 
-        }
-        this.filterCache = null;
-        this.renderTickerList();
     }
     
+    // ✅ 3. Удаляем тикер из всех коллекций
+    delete this.state.flags[key];
+    this.tickers = this.tickers.filter(t => 
+        !(t.symbol === symbol && t.exchange === exchange && t.marketType === marketType)
+    );
+    this.tickersMap.delete(key);
+    this._rowDomCache.delete(key);
+    this._subscribedSymbols.delete(key);
+    this.state.customSymbols = this.state.customSymbols.filter(s => s !== key);
+    this.state.favorites = this.state.favorites.filter(s => s !== symbol);
+    
+    if (window.priceManagerInstance && this._pmPriceHandler) {
+        window.priceManagerInstance.unsubscribe(key, this._pmPriceHandler);
+    }
+    
+    if (this.watchlistManager) { 
+        this.watchlistManager.removeSymbolFromActiveList(symbol, exchange, marketType); 
+        this.watchlistManager.renderDropdown(); 
+    }
+    this.saveState();
+    
+    // ✅ 4. Переключаемся на следующий тикер
+    if (wasCurrentSymbol && nextTicker) {
+        this.state.currentSymbol = nextTicker.symbol;
+        this.state.currentExchange = nextTicker.exchange;
+        this.state.currentMarketType = nextTicker.marketType;
+        this.saveCurrentSymbol(nextTicker.symbol, nextTicker.exchange, nextTicker.marketType);
+        
+        // Обновляем график
+        try {
+            if (this.coordinator?.chartManager) {
+                this.coordinator.chartManager.switchSymbol(
+                    nextTicker.symbol, 
+                    nextTicker.exchange, 
+                    nextTicker.marketType
+                );
+            }
+        } catch (error) {
+            console.error('❌ Ошибка переключения символа:', error);
+        }
+        
+        // Обновляем заголовок
+        const pairDisplay = document.getElementById('pairDisplay');
+        if (pairDisplay) pairDisplay.textContent = nextTicker.symbol;
+        const exchangeDisplay = document.getElementById('exchangeDisplay');
+        if (exchangeDisplay) exchangeDisplay.textContent = nextTicker.exchange === 'binance' ? 'Binance' : 'Bybit';
+        const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+        if (contractTypeDisplay) contractTypeDisplay.textContent = nextTicker.marketType === 'futures' ? 'PERP' : 'SPOT';
+    } else if (wasCurrentSymbol) {
+        // Нет следующего тикера — сбрасываем
+        this.state.currentSymbol = '';
+        this.state.currentExchange = 'binance';
+        this.state.currentMarketType = 'futures';
+    }
+    
+    // ✅ 5. Перерисовываем список
+    this.filterCache = null;
+    this.renderTickerList();
+    
+    // ✅ 6. Подсвечиваем новый тикер после перерисовки
+    if (wasCurrentSymbol && nextTicker) {
+        setTimeout(() => {
+            const activeEl = document.querySelector(
+                `.ticker-item[data-symbol="${nextTicker.symbol}"][data-exchange="${nextTicker.exchange}"][data-market-type="${nextTicker.marketType}"]`
+            );
+            if (activeEl) {
+                document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
+                activeEl.classList.add('active');
+            }
+        }, 150);
+    }
+}
     handleKeyDelete(e) {
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         const activeElement = document.activeElement;
