@@ -3209,3 +3209,16 @@ input:checked + .slider:before { transform: translateX(22px); }
     opacity: 1;
     visibility: visible;
 }
+#candleStatsOverlay,
+#priceLineTimer,
+#loadingOverlay,
+#loadingProgress,
+#indicator-panels-container {
+    pointer-events: none !important;
+}
+
+/* Возвращаем кликабельность только кнопкам внутри оверлеев, если они есть */
+#candleStatsOverlay button, 
+#loadingOverlay button {
+    pointer-events: auto !important;
+}
