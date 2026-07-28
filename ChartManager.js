@@ -594,57 +594,64 @@ class ChartManager {
 
     // 🚀 ИСПРАВЛЕНО: Мгновенное обновление данных (сохраняет правильные high/low), 
     // но троттлинг тяжелых DOM-операций (заголовок, позиция, рисовалки)
-    _syncPriceLine(price) {
-        if (!price || isNaN(price)) return;
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series) return;
-        
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        
-        // 1. МГНОВЕННО обновляем данные в памяти. Это КРИТИЧНО для правильных фитилей!
-        lastCandle.close = price;
-        if (price > lastCandle.high) lastCandle.high = price;
-        if (price < lastCandle.low) lastCandle.low = price;
-        
-        const isBullish = price >= lastCandle.open;
-        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
-        
-        this.currentRealPrice = price;
-        this._lastAppliedColor = lineColor;
-        this.lastCandle = lastCandle;
-        
-        // 2. МГНОВЕННО обновляем серию графика (Lightweight Charts оптимизирован для частых вызовов update)
-        series.update({ 
-            time: lastCandle.time, 
-            open: lastCandle.open, 
-            high: lastCandle.high, 
-            low: lastCandle.low, 
-            close: price 
+  _syncPriceLine(price) {
+    if (!price || isNaN(price)) return;
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series) return;
+    
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    // 1. Обновляем данные свечи
+    lastCandle.close = price;
+    if (price > lastCandle.high) lastCandle.high = price;
+    if (price < lastCandle.low) lastCandle.low = price;
+    
+    // ✅ Цвет линии ВСЕГДА совпадает с цветом свечи (close vs open)
+    const isBullish = lastCandle.close >= lastCandle.open;
+    const lineColor = isBullish 
+        ? (this.bullishColor || CONFIG.colors.bullish) 
+        : (this.bearishColor || CONFIG.colors.bearish);
+    
+    this.currentRealPrice = price;
+    this._lastAppliedColor = lineColor;
+    this.lastCandle = lastCandle;
+    
+    // 2. МГНОВЕННО: свеча + линия цены (цвет синхронизирован)
+    series.update({ 
+        time: lastCandle.time, 
+        open: lastCandle.open, 
+        high: lastCandle.high, 
+        low: lastCandle.low, 
+        close: price 
+    });
+    
+    // ✅ МГНОВЕННО обновляем цвет линии (без троттлинга)
+    series.applyOptions({ 
+        priceLineSource: price, 
+        priceLineColor: lineColor 
+    });
+    
+    // 3. ТРОТТЛИНГ только для тяжёлых операций
+    if (!this._priceEffectRafId) {
+        this._priceEffectRafId = requestAnimationFrame(() => {
+            this._priceEffectRafId = null;
+            
+            const prim = this.timerManager?._primitive;
+            if (prim) {
+                if (prim.setPrice) prim.setPrice(this.currentRealPrice);
+                if (prim.setColor) prim.setColor(this._lastAppliedColor);
+                if (prim.isEnabled) prim.requestRedraw();
+            }
+            
+            if (!document.hidden) {
+                this.scheduleUpdatePosition();
+                this._updatePageTitle();
+            }
+            this.requestDrawingsRedraw();
         });
-        
-        // 3. ТРОТТЛИНГ тяжелых операций (не чаще 60 FPS)
-        if (!this._priceEffectRafId) {
-            this._priceEffectRafId = requestAnimationFrame(() => {
-                this._priceEffectRafId = null;
-                
-                series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-                
-                const prim = this.timerManager?._primitive;
-                if (prim) {
-                    if (prim.setPrice) prim.setPrice(this.currentRealPrice);
-                    if (prim.setColor) prim.setColor(this._lastAppliedColor);
-                    if (prim.isEnabled) prim.requestRedraw();
-                }
-                
-                if (!document.hidden) {
-                    this.scheduleUpdatePosition();
-                    this._updatePageTitle();
-                }
-                this.requestDrawingsRedraw();
-            });
-        }
     }
+}
 
     updateLastCandle(candle) {
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
