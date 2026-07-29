@@ -65,18 +65,28 @@ class WatchlistManager {
                 
                 if (this.lists.has('default')) {
                     const defaultList = this.lists.get('default');
+                    
                     if (saved.globalFlags && Object.keys(defaultList.flags).length === 0) {
                         defaultList.flags = saved.globalFlags;
+                        console.log(`🔄 Миграция флагов: ${Object.keys(saved.globalFlags).length} шт.`);
                     }
+                    
                     if (saved.globalFavorites && defaultList.favorites.length === 0) {
                         defaultList.favorites = saved.globalFavorites;
+                        console.log(`🔄 Миграция звёзд: ${saved.globalFavorites.length} шт.`);
                     }
                 }
             }
         } catch (e) {}
 
         if (!this.lists.has('default')) {
-            this.lists.set('default', { name: 'Основной', symbols: [], isDefault: true, flags: {}, favorites: [] });
+            this.lists.set('default', { 
+                name: 'Основной', 
+                symbols: [], 
+                isDefault: true, 
+                flags: {},
+                favorites: []
+            });
         }
         if (!this.lists.has(this.activeListId)) this.activeListId = 'default';
 
@@ -85,6 +95,7 @@ class WatchlistManager {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
             this.tickerPanel.state.flags = { ...(activeList.flags || {}) };
             this.tickerPanel.state.favorites = [...(activeList.favorites || [])];
+            console.log(`📦 Загружен "${activeList.name}": ${activeList.symbols.length} символов, ${Object.keys(activeList.flags || {}).length} флагов, ${(activeList.favorites || []).length} звёзд`);
         } else {
             this.tickerPanel.state.customSymbols = [];
             this.tickerPanel.state.flags = {};
@@ -118,6 +129,7 @@ class WatchlistManager {
 
     async _saveNow() {
         if (!this._loaded || this._destroyed) return;
+        
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
@@ -125,11 +137,14 @@ class WatchlistManager {
             activeList.flags = { ...this.tickerPanel.state.flags };
             activeList.favorites = [...this.tickerPanel.state.favorites];
         }
+        
+        const listSortsObj = Object.fromEntries(this._listSorts);
+        
         await this._saveToDB({
             lists: Object.fromEntries(this.lists),
             listOrder: this.listOrder,
             activeListId: this.activeListId,
-            listSorts: Object.fromEntries(this._listSorts)
+            listSorts: listSortsObj
         });
     }
 
@@ -149,7 +164,13 @@ class WatchlistManager {
     async createList(name) {
         await this._initPromise;
         const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        this.lists.set(id, { name: name || `Список ${this.lists.size}`, symbols: [], isDefault: false, flags: {}, favorites: [] });
+        this.lists.set(id, { 
+            name: name || `Список ${this.lists.size}`, 
+            symbols: [], 
+            isDefault: false,
+            flags: {},
+            favorites: []
+        });
         this.listOrder.push(id);
         this.renderCache.delete(id);
         this._listSorts.set(id, { sortBy: 'volume', sortDirection: 'desc' });
@@ -184,13 +205,18 @@ class WatchlistManager {
     }
 
     async activateList(listId) {
-        if (this.tickerPanel?._suppressWatchlistLoad) return;
+        if (this.tickerPanel?._suppressWatchlistLoad) {
+            console.log('⏸️ activateList(): ПРОПУЩЕНО — идёт массовое добавление');
+            return;
+        }
 
         await this._initPromise;
         if (!this.lists.has(listId)) return;
         if (this.activeListId === listId) { this.closeDropdown(); return; }
 
-        if (this.activeListId) this._saveSortForList(this.activeListId);
+        if (this.activeListId) {
+            this._saveSortForList(this.activeListId);
+        }
 
         const oldList = this.lists.get(this.activeListId);
         if (oldList) {
@@ -235,6 +261,7 @@ class WatchlistManager {
             }
         }
 
+        // ✅ Запускаем немедленную загрузку цен для нового списка
         this.fetchPricesForActiveList();
     }
 
@@ -270,33 +297,36 @@ class WatchlistManager {
             const icon = activeHeader.querySelector('i');
             if (icon) {
                 icon.className = sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                if (sortBy === 'flag') icon.style.display = 'none';
+                if (sortBy === 'flag') {
+                    icon.style.display = 'none';
+                }
             }
         }
     }
 
+    // ✅ Ускорено: таймер уменьшен до 500 мс и убран renderTickerList
     _schedulePriceLoadForList(symbols) {
         if (!symbols || symbols.length === 0) return;
         if (this._priceLoadTimer) clearTimeout(this._priceLoadTimer);
         this._priceLoadTimer = setTimeout(async () => {
             this._priceLoadTimer = null;
             await this.fetchPricesForActiveList();
-        }, 300);
+            // renderTickerList убран — цены обновятся через updatePriceElements
+        }, 500);
     }
 
-    // ✅ ИСПРАВЛЕНО: Убран несуществующий pollRestData. Теперь просто синхронизируем подписки.
     async fetchPricesForActiveList() {
         if (this.tickerPanel?._suppressWatchlistLoad) return false;
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
         
-        if (this.tickerPanel?._syncToPriceManager) {
-            this.tickerPanel._syncToPriceManager();
+        // ✅ Запускаем REST немедленно
+        if (this.tickerPanel?.pollRestData) {
+            this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
         }
         return true;
     }
 
-    // ✅ ИСПРАВЛЕНО: Добавлена подписка на PriceManager, чтобы цены и анимация работали как в тикер-панели
     loadSymbolsFromList(listId) {
         const list = this.lists.get(listId);
         if (!list) return;
@@ -319,7 +349,6 @@ class WatchlistManager {
             if (parts.length !== 3) continue;
             const [symbol, exchange, marketType] = parts;
             const flag = this.tickerPanel.state.flags[symbolKey] || null;
-            
             const t = {
                 symbol, price: 0, change: 0, volume: 0,
                 trades: null, custom: true, prevPrice: 0,
@@ -327,16 +356,9 @@ class WatchlistManager {
             };
             this.tickerPanel.tickers.push(t);
             this.tickerPanel.tickersMap.set(symbolKey, t);
-
-            // ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Подписываем на PriceManager, иначе обновлений не будет
-            if (window.priceManagerInstance && !this.tickerPanel._subscribedSymbols.has(symbolKey)) {
-                window.priceManagerInstance.subscribe(symbolKey, this.tickerPanel._pmPriceHandler);
-                this.tickerPanel._subscribedSymbols.add(symbolKey);
-            }
         }
 
         this.tickerPanel.updateModalCount();
-        this.tickerPanel._scheduleRender();
     }
 
     async addSymbolToList(listId, symbol, exchange, marketType) {
@@ -370,7 +392,9 @@ class WatchlistManager {
         list.symbols = list.symbols.filter(s => s !== key);
         
         if (list.flags && list.flags[key]) delete list.flags[key];
-        if (list.favorites) list.favorites = list.favorites.filter(s => s !== symbol);
+        if (list.favorites) {
+            list.favorites = list.favorites.filter(s => s !== symbol);
+        }
         
         if (list.symbols.length !== before) {
             this.renderCache.delete(this.activeListId);
@@ -441,7 +465,12 @@ class WatchlistManager {
                     </div>
                 `;
             });
-            html += `<div class="wl-dropdown-divider"></div><div class="wl-dropdown-item wl-add-item" data-action="add">+ Создать новый список</div>`;
+
+            html += `
+                <div class="wl-dropdown-divider"></div>
+                <div class="wl-dropdown-item wl-add-item" data-action="add">+ Создать новый список</div>
+            `;
+
             dropdown.innerHTML = html;
 
             dropdown.querySelectorAll('.wl-dropdown-item[data-list-id]').forEach(item => {
@@ -451,6 +480,7 @@ class WatchlistManager {
                     this.activateList(item.dataset.listId);
                 });
             });
+
             const addBtn = dropdown.querySelector('[data-action="add"]');
             if (addBtn) addBtn.addEventListener('click', () => this.createListPrompt());
         }
@@ -467,7 +497,9 @@ class WatchlistManager {
                 <div class="wl-dropdown-btn">
                     <span class="wl-btn-text">Основной</span>
                     <span class="wl-btn-count">0</span>
-                    <svg class="wl-btn-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    <svg class="wl-btn-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
                 </div>
                 <div class="wl-dropdown-menu"></div>
             `;
@@ -481,8 +513,12 @@ class WatchlistManager {
 
     bindDropdownEvents(container) {
         container.querySelector('.wl-dropdown-btn').addEventListener('click', (e) => { e.stopPropagation(); this.toggleDropdown(); });
-        if (this._outsideClickListener) document.removeEventListener('click', this._outsideClickListener);
-        this._outsideClickListener = (e) => { if (!container.contains(e.target)) this.closeDropdown(); };
+        if (this._outsideClickListener) {
+            document.removeEventListener('click', this._outsideClickListener);
+        }
+        this._outsideClickListener = (e) => {
+            if (!container.contains(e.target)) this.closeDropdown();
+        };
         document.addEventListener('click', this._outsideClickListener);
     }
 
@@ -533,6 +569,13 @@ class WatchlistManager {
         this.closeDropdown();
     }
 }
+
+const toastStyles = document.createElement('style');
+toastStyles.textContent = `
+    @keyframes wl-toast-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes wl-toast-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); } }
+`;
+document.head.appendChild(toastStyles);
 
 if (typeof window !== 'undefined') {
     window.WatchlistManager = WatchlistManager;
