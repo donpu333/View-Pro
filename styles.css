@@ -3209,3 +3209,9 @@ input:checked + .slider:before { transform: translateX(22px); }
     opacity: 1;
     visibility: visible;
 }
+.chart-updating {
+    pointer-events: none; /* Блокирует мышь/тач на время обновления */
+    cursor: wait; /* Показывает курсор загрузки */
+    opacity: 0.95; /* Легкое визуальное indication, что что-то происходит, без мерцания */
+    transition: opacity 0.05s ease;
+}
