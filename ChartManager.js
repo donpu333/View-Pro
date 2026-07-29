@@ -403,7 +403,7 @@ this._tempCandleUpdate = { time: 0, open: 0, high: 0, low: 0, close: 0 };
         });
     }
 
-    setupOptimizedSubscriptions() {
+       setupOptimizedSubscriptions() {
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             const now = performance.now();
             this._isScrollingFast = (now - this._lastScrollTime) < 40;
@@ -411,23 +411,28 @@ this._tempCandleUpdate = { time: 0, open: 0, high: 0, low: 0, close: 0 };
             this._lastScrollTime = now;
             this._lastVisibleRange = range;
 
+            // 1. Сбрасываем таймер "остановки" скролла
             clearTimeout(this._scrollStopTimeout);
+            
+            // 2. 🚀 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Просто ставим флаг, что рисовалки нужно обновить ПОЗЖЕ
+            this._pendingDrawingsRedraw = true;
+
             this._scrollStopTimeout = setTimeout(() => {
                 this._isScrolling = false;
                 this._isScrollingFast = false;
+                
+                // 3. Обрезка данных и проверка истории (только после остановки)
                 this._applyPendingTrim();
                 this.onVisibleLogicalRangeChange(this._lastVisibleRange);
                 
-                // 🚀 ГАРАНТИРОВАННАЯ перерисовка рисунков после скролла
+                // 4. 🚀 ГАРАНТИРОВАННАЯ перерисовка рисунков ПОСЛЕ остановки скролла
                 if (this._pendingDrawingsRedraw) {
                     this._pendingDrawingsRedraw = false;
-                    this.requestDrawingsRedraw();
-                } else {
-                    this.scheduleDrawingsUpdate(true);
-                    this.requestDrawingsRedraw();
+                    this.requestDrawingsRedraw(); // Вызываем перерисовку один раз
                 }
-            }, 150);
+            }, 150); // 150мс тишины считаются "остановкой скролла"
 
+            // 5. Синхронизация панелей индикаторов (оставляем, она легкая благодаря RAF)
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
                 if (!this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
@@ -443,12 +448,13 @@ this._tempCandleUpdate = { time: 0, open: 0, high: 0, low: 0, close: 0 };
                     });
                 }
             }
-            this.scheduleDrawingsUpdate();
+            
+            // 🚨 ЗДЕСЬ БЫЛО: this.scheduleDrawingsUpdate(); 
+            // МЫ ЭТО УДАЛИЛИ, чтобы не нагружать процессор во время движения
         });
         
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
-
           setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
