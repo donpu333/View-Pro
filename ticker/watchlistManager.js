@@ -328,7 +328,7 @@ class WatchlistManager {
     }
 
     // ✅ ИСПРАВЛЕНО: Добавлена мгновенная подписка каждого символа на PriceManager
-    loadSymbolsFromList(listId) {
+     loadSymbolsFromList(listId) {
         const list = this.lists.get(listId);
         if (!list) return;
 
@@ -359,8 +359,7 @@ class WatchlistManager {
             this.tickerPanel.tickers.push(t);
             this.tickerPanel.tickersMap.set(symbolKey, t);
 
-            // ✅ КРИТИЧЕСКИ ВАЖНО: Подписываем каждый символ на PriceManager!
-            // Без этого PriceManager не будет отправлять обновления цен для этого списка.
+            // Подписываем на WebSocket для будущих обновлений
             if (window.priceManagerInstance && !this.tickerPanel._subscribedSymbols.has(symbolKey)) {
                 window.priceManagerInstance.subscribe(symbolKey, this.tickerPanel._pmPriceHandler);
                 this.tickerPanel._subscribedSymbols.add(symbolKey);
@@ -368,11 +367,53 @@ class WatchlistManager {
         }
 
         this.tickerPanel.updateModalCount();
-        
-        // ✅ Запускаем рендер, чтобы отобразить структуру (даже с нулями на доли секунды до прихода WS)
         this.tickerPanel._scheduleRender();
     }
 
+    // ✅ ИСПРАВЛЕНО: Мгновенная загрузка без каких-либо задержек
+    async fetchPricesForActiveList() {
+        if (this.tickerPanel?._suppressWatchlistLoad) return false;
+        const activeList = this.lists.get(this.activeListId);
+        if (!activeList || activeList.symbols.length === 0) return false;
+        
+        // Собираем символы, которых НЕТ в кэше PriceManager
+        const missingSymbols = [];
+        for (const symbolKey of activeList.symbols) {
+            const cached = window.priceManagerInstance?.prices?.get(symbolKey);
+            if (!cached || cached.price === 0) {
+                missingSymbols.push(symbolKey);
+            }
+        }
+        
+        // Если есть недостающие данные — загружаем их НЕМЕДЛЕННО групповым запросом
+        if (missingSymbols.length > 0) {
+            const groups = {
+                'binance:futures': [],
+                'binance:spot': [],
+                'bybit:futures': [],
+                'bybit:spot': []
+            };
+            
+            for (const key of missingSymbols) {
+                const parts = key.split(':');
+                if (parts.length === 3) {
+                    const [symbol, exchange, marketType] = parts;
+                    const groupKey = `${exchange}:${marketType}`;
+                    if (groups[groupKey]) groups[groupKey].push(symbol);
+                }
+            }
+            
+            const tasks = [];
+            if (groups['binance:futures'].length > 0) tasks.push(window.priceManagerInstance._fetchBinanceRest(groups['binance:futures'], 'futures'));
+            if (groups['binance:spot'].length > 0) tasks.push(window.priceManagerInstance._fetchBinanceRest(groups['binance:spot'], 'spot'));
+            if (groups['bybit:futures'].length > 0) tasks.push(window.priceManagerInstance._fetchBybitRest(groups['bybit:futures'], 'futures'));
+            if (groups['bybit:spot'].length > 0) tasks.push(window.priceManagerInstance._fetchBybitRest(groups['bybit:spot'], 'spot'));
+            
+            await Promise.allSettled(tasks);
+        }
+        
+        return true;
+    }
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
