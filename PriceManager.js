@@ -13,15 +13,14 @@ class PriceManager {
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
         this._connectionState = {};
-        this._initInProgress = false; // Флаг, чтобы не запускать _init дважды
+        this._initInProgress = false;
         
-        // Оптимизированные настройки для максимальной стабильности
         this.config = {
-            reconnectDelay: 15000,        // 15 секунд базовой задержки
-            maxReconnectDelay: 120000,    // Максимум 2 минуты
-            restPollInterval: 10000,      // REST-опрос каждые 10 сек
-            bybitPingInterval: 20000,     // Пинг для Bybit каждые 20 сек
-            startupDelay: 2000            // Задержка 2 сек между подключениями при старте
+            reconnectDelay: 15000,
+            maxReconnectDelay: 120000,
+            restPollInterval: 10000,
+            bybitPingInterval: 20000,
+            startupDelay: 2000
         };
         
         this._init();
@@ -31,7 +30,6 @@ class PriceManager {
         if (this._initInProgress) return;
         this._initInProgress = true;
         
-        // Запускаем подключения с задержкой, чтобы не создавать 4 сокета одновременно (защита от soft-ban)
         const connectSequence = [
             () => this._connectBinanceFutures(),
             () => this._connectBinanceSpot(),
@@ -50,7 +48,7 @@ class PriceManager {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v10 запущен (REST каждые 10 сек, подключения с задержкой)');
+        console.log('✅ PriceManager v11 запущен (Real-time Price + Change, REST каждые 10 сек)');
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
@@ -61,7 +59,9 @@ class PriceManager {
             const tickers = Array.isArray(data) ? data : [data];
             tickers.forEach(ticker => {
                 if (!ticker.s || !ticker.c) return;
-                this._setPrice(ticker.s, parseFloat(ticker.c), 'binance', 'futures');
+                const price = parseFloat(ticker.c);
+                const change = parseFloat(ticker.P) || 0; // 'P' - это price change percent
+                this._setPrice(ticker.s, { price, change }, 'binance', 'futures');
             });
         });
     }
@@ -73,7 +73,9 @@ class PriceManager {
             const tickers = Array.isArray(data) ? data : [data];
             tickers.forEach(ticker => {
                 if (!ticker.s || !ticker.c) return;
-                this._setPrice(ticker.s, parseFloat(ticker.c), 'binance', 'spot');
+                const price = parseFloat(ticker.c);
+                const change = parseFloat(ticker.P) || 0;
+                this._setPrice(ticker.s, { price, change }, 'binance', 'spot');
             });
         });
     }
@@ -115,7 +117,6 @@ class PriceManager {
             this._connectionState[key] = 'closed';
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
             
-            // Экспоненциальная задержка с увеличением при повторных попытках
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
@@ -128,9 +129,7 @@ class PriceManager {
             }, delay));
         };
         
-        ws.onerror = () => {
-            // Игнорируем, обработка идет в onclose
-        };
+        ws.onerror = () => {};
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BYBIT ==========
@@ -171,7 +170,12 @@ class PriceManager {
                 if (msg.topic?.startsWith('tickers.') && msg.data) {
                     const symbol = msg.data.symbol || msg.data.s;
                     const price = parseFloat(msg.data.lastPrice || msg.data.c);
-                    if (symbol && !isNaN(price)) this._setPrice(symbol, price, 'bybit', marketType);
+                    // Bybit присылает price24hPcnt уже в процентах (например, "1.5" = 1.5%)
+                    const change = parseFloat(msg.data.price24hPcnt) || 0;
+                    
+                    if (symbol && !isNaN(price)) {
+                        this._setPrice(symbol, { price, change }, 'bybit', marketType);
+                    }
                 }
             } catch(e) {}
         };
@@ -261,9 +265,10 @@ class PriceManager {
     
     async _fetchBinanceRest(symbols, marketType) {
         try {
+            // ✅ Используем /ticker/24hr, чтобы получить и цену, и процент изменения
             const url = symbols.length === 1 
-                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/price?symbol=${symbols[0]}`
-                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/price?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
+                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
+                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
             
             const response = await this._fetchWithRetry(url);
             if (!response) return;
@@ -271,10 +276,10 @@ class PriceManager {
             const tickers = Array.isArray(data) ? data : [data];
             
             for (const ticker of tickers) {
-                const price = parseFloat(ticker.price);
+                const price = parseFloat(ticker.lastPrice || ticker.price);
+                const change = parseFloat(ticker.priceChangePercent) || 0;
                 if (ticker.symbol && price && !isNaN(price)) {
-                    this._setPrice(ticker.symbol, price, 'binance', marketType);
-                    // ✅ ИСПРАВЛЕНО: Добавлена безопасная проверка optional chaining (?.)
+                    this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
                     window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'binance', marketType);
                 }
             }
@@ -284,9 +289,6 @@ class PriceManager {
     async _fetchBybitRest(symbols, marketType) {
         try {
             const category = marketType === 'futures' ? 'linear' : 'spot';
-            
-            // ✅ ИСПРАВЛЕНО: Запрашиваем ТОЛЬКО нужные символы через Promise.all, 
-            // а не тянем весь рынок ради 2-3 алертов.
             const tasks = symbols.map(sym => 
                 fetch(`https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${sym}`)
                     .then(r => r.json())
@@ -299,8 +301,9 @@ class PriceManager {
                 if (data?.retCode === 0 && data.result?.list?.[0]) {
                     const ticker = data.result.list[0];
                     const price = parseFloat(ticker.lastPrice);
+                    const change = parseFloat(ticker.price24hPcnt) || 0;
                     if (price && !isNaN(price)) {
-                        this._setPrice(ticker.symbol, price, 'bybit', marketType);
+                        this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
                         window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
                     }
                 }
@@ -331,19 +334,24 @@ class PriceManager {
     }
     
     // ========== УСТАНОВКА ЦЕНЫ ==========
-    _setPrice(symbol, price, exchange, marketType) {
-        if (!symbol || isNaN(price) || price <= 0) return;
+    _setPrice(symbol, priceData, exchange, marketType) {
+        if (!symbol) return;
+        
+        // ✅ Поддержка и старого формата (просто число), и нового (объект {price, change})
+        const isObject = typeof priceData === 'object' && priceData !== null;
+        const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
+        const change = isObject ? parseFloat(priceData.change) : undefined;
+
+        if (isNaN(price) || price <= 0) return;
         
         const key = `${symbol}:${exchange}:${marketType}`;
         const old = this.prices.get(key);
         
-        // ✅ ИСПРАВЛЕНО: Простое строгое неравенство. 
-        // Избегаем проблем с плавающей точкой для дешевых монет.
-        // WS биржи и так шлет обновление только при реальном изменении цены.
-        if (old && old.price === price) return;
+        // Обновляем только если цена или процент реально изменились
+        if (old && old.price === price && old.change === change) return;
         
-        this.prices.set(key, { price, time: Date.now() });
-        this._pendingUpdates.set(key, { price, symbol, exchange, marketType });
+        this.prices.set(key, { price, change, time: Date.now() });
+        this._pendingUpdates.set(key, { price, change, symbol, exchange, marketType });
         
         if (this._flushRafId === null) {
             this._flushRafId = requestAnimationFrame(() => {
@@ -351,11 +359,18 @@ class PriceManager {
                 const updates = new Map(this._pendingUpdates);
                 this._pendingUpdates.clear();
                 for (const [k, data] of updates.entries()) {
+                    // ✅ Передаем объект { price, change } подписчикам
+                    const payload = { price: data.price, change: data.change };
+                    
                     if (this.subscribers.has(k)) {
-                        this.subscribers.get(k).forEach(cb => { try { cb(data.price, data.symbol, data.exchange, data.marketType); } catch(e) {} });
+                        this.subscribers.get(k).forEach(cb => { 
+                            try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                        });
                     }
                     if (this.subscribers.has(data.symbol)) {
-                        this.subscribers.get(data.symbol).forEach(cb => { try { cb(data.price, data.symbol, data.exchange, data.marketType); } catch(e) {} });
+                        this.subscribers.get(data.symbol).forEach(cb => { 
+                            try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                        });
                     }
                 }
             });
@@ -371,7 +386,14 @@ class PriceManager {
             this.subscribeBybitSymbol(parts[0], parts[2]);
         }
         const cached = this.prices.get(key);
-        if (cached) setTimeout(() => { try { callback(cached.price, parts[0], parts[1], parts[2]); } catch(e) {} }, 0);
+        if (cached) {
+            setTimeout(() => { 
+                try { 
+                    // ✅ При инициализации также передаем объект с процентом
+                    callback({ price: cached.price, change: cached.change }, parts[0], parts[1], parts[2]); 
+                } catch(e) {} 
+            }, 0);
+        }
     }
     
     unsubscribe(key, callback) {
@@ -397,8 +419,8 @@ class PriceManager {
             let url;
             if (exchange === 'binance') {
                 url = marketType === 'futures'
-                    ? `https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`
-                    : `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`;
+                    ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+                    : `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`;
             } else {
                 const category = marketType === 'futures' ? 'linear' : 'spot';
                 url = `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${symbol}`;
@@ -406,15 +428,19 @@ class PriceManager {
             const response = await fetch(url);
             const data = await response.json();
             let price = null;
+            let change = 0;
+            
             if (exchange === 'binance') {
-                price = parseFloat(data.price);
+                price = parseFloat(data.lastPrice || data.price);
+                change = parseFloat(data.priceChangePercent) || 0;
             } else {
                 if (data.retCode === 0 && data.result?.list?.[0]) {
                     price = parseFloat(data.result.list[0].lastPrice);
+                    change = parseFloat(data.result.list[0].price24hPcnt) || 0;
                 }
             }
             if (price && !isNaN(price)) {
-                this._setPrice(symbol, price, exchange, marketType);
+                this._setPrice(symbol, { price, change }, exchange, marketType);
                 return price;
             }
         } catch(e) {}
