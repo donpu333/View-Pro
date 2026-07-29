@@ -2,7 +2,10 @@ const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
     CACHE_REFRESH_INTERVAL: 4 * 60 * 60 * 1000,
     HEALTH_CHECK_INTERVAL: 30 * 1000,
-    REST_POLL_INTERVAL: 5 * 60 * 1000, // ✅ Было 5 минут, стало 10 минут
+    
+    // ✅ ИЗМЕНЕНО: Было 5 минут, стало 1 час (снимаем нагрузку на API)
+    REST_POLL_INTERVAL: 60 * 60 * 1000, 
+    
     FINAL_RERENDER_DELAY: 3000,
     WS_RECONNECT_DELAY: 5000,
     FETCH_TIMEOUT: 15000,
@@ -12,7 +15,6 @@ const TICKER_TIMINGS = {
     REST_QUEUE_DELAY: 300,
     BINANCE_BATCH_SIZE: 100,
 };
-
 const QUOTE_ASSETS = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH'];
 
 class TickerPanel {
