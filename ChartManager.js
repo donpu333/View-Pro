@@ -1121,7 +1121,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
     // Таймер уже запущен в setDataQuick, повторный вызов не нужен
 }
 
-  async switchSymbol(symbol, exchange, marketType) {
+ async switchSymbol(symbol, exchange, marketType) {
     if (this._switchingSymbol) return;
     this._switchingSymbol = true;
     
@@ -1132,7 +1132,11 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         this._abortAllProcesses();
         this._suspendAllUpdates();
         
-        // Очищаем только внутренние структуры, серии очистит setDataQuick
+        // Мгновенная очистка графика — чтобы не висели старые данные
+        if (this.candleSeries) this.candleSeries.setData([]);
+        if (this.barSeries) this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
+        
         this.lastCandle = null;
         this.chartData = [];
         this._candleTimeMap.clear();
@@ -1163,7 +1167,13 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             return;
         }
 
-        // setDataQuick сам управляет блокировками и очисткой серий
+        // 🚀 ВАЖНО: Гарантированно уничтожаем старый таймер перед созданием нового
+        // Это предотвращает утечки памяти и дублирование обработчиков
+        if (this.timerManager && this.timerManager.destroy) {
+            this.timerManager.destroy();
+        }
+
+        // setDataQuick сам делает очистку, вставляет свежие данные и создает новый таймер
         this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
 
         if (!isFromCache) {
@@ -1171,11 +1181,6 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         }
 
         this.loadDrawingsForCurrentSymbol();
-
-        // Таймер уже запущен внутри setDataQuick, повторно не запускаем
-        if (this.timerManager && this.timerManager.destroy) {
-            this.timerManager.destroy();
-        }
 
         localStorage.setItem('lastSymbol', symbol);
         localStorage.setItem('lastExchange', exchange);
@@ -1191,9 +1196,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
     } finally {
         if (this._activeGeneration === generationId) {
             this._switchingSymbol = false;
-            this._updatesSuspended = false;
-            if (this.priceManager) this.priceManager.resume?.();
-            // таймер уже активен, _resumeAllUpdates больше ничего не делает
+            this._resumeAllUpdates(generationId);
         }
     }
 }
