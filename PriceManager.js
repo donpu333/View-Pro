@@ -464,15 +464,41 @@ class PriceManager {
         };
     }
     
-    close() {
-        if (this._restPollInterval) clearInterval(this._restPollInterval);
-        for (const key in this.pingIntervals) this._stopPing(key);
-        for (const ws of Object.values(this.connections)) { if (ws) try { ws.close(1000); } catch(e) {} }
-        for (const timer of this.reconnectTimers.values()) clearTimeout(timer);
+       close() {
+        if (this._restPollInterval) {
+            clearInterval(this._restPollInterval);
+            this._restPollInterval = null;
+        }
+        
+        // 🚀 Очищаем ожидающий кадр анимации, чтобы не было утечек или вызовов после уничтожения
+        if (this._flushRafId) {
+            cancelAnimationFrame(this._flushRafId);
+            this._flushRafId = null;
+        }
+        this._pendingUpdates.clear();
+        
+        for (const key in this.pingIntervals) {
+            this._stopPing(key);
+        }
+        
+        for (const ws of Object.values(this.connections)) { 
+            if (ws) {
+                // 🚀 ВАЖНО: отключаем обработчик перед закрытием, чтобы не сработал автореконнект
+                ws.onclose = null; 
+                ws.onerror = null;
+                try { ws.close(1000); } catch(e) {} 
+            }
+        }
+        
+        for (const timer of this.reconnectTimers.values()) {
+            clearTimeout(timer);
+        }
         this.reconnectTimers.clear();
+        
+        // Опционально: очистка подписчиков при полном уничтожении экземпляра
+        // this.subscribers.clear(); 
     }
 }
-
 if (typeof window !== 'undefined') {
     window.PriceManager = PriceManager;
     if (!window.priceManagerInstance) {
