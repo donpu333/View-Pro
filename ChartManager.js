@@ -11,8 +11,6 @@ class ChartManager {
         this._isApplyingData = false;
         this._pendingData = null;
         this._batchUpdateActive = false;
-        this._isViewingHistory = false;
-        this._lastRealTimePrice = null;
         
         // ============ МЕНЕДЖЕРЫ ============
         this.indicatorManager = new IndicatorManager(this);
@@ -493,24 +491,12 @@ class ChartManager {
             this._lastScrollTime = now;
             this._lastVisibleRange = range;
 
-            // Определяем, смотрит ли пользователь в историю
-            if (range && this.chartData.length > 0) {
-                const lastIndex = this.chartData.length - 1;
-                const visibleEnd = range.to;
-                this._isViewingHistory = (lastIndex - visibleEnd) > 2;
-            }
-
             clearTimeout(this._scrollStopTimeout);
             this._pendingDrawingsRedraw = true;
 
             this._scrollStopTimeout = setTimeout(() => {
                 this._isScrolling = false;
                 this._isScrollingFast = false;
-                
-                // Если пользователь вернулся к последним данным — принудительно обновляем
-                if (!this._isViewingHistory && this._lastRealTimePrice) {
-                    this._syncPriceLine(this._lastRealTimePrice);
-                }
                 
                 this._applyPendingTrim();
                 this.onVisibleLogicalRangeChange(this._lastVisibleRange);
@@ -741,27 +727,6 @@ class ChartManager {
         const lastCandle = this.chartData[this.chartData.length - 1];
         if (!lastCandle) return;
         
-        // Сохраняем цену всегда, даже если мы в истории
-        this._lastRealTimePrice = price;
-        
-        // Если пользователь смотрит историю — не обновляем график
-        if (this._isViewingHistory) {
-            // Только обновляем данные в памяти, но не на графике
-            lastCandle.close = price;
-            if (price > lastCandle.high) lastCandle.high = price;
-            if (price < lastCandle.low) lastCandle.low = price;
-            this.currentRealPrice = price;
-            
-            const isBullish = lastCandle.close >= lastCandle.open;
-            this._lastAppliedColor = isBullish 
-                ? (this.bullishColor || CONFIG.colors.bullish) 
-                : (this.bearishColor || CONFIG.colors.bearish);
-            
-            this._updatePageTitle();
-            return; // Не обновляем series
-        }
-        
-        // Обновляем только close/high/low, open НЕ трогаем
         lastCandle.close = price;
         if (price > lastCandle.high) lastCandle.high = price;
         if (price < lastCandle.low) lastCandle.low = price;
@@ -862,13 +827,6 @@ class ChartManager {
             }
             
             if (!this.lastCandle) return;
-            
-            // Если смотрим историю — не обновляем последнюю свечу на графике
-            if (this._isViewingHistory && isLastCandle) {
-                this.currentRealPrice = this.lastCandle.close;
-                this._updatePageTitle();
-                return;
-            }
             
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (activeSeries) {
@@ -1357,7 +1315,7 @@ class ChartManager {
         this._syncPriceLine(price); 
     }
     
-scrollToLast(enableRealTime = true) {
+ scrollToLast(enableRealTime = true) {
     if (!this.chart || !this.chartData || this.chartData.length === 0) {
         console.warn('⚠️ scrollToLast: График не готов или нет данных');
         return false;
@@ -1538,10 +1496,9 @@ scrollToLast(enableRealTime = true) {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
             
             this.currentRealPrice = price;
-            this._lastRealTimePrice = price;
             this._updatePageTitle();
             
-            if (!document.hidden && !this._isViewingHistory) {
+            if (!document.hidden) {
                 this._syncPriceLine(price);
             }
         };
@@ -2143,6 +2100,7 @@ scrollToLast(enableRealTime = true) {
     this._isTrimming = true;
     
     try {
+        // 1. Создаем новый массив
         this.chartData = this.chartData.slice(keepFrom, keepTo);
         this._rebuildTimeMap();
         this._volumeDataDirty = true;
@@ -2151,23 +2109,34 @@ scrollToLast(enableRealTime = true) {
         const timeScale = this.chart.timeScale();
         const currentRange = timeScale.getVisibleLogicalRange();
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (activeSeries) activeSeries.setData(this.chartData);
-        
-        // 🚀 Обновляем volumeSeries после обрезки
+
+        // 🚀 2. КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ПРЫЖКОВ:
+        // Фиксируем масштаб перед перерисовкой урезанного массива
+        const priceScale = this.chart.priceScale('right');
+        priceScale.applyOptions({ autoScale: false });
+
+        // 3. Обновляем данные
+        if (activeSeries) {
+            activeSeries.setData(this.chartData);
+        }
         this._updateVolumeOptimized();
         
+        // 4. Корректируем позицию скролла, компенсируя удаленные слева свечи
         if (currentRange && leftTrim > 0) {
             timeScale.setVisibleLogicalRange({
                 from: Math.max(0, currentRange.from - leftTrim),
                 to: Math.max(1, currentRange.to - leftTrim)
             });
         }
+
+        // 5. Обновляем индикаторы
         if (leftTrim > 0 || rightTrim > 0) {
             requestAnimationFrame(() => {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             });
         }
 
+        // 6. Жестко привязываем lastCandle к новому концу массива
         this.lastCandle = this.chartData[this.chartData.length - 1];
 
     } catch (e) {
@@ -2176,11 +2145,12 @@ scrollToLast(enableRealTime = true) {
         this._isTrimming = false;
     }
 }
-async _loadHistoryAsync() {
+
+ async _loadHistoryAsync() {
     if (this.isLoadingMore || !this.hasMoreData) return;
     
     const now = Date.now();
-    if (now - this._lastHistoryLoadTime < 1500) return; 
+    if (now - this._lastHistoryLoadTime < 1500) return; // Анти-спам запросов
     
     this.isLoadingMore = true;
     this._lastHistoryLoadTime = now;
@@ -2210,6 +2180,7 @@ async _loadHistoryAsync() {
         }
         
         const oldestExistingTime = this.chartData[0].time;
+        // Берем только строго более ранние свечи, чтобы избежать дубликатов
         const uniqueOlder = olderCandles.filter(c => c.time < oldestExistingTime);
         
         if (uniqueOlder.length > 0) {
@@ -2217,30 +2188,34 @@ async _loadHistoryAsync() {
             const currentRange = timeScale.getVisibleLogicalRange();
             const addedCount = uniqueOlder.length;
             
+            // 1. Сливаем новые старые данные в начало массива
             this.chartData = [...uniqueOlder, ...this.chartData];
             
+            // 2. Обрезка, если превышен лимит памяти
             if (this.chartData.length > this._maxCandlesInMemory + 500) {
                 this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
             }
             
             this._rebuildTimeMap();
-            
             this.lastCandle = this.chartData[this.chartData.length - 1];
-            
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1;
             
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (activeSeries) activeSeries.setData(this.chartData);
-            
-            // 🚀 ВАЖНО: Обновляем volumeSeries с теми же историческими данными
-            if (this.volumeSeries) {
-                const volumeData = this._buildVolumeData(this.chartData);
-                this.volumeSeries.setData(volumeData);
-                this._volumeDataDirty = false;
-                this._lastVolumeUpdateIndex = this.chartData.length - 1;
+
+            // 🚀 3. КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ПРЫЖКОВ:
+            // Принудительно отключаем авто-масштаб перед обновлением данных.
+            // Это предотвращает "дергание" графика при попытке библиотеки вместить новую историю.
+            const priceScale = this.chart.priceScale('right');
+            priceScale.applyOptions({ autoScale: false });
+
+            // 4. Обновляем данные серии
+            if (activeSeries) {
+                activeSeries.setData(this.chartData);
             }
+            this._updateVolumeOptimized();
             
+            // 5. Мгновенно восстанавливаем позицию скролла (сдвигаем на количество добавленных свечей)
             if (currentRange) {
                 timeScale.setVisibleLogicalRange({ 
                     from: currentRange.from + addedCount, 
@@ -2248,6 +2223,7 @@ async _loadHistoryAsync() {
                 });
             }
             
+            // 6. Обновляем индикаторы в следующем кадре, чтобы не блокировать рендер свечей
             requestAnimationFrame(() => {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                 this.scheduleDrawingsUpdate(true);
