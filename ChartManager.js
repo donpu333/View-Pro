@@ -437,52 +437,9 @@ class ChartManager {
         check();
     }
 
-    _setupPanelsSync() {
-        if (!this.chart) return;
-        const mainChart = this.chart;
-        let crosshairUpdateScheduled = false;
-        let lastCrosshairParam = null;
-        
-        const syncCrosshairToPanels = (param) => {
-            if (!mainChart || !param) return;
-            const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
-            if (!panels) return;
-            
-            panels.forEach((panel) => {
-                if (!panel.chart || panel.isCollapsed) return;
-                try {
-                    if (!param.time || !param.point) { 
-                        panel.chart.clearCrosshairPosition(); 
-                        return; 
-                    }
-                    let targetSeries = null;
-                    panel.series.forEach((series) => { targetSeries = series; });
-                    if (!targetSeries) { 
-                        panel.chart.clearCrosshairPosition(); 
-                        return; 
-                    }
-                    const dataPoint = param.seriesData.get(targetSeries);
-                    if (dataPoint) {
-                        panel.chart.setCrosshairPosition(dataPoint.value, param.time, param.point.x);
-                    } else {
-                        panel.chart.clearCrosshairPosition();
-                    }
-                } catch(e) {}
-            });
-        };
-        
-        mainChart.subscribeCrosshairMove((param) => {
-            lastCrosshairParam = param;
-            if (!crosshairUpdateScheduled) {
-                crosshairUpdateScheduled = true;
-                requestAnimationFrame(() => {
-                    syncCrosshairToPanels(lastCrosshairParam);
-                    crosshairUpdateScheduled = false;
-                });
-            }
-        });
-    }
-
+   _setupPanelsSync() {
+    // Синхронизация перекрестия с панелями индикаторов отключена
+}
     setupOptimizedSubscriptions() {
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             const now = performance.now();
@@ -1191,14 +1148,12 @@ class ChartManager {
         ]).then(() => this.requestDrawingsRedraw());
     }
 
+       // ✅ НОВЫЙ ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК ПЕРЕКРЕСТИЯ
     onCrosshairMove(param) {
-        if (document.hidden) return;
-
-        if (!this.overlay) this.overlay = this._safeElement('candleStatsOverlay');
-        
-        if (!param || !param.time || !param.point || !this.chartData || this.chartData.length === 0) {
+        if (document.hidden || !param || !param.time || !param.point) {
             if (this.overlay) this.overlay.classList.remove('visible');
             this._latestCrosshairData = null;
+            this._clearPanelsCrosshair(); // Очищаем перекрестие на панелях
             return;
         }
 
@@ -1211,6 +1166,8 @@ class ChartManager {
             const changeNum = parseFloat(change);
             const index = this._candleTimeMap.get(param.time);
             const vol = index !== undefined ? (this.chartData[index].quoteVolume || 0) : 0;
+            
+            // Сохраняем данные, чтобы не вычислять их снова в RAF
             this._latestCrosshairData = {
                 open: candle.open, 
                 high: candle.high, 
@@ -1219,21 +1176,81 @@ class ChartManager {
                 change: (changeNum > 0 ? '+' : '') + change + '%',
                 volume: typeof Utils !== 'undefined' ? Utils.formatVolume(vol) : vol,
                 cls: isBullish ? 'bullish' : 'bearish', 
-                visible: true
+                visible: true,
+                time: param.time,
+                pointX: param.point.x
             };
         } else {
-            this._latestCrosshairData = { visible: false };
+            this._latestCrosshairData = { visible: false, time: param.time, pointX: param.point.x };
         }
         
+        // ✅ Используем requestAnimationFrame для пакетного обновления DOM и панелей
         if (!this._crosshairRafId) {
             this._crosshairRafId = requestAnimationFrame(() => {
-                this._applyCrosshairDOM();
+                this._applyCrosshairDOMOptimized();
+                this._syncPanelsCrosshairOptimized();
                 this._crosshairRafId = null;
             });
         }
     }
 
-    _applyCrosshairDOM() {
+    // ✅ Быстрая очистка перекрестия на панелях
+    _clearPanelsCrosshair() {
+        const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
+        if (!panels) return;
+        for (let i = 0; i < panels.length; i++) {
+            const panel = panels[i];
+            if (panel.chart && !panel.isCollapsed) {
+                try { panel.chart.clearCrosshairPosition(); } catch(e) {}
+            }
+        }
+    }
+
+    // ✅ Быстрая синхронизация перекрестия на панелях (только если есть данные)
+    _syncPanelsCrosshairOptimized() {
+        if (!this._latestCrosshairData || !this._latestCrosshairData.visible) {
+            this._clearPanelsCrosshair();
+            return;
+        }
+
+        const panels = window.chartManager?.indicatorManager?.panelManager?.panels;
+        if (!panels) return;
+
+        const { time, pointX } = this._latestCrosshairData;
+
+        for (let i = 0; i < panels.length; i++) {
+            const panel = panels[i];
+            if (!panel.chart || panel.isCollapsed) continue;
+            
+            try {
+                let targetSeries = null;
+                // Берем первую доступную серию на панели для позиционирования
+                for (const series of panel.series) { 
+                    targetSeries = series; 
+                    break; 
+                }
+                
+                if (!targetSeries) { 
+                    panel.chart.clearCrosshairPosition(); 
+                    continue; 
+                }
+                
+                // ⚠️ ВАЖНО: getVisibleData работает быстрее, чем перебор всех данных
+                const dataPoint = targetSeries.dataByIndex?.(this._candleTimeMap.get(time)); 
+                // Или если dataByIndex нет, используем старый способ, но он медленнее:
+                // const dataPoint = param.seriesData.get(targetSeries); 
+                
+                if (dataPoint && dataPoint.value !== undefined) {
+                    panel.chart.setCrosshairPosition(dataPoint.value, time, pointX);
+                } else {
+                    panel.chart.clearCrosshairPosition();
+                }
+            } catch(e) {
+                // Игнорируем ошибки синхронизации отдельной панели, чтобы не ронять весь график
+            }
+        }
+    }
+    _applyCrosshairDOMOptimized() {
         const data = this._latestCrosshairData;
         if (!data || !data.visible) {
             if (this.overlay) this.overlay.classList.remove('visible');
@@ -1243,17 +1260,15 @@ class ChartManager {
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         const precision = series?.options()?.priceFormat?.precision ?? 2;
         
+        // Кэширование форматирования (уже было у вас, оставляем)
         const formatWithPrecision = (value) => {
             if (value === undefined || value === null || isNaN(value)) return '—';
             const key = `${value}_${precision}`;
-            
             if (!this._formatCache.has(key)) {
                 const formatted = Number(value).toFixed(precision);
                 this._formatCache.set(key, formatted);
-                
                 if (this._formatCache.size > 500) {
-                    const firstKey = this._formatCache.keys().next().value;
-                    this._formatCache.delete(firstKey);
+                    this._formatCache.delete(this._formatCache.keys().next().value);
                 }
                 return formatted;
             }
@@ -1264,53 +1279,50 @@ class ChartManager {
         const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
         const color = data.cls === 'bullish' ? bullishColor : bearishColor;
 
+        // ✅ Обновляем цвет ТОЛЬКО если он реально изменился
         if (this._lastCrosshairColor !== color) {
             this._lastCrosshairColor = color;
-            if (this.openEl) this.openEl.style.color = color;
-            if (this.highEl) this.highEl.style.color = color;
-            if (this.lowEl) this.lowEl.style.color = color;
-            if (this.closeEl) this.closeEl.style.color = color;
-            if (this.changeEl) this.changeEl.style.color = color;
-            if (this.volumeEl) this.volumeEl.style.color = color;
+            const styleColor = `color: ${color}`;
+            if (this.openEl) this.openEl.style.cssText = styleColor;
+            if (this.highEl) this.highEl.style.cssText = styleColor;
+            if (this.lowEl) this.lowEl.style.cssText = styleColor;
+            if (this.closeEl) this.closeEl.style.cssText = styleColor;
+            if (this.changeEl) this.changeEl.style.cssText = styleColor;
+            if (this.volumeEl) this.volumeEl.style.cssText = styleColor;
         }
 
         const baseClass = `stat-value ${data.cls}`;
         const changeClass = `change-value ${data.cls}`;
 
-        if (this.openEl) {
-            const newText = formatWithPrecision(data.open);
-            if (this.openEl.textContent !== newText) this.openEl.textContent = newText;
-            if (this.openEl.className !== baseClass) this.openEl.className = baseClass;
-        }
-        if (this.highEl) {
-            const newText = formatWithPrecision(data.high);
-            if (this.highEl.textContent !== newText) this.highEl.textContent = newText;
-            if (this.highEl.className !== baseClass) this.highEl.className = baseClass;
-        }
-        if (this.lowEl) {
-            const newText = formatWithPrecision(data.low);
-            if (this.lowEl.textContent !== newText) this.lowEl.textContent = newText;
-            if (this.lowEl.className !== baseClass) this.lowEl.className = baseClass;
-        }
-        if (this.closeEl) {
-            const newText = formatWithPrecision(data.close);
-            if (this.closeEl.textContent !== newText) this.closeEl.textContent = newText;
-            if (this.closeEl.className !== baseClass) this.closeEl.className = baseClass;
-        }
-        if (this.changeEl) {
-            if (this.changeEl.textContent !== data.change) this.changeEl.textContent = data.change;
-            if (this.changeEl.className !== changeClass) this.changeEl.className = changeClass;
-        }
-        if (this.volumeEl) {
-            if (this.volumeEl.textContent !== data.volume) this.volumeEl.textContent = data.volume;
-            if (this.volumeEl.className !== baseClass) this.volumeEl.className = baseClass;
-        }
+        // ✅ Обновляем текст ТОЛЬКО если он изменился (избегаем layout thrashing)
+        let newText;
+        
+        newText = formatWithPrecision(data.open);
+        if (this.openEl && this.openEl.textContent !== newText) this.openEl.textContent = newText;
+        if (this.openEl && this.openEl.className !== baseClass) this.openEl.className = baseClass;
+
+        newText = formatWithPrecision(data.high);
+        if (this.highEl && this.highEl.textContent !== newText) this.highEl.textContent = newText;
+        if (this.highEl && this.highEl.className !== baseClass) this.highEl.className = baseClass;
+
+        newText = formatWithPrecision(data.low);
+        if (this.lowEl && this.lowEl.textContent !== newText) this.lowEl.textContent = newText;
+        if (this.lowEl && this.lowEl.className !== baseClass) this.lowEl.className = baseClass;
+
+        newText = formatWithPrecision(data.close);
+        if (this.closeEl && this.closeEl.textContent !== newText) this.closeEl.textContent = newText;
+        if (this.closeEl && this.closeEl.className !== baseClass) this.closeEl.className = baseClass;
+
+        if (this.changeEl && this.changeEl.textContent !== data.change) this.changeEl.textContent = data.change;
+        if (this.changeEl && this.changeEl.className !== changeClass) this.changeEl.className = changeClass;
+
+        if (this.volumeEl && this.volumeEl.textContent !== data.volume) this.volumeEl.textContent = data.volume;
+        if (this.volumeEl && this.volumeEl.className !== baseClass) this.volumeEl.className = baseClass;
 
         if (this.overlay && !this.overlay.classList.contains('visible')) {
             this.overlay.classList.add('visible');
         }
     }
-
     updateRealPrice(price) { 
         this._syncPriceLine(price); 
     }
