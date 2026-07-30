@@ -1357,60 +1357,69 @@ class ChartManager {
         this._syncPriceLine(price); 
     }
     
-    scrollToLast(enableRealTime = true) {
-        if (!this.chart || !this.chartData || this.chartData.length === 0) {
-            console.warn('⚠️ scrollToLast: График не готов или нет данных');
+scrollToLast(enableRealTime = true) {
+    if (!this.chart || !this.chartData || this.chartData.length === 0) {
+        console.warn('⚠️ scrollToLast: График не готов или нет данных');
+        return false;
+    }
+
+    try {
+        // Сбрасываем флаг просмотра истории
+        this._isViewingHistory = false;
+        
+        this.lastCandle = this.chartData[this.chartData.length - 1];
+        
+        const timeScale = this.chart.timeScale();
+        if (!timeScale) {
+            console.warn('⚠️ scrollToLast: timeScale недоступен');
             return false;
         }
 
-        try {
-            // Сбрасываем флаг просмотра истории
-            this._isViewingHistory = false;
+        if (enableRealTime) {
+            // 🚀 Используем setVisibleLogicalRange вместо scrollToRealTime
+            // Это сохранит rightOffset
+            const visibleBars = Math.floor(this.chartContainer.clientWidth / 12); // barSpacing = 12
+            const lastIndex = this.chartData.length - 1;
+            const rightOffsetBars = 10; // тот же отступ что в rightOffset
             
-            this.lastCandle = this.chartData[this.chartData.length - 1];
-            
-            const timeScale = this.chart.timeScale();
-            if (!timeScale) {
-                console.warn('⚠️ scrollToLast: timeScale недоступен');
-                return false;
-            }
-
-            if (enableRealTime) {
-                timeScale.scrollToRealTime();
-            } else {
-                const currentRange = timeScale.getVisibleLogicalRange();
-                if (currentRange) {
-                    const visibleBars = currentRange.to - currentRange.from;
-                    const lastIndex = this.chartData.length - 1;
-                    timeScale.setVisibleLogicalRange({
-                        from: Math.max(0, lastIndex - visibleBars + 1),
-                        to: lastIndex + 1
-                    });
-                }
-            }
-
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (activeSeries && this.lastCandle) {
-                activeSeries.update({
-                    time: this.lastCandle.time,
-                    open: this.lastCandle.open,
-                    high: this.lastCandle.high,
-                    low: this.lastCandle.low,
-                    close: this.lastCandle.close
+            timeScale.setVisibleLogicalRange({
+                from: Math.max(0, lastIndex - visibleBars - rightOffsetBars),
+                to: lastIndex + rightOffsetBars
+            });
+        } else {
+            const currentRange = timeScale.getVisibleLogicalRange();
+            if (currentRange) {
+                const visibleBars = currentRange.to - currentRange.from;
+                const lastIndex = this.chartData.length - 1;
+                timeScale.setVisibleLogicalRange({
+                    from: Math.max(0, lastIndex - visibleBars + 1),
+                    to: lastIndex + 1
                 });
             }
-
-            // Принудительно обновляем цену при возврате
-            if (this._lastRealTimePrice) {
-                this._syncPriceLine(this._lastRealTimePrice);
-            }
-
-            return true;
-        } catch (e) {
-            console.error('❌ Ошибка в scrollToLast:', e);
-            return false;
         }
+
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries && this.lastCandle) {
+            activeSeries.update({
+                time: this.lastCandle.time,
+                open: this.lastCandle.open,
+                high: this.lastCandle.high,
+                low: this.lastCandle.low,
+                close: this.lastCandle.close
+            });
+        }
+
+        // Принудительно обновляем цену при возврате
+        if (this._lastRealTimePrice) {
+            this._syncPriceLine(this._lastRealTimePrice);
+        }
+
+        return true;
+    } catch (e) {
+        console.error('❌ Ошибка в scrollToLast:', e);
+        return false;
     }
+}
 
     clearChart() {
         if (this.candleSeries) this.candleSeries.setData([]);
@@ -2121,133 +2130,141 @@ class ChartManager {
         }
     }
 
-    _performTrimNow(fromIndex, toIndex) {
-        if (this._isTrimming || this.isLoadingMore) return;
-        if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
+  _performTrimNow(fromIndex, toIndex) {
+    if (this._isTrimming || this.isLoadingMore) return;
+    if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
+    
+    const keepFrom = Math.max(0, fromIndex - (this._leftBuffer * 1.5));
+    const keepTo = Math.min(this.chartData.length, toIndex + (this._rightBuffer * 1.5));
+    const leftTrim = keepFrom;
+    const rightTrim = this.chartData.length - keepTo;
+    
+    if (leftTrim === 0 && rightTrim === 0) return;
+    this._isTrimming = true;
+    
+    try {
+        this.chartData = this.chartData.slice(keepFrom, keepTo);
+        this._rebuildTimeMap();
+        this._volumeDataDirty = true;
+        this._lastVolumeUpdateIndex = -1;
         
-        const keepFrom = Math.max(0, fromIndex - (this._leftBuffer * 1.5));
-        const keepTo = Math.min(this.chartData.length, toIndex + (this._rightBuffer * 1.5));
-        const leftTrim = keepFrom;
-        const rightTrim = this.chartData.length - keepTo;
+        const timeScale = this.chart.timeScale();
+        const currentRange = timeScale.getVisibleLogicalRange();
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries) activeSeries.setData(this.chartData);
         
-        if (leftTrim === 0 && rightTrim === 0) return;
-        this._isTrimming = true;
+        // 🚀 Обновляем volumeSeries после обрезки
+        this._updateVolumeOptimized();
         
-        try {
-            this.chartData = this.chartData.slice(keepFrom, keepTo);
+        if (currentRange && leftTrim > 0) {
+            timeScale.setVisibleLogicalRange({
+                from: Math.max(0, currentRange.from - leftTrim),
+                to: Math.max(1, currentRange.to - leftTrim)
+            });
+        }
+        if (leftTrim > 0 || rightTrim > 0) {
+            requestAnimationFrame(() => {
+                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+            });
+        }
+
+        this.lastCandle = this.chartData[this.chartData.length - 1];
+
+    } catch (e) {
+        console.error('❌ Ошибка обрезки данных:', e);
+    } finally {
+        this._isTrimming = false;
+    }
+}
+async _loadHistoryAsync() {
+    if (this.isLoadingMore || !this.hasMoreData) return;
+    
+    const now = Date.now();
+    if (now - this._lastHistoryLoadTime < 1500) return; 
+    
+    this.isLoadingMore = true;
+    this._lastHistoryLoadTime = now;
+    
+    try {
+        const oldestCandle = this.chartData[0];
+        if (!oldestCandle) { 
+            this.hasMoreData = false;
+            this.isLoadingMore = false;
+            return; 
+        }
+        
+        const endTime = (oldestCandle.time * 1000) - 1;
+        const olderCandles = await this.fetchKlines(
+            this.currentSymbol, 
+            this.currentExchange, 
+            this.currentMarketType, 
+            this.currentInterval, 
+            this._batchSize, 
+            endTime
+        );
+        
+        if (!olderCandles || olderCandles.length === 0) {
+            this.hasMoreData = false;
+            this.isLoadingMore = false;
+            return;
+        }
+        
+        const oldestExistingTime = this.chartData[0].time;
+        const uniqueOlder = olderCandles.filter(c => c.time < oldestExistingTime);
+        
+        if (uniqueOlder.length > 0) {
+            const timeScale = this.chart.timeScale();
+            const currentRange = timeScale.getVisibleLogicalRange();
+            const addedCount = uniqueOlder.length;
+            
+            this.chartData = [...uniqueOlder, ...this.chartData];
+            
+            if (this.chartData.length > this._maxCandlesInMemory + 500) {
+                this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
+            }
+            
             this._rebuildTimeMap();
+            
+            this.lastCandle = this.chartData[this.chartData.length - 1];
+            
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1;
             
-            const timeScale = this.chart.timeScale();
-            const currentRange = timeScale.getVisibleLogicalRange();
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (activeSeries) activeSeries.setData(this.chartData);
-            this._updateVolumeOptimized();
             
-            if (currentRange && leftTrim > 0) {
-                timeScale.setVisibleLogicalRange({
-                    from: Math.max(0, currentRange.from - leftTrim),
-                    to: Math.max(1, currentRange.to - leftTrim)
+            // 🚀 ВАЖНО: Обновляем volumeSeries с теми же историческими данными
+            if (this.volumeSeries) {
+                const volumeData = this._buildVolumeData(this.chartData);
+                this.volumeSeries.setData(volumeData);
+                this._volumeDataDirty = false;
+                this._lastVolumeUpdateIndex = this.chartData.length - 1;
+            }
+            
+            if (currentRange) {
+                timeScale.setVisibleLogicalRange({ 
+                    from: currentRange.from + addedCount, 
+                    to: currentRange.to + addedCount 
                 });
             }
-            if (leftTrim > 0 || rightTrim > 0) {
-                requestAnimationFrame(() => {
-                    if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                });
-            }
-
-            this.lastCandle = this.chartData[this.chartData.length - 1];
-
-        } catch (e) {
-            console.error('❌ Ошибка обрезки данных:', e);
-        } finally {
-            this._isTrimming = false;
+            
+            requestAnimationFrame(() => {
+                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                this.scheduleDrawingsUpdate(true);
+            });
         }
-    }
-
-    async _loadHistoryAsync() {
-        if (this.isLoadingMore || !this.hasMoreData) return;
         
-        const now = Date.now();
-        if (now - this._lastHistoryLoadTime < 1500) return; 
-        
-        this.isLoadingMore = true;
-        this._lastHistoryLoadTime = now;
-        
-        try {
-            const oldestCandle = this.chartData[0];
-            if (!oldestCandle) { 
-                this.hasMoreData = false;
-                this.isLoadingMore = false;
-                return; 
-            }
-            
-            const endTime = (oldestCandle.time * 1000) - 1;
-            const olderCandles = await this.fetchKlines(
-                this.currentSymbol, 
-                this.currentExchange, 
-                this.currentMarketType, 
-                this.currentInterval, 
-                this._batchSize, 
-                endTime
-            );
-            
-            if (!olderCandles || olderCandles.length === 0) {
-                this.hasMoreData = false;
-                this.isLoadingMore = false;
-                return;
-            }
-            
-            const oldestExistingTime = this.chartData[0].time;
-            const uniqueOlder = olderCandles.filter(c => c.time < oldestExistingTime);
-            
-            if (uniqueOlder.length > 0) {
-                const timeScale = this.chart.timeScale();
-                const currentRange = timeScale.getVisibleLogicalRange();
-                const addedCount = uniqueOlder.length;
-                
-                this.chartData = [...uniqueOlder, ...this.chartData];
-                
-                if (this.chartData.length > this._maxCandlesInMemory + 500) {
-                    this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
-                }
-                
-                this._rebuildTimeMap();
-                
-                this.lastCandle = this.chartData[this.chartData.length - 1];
-                
-                this._volumeDataDirty = true;
-                this._lastVolumeUpdateIndex = -1;
-                
-                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (activeSeries) activeSeries.setData(this.chartData);
-                
-                if (currentRange) {
-                    timeScale.setVisibleLogicalRange({ 
-                        from: currentRange.from + addedCount, 
-                        to: currentRange.to + addedCount 
-                    });
-                }
-                
-                requestAnimationFrame(() => {
-                    if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                    this.scheduleDrawingsUpdate(true);
-                });
-            }
-            
-            if (olderCandles.length < this._batchSize) {
-                this.hasMoreData = false;
-            }
-            
-        } catch (e) {
-            console.error('❌ Ошибка загрузки истории:', e);
+        if (olderCandles.length < this._batchSize) {
             this.hasMoreData = false;
-        } finally {
-            this.isLoadingMore = false;
         }
+        
+    } catch (e) {
+        console.error('❌ Ошибка загрузки истории:', e);
+        this.hasMoreData = false;
+    } finally {
+        this.isLoadingMore = false;
     }
-
+}
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange) return;
