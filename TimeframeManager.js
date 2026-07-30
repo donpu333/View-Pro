@@ -9,6 +9,9 @@ class TimeframeManager {
         this.currentExchange = 'Binance';
         this.currentContractType = 'PERP';
         
+        this.savedCenterTime = null;
+        this.savedRangeWidth = null;
+
         // Привязываем методы один раз для корректного удаления слушателей
         this.handleDocumentClickBound = this.handleDocumentClick.bind(this);
         this.handleGlobalClickBound = this.handleGlobalClick.bind(this);
@@ -30,18 +33,81 @@ class TimeframeManager {
         document.addEventListener('click', this.handleGlobalClickBound);
         document.addEventListener('keydown', this.handleGlobalKeydownBound);
         
-        // Подписка на изменение видимого диапазона (если нужно для других целей)
         this.chartManager.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-            // Можно оставить пустым или использовать для других задач
+            this.saveCurrentPosition();
         });
     }
 
-    // Очистка слушателей при уничтожении компонента
+    // Очистка слушателей (полезно при уничтожении компонента)
     destroy() {
         document.removeEventListener('click', this.handleDocumentClickBound);
         document.removeEventListener('click', this.handleGlobalClickBound);
         document.removeEventListener('keydown', this.handleGlobalKeydownBound);
         this.chartManager.chart.timeScale().unsubscribeVisibleLogicalRangeChange();
+    }
+
+    saveCurrentPosition() {
+        const timeScale = this.chartManager.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        
+        if (visibleRange && this.chartManager.chartData && this.chartManager.chartData.length > 0) {
+            const fromIndex = Math.max(0, Math.floor(visibleRange.from));
+            const toIndex = Math.min(this.chartManager.chartData.length - 1, Math.ceil(visibleRange.to));
+            
+            if (fromIndex < toIndex && fromIndex >= 0 && toIndex < this.chartManager.chartData.length) {
+                const centerIndex = Math.floor((fromIndex + toIndex) / 2);
+                this.savedCenterTime = this.chartManager.chartData[centerIndex].time;
+                
+                const startTime = this.chartManager.chartData[fromIndex].time;
+                const endTime = this.chartManager.chartData[toIndex].time;
+                
+                // Убедимся, что время — это число (UNIX timestamp), а не объект BusinessDay
+                if (typeof startTime === 'number' && typeof endTime === 'number') {
+                    this.savedRangeWidth = Math.abs(endTime - startTime);
+                }
+            }
+        }
+    }
+
+    restorePosition() {
+        if (!this.savedCenterTime || !this.savedRangeWidth || !this.chartManager.chartData || this.chartManager.chartData.length === 0) return;
+        
+        const timeScale = this.chartManager.chart.timeScale();
+        let closestIndex = 0;
+        let minDiff = Infinity;
+        
+        for (let i = 0; i < this.chartManager.chartData.length; i++) {
+            const diff = Math.abs(this.chartManager.chartData[i].time - this.savedCenterTime);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = i;
+            }
+        }
+        
+        const halfWidth = this.savedRangeWidth / 2;
+        const targetStartTime = this.chartManager.chartData[closestIndex].time - halfWidth;
+        const targetEndTime = this.chartManager.chartData[closestIndex].time + halfWidth;
+        
+        let startIndex = 0;
+        let endIndex = this.chartManager.chartData.length - 1;
+        
+        for (let i = 0; i < this.chartManager.chartData.length; i++) {
+            if (this.chartManager.chartData[i].time >= targetStartTime) {
+                startIndex = i;
+                break;
+            }
+        }
+        
+        for (let i = this.chartManager.chartData.length - 1; i >= 0; i--) {
+            if (this.chartManager.chartData[i].time <= targetEndTime) {
+                endIndex = i;
+                break;
+            }
+        }
+        
+        if (startIndex < endIndex) {
+            timeScale.setVisibleLogicalRange({ from: startIndex, to: endIndex });
+        }
     }
 
     handleDocumentClick(event) {
@@ -51,6 +117,7 @@ class TimeframeManager {
         }
     }
 
+    // Вынесено в отдельный метод для возможности удаления слушателя
     handleGlobalClick(event) {
         if (event.target.classList.contains('tf-star')) {
             event.stopPropagation();
@@ -59,6 +126,7 @@ class TimeframeManager {
         }
     }
 
+    // Вынесено в отдельный метод для возможности удаления слушателя
     handleGlobalKeydown(event) {
         if (event.ctrlKey && event.key === 't') {
             event.preventDefault();
@@ -183,9 +251,10 @@ class TimeframeManager {
         }
     }
 
+    // ✅ ОСТАВЛЕН ТОЛЬКО ОДИН КОРРЕКТНЫЙ ВАРИАНТ fallbackCopy
     fallbackCopy(button, text) {
         const textarea = document.createElement('textarea');
-        textarea.value = text;
+        textarea.value = text; // ✅ Используем переданный текст, а не this.currentPair
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
         document.body.appendChild(textarea);
@@ -252,54 +321,58 @@ class TimeframeManager {
         });
     }
 
-    async switchToTimeframe(tf) {
-        console.log('Переключение на таймфрейм:', tf);
-        
-        document.querySelectorAll('.timeframe-item').forEach(i => {
-            i.classList.toggle('active', i.dataset.tf === tf);
-        });
+  async switchToTimeframe(tf) {
+    console.log('Переключение на таймфрейм:', tf);
+    
+    document.querySelectorAll('.timeframe-item').forEach(i => {
+        i.classList.toggle('active', i.dataset.tf === tf);
+    });
 
-        this.currentInterval = tf;
-        localStorage.setItem('lastTimeframe', tf);
-        console.log('💾 Сохранён таймфрейм:', tf);
-        
-        this.chartManager.setCurrentInterval(tf);
-        
-        const panel = document.getElementById('timeframePanel');
-        if (panel) panel.classList.remove('expanded');
+    this.currentInterval = tf;
+    localStorage.setItem('lastTimeframe', tf);
+    this.chartManager.setCurrentInterval(tf);
+    document.getElementById('timeframePanel').classList.remove('expanded');
 
-        const currentSymbol = this.chartManager.currentSymbol;
-        const currentExchange = this.chartManager.currentExchange;
-        const currentMarketType = this.chartManager.currentMarketType;
-        
-        console.log('Текущий символ:', currentSymbol, currentExchange, currentMarketType);
-
-        // Ждём загрузки новых данных
-        await this.chartManager.switchSymbol(currentSymbol, currentExchange, currentMarketType);
-        
-        if (this.wsManager) {
-            console.log('🔄 Обновляем WebSocket для символа:', currentSymbol, 'таймфрейм:', tf);
-            this.wsManager.updateSymbolAndTimeframe(currentSymbol, tf, currentExchange, currentMarketType);
-        }
-        
-        this.timerManager.start(tf);
-        
-        // ✅ ВОССТАНАВЛИВАЕМ НОРМАЛЬНЫЙ ВИД ГРАФИКА (как в вашем оригинале)
-        setTimeout(() => {
-            this.chartManager.autoScale();
-        }, 300);
-        
-        setTimeout(() => {
-            if (window.rayManager) window.rayManager.syncWithNewTimeframe();
-            if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
-            if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
-            if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
-            if (window.textManager) window.textManager.syncWithNewTimeframe();
-        }, 200);
-        
-        this.updateInstrumentInfo();
-        this.loadStarredTimeframes();
+    // Загружаем данные напрямую, без switchSymbol
+    const candles = await this.chartManager.fetchKlines(
+        this.chartManager.currentSymbol,
+        this.chartManager.currentExchange,
+        this.chartManager.currentMarketType,
+        tf,
+        1000
+    );
+    
+    if (candles && candles.length > 0) {
+        this.chartManager.setDataQuick(candles, tf,
+            this.chartManager.currentSymbol,
+            this.chartManager.currentExchange,
+            this.chartManager.currentMarketType
+        );
     }
+    
+    if (this.wsManager) {
+        this.wsManager.updateSymbolAndTimeframe(
+            this.chartManager.currentSymbol, tf,
+            this.chartManager.currentExchange,
+            this.chartManager.currentMarketType
+        );
+    }
+    
+    this.timerManager.start(tf);
+    
+    setTimeout(() => this.chartManager.autoScale(), 300);
+    
+    setTimeout(() => {
+        if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+        if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+        if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+        if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+        if (window.textManager) window.textManager.syncWithNewTimeframe();
+    }, 200);
+    
+    this.updateInstrumentInfo();
+    this.loadStarredTimeframes();
+}
 }
 
 if (typeof window !== 'undefined') {
