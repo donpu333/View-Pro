@@ -786,8 +786,7 @@ class ChartManager {
             candle = sanitized;
         }
         
-        // 🔒 ФИКСИРУЕМ open входящей свечи — он может быть неверным из WebSocket
-        const incomingOpen = candle.open;
+       
         
         if (!this.chartData || this.chartData.length === 0) return;
         
