@@ -219,51 +219,101 @@ class TickerPanel {
         window.addEventListener('focus', () => this._restoreWebSockets());
     }
 
-    _restoreWebSockets() {
-        if (!this._isRestRunning && this._restQueue?.length === 0) {
-            console.log('📡 Вкладка активна, запускаю REST-обновление...');
-            this.pollRestData?.();
+        _restoreWebSockets() {
+        console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
+        
+        // 1. Принудительно сбрасываем флаги, чтобы разблокировать процесс, 
+        // даже если предыдущий запрос "завис" или был прерван уходом вкладки в фон
+        this._isRestRunning = false;
+        this._restQueue = []; // Очищаем очередь, чтобы начать сбор данных с чистого листа
+        
+        // 2. Запускаем обновление с небольшой задержкой (100мс). 
+        // Это критически важно: позволяет браузеру сначала отрисовать кадр 
+        // после возвращения фокуса, избегая визуального "фриза" от синхронной блокировки потока
+        if (this.pollRestData) {
+            setTimeout(() => {
+                this.pollRestData();
+            }, 100);
         }
+
+        // 3. Гарантируем перерисовку списка тикеров, если она была пропущена 
+        // из-за заморозки requestAnimationFrame в фоновой вкладке
+        this._scheduleRender();
     }
 
-    async initializeDataParallel() {
+      async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
+        const loader = document.getElementById('tickerLoader');
+        
+        // 1. Пытаемся загрузить данные из быстрого кэша (IndexedDB)
         const loaded = await this.loadFromIndexedDB();
         if (loaded) {
             this.addInitialSymbols(); 
             this.updateModalCount();
+            
+            // Скрываем лоадер, так как данные уже отображены
+            if (loader) loader.style.display = 'none';
+            if (container) container.classList.add('ready');
+            
+            // Фоновое обновление кэша через 1 секунду
             setTimeout(() => this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление:', err)), 1000);
             return;
         }
-        if (container) container.innerHTML = '';
+
+        // 2. Если кэша нет, гарантируем показ лоадера и чистим контейнер от возможного мусора
+        if (loader) loader.style.display = 'block';
+        if (container) container.innerHTML = ''; 
+
         const controllers = [];
         const fetchWithTimeout = (url, timeout) => {
             const controller = new AbortController();
             controllers.push(controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
-            return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeoutId));
+            
+            return fetch(url, { signal: controller.signal })
+                .then(r => r.json())
+                .catch(() => null) // Ловим ошибки сети/аборта здесь, чтобы Promise.allSettled не считал это фатальным крахом всего массива
+                .finally(() => clearTimeout(timeoutId));
         };
+
         const urls = [
             'https://fapi.binance.com/fapi/v1/exchangeInfo',
             'https://api.binance.com/api/v3/exchangeInfo',
             'https://api.bybit.com/v5/market/instruments-info?category=linear',
             'https://api.bybit.com/v5/market/instruments-info?category=spot'
         ];
+
         try {
-            const allResults = await Promise.allSettled(urls.map(url => fetchWithTimeout(url, 5000).then(r => r.json()).catch(() => null)));
+            // Ждем все запросы, даже если один из них упадет
+            const allResults = await Promise.allSettled(urls.map(url => fetchWithTimeout(url, 5000)));
             const finalResults = allResults.map(r => r.status === 'fulfilled' ? r.value : null);
+            
             this.processParallelData(finalResults, false);
             this.addInitialSymbols();
             await this.saveSymbolsToIndexedDB();
-            if (container) container.innerHTML = '';
+            
+            // 3. Успех: очищаем контейнер (убираем лоадер) и готовим к рендеру
+            if (container) {
+                container.innerHTML = ''; 
+                container.classList.add('ready');
+            }
+            if (loader) loader.style.display = 'none';
+
         } catch (error) {
             console.error('❌ Ошибка загрузки данных:', error);
-            if (container) container.innerHTML = '';
+            // 4. Ошибка: показываем понятное сообщение пользователю, а не просто пустой экран
+            if (container) {
+                container.innerHTML = '<div style="padding: 20px; text-align: center; color: #f23645; font-size: 14px;">⚠️ Не удалось загрузить данные бирж. Проверьте подключение к интернету.</div>';
+            }
+            if (loader) loader.style.display = 'none';
         } finally {
-            controllers.forEach(c => c.abort());
+            // 5. БЕЗОПАСНАЯ ОЧИСТКА: 
+            // Мы НЕ вызываем c.abort() здесь, так как Promise.allSettled уже завершился.
+            // Вызов abort() на завершенном запросе может вызвать предупреждения в консоли.
+            // Просто обнуляем массив, чтобы сборщик мусора удалил ссылки на контроллеры.
+            controllers.length = 0; 
         }
     }
-    
     async refreshSymbolCache(timeout = 10000) {
         if (this._isRefreshing) return;
         this._isRefreshing = true;
@@ -293,7 +343,7 @@ class TickerPanel {
         }
     }
 
-       _onPriceUpdate(symbol, data, exchange, marketType) {
+           _onPriceUpdate(symbol, data, exchange, marketType) {
         const compositeKey = `${symbol}:${exchange}:${marketType}`;
         const ticker = this.tickersMap.get(compositeKey);
         if (!ticker) return;
@@ -305,11 +355,25 @@ class TickerPanel {
 
         ticker.prevPrice = ticker.price || newPrice;
         ticker.price = newPrice;
-        ticker.change = newChange; // ✅ Обновляется в реальном времени!
+        ticker.change = newChange;
         ticker._lastUpdateTime = Date.now();
 
+        // 🚀 ПАКЕТНОЕ ОБНОВЛЕНИЕ DOM: Копим изменения и применяем за 1 раз
         if (!this._blockDOMUpdates && this.renderer) {
-            this.renderer.updatePriceForSymbol(compositeKey, ticker.price, ticker.change);
+            if (!this._pendingPriceUpdates) this._pendingPriceUpdates = new Map();
+            this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: ticker.change });
+            
+            if (!this._priceUpdateRaf) {
+                this._priceUpdateRaf = requestAnimationFrame(() => {
+                    const batch = this._pendingPriceUpdates;
+                    this._pendingPriceUpdates = new Map(); // Создаем новую для следующих обновлений
+                    this._priceUpdateRaf = null;
+                    
+                    for (const [key, val] of batch.entries()) {
+                        this.renderer.updatePriceForSymbol(key, val.price, val.change);
+                    }
+                });
+            }
         }
     }
     processParallelData(results, updateOnly = false) {
