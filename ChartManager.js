@@ -911,8 +911,9 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         if (!data || data.length === 0) return;
 
         const currentScale = this._captureScale();
-        
-        // 🚀 ОПТИМИЗАЦИЯ: Блокируем график один раз
+        const isNewSymbol = this.currentSymbol !== symbol;  // ← ДО обновления
+
+        // Минимальная блокировка графика на время атомарной вставки
         this.chart.applyOptions({ 
             handleScroll: false, 
             handleScale: false 
@@ -956,7 +957,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         }
 
         this.currentInterval = interval;
-        this.currentSymbol = symbol;
+        this.currentSymbol = symbol;           // ← Обновляем здесь
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
         this.hasMoreData = true;
@@ -973,13 +974,12 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             this._lastVolumeUpdateIndex = this.chartData.length - 1;
         }
 
-        // 🚀 ОПТИМИЗАЦИЯ: Объединяем разблокировку с установкой цвета
         const lastCandle = this.chartData[this.chartData.length - 1];
         const isBullishByCandle = lastCandle ? lastCandle.close >= lastCandle.open : true;
         const lineColorByCandle = isBullishByCandle ? CONFIG.colors.bullish : CONFIG.colors.bearish;
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         
-        // Один вызов applyOptions вместо двух
+        // Разблокировка графика
         this.chart.applyOptions({ 
             handleScroll: true, 
             handleScale: true 
@@ -1010,7 +1010,8 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
 
         if (this.timerManager) this.timerManager.start(this.currentInterval);
 
-        if (currentScale && !this._isNewSymbol(symbol)) {
+        // Восстанавливаем масштаб только если символ НЕ изменился
+        if (currentScale && !isNewSymbol) {
             this._restoreScale(currentScale);
         } else {
             this.scrollToLast();
@@ -1061,7 +1062,6 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         this.chart.applyOptions({ handleScroll: true, handleScale: true });
     }
 }
-
     _captureScale() {
         try {
             const timeScale = this.chart.timeScale();
@@ -1113,17 +1113,15 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
     }
 
     _resumeAllUpdates(genId) {
-        if (this._activeGeneration !== genId) return;
-        this._updatesSuspended = false;
-        if (this.priceManager) {
-            this.priceManager.resume?.();
-        }
-        if (this.timerManager) {
-            this.timerManager.start?.(this.currentInterval);
-        }
+    if (this._activeGeneration !== genId) return;
+    this._updatesSuspended = false;
+    if (this.priceManager) {
+        this.priceManager.resume?.();
     }
+    // Таймер уже запущен в setDataQuick, повторный вызов не нужен
+}
 
-     async switchSymbol(symbol, exchange, marketType) {
+  async switchSymbol(symbol, exchange, marketType) {
     if (this._switchingSymbol) return;
     this._switchingSymbol = true;
     
@@ -1134,11 +1132,10 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         this._abortAllProcesses();
         this._suspendAllUpdates();
         
-        if (this.candleSeries) this.candleSeries.setData([]);
-        if (this.barSeries) this.barSeries.setData([]);
-        if (this.volumeSeries) this.volumeSeries.setData([]);
-        
+        // Очищаем только внутренние структуры, серии очистит setDataQuick
         this.lastCandle = null;
+        this.chartData = [];
+        this._candleTimeMap.clear();
         this.currentSymbol = symbol;
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
@@ -1166,8 +1163,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             return;
         }
 
-        // УБРАТЬ: this._beginBatchUpdate();
-        // setDataQuick теперь сам управляет состоянием без блокировок
+        // setDataQuick сам управляет блокировками и очисткой серий
         this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
 
         if (!isFromCache) {
@@ -1176,9 +1172,9 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
 
         this.loadDrawingsForCurrentSymbol();
 
-        if (this.timerManager) {
-            if (this.timerManager.destroy) this.timerManager.destroy();
-            this.timerManager.start(this.currentInterval);
+        // Таймер уже запущен внутри setDataQuick, повторно не запускаем
+        if (this.timerManager && this.timerManager.destroy) {
+            this.timerManager.destroy();
         }
 
         localStorage.setItem('lastSymbol', symbol);
@@ -1195,8 +1191,9 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
     } finally {
         if (this._activeGeneration === generationId) {
             this._switchingSymbol = false;
-            this._resumeAllUpdates(generationId);
-            // УБРАТЬ: this._endBatchUpdate();
+            this._updatesSuspended = false;
+            if (this.priceManager) this.priceManager.resume?.();
+            // таймер уже активен, _resumeAllUpdates больше ничего не делает
         }
     }
 }
