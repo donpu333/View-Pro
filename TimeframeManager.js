@@ -3,7 +3,7 @@ class TimeframeManager {
         this.chartManager = chartManager;
         this.wsManager = wsManager;
         this.timerManager = timerManager;
-        this.currentInterval = localStorage.getItem('lastTimeframe') || (typeof CONFIG !== 'undefined' ? CONFIG.defaultInterval : '15m');
+        this.currentInterval = localStorage.getItem('lastTimeframe') || CONFIG.defaultInterval;
         console.log('📊 TimeframeManager: таймфрейм =', this.currentInterval);
         
         this.currentExchange = 'Binance';
@@ -11,11 +11,6 @@ class TimeframeManager {
         
         this.savedCenterTime = null;
         this.savedRangeWidth = null;
-
-        // Привязываем методы один раз для корректного удаления слушателей
-        this.handleDocumentClickBound = this.handleDocumentClick.bind(this);
-        this.handleGlobalClickBound = this.handleGlobalClick.bind(this);
-        this.handleGlobalKeydownBound = this.handleGlobalKeydown.bind(this);
         
         this.init();
     }
@@ -29,28 +24,18 @@ class TimeframeManager {
         this.timerManager.start(this.currentInterval);
         this.chartManager.setCurrentInterval(this.currentInterval);
 
-        document.addEventListener('click', this.handleDocumentClickBound);
-        document.addEventListener('click', this.handleGlobalClickBound);
-        document.addEventListener('keydown', this.handleGlobalKeydownBound);
+        document.addEventListener('click', this.handleDocumentClick.bind(this));
         
         this.chartManager.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             this.saveCurrentPosition();
         });
     }
 
-    // Очистка слушателей (полезно при уничтожении компонента)
-    destroy() {
-        document.removeEventListener('click', this.handleDocumentClickBound);
-        document.removeEventListener('click', this.handleGlobalClickBound);
-        document.removeEventListener('keydown', this.handleGlobalKeydownBound);
-        this.chartManager.chart.timeScale().unsubscribeVisibleLogicalRangeChange();
-    }
-
     saveCurrentPosition() {
         const timeScale = this.chartManager.chart.timeScale();
         const visibleRange = timeScale.getVisibleLogicalRange();
         
-        if (visibleRange && this.chartManager.chartData && this.chartManager.chartData.length > 0) {
+        if (visibleRange && this.chartManager.chartData.length > 0) {
             const fromIndex = Math.max(0, Math.floor(visibleRange.from));
             const toIndex = Math.min(this.chartManager.chartData.length - 1, Math.ceil(visibleRange.to));
             
@@ -60,19 +45,16 @@ class TimeframeManager {
                 
                 const startTime = this.chartManager.chartData[fromIndex].time;
                 const endTime = this.chartManager.chartData[toIndex].time;
-                
-                // Убедимся, что время — это число (UNIX timestamp), а не объект BusinessDay
-                if (typeof startTime === 'number' && typeof endTime === 'number') {
-                    this.savedRangeWidth = Math.abs(endTime - startTime);
-                }
+                this.savedRangeWidth = Math.abs(endTime - startTime);
             }
         }
     }
 
     restorePosition() {
-        if (!this.savedCenterTime || !this.savedRangeWidth || !this.chartManager.chartData || this.chartManager.chartData.length === 0) return;
+        if (!this.savedCenterTime || !this.savedRangeWidth || this.chartManager.chartData.length === 0) return;
         
         const timeScale = this.chartManager.chart.timeScale();
+        
         let closestIndex = 0;
         let minDiff = Infinity;
         
@@ -106,32 +88,17 @@ class TimeframeManager {
         }
         
         if (startIndex < endIndex) {
-            timeScale.setVisibleLogicalRange({ from: startIndex, to: endIndex });
+            timeScale.setVisibleLogicalRange({
+                from: startIndex,
+                to: endIndex
+            });
         }
     }
 
     handleDocumentClick(event) {
         const panel = document.getElementById('timeframePanel');
-        if (panel && panel.classList.contains('expanded') && !panel.contains(event.target)) {
+        if (panel.classList.contains('expanded') && !panel.contains(event.target)) {
             panel.classList.remove('expanded');
-        }
-    }
-
-    // Вынесено в отдельный метод для возможности удаления слушателя
-    handleGlobalClick(event) {
-        if (event.target.classList.contains('tf-star')) {
-            event.stopPropagation();
-            event.target.classList.toggle('starred');
-            this.saveStarredTimeframes();
-        }
-    }
-
-    // Вынесено в отдельный метод для возможности удаления слушателя
-    handleGlobalKeydown(event) {
-        if (event.ctrlKey && event.key === 't') {
-            event.preventDefault();
-            this.currentContractType = this.currentContractType === 'PERP' ? 'SPOT' : 'PERP';
-            this.updateInstrumentInfo();
         }
     }
 
@@ -140,31 +107,22 @@ class TimeframeManager {
         if (pairDisplay) pairDisplay.textContent = this.chartManager.currentSymbol;
         
         const contractTypeDisplay = document.getElementById('contractTypeDisplay');
-        if (contractTypeDisplay) {
-            contractTypeDisplay.textContent = this.chartManager.currentMarketType === 'futures' ? 'PERP' : 'SPOT';
-        }
+        if (contractTypeDisplay) contractTypeDisplay.textContent = this.chartManager.currentMarketType === 'futures' ? 'PERP' : 'SPOT';
         
         const exchangeDisplay = document.getElementById('exchangeDisplay');
-        if (exchangeDisplay) {
-            exchangeDisplay.textContent = this.chartManager.currentExchange === 'binance' ? 'Binance' : 'Bybit';
-        }
+        if (exchangeDisplay) exchangeDisplay.textContent = this.chartManager.currentExchange === 'binance' ? 'Binance' : 'Bybit';
         
         const currentTfBadge = document.getElementById('currentTfBadge');
-        if (currentTfBadge) {
-            currentTfBadge.textContent = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[this.currentInterval] : null) || this.currentInterval;
-        }
+        if (currentTfBadge) currentTfBadge.textContent = TF_LABELS[this.currentInterval] || this.currentInterval;
     }
 
     setupEventListeners() {
         const header = document.getElementById('timeframeHeader');
-        if (header) {
-            header.addEventListener('click', (e) => {
-                if (!e.target.classList.contains('tf-star')) {
-                    const panel = document.getElementById('timeframePanel');
-                    if (panel) panel.classList.toggle('expanded');
-                }
-            });
-        }
+        header.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('tf-star')) {
+                document.getElementById('timeframePanel').classList.toggle('expanded');
+            }
+        });
 
         document.querySelectorAll('.timeframe-item').forEach(item => {
             item.addEventListener('click', (e) => {
@@ -173,54 +131,60 @@ class TimeframeManager {
             });
         });
 
-        const copyBtn = document.getElementById('copyPairButton');
-        if (copyBtn) {
-            copyBtn.addEventListener('click', (e) => {
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('tf-star')) {
                 e.stopPropagation();
-                this.copyToClipboard();
-            });
-        }
+                e.target.classList.toggle('starred');
+                this.saveStarredTimeframes();
+            }
+        });
+
+        const copyBtn = document.getElementById('copyPairButton');
+        copyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.copyToClipboard();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 't') {
+                e.preventDefault();
+                this.currentContractType = this.currentContractType === 'PERP' ? 'SPOT' : 'PERP';
+                this.updateInstrumentInfo();
+            }
+        });
 
         const candleBtn = document.getElementById('candleBtn');
         const barBtn = document.getElementById('barBtn');
         
-        if (candleBtn) {
-            candleBtn.addEventListener('click', () => {
-                candleBtn.classList.add('active');
-                if (barBtn) barBtn.classList.remove('active');
-                this.chartManager.setChartType('candle');
-            });
-        }
+        candleBtn.addEventListener('click', () => {
+            candleBtn.classList.add('active');
+            barBtn.classList.remove('active');
+            this.chartManager.setChartType('candle');
+        });
         
-        if (barBtn) {
-            barBtn.addEventListener('click', () => {
-                barBtn.classList.add('active');
-                if (candleBtn) candleBtn.classList.remove('active');
-                this.chartManager.setChartType('bar');
-            });
-        }
+        barBtn.addEventListener('click', () => {
+            barBtn.classList.add('active');
+            candleBtn.classList.remove('active');
+            this.chartManager.setChartType('bar');
+        });
     }
     
     setupControlButtons() {
         const scrollBtn = document.getElementById('scrollToLastCandleButton');
-        if (scrollBtn) {
-            const newScrollBtn = scrollBtn.cloneNode(true);
-            scrollBtn.parentNode.replaceChild(newScrollBtn, scrollBtn);
-            newScrollBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.scrollToLastCandle();
-            });
-        }
+        const newScrollBtn = scrollBtn.cloneNode(true);
+        scrollBtn.parentNode.replaceChild(newScrollBtn, scrollBtn);
+        newScrollBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.scrollToLastCandle();
+        });
         
         const autoScaleBtn = document.getElementById('autoScaleButton');
-        if (autoScaleBtn) {
-            const newAutoScaleBtn = autoScaleBtn.cloneNode(true);
-            autoScaleBtn.parentNode.replaceChild(newAutoScaleBtn, autoScaleBtn);
-            newAutoScaleBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.autoScaleChart();
-            });
-        }
+        const newAutoScaleBtn = autoScaleBtn.cloneNode(true);
+        autoScaleBtn.parentNode.replaceChild(newAutoScaleBtn, autoScaleBtn);
+        newAutoScaleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.autoScaleChart();
+        });
     }
     
     scrollToLastCandle() {
@@ -235,15 +199,11 @@ class TimeframeManager {
         const button = document.getElementById('copyPairButton');
         const textToCopy = this.chartManager.currentSymbol;
         
-        if (!textToCopy) return;
-
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(textToCopy)
                 .then(() => {
-                    if (button) {
-                        button.classList.add('copied');
-                        setTimeout(() => button.classList.remove('copied'), 1000);
-                    }
+                    button.classList.add('copied');
+                    setTimeout(() => button.classList.remove('copied'), 1000);
                 })
                 .catch(() => this.fallbackCopy(button, textToCopy));
         } else {
@@ -251,10 +211,9 @@ class TimeframeManager {
         }
     }
 
-    // ✅ ОСТАВЛЕН ТОЛЬКО ОДИН КОРРЕКТНЫЙ ВАРИАНТ fallbackCopy
     fallbackCopy(button, text) {
         const textarea = document.createElement('textarea');
-        textarea.value = text; // ✅ Используем переданный текст, а не this.currentPair
+        textarea.value = text;
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
         document.body.appendChild(textarea);
@@ -262,10 +221,8 @@ class TimeframeManager {
         
         try {
             document.execCommand('copy');
-            if (button) {
-                button.classList.add('copied');
-                setTimeout(() => button.classList.remove('copied'), 1000);
-            }
+            button.classList.add('copied');
+            setTimeout(() => button.classList.remove('copied'), 1000);
         } catch (err) {
             console.error('Ошибка копирования:', err);
         }
@@ -298,12 +255,10 @@ class TimeframeManager {
 
     updateStarredDisplay(starred) {
         const container = document.getElementById('starredTimeframes');
-        if (!container) return;
-        
         container.innerHTML = '';
         
         starred.forEach(tf => {
-            const label = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[tf] : null) || tf;
+            const label = TF_LABELS[tf] || tf;
             const item = document.createElement('div');
             item.className = 'starred-item';
             if (tf === this.currentInterval) {
@@ -333,9 +288,7 @@ class TimeframeManager {
         console.log('💾 Сохранён таймфрейм:', tf);
         
         this.chartManager.setCurrentInterval(tf);
-        
-        const panel = document.getElementById('timeframePanel');
-        if (panel) panel.classList.remove('expanded');
+        document.getElementById('timeframePanel').classList.remove('expanded');
 
         const currentSymbol = this.chartManager.currentSymbol;
         const currentExchange = this.chartManager.currentExchange;
