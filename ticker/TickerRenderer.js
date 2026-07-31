@@ -13,8 +13,6 @@ class TickerRenderer {
         this._updatePriceRaf = null;
         this._escapeDiv = document.createElement('div');
 
-        // 🚀 ОПТИМИЗАЦИЯ 1: Ограничение частоты обновлений (Throttling)
-        // Обновляем DOM не чаще 15 раз в секунду (66 мс). Это снимает 80% нагрузки с CPU
         this._lastUpdateTime = 0;
         this._updateInterval = 66; 
 
@@ -57,7 +55,6 @@ class TickerRenderer {
         document.head.appendChild(style);
     }
 
-    // 🚀 ОПТИМИЗАЦИЯ 2: Добавлен временной троттлинг поверх requestAnimationFrame
     updatePriceElements() {
         const now = performance.now();
         if (now - this._lastUpdateTime < this._updateInterval) return;
@@ -72,9 +69,6 @@ class TickerRenderer {
 
     _doUpdatePriceElements() {
         let domUpdates = 0;
-        
-        // 🚀 ОПТИМИЗАЦИЯ 3: Пакетная перерисовка (Batched Reflows)
-        // Собираем элементы для анимации, чтобы сделать void offsetWidth ОДИН раз, а не в цикле
         const elementsToFlash = [];
 
         for (const [key, el] of this.tickerElements.entries()) {
@@ -94,8 +88,6 @@ class TickerRenderer {
                 if (priceEl.textContent !== newPrice) {
                     priceEl.textContent = newPrice;
                     const colorClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
-                    
-                    // Проверяем, нужен ли смена класса, чтобы не триггерить Layout лишний раз
                     const expectedClass = `ticker-price ${colorClass}`;
                     if (priceEl.className !== expectedClass) {
                         priceEl.className = expectedClass;
@@ -138,10 +130,9 @@ class TickerRenderer {
             }
         }
 
-        // 🚀 ВЫПОЛНЯЕМ ПРИНУДИТЕЛЬНЫЙ ПЕРЕСЧЕТ МАКЕТА (REFLOW) ОДИН РАЗ ДЛЯ ВСЕХ ЭЛЕМЕНТОВ
         for (const item of elementsToFlash) {
             item.el.classList.remove('flash-up', 'flash-down');
-            void item.el.offsetWidth; // Теперь это происходит пакетно, а не в цикле
+            void item.el.offsetWidth; 
             item.el.classList.add(item.flashClass);
         }
 
@@ -150,16 +141,14 @@ class TickerRenderer {
         }
     }
 
-       updatePriceForSymbol(key, price, change) {
+    updatePriceForSymbol(key, price, change) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
 
-        // Обращаемся к мапе ТОЛЬКО ради prevPrice для анимации вспышки
         const ticker = this.parent.tickersMap?.get(key);
         if (!ticker) return;
 
         const els = el._cachedEls || {};
-        // 🚀 ИСПРАВЛЕНО: Используем переданные price и change напрямую, а не из мапы
         const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
         
         if (els.price) {
@@ -168,11 +157,10 @@ class TickerRenderer {
                 els.price.textContent = newPrice;
                 els.price.className = `ticker-price ${colorClass}`;
                 
-                // Анимация вспышки (нужен prevPrice)
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
                     const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
                     els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth; // Триггер для перезапуска анимации
+                    void els.price.offsetWidth; 
                     els.price.classList.add(flashClass);
                 }
             }
@@ -187,7 +175,6 @@ class TickerRenderer {
         }
     }
 
-    // ... (методы sortTickers, getFilteredTickers, _compareTickers оставляем без изменений, они быстрые) ...
     sortTickers(tickers) {
         const arrayToSort = tickers || this.parent?.tickers;
         if (!arrayToSort || !Array.isArray(arrayToSort)) return [];
@@ -197,22 +184,17 @@ class TickerRenderer {
         return [...arrayToSort].sort((a, b) => this._compareTickers(a, b, sortBy, direction));
     }
 
-       getFilteredTickers() {
+    getFilteredTickers() {
         const state = this.parent?.state;
         if (!state) return [];
 
-        // 🛡️ ИСПРАВЛЕНИЕ БАГА 4: Генерируем умный ключ кэша
         let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
 
-        // Если мы на вкладке "Избранное", добавляем в ключ "отпечаток" массива.
-        // Если пользователь добавил/удалил монету, отпечаток изменится и кэш сбросится.
         if (state.activeTab === 'favorites') {
             const favs = state.favorites || [];
-            // Быстрый хэш: берем длину + первую и последнюю монету (работает мгновенно)
             cacheKey += `:favs_${favs.length}_${favs[0] || ''}_${favs[favs.length - 1] || ''}`;
         }
 
-        // То же самое для вкладки флагов
         if (state.activeTab === 'flags') {
             const flags = state.flags || {};
             const activeFlags = Object.keys(flags).filter(k => flags[k]);
@@ -276,6 +258,7 @@ class TickerRenderer {
         this.parent.filterCache = { key: cacheKey, result };
         return result;
     }
+
     _compareTickers(a, b, sortBy, direction) {
         if (!a || !b) return 0;
         const flagPriority = { red: 1, yellow: 2, green: 3, lime: 4, blue: 5, cyan: 6, purple: 7, null: 999 };
@@ -386,22 +369,20 @@ class TickerRenderer {
                 el.style.right = '0';
                 el.style.width = '100%';
                 el.style.display = '';
+                
                 if (!isNewElement) {
-                    // Проверяем, активна ли эта монета ПРЯМО СЕЙЧАС
                     const isActive = (
                         ticker.symbol === this.parent?.state?.currentSymbol &&
                         ticker.exchange === this.parent?.state?.currentExchange &&
                         ticker.marketType === this.parent?.state?.currentMarketType
                     );
                     
-                    // Если монета стала активной — вешаем класс. Если перестала — снимаем.
                     if (isActive && !el.classList.contains('active')) {
                         el.classList.add('active');
                     } else if (!isActive && el.classList.contains('active')) {
                         el.classList.remove('active');
                     }
 
-                    // Берем элементы для обновления (дубликаты убраны)
                     const priceEl = el._cachedEls?.price;
                     const changeEl = el._cachedEls?.change;
                     const volumeEl = el._cachedEls?.volume;
@@ -448,6 +429,8 @@ class TickerRenderer {
                 el.style.display = 'none';
             }
         }
+    } // <--- ВОТ ЭТА СКОБКА БЫЛА ПОТЕРЯНА
+
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
         div.className = 'ticker-item';
@@ -599,7 +582,7 @@ class TickerRenderer {
         parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : 'volume';
         parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) ? savedSortDir : 'desc';
 
-              parent._sortClickHandler = (e) => {
+        parent._sortClickHandler = (e) => {
             e.stopPropagation();
             const header = e.currentTarget;
             const sortBy = header.dataset.sort;
@@ -618,20 +601,16 @@ class TickerRenderer {
                 parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
             }
 
-            // 🚀 ИСПРАВЛЕНО: Сбрасываем ВСЕ стрелочки в дефолтное состояние
             document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                icon.className = 'fas fa-sort'; // Возвращаем нейтральную иконку
-                icon.style.display = '';        // <--- ДОБАВЛЕНО: Гарантированно показываем иконку (если она была скрыта флагом)
+                icon.className = 'fas fa-sort'; 
+                icon.style.display = '';        
             });
 
-            // Ставим активную стрелочку на ту колонку, на которую нажали
             const icon = header.querySelector('i');
             if (icon) {
-                // Если это флаг - скрываем стрелочку (по вашей логике)
                 if (sortBy === 'flag') {
                     icon.style.display = 'none';
                 } else {
-                    // Иначе показываем нужное направление
                     icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
                 }
             }
