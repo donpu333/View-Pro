@@ -47,9 +47,23 @@ class PriceManager {
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
         }
+                if (typeof window !== 'undefined') {
+            window.addEventListener('beforeunload', () => this.close());
+        }
+        
+        // 🚀 НОВОЕ: Принудительная выгрузка цен при возврате на вкладку
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', () => {
+                // Если вкладка стала активной И у нас есть накопленные, но не отправленные цены
+                if (!document.hidden && this._pendingUpdates.size > 0) {
+                    this._forceFlushUpdates();
+                }
+            });
+        }
         
         console.log('✅ PriceManager v11 запущен (Real-time Price + Change, REST каждые 10 сек)');
     }
+      
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
     _connectBinanceFutures() {
@@ -170,8 +184,8 @@ class PriceManager {
                 if (msg.topic?.startsWith('tickers.') && msg.data) {
                     const symbol = msg.data.symbol || msg.data.s;
                     const price = parseFloat(msg.data.lastPrice || msg.data.c);
-                    // Bybit присылает price24hPcnt уже в процентах (например, "1.5" = 1.5%)
-                    const change = parseFloat(msg.data.price24hPcnt) || 0;
+// 🛡️ ИСПРАВЛЕНО: Bybit присылает дробь (0.05 = 5%). Умножаем на 100 для стандартизации с Binance
+const change = (parseFloat(msg.data.price24hPcnt) || 0) * 100;
                     
                     if (symbol && !isNaN(price)) {
                         this._setPrice(symbol, { price, change }, 'bybit', marketType);
@@ -301,7 +315,8 @@ class PriceManager {
                 if (data?.retCode === 0 && data.result?.list?.[0]) {
                     const ticker = data.result.list[0];
                     const price = parseFloat(ticker.lastPrice);
-                    const change = parseFloat(ticker.price24hPcnt) || 0;
+// 🛡️ ИСПРАВЛЕНО: Умножаем на 100 для стандартизации
+const change = (parseFloat(ticker.price24hPcnt) || 0) * 100;
                     if (price && !isNaN(price)) {
                         this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
                         window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
@@ -376,7 +391,34 @@ class PriceManager {
             });
         }
     }
+    // ========== ПРИНУДИТЕЛЬНАЯ ВЫГРУЗКА ДЛЯ ФОНОВЫХ ВКЛАДОК ==========
+    _forceFlushUpdates() {
+        // Отменяем зависший RAF, чтобы он не сработал дважды
+        if (this._flushRafId !== null) {
+            cancelAnimationFrame(this._flushRafId);
+            this._flushRafId = null;
+        }
 
+        // Забираем все накопленные цены
+        const updates = new Map(this._pendingUpdates);
+        this._pendingUpdates.clear();
+        
+        // Рассылаем их подписчикам (шапке графика, тикер-панели и т.д.) синхронно
+        for (const [k, data] of updates.entries()) {
+            const payload = { price: data.price, change: data.change };
+            
+            if (this.subscribers.has(k)) {
+                this.subscribers.get(k).forEach(cb => { 
+                    try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                });
+            }
+            if (this.subscribers.has(data.symbol)) {
+                this.subscribers.get(data.symbol).forEach(cb => { 
+                    try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                });
+            }
+        }
+    }
     // ========== ПОДПИСКА ==========
     subscribe(key, callback) {
         if (!this.subscribers.has(key)) this.subscribers.set(key, []);
