@@ -932,93 +932,114 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             console.error('❌ Ошибка загрузки Bybit:', error); 
         }
     }
-
-   removeSymbol(symbol, exchange, marketType) {
-    if (!symbol) return;
-    const key = `${symbol}:${exchange}:${marketType}`;
-    
-    const wasCurrentSymbol = (
-        this.state.currentSymbol === symbol && 
-        this.state.currentExchange === exchange && 
-        this.state.currentMarketType === marketType
-    );
-    
-    let nextTicker = null;
-    if (wasCurrentSymbol) {
-        const filteredTickers = this.renderer.getFilteredTickers();
-        const currentIndex = filteredTickers.findIndex(t => 
-            t.symbol === symbol && t.exchange === exchange && t.marketType === marketType
+    removeSymbol(symbol, exchange, marketType) {
+        if (!symbol) return;
+        const key = `${symbol}:${exchange}:${marketType}`;
+        
+        const wasCurrentSymbol = (
+            this.state.currentSymbol === symbol && 
+            this.state.currentExchange === exchange && 
+            this.state.currentMarketType === marketType
         );
         
-        if (currentIndex !== -1) {
-            if (currentIndex + 1 < filteredTickers.length) {
-                nextTicker = filteredTickers[currentIndex + 1];
-            } else if (currentIndex > 0) {
-                nextTicker = filteredTickers[currentIndex - 1];
-            }
-        }
-    }
-    
-    delete this.state.flags[key];
-    this.tickers = this.tickers.filter(t => 
-        !(t.symbol === symbol && t.exchange === exchange && t.marketType === marketType)
-    );
-    this.tickersMap.delete(key);
-    this._rowDomCache.delete(key);
-    this._subscribedSymbols.delete(key);
-    this.state.customSymbols = this.state.customSymbols.filter(s => s !== key);
-    this.state.favorites = this.state.favorites.filter(s => s !== symbol);
-    
-    if (window.priceManagerInstance && this._pmPriceHandler) {
-        window.priceManagerInstance.unsubscribe(key, this._pmPriceHandler);
-    }
-    
-    if (this.watchlistManager) { 
-        this.watchlistManager.removeSymbolFromActiveList(symbol, exchange, marketType); 
-        this.watchlistManager.renderDropdown(); 
-    }
-    this.saveState();
-    
-    if (wasCurrentSymbol && nextTicker) {
-        this.state.currentSymbol = nextTicker.symbol;
-        this.state.currentExchange = nextTicker.exchange;
-        this.state.currentMarketType = nextTicker.marketType;
-        this.saveCurrentSymbol(nextTicker.symbol, nextTicker.exchange, nextTicker.marketType);
-        
-        try {
-            if (this.coordinator?.chartManager) {
-                this.coordinator.chartManager.switchSymbol(
-                    nextTicker.symbol, 
-                    nextTicker.exchange, 
-                    nextTicker.marketType
-                );
-            }
-        } catch (error) {
-            console.error('❌ Ошибка переключения символа:', error);
-        }
-        
-     
-    } else if (wasCurrentSymbol) {
-        this.state.currentSymbol = '';
-        this.state.currentExchange = 'binance';
-        this.state.currentMarketType = 'futures';
-    }
-    
-    this.filterCache = null;
-    this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
-    
-    if (wasCurrentSymbol && nextTicker) {
-        setTimeout(() => {
-            const activeEl = document.querySelector(
-                `.ticker-item[data-symbol="${nextTicker.symbol}"][data-exchange="${nextTicker.exchange}"][data-market-type="${nextTicker.marketType}"]`
+        let nextTicker = null;
+        if (wasCurrentSymbol) {
+            const filteredTickers = this.renderer.getFilteredTickers();
+            const currentIndex = filteredTickers.findIndex(t => 
+                t.symbol === symbol && t.exchange === exchange && t.marketType === marketType
             );
-            if (activeEl) {
-                document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
-                activeEl.classList.add('active');
+            
+            if (currentIndex !== -1) {
+                if (currentIndex + 1 < filteredTickers.length) {
+                    nextTicker = filteredTickers[currentIndex + 1];
+                } else if (currentIndex > 0) {
+                    nextTicker = filteredTickers[currentIndex - 1];
+                }
             }
-        }, 150);
+        }
+        
+        delete this.state.flags[key];
+        this.tickers = this.tickers.filter(t => 
+            !(t.symbol === symbol && t.exchange === exchange && t.marketType === marketType)
+        );
+        this.tickersMap.delete(key);
+        this._rowDomCache.delete(key);
+        this._subscribedSymbols.delete(key);
+        this.state.customSymbols = this.state.customSymbols.filter(s => s !== key);
+        this.state.favorites = this.state.favorites.filter(s => s !== symbol);
+        
+        if (window.priceManagerInstance && this._pmPriceHandler) {
+            window.priceManagerInstance.unsubscribe(key, this._pmPriceHandler);
+        }
+        
+        if (this.watchlistManager) { 
+            this.watchlistManager.removeSymbolFromActiveList(symbol, exchange, marketType); 
+            this.watchlistManager.renderDropdown(); 
+        }
+        this.saveState();
+        
+        if (wasCurrentSymbol && nextTicker) {
+            this.state.currentSymbol = nextTicker.symbol;
+            this.state.currentExchange = nextTicker.exchange;
+            this.state.currentMarketType = nextTicker.marketType;
+            this.saveCurrentSymbol(nextTicker.symbol, nextTicker.exchange, nextTicker.marketType);
+            
+            try {
+                if (this.coordinator?.chartManager) {
+                    this.coordinator.chartManager.switchSymbol(
+                        nextTicker.symbol, 
+                        nextTicker.exchange, 
+                        nextTicker.marketType
+                    );
+                }
+            } catch (error) {
+                console.error('❌ Ошибка переключения символа:', error);
+            }
+            
+            // 🚀 ДОБАВЛЕНО: Прямое обновление DOM элементов заголовка графика (как в оригинале)
+            const pairDisplay = document.getElementById('pairDisplay');
+            if (pairDisplay) pairDisplay.textContent = nextTicker.symbol;
+            
+            const exchangeDisplay = document.getElementById('exchangeDisplay');
+            if (exchangeDisplay) exchangeDisplay.textContent = nextTicker.exchange === 'binance' ? 'Binance' : 'Bybit';
+            
+            const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+            if (contractTypeDisplay) contractTypeDisplay.textContent = nextTicker.marketType === 'futures' ? 'PERP' : 'SPOT';
+            
+            // Дополнительный вызов для совместимости, если он используется в проекте
+            if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
+            
+        } else if (wasCurrentSymbol) {
+            this.state.currentSymbol = '';
+            this.state.currentExchange = 'binance';
+            this.state.currentMarketType = 'futures';
+            
+            // 🚀 ДОБАВЛЕНО: Сброс заголовков, если тикеры закончились
+            const pairDisplay = document.getElementById('pairDisplay');
+            if (pairDisplay) pairDisplay.textContent = 'Выберите пару';
+            
+            const exchangeDisplay = document.getElementById('exchangeDisplay');
+            if (exchangeDisplay) exchangeDisplay.textContent = 'Binance';
+            
+            const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+            if (contractTypeDisplay) contractTypeDisplay.textContent = 'PERP';
+        }
+        
+        this.filterCache = null;
+        this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
+        
+        if (wasCurrentSymbol && nextTicker) {
+            setTimeout(() => {
+                const activeEl = document.querySelector(
+                    `.ticker-item[data-symbol="${nextTicker.symbol}"][data-exchange="${nextTicker.exchange}"][data-market-type="${nextTicker.marketType}"]`
+                );
+                if (activeEl) {
+                    document.querySelectorAll('.ticker-item.active').forEach(el => el.classList.remove('active'));
+                    activeEl.classList.add('active');
+                }
+            }, 150);
+        }
     }
-}
 
     handleKeyDelete(e) {
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
@@ -1040,7 +1061,7 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-       handleTickerClick(e) {
+         handleTickerClick(e) {
         const star = e.target.closest('.star');
         if (star) { e.preventDefault(); e.stopPropagation(); this.handleStarClick(star); return; }
         const flag = e.target.closest('.flag');
@@ -1066,11 +1087,17 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 if (this.coordinator?.chartManager) this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
             } catch (error) { console.error('❌ Ошибка переключения символа:', error); }
             
-            // 🚀 ИСПРАВЛЕНО: Обновляем шапку графика через единый центральный метод, а не вручную
+            // 🚀 ВОЗВРАЩЕНО: Прямое обновление DOM элементов как в оригинале
+            const pairDisplay = document.getElementById('pairDisplay');
+            if (pairDisplay) pairDisplay.textContent = symbol;
+            const exchangeDisplay = document.getElementById('exchangeDisplay');
+            if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
+            const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+            if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+            
             if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
         }
     }
-
     handleStarClick(star) {
         const symbol = star.dataset.symbol; 
         if (!symbol) return;
@@ -1224,7 +1251,7 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-    focusOnSymbol(symbol, exchange, marketType) {
+       focusOnSymbol(symbol, exchange, marketType) {
         this.state.currentSymbol = symbol;
         this.state.currentExchange = exchange;
         this.state.currentMarketType = marketType;
@@ -1239,7 +1266,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 const container = document.getElementById('tickerListContainer');
                 container.scrollTop = Math.max(0, index * (this.renderer.rowHeight || 36) - container.clientHeight / 2);
                 
-                // Скролл сам триггерит рендер, оставляем только установку класса
                 setTimeout(() => {
                     const el = document.querySelector(`.ticker-item[data-symbol="${symbol}"][data-exchange="${exchange}"][data-market-type="${marketType}"]`);
                     if (el) el.classList.add('active');
@@ -1250,12 +1276,18 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             if (this.coordinator?.chartManager) this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
         } catch (error) { console.error('❌ Ошибка переключения символа:', error); }
         
-        // 🚀 ИСПРАВЛЕНО: Обновление шапки через единый метод
+        // 🚀 ВОЗВРАЩЕНО: Прямое обновление DOM элементов
+        const pairDisplay = document.getElementById('pairDisplay');
+        if (pairDisplay) pairDisplay.textContent = symbol;
+        const exchangeDisplay = document.getElementById('exchangeDisplay');
+        if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
+        const contractTypeDisplay = document.getElementById('contractTypeDisplay');
+        if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+        
         if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
         
         document.getElementById('addInstrumentModal').classList.remove('show');
     }
-
     handleFlagSelect(e) {
         e.stopPropagation(); 
         const contextMenu = document.getElementById('flagContextMenu');
