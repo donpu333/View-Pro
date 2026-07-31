@@ -48,7 +48,40 @@ class PriceManager {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v11 запущен (Real-time Price + Change, REST каждые 10 сек)');
+        console.log('✅ PriceManager v12 запущен (Safe Close + Real-time Price)');
+    }
+
+    // 🚀 НОВЫЙ МЕТОД: Безопасное уничтожение соединения
+    _safeCloseConnection(key) {
+        // 1. Отменяем запланированный реконнект
+        if (this.reconnectTimers.has(key)) {
+            clearTimeout(this.reconnectTimers.get(key));
+            this.reconnectTimers.delete(key);
+        }
+        
+        // 2. Останавливаем пинг
+        this._stopPing(key);
+        
+        // 3. Безопасно закрываем сокет
+        const ws = this.connections[key];
+        if (ws) {
+            // ГЛАВНОЕ: Глушим обработчики ДО закрытия, чтобы старый сокет не мог вызвать реконнект
+            ws.onopen = null;
+            ws.onmessage = null;
+            ws.onerror = null;
+            ws.onclose = null;
+            
+            // Вызываем close() ТОЛЬКО если сокет уже открыт.
+            // Если он в состоянии CONNECTING, мы его просто "забываем", и браузер тихо его убьет без ошибок.
+            if (ws.readyState === WebSocket.OPEN) {
+                try { ws.close(1000, 'Intentional cleanup'); } catch(e) {}
+            }
+            
+            this.connections[key] = null;
+        }
+        
+        // Сбрасываем счетчик попыток для чистого старта при следующем подключении
+        this._connectionAttempts[key] = 0;
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
@@ -60,7 +93,7 @@ class PriceManager {
             tickers.forEach(ticker => {
                 if (!ticker.s || !ticker.c) return;
                 const price = parseFloat(ticker.c);
-                const change = parseFloat(ticker.P) || 0; // 'P' - это price change percent
+                const change = parseFloat(ticker.P) || 0;
                 this._setPrice(ticker.s, { price, change }, 'binance', 'futures');
             });
         });
@@ -81,14 +114,8 @@ class PriceManager {
     }
     
     _connectBinance(key, url, onMessageHandler) {
-        if (this.reconnectTimers.has(key)) {
-            clearTimeout(this.reconnectTimers.get(key));
-            this.reconnectTimers.delete(key);
-        }
-        if (this.connections[key]) {
-            try { this.connections[key].close(1000); } catch(e) {}
-            this.connections[key] = null;
-        }
+        // Используем безопасное закрытие вместо ручного .close()
+        this._safeCloseConnection(key);
         
         const ws = new WebSocket(url);
         this.connections[key] = ws;
@@ -97,7 +124,7 @@ class PriceManager {
         
         ws.onopen = () => {
             this._lastWsMessage[key] = Date.now();
-            this._connectionAttempts[key] = 0;
+            this._connectionAttempts[key] = 0; // Сброс при успешном открытии
             this._connectionState[key] = 'open';
         };
         
@@ -113,7 +140,7 @@ class PriceManager {
             } catch(e) {}
         };
         
-        ws.onclose = () => {
+        ws.onclose = (e) => {
             this._connectionState[key] = 'closed';
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
             
@@ -122,7 +149,7 @@ class PriceManager {
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
                 this.config.maxReconnectDelay
             );
-            console.warn(`⚠️ ${key} закрыт, реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            console.warn(`⚠️ ${key} закрыт (код ${e.code}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
             
             this.reconnectTimers.set(key, setTimeout(() => {
                 this._connectBinance(key, url, onMessageHandler);
@@ -142,14 +169,8 @@ class PriceManager {
     }
     
     _connectBybit(key, url, marketKey, marketType) {
-        if (this.reconnectTimers.has(key)) {
-            clearTimeout(this.reconnectTimers.get(key));
-            this.reconnectTimers.delete(key);
-        }
-        if (this.connections[key]) {
-            try { this.connections[key].close(1000); } catch(e) {}
-            this.connections[key] = null;
-        }
+        // Используем безопасное закрытие
+        this._safeCloseConnection(key);
         
         const ws = new WebSocket(url);
         this.connections[key] = ws;
@@ -170,7 +191,6 @@ class PriceManager {
                 if (msg.topic?.startsWith('tickers.') && msg.data) {
                     const symbol = msg.data.symbol || msg.data.s;
                     const price = parseFloat(msg.data.lastPrice || msg.data.c);
-                    // Bybit присылает price24hPcnt уже в процентах (например, "1.5" = 1.5%)
                     const change = parseFloat(msg.data.price24hPcnt) || 0;
                     
                     if (symbol && !isNaN(price)) {
@@ -180,7 +200,7 @@ class PriceManager {
             } catch(e) {}
         };
         
-        ws.onclose = () => {
+        ws.onclose = (e) => {
             this._connectionState[key] = 'closed';
             this._stopPing(key);
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
@@ -190,7 +210,7 @@ class PriceManager {
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
                 this.config.maxReconnectDelay
             );
-            console.warn(`⚠️ ${key} закрыт, реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            console.warn(`⚠️ ${key} закрыт (код ${e.code}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
             
             this.reconnectTimers.set(key, setTimeout(() => {
                 this._connectBybit(key, url, marketKey, marketType);
@@ -265,7 +285,6 @@ class PriceManager {
     
     async _fetchBinanceRest(symbols, marketType) {
         try {
-            // ✅ Используем /ticker/24hr, чтобы получить и цену, и процент изменения
             const url = symbols.length === 1 
                 ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
                 : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
@@ -337,7 +356,6 @@ class PriceManager {
     _setPrice(symbol, priceData, exchange, marketType) {
         if (!symbol) return;
         
-        // ✅ Поддержка и старого формата (просто число), и нового (объект {price, change})
         const isObject = typeof priceData === 'object' && priceData !== null;
         const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
         const change = isObject ? parseFloat(priceData.change) : undefined;
@@ -347,7 +365,6 @@ class PriceManager {
         const key = `${symbol}:${exchange}:${marketType}`;
         const old = this.prices.get(key);
         
-        // Обновляем только если цена или процент реально изменились
         if (old && old.price === price && old.change === change) return;
         
         this.prices.set(key, { price, change, time: Date.now() });
@@ -359,7 +376,6 @@ class PriceManager {
                 const updates = new Map(this._pendingUpdates);
                 this._pendingUpdates.clear();
                 for (const [k, data] of updates.entries()) {
-                    // ✅ Передаем объект { price, change } подписчикам
                     const payload = { price: data.price, change: data.change };
                     
                     if (this.subscribers.has(k)) {
@@ -389,7 +405,6 @@ class PriceManager {
         if (cached) {
             setTimeout(() => { 
                 try { 
-                    // ✅ При инициализации также передаем объект с процентом
                     callback({ price: cached.price, change: cached.change }, parts[0], parts[1], parts[2]); 
                 } catch(e) {} 
             }, 0);
@@ -464,41 +479,28 @@ class PriceManager {
         };
     }
     
-       close() {
+    close() {
         if (this._restPollInterval) {
             clearInterval(this._restPollInterval);
             this._restPollInterval = null;
         }
         
-        // 🚀 Очищаем ожидающий кадр анимации, чтобы не было утечек или вызовов после уничтожения
         if (this._flushRafId) {
             cancelAnimationFrame(this._flushRafId);
             this._flushRafId = null;
         }
         this._pendingUpdates.clear();
         
-        for (const key in this.pingIntervals) {
-            this._stopPing(key);
+        // 🚀 Используем безопасное закрытие для всех ключей
+        const keys = Object.keys(this.connections);
+        for (const key of keys) {
+            this._safeCloseConnection(key);
         }
         
-        for (const ws of Object.values(this.connections)) { 
-            if (ws) {
-                // 🚀 ВАЖНО: отключаем обработчик перед закрытием, чтобы не сработал автореконнект
-                ws.onclose = null; 
-                ws.onerror = null;
-                try { ws.close(1000); } catch(e) {} 
-            }
-        }
-        
-        for (const timer of this.reconnectTimers.values()) {
-            clearTimeout(timer);
-        }
-        this.reconnectTimers.clear();
-        
-        // Опционально: очистка подписчиков при полном уничтожении экземпляра
-        // this.subscribers.clear(); 
+        this.subscribers.clear(); 
     }
 }
+
 if (typeof window !== 'undefined') {
     window.PriceManager = PriceManager;
     if (!window.priceManagerInstance) {
