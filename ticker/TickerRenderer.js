@@ -150,36 +150,39 @@ class TickerRenderer {
         }
     }
 
-    updatePriceForSymbol(key, price, change) {
+       updatePriceForSymbol(key, price, change) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
 
+        // Обращаемся к мапе ТОЛЬКО ради prevPrice для анимации вспышки
         const ticker = this.parent.tickersMap?.get(key);
         if (!ticker) return;
 
         const els = el._cachedEls || {};
+        // 🚀 ИСПРАВЛЕНО: Используем переданные price и change напрямую, а не из мапы
+        const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
         
         if (els.price) {
-            const newPrice = this.formatPrice(ticker.price);
+            const newPrice = this.formatPrice(price);
             if (els.price.textContent !== newPrice) {
                 els.price.textContent = newPrice;
-                const colorClass = ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '');
                 els.price.className = `ticker-price ${colorClass}`;
                 
-                if (ticker.prevPrice > 0 && ticker.prevPrice !== ticker.price) {
-                    const flashClass = ticker.price > ticker.prevPrice ? 'flash-up' : 'flash-down';
+                // Анимация вспышки (нужен prevPrice)
+                if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
+                    const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
                     els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth;
+                    void els.price.offsetWidth; // Триггер для перезапуска анимации
                     els.price.classList.add(flashClass);
                 }
             }
         }
         
         if (els.change) {
-            const newChange = this.formatChange(ticker.change) + '%';
+            const newChange = this.formatChange(change) + '%';
             if (els.change.textContent !== newChange) {
                 els.change.textContent = newChange;
-                els.change.className = `ticker-change ${ticker.change > 0 ? 'positive' : (ticker.change < 0 ? 'negative' : '')}`;
+                els.change.className = `ticker-change ${colorClass}`;
             }
         }
     }
@@ -194,11 +197,28 @@ class TickerRenderer {
         return [...arrayToSort].sort((a, b) => this._compareTickers(a, b, sortBy, direction));
     }
 
-    getFilteredTickers() {
+       getFilteredTickers() {
         const state = this.parent?.state;
         if (!state) return [];
 
-        const cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
+        // 🛡️ ИСПРАВЛЕНИЕ БАГА 4: Генерируем умный ключ кэша
+        let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
+
+        // Если мы на вкладке "Избранное", добавляем в ключ "отпечаток" массива.
+        // Если пользователь добавил/удалил монету, отпечаток изменится и кэш сбросится.
+        if (state.activeTab === 'favorites') {
+            const favs = state.favorites || [];
+            // Быстрый хэш: берем длину + первую и последнюю монету (работает мгновенно)
+            cacheKey += `:favs_${favs.length}_${favs[0] || ''}_${favs[favs.length - 1] || ''}`;
+        }
+
+        // То же самое для вкладки флагов
+        if (state.activeTab === 'flags') {
+            const flags = state.flags || {};
+            const activeFlags = Object.keys(flags).filter(k => flags[k]);
+            cacheKey += `:flags_${activeFlags.length}_${activeFlags[0] || ''}`;
+        }
+
         if (this.parent.filterCache?.key === cacheKey) {
             return this.parent.filterCache.result;
         }
@@ -256,7 +276,6 @@ class TickerRenderer {
         this.parent.filterCache = { key: cacheKey, result };
         return result;
     }
-
     _compareTickers(a, b, sortBy, direction) {
         if (!a || !b) return 0;
         const flagPriority = { red: 1, yellow: 2, green: 3, lime: 4, blue: 5, cyan: 6, purple: 7, null: 999 };
@@ -367,8 +386,22 @@ class TickerRenderer {
                 el.style.right = '0';
                 el.style.width = '100%';
                 el.style.display = '';
-
                 if (!isNewElement) {
+                    // Проверяем, активна ли эта монета ПРЯМО СЕЙЧАС
+                    const isActive = (
+                        ticker.symbol === this.parent?.state?.currentSymbol &&
+                        ticker.exchange === this.parent?.state?.currentExchange &&
+                        ticker.marketType === this.parent?.state?.currentMarketType
+                    );
+                    
+                    // Если монета стала активной — вешаем класс. Если перестала — снимаем.
+                    if (isActive && !el.classList.contains('active')) {
+                        el.classList.add('active');
+                    } else if (!isActive && el.classList.contains('active')) {
+                        el.classList.remove('active');
+                    }
+
+                    // Берем элементы для обновления (дубликаты убраны)
                     const priceEl = el._cachedEls?.price;
                     const changeEl = el._cachedEls?.change;
                     const volumeEl = el._cachedEls?.volume;
@@ -415,8 +448,6 @@ class TickerRenderer {
                 el.style.display = 'none';
             }
         }
-    }
-
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
         div.className = 'ticker-item';
