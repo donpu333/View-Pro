@@ -3157,7 +3157,7 @@ class TrendLineManager {
         this.anchorTime1 = point1?.time || 0;
         this.anchorTime2 = point2?.time || 0;
         
-               this.options = {
+        this.options = {
             color: options.color || (this._isBullish() 
                 ? (this.chartManager?.bullishColor || '#00bcd4') 
                 : (this.chartManager?.bearishColor || '#f23645')
@@ -3223,7 +3223,6 @@ class RulerLineRenderer {
         this._hitAreaInfo = null;
     }
 
-    // ✅ НОВЫЙ МЕТОД: получение координаты времени даже за пределами графика
     _extendedTimeToCoordinate(time) {
         const chartManager = this._chartManager;
         const standardCoord = chartManager.timeToCoordinate(time);
@@ -3252,24 +3251,20 @@ class RulerLineRenderer {
         }
     }
 
-    // ✅ НОВЫЙ МЕТОД: получение координаты цены даже за пределами графика
     _extendedPriceToCoordinate(price) {
         const chartManager = this._chartManager;
         const standardCoord = chartManager.priceToCoordinate(price);
         if (standardCoord !== null) return standardCoord;
         
-        // Получаем видимый диапазон цен
         const priceScale = chartManager.priceScale;
         if (!priceScale) return null;
         
         try {
-            // Пробуем получить границы видимой области
             const visibleRange = priceScale.visibleRange();
             if (visibleRange) {
                 const topPrice = visibleRange.to;
                 const bottomPrice = visibleRange.from;
                 
-                // Получаем координаты границ
                 const topCoord = chartManager.priceToCoordinate(topPrice);
                 const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
                 
@@ -3309,7 +3304,7 @@ class RulerLineRenderer {
             const currentTf = chartManager.currentInterval;
             if (!ruler.isVisibleOnTimeframe(currentTf)) return;
 
-            // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЕ МЕТОДЫ
+            // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЕ МЕТОДЫ ДЛЯ ПОДДЕРЖКИ ПУСТЫХ ЗОН
             const point1X = this._extendedTimeToCoordinate(ruler.point1.time);
             const point1Y = this._extendedPriceToCoordinate(ruler.point1.price);
             const point2X = this._extendedTimeToCoordinate(ruler.point2.time);
@@ -3339,26 +3334,17 @@ class RulerLineRenderer {
             const width = rightX - leftX;
             const height = bottomY - topY;
 
-            // Рисуем заливку прямоугольника
             if (width > 0 && height > 0) {
                 const fillColor = ruler.fillColor;
                 const opacity = ruler.options.fillOpacity !== undefined ? ruler.options.fillOpacity : 0.25;
 
                 const parseHex = (hex) => {
                     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                    return result ? {
-                        r: parseInt(result[1], 16),
-                        g: parseInt(result[2], 16),
-                        b: parseInt(result[3], 16)
-                    } : null;
+                    return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
                 };
                 const parseRgb = (rgb) => {
                     const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                    return result ? {
-                        r: parseInt(result[1], 10),
-                        g: parseInt(result[2], 10),
-                        b: parseInt(result[3], 10)
-                    } : null;
+                    return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
                 };
                 let rgbaFill;
                 let parsed = parseHex(fillColor) || parseRgb(fillColor);
@@ -3376,7 +3362,6 @@ class RulerLineRenderer {
                 ctx.strokeRect(leftX, topY, width, height);
             }
 
-            // Рисуем пунктирную линию
             ctx.strokeStyle = ruler.fillColor;
             ctx.lineWidth = y1Length;
             ctx.setLineDash([5, 3]);
@@ -3386,7 +3371,6 @@ class RulerLineRenderer {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // Рисуем точки перетаскивания
             if (ruler.showDragPoint1 || ruler.showDragPoint2) {
                 ctx.shadowColor = 'rgba(0,0,0,0.5)';
                 ctx.shadowBlur = 4;
@@ -3412,60 +3396,78 @@ class RulerLineRenderer {
                 ctx.shadowBlur = 0;
             }
 
-            // Информационная панель
+                     // Информационная панель
             const pixelRatio = window.devicePixelRatio || 1;
             const scale = Math.min(pixelRatio, 2);
             const infoY = topY - 5 * scope.verticalPixelRatio * scale;
+            
             if (infoY > 10) {
-                const priceChange = ruler.point2.price - ruler.point1.price;
-                const percentChange = (priceChange / ruler.point1.price) * 100;
+                // ✅ 1. Безопасный расчет изменения цены и процента (защита от деления на 0)
+                const price1 = ruler.point1.price;
+                const price2 = ruler.point2.price;
+                const priceChange = price2 - price1;
+                const percentChange = price1 !== 0 ? (priceChange / price1) * 100 : 0;
+                
+                // ✅ 2. Расчет времени. 
+                // ВАЖНО: Lightweight Charts по умолчанию использует СЕКУНДЫ.
+                // Если ваша система передает время в миллисекундах, раскомментируйте деление на 1000 ниже:
+                // const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time) / 1000;
                 const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
+                
                 const timeStr = Utils.formatTime(timeDiffSec);
                 const sign = priceChange >= 0 ? '+' : '';
                 const percentStr = `${sign}${percentChange.toFixed(2)}%`;
                 const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
 
+                // ✅ 3. Расчет размеров с более точной высотой
                 const baseFontSize = 12;
                 const fontSize = baseFontSize * scale;
                 ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-                const textWidth = ctx.measureText(infoText).width;
                 
+                const textWidth = ctx.measureText(infoText).width;
                 const paddingX = 10 * scope.horizontalPixelRatio * scale;
                 const paddingY = 6 * scope.verticalPixelRatio * scale;
-                const labelWidth = textWidth + paddingX * 2;
-                const labelHeight = (fontSize + 10 * scale) * scope.verticalPixelRatio;
                 
-                const labelX = leftX + width/2 - labelWidth/2;
+                const labelWidth = textWidth + (paddingX * 2);
+                const labelHeight = fontSize + (paddingY * 2); // Более надежная формула высоты
+                
+                const labelX = leftX + (width / 2) - (labelWidth / 2);
                 const labelY = infoY - labelHeight;
 
-                this._hitAreaInfo = {
-                    x: labelX, y: labelY,
-                    width: labelWidth, height: labelHeight
+                this._hitAreaInfo = { 
+                    x: labelX, 
+                    y: labelY, 
+                    width: labelWidth, 
+                    height: labelHeight 
                 };
 
+                // ✅ 4. Отрисовка фона и тени
                 ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
                 ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
                 ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+                
                 ctx.beginPath();
                 this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
                 ctx.fill();
                 
+                // ✅ 5. Отрисовка обводки (сбрасываем тень для четкости линии)
+                ctx.shadowBlur = 0; 
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
                 ctx.lineWidth = 1 * scope.horizontalPixelRatio;
                 ctx.stroke();
 
-                ctx.shadowBlur = 0;
+                // ✅ 6. Отрисовка текста
                 ctx.fillStyle = '#FFFFFF';
-                ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
+                
+                // Центрируем текст ровно внутри прямоугольника
+                ctx.fillText(infoText, labelX + (labelWidth / 2), labelY + (labelHeight / 2));
             }
 
             ctx.restore();
         });
     }
-
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
         if (h < 2 * r) r = h / 2;
@@ -3566,7 +3568,6 @@ class TempRulerPointPrimitive {
         this._requestUpdate = null;
     }
 
-    // ✅ Добавляем расширенные методы для временной точки
     _extendedTimeToCoordinate(time) {
         const chartManager = this._manager._chartManager;
         const standardCoord = chartManager.timeToCoordinate(time);
@@ -3577,7 +3578,6 @@ class TempRulerPointPrimitive {
         
         const firstTime = chartData[0].time;
         const lastTime = chartData[chartData.length - 1].time;
-        
         const firstCoord = chartManager.timeToCoordinate(firstTime);
         const lastCoord = chartManager.timeToCoordinate(lastTime);
         
@@ -3608,7 +3608,6 @@ class TempRulerPointPrimitive {
             if (visibleRange) {
                 const topPrice = visibleRange.to;
                 const bottomPrice = visibleRange.from;
-                
                 const topCoord = chartManager.priceToCoordinate(topPrice);
                 const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
                 
@@ -3627,7 +3626,6 @@ class TempRulerPointPrimitive {
                 }
             }
         } catch(e) {}
-        
         return null;
     }
 
@@ -3641,11 +3639,9 @@ class TempRulerPointPrimitive {
                     target.useBitmapCoordinateSpace(scope => {
                         const ctx = scope.context;
                         const point = this._manager._tempPoint;
-                        const chartManager = this._manager._chartManager;
                         
                         if (!point) return;
                         
-                        // ✅ Используем расширенные методы
                         const xCoord = this._extendedTimeToCoordinate(point.time);
                         const yCoord = this._extendedPriceToCoordinate(point.price);
                         
@@ -3670,7 +3666,6 @@ class TempRulerPointPrimitive {
                 }
             })
         };
-        
         return [paneView];
     }
 
@@ -3679,12 +3674,8 @@ class TempRulerPointPrimitive {
         this._series = series;
         this._requestUpdate = requestUpdate;
     }
-
     updateAllViews() {}
-    
-    requestRedraw() {
-        if (this._requestUpdate) this._requestUpdate();
-    }
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
 }
 
 class TempRulerLinePrimitive {
@@ -3695,7 +3686,6 @@ class TempRulerLinePrimitive {
         this._requestUpdate = null;
     }
 
-    // ✅ Добавляем расширенные методы для временной линии
     _extendedTimeToCoordinate(time) {
         const chartManager = this._manager._chartManager;
         const standardCoord = chartManager.timeToCoordinate(time);
@@ -3706,7 +3696,6 @@ class TempRulerLinePrimitive {
         
         const firstTime = chartData[0].time;
         const lastTime = chartData[chartData.length - 1].time;
-        
         const firstCoord = chartManager.timeToCoordinate(firstTime);
         const lastCoord = chartManager.timeToCoordinate(lastTime);
         
@@ -3737,7 +3726,6 @@ class TempRulerLinePrimitive {
             if (visibleRange) {
                 const topPrice = visibleRange.to;
                 const bottomPrice = visibleRange.from;
-                
                 const topCoord = chartManager.priceToCoordinate(topPrice);
                 const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
                 
@@ -3756,7 +3744,6 @@ class TempRulerLinePrimitive {
                 }
             }
         } catch(e) {}
-        
         return null;
     }
 
@@ -3774,7 +3761,6 @@ class TempRulerLinePrimitive {
                         
                         if (!tempLine || !tempLine.point1 || !tempLine.point2) return;
                         
-                        // ✅ Используем расширенные методы
                         const point1X = this._extendedTimeToCoordinate(tempLine.point1.time);
                         const point1Y = this._extendedPriceToCoordinate(tempLine.point1.price);
                         const point2X = this._extendedTimeToCoordinate(tempLine.point2.time);
@@ -3788,11 +3774,11 @@ class TempRulerLinePrimitive {
                         const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, 2, false);
                         
                         ctx.save();
-                      // ✅ СТАЛО (динамические цвета из настроек графика)
-const isBullish = point2Y <= point1Y;
-const bullishColor = chartManager?.bullishColor || '#00bcd4';
-const bearishColor = chartManager?.bearishColor || '#f23645';
-const lineColor = isBullish ? bullishColor : bearishColor;
+                        const isBullish = point2Y <= point1Y;
+                        const bullishColor = chartManager?.bullishColor || '#00bcd4';
+                        const bearishColor = chartManager?.bearishColor || '#f23645';
+                        const lineColor = isBullish ? bullishColor : bearishColor;
+                        
                         ctx.strokeStyle = lineColor;
                         ctx.lineWidth = y1Length;
                         ctx.setLineDash([5, 3]);
@@ -3800,6 +3786,7 @@ const lineColor = isBullish ? bullishColor : bearishColor;
                         ctx.moveTo(x1, y1 + y1Length/2);
                         ctx.lineTo(x2, y2 + y2Length/2);
                         ctx.stroke();
+                        
                         ctx.shadowColor = 'rgba(0,0,0,0.5)';
                         ctx.shadowBlur = 4;
                         ctx.fillStyle = '#FFFFFF';
@@ -3815,7 +3802,6 @@ const lineColor = isBullish ? bullishColor : bearishColor;
                 }
             })
         };
-        
         return [paneView];
     }
 
@@ -3824,12 +3810,8 @@ const lineColor = isBullish ? bullishColor : bearishColor;
         this._series = series;
         this._requestUpdate = requestUpdate;
     }
-
     updateAllViews() {}
-    
-    requestRedraw() {
-        if (this._requestUpdate) this._requestUpdate();
-    }
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
 }
 
 class RulerLinePaneView {
@@ -3870,11 +3852,23 @@ class RulerLinePrimitive {
         }
     }
 
+    // ✅ ИСПРАВЛЕНО: Разрешаем времени выходить за пределы существующих свечей
     _syncPointsTime() {
         const chartData = this._chartManager.chartData;
-        if (!chartData || chartData.length === 0) return;
+        if (!chartData || chartData.length === 0) {
+            this._ruler.point1.time = this._ruler.anchorTime1;
+            this._ruler.point2.time = this._ruler.anchorTime2;
+            return;
+        }
         
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+
         const syncPoint = (anchorTime) => {
+            // ✅ Если время в будущем или прошлом, не обрезаем его до последней/первой свечи
+            if (anchorTime >= lastTime) return anchorTime;
+            if (anchorTime <= firstTime) return anchorTime;
+
             let left = 0;
             let right = chartData.length - 1;
             let closest = chartData[0];
@@ -3883,10 +3877,7 @@ class RulerLinePrimitive {
                 const mid = Math.floor((left + right) / 2);
                 const midTime = chartData[mid].time;
 
-                if (midTime === anchorTime) {
-                    closest = chartData[mid];
-                    break;
-                }
+                if (midTime === anchorTime) return midTime;
 
                 if (Math.abs(midTime - anchorTime) < Math.abs(closest.time - anchorTime)) {
                     closest = chartData[mid];
@@ -3906,7 +3897,6 @@ class RulerLinePrimitive {
     }
 
     getRuler() { return this._ruler; }
-
     requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
 }
 
@@ -3940,18 +3930,21 @@ class RulerLineManager {
         this._dblClickTimeout = 350;
         this._lastClickTime = 0;
         this._needsRedraw = false;
+        
         this._handleMouseDown = this._handleMouseDown.bind(this);
         this._handleMouseMove = this._handleMouseMove.bind(this);
         this._handleMouseUp = this._handleMouseUp.bind(this);
         this._handleMouseLeave = this._handleMouseLeave.bind(this);
         this._handleContextMenu = this._handleContextMenu.bind(this);
-    
         this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        
         window.addEventListener('mouseup', this._handleGlobalMouseUp);
         this._setupEventListeners();
         this._setupHotkeys();
         
-        window.drawingLoaderCoordinator.register(this, 'ruler');
+        if (window.drawingLoaderCoordinator) {
+            window.drawingLoaderCoordinator.register(this, 'ruler');
+        }
         
         setTimeout(async () => {
             try {
@@ -3965,10 +3958,7 @@ class RulerLineManager {
     }
 
     _toBitmapCoords(cssX, cssY) {
-        return {
-            x: cssX * this._pixelRatio,
-            y: cssY * this._pixelRatio
-        };
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
     }
 
     _setupEventListeners() {
@@ -4040,8 +4030,34 @@ class RulerLineManager {
         }
     }
 
-    setMagnetEnabled(enabled) {
-        // Магнит отключён
+    setMagnetEnabled(enabled) {}
+
+    // ✅ НОВЫЙ МЕТОД: Получение времени по X даже в пустых зонах (будущее/прошлое)
+    _getExtendedTimeFromX(x) {
+        let time = this._chartManager.coordinateToTime(x);
+        if (time !== null) return time;
+
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length < 2) return null;
+
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        const firstX = this._chartManager.timeToCoordinate(firstTime);
+        const lastX = this._chartManager.timeToCoordinate(lastTime);
+
+        if (firstX !== null && lastX !== null) {
+            const barInterval = chartData[1].time - chartData[0].time;
+            const barWidth = (lastX - firstX) / (chartData.length - 1);
+            
+            if (x > lastX) {
+                const barsAfter = Math.round((x - lastX) / barWidth);
+                return lastTime + barsAfter * barInterval;
+            } else if (x < firstX) {
+                const barsBefore = Math.round((firstX - x) / barWidth);
+                return firstTime - barsBefore * barInterval;
+            }
+        }
+        return null;
     }
 
     createRuler(point1, point2, options = {}) {
@@ -4066,7 +4082,7 @@ class RulerLineManager {
         const index = this._rulers.findIndex(r => r.ruler.id === rulerId);
         if (index !== -1) {
             const { primitive, series } = this._rulers[index];
-            window.db.delete('drawings', rulerId).catch(e => console.warn(e));
+            if (window.db) window.db.delete('drawings', rulerId).catch(e => console.warn(e));
             try { series.detachPrimitive(primitive); } catch (e) {}
             this._rulers.splice(index, 1);
             if (this._selectedRuler && this._selectedRuler.id === rulerId) this._selectedRuler = null;
@@ -4080,7 +4096,7 @@ class RulerLineManager {
 
     deleteAllRulers() {
         for (const item of this._rulers) {
-            window.db.delete('drawings', item.ruler.id).catch(e => console.warn(e));
+            if (window.db) window.db.delete('drawings', item.ruler.id).catch(e => console.warn(e));
         }
         this._rulers.forEach(({ primitive, series }) => { try { series.detachPrimitive(primitive); } catch (e) {} });
         this._rulers = [];
@@ -4217,7 +4233,8 @@ class RulerLineManager {
 
         if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
             let price = this._chartManager.coordinateToPrice(cssY);
-            let time = this._chartManager.coordinateToTime(cssX);
+            let time = this._getExtendedTimeFromX(cssX); // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЙ МЕТОД
+            
             if (price !== null && time !== null) {
                 if (!this._tempLine) {
                     this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
@@ -4257,14 +4274,36 @@ class RulerLineManager {
             const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
 
             const startPoint = this._dragPoint === 'point1' ? this._dragStartPoint1 : this._dragStartPoint2;
-            const px = this._chartManager.timeToCoordinate(startPoint.time);
+            
+            // ✅ Получаем X с учетом возможного нахождения в будущем/прошлом
+            let px = this._chartManager.timeToCoordinate(startPoint.time);
+            if (px === null) {
+                const chartData = this._chartManager.chartData;
+                if (chartData && chartData.length > 1) {
+                    const firstTime = chartData[0].time;
+                    const lastTime = chartData[chartData.length - 1].time;
+                    const firstX = this._chartManager.timeToCoordinate(firstTime);
+                    const lastX = this._chartManager.timeToCoordinate(lastTime);
+                    if (firstX !== null && lastX !== null) {
+                        const barInterval = chartData[1].time - chartData[0].time;
+                        const barWidth = (lastX - firstX) / (chartData.length - 1);
+                        if (startPoint.time > lastTime) {
+                            px = lastX + ((startPoint.time - lastTime) / barInterval) * barWidth;
+                        } else {
+                            px = firstX - ((firstTime - startPoint.time) / barInterval) * barWidth;
+                        }
+                    }
+                }
+            }
+            
             const py = this._chartManager.priceToCoordinate(startPoint.price);
             
             if (px !== null && py !== null) {
                 const newX = px + deltaX;
                 const newY = py + deltaY;
+                
                 const newPrice = this._chartManager.coordinateToPrice(newY);
-                const newTime = this._chartManager.coordinateToTime(newX);
+                const newTime = this._getExtendedTimeFromX(newX); // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЙ МЕТОД
                 
                 if (this._dragPoint === 'point1') {
                     if (newPrice !== null) this._dragRuler.point1.price = newPrice;
@@ -4373,14 +4412,16 @@ class RulerLineManager {
 
     _startDrawing(x, y) {
         let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
+        let time = this._getExtendedTimeFromX(x); // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЙ МЕТОД
         
         if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
+            const lastCandle = this._chartManager.getLastCandle?.() || (this._chartManager.chartData?.length ? this._chartManager.chartData[this._chartManager.chartData.length - 1] : null);
             if (lastCandle) { 
-                price = lastCandle.close; 
-                time = lastCandle.time; 
-            } else return;
+                price = price ?? lastCandle.close; 
+                time = time ?? lastCandle.time; 
+            } else {
+                return;
+            }
         }
         
         this._drawingStartPoint = { price, time, x, y, anchorCandle: null };
@@ -4399,14 +4440,16 @@ class RulerLineManager {
     _completeDrawing(x, y) {
         if (!this._drawingStartPoint) return;
         let price = this._chartManager.coordinateToPrice(y);
-        let time = this._chartManager.coordinateToTime(x);
+        let time = this._getExtendedTimeFromX(x); // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЙ МЕТОД
         
         if (price === null || time === null) {
-            const lastCandle = this._chartManager.getLastCandle();
+            const lastCandle = this._chartManager.getLastCandle?.() || (this._chartManager.chartData?.length ? this._chartManager.chartData[this._chartManager.chartData.length - 1] : null);
             if (lastCandle) { 
-                price = lastCandle.close; 
-                time = lastCandle.time; 
-            } else return;
+                price = price ?? lastCandle.close; 
+                time = time ?? lastCandle.time; 
+            } else {
+                return;
+            }
         }
         
         const startTime = this._drawingStartPoint.time; 
@@ -4497,7 +4540,6 @@ class RulerLineManager {
 
         if (!panel.dataset.instantBound) {
             panel.dataset.instantBound = 'true';
-
             opacitySlider.addEventListener('input', () => {
                 const val = parseInt(opacitySlider.value) / 100;
                 opacityValue.textContent = opacitySlider.value + '%';
@@ -4523,9 +4565,7 @@ class RulerLineManager {
         if (this._needsRedraw) {
             this._needsRedraw = false;
             this._rulers?.forEach(item => { 
-                if (item.primitive?.requestRedraw) {
-                    item.primitive.requestRedraw();
-                }
+                if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
             });
             if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
             if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
@@ -4533,14 +4573,25 @@ class RulerLineManager {
     }
 
     async _saveRulers() {
-        if (this._rulers.length === 0) return;
-        const promises = this._rulers.map(item => window.db.put('drawings', { id: item.ruler.id, type: 'ruler', symbolKey: item.ruler.symbolKey, data: { point1: item.ruler.point1, point2: item.ruler.point2, options: item.ruler.options, timeframeVisibility: item.ruler.timeframeVisibility, anchorCandle1: item.ruler.anchorCandle1, anchorCandle2: item.ruler.anchorCandle2, anchorTime1: item.ruler.anchorTime1, anchorTime2: item.ruler.anchorTime2, symbol: item.ruler.symbol, exchange: item.ruler.exchange, marketType: item.ruler.marketType } }).catch(e => console.warn(e)));
+        if (this._rulers.length === 0 || !window.db) return;
+        const promises = this._rulers.map(item => window.db.put('drawings', { 
+            id: item.ruler.id, type: 'ruler', symbolKey: item.ruler.symbolKey, 
+            data: { 
+                point1: item.ruler.point1, point2: item.ruler.point2, 
+                options: item.ruler.options, timeframeVisibility: item.ruler.timeframeVisibility, 
+                anchorCandle1: item.ruler.anchorCandle1, anchorCandle2: item.ruler.anchorCandle2, 
+                anchorTime1: item.ruler.anchorTime1, anchorTime2: item.ruler.anchorTime2, 
+                symbol: item.ruler.symbol, exchange: item.ruler.exchange, marketType: item.ruler.marketType 
+            } 
+        }).catch(e => console.warn(e)));
         await Promise.all(promises);
     }
 
     async loadRulers() {
         const currentKey = this._getCurrentSymbolKey();
-        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+        if (window.drawingLoaderCoordinator) {
+            await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+        }
     }
 
     async loadFromData(symbolKey, rulerRecords) {
@@ -4558,9 +4609,7 @@ class RulerLineManager {
             ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
 
             const existingIds = new Set(
-                this._rulers
-                    .filter(item => item.ruler.symbolKey === symbolKey)
-                    .map(item => item.ruler.id)
+                this._rulers.filter(item => item.ruler.symbolKey === symbolKey).map(item => item.ruler.id)
             );
             
             const newRecordIds = new Set(rulerRecords.map(r => r.id));
@@ -4570,11 +4619,7 @@ class RulerLineManager {
             );
             
             for (const item of toDetach) {
-                try { 
-                    if (item.series && item.primitive) {
-                        item.series.detachPrimitive(item.primitive); 
-                    }
-                } catch(e) {}
+                try { if (item.series && item.primitive) item.series.detachPrimitive(item.primitive); } catch(e) {}
             }
             
             this._rulers = this._rulers.filter(item => 
@@ -4631,9 +4676,7 @@ class RulerLineManager {
         const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
         for (const item of itemsForSymbol) {
             if (item.primitive && item.series) {
-                try { 
-                    item.series.detachPrimitive(item.primitive); 
-                } catch(e) {}
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
             }
         }
         this._rulers = this._rulers.filter(item => item.ruler.symbolKey !== symbolKey);
