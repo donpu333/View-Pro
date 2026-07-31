@@ -568,7 +568,7 @@ class TickerRenderer {
         parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : 'volume';
         parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) ? savedSortDir : 'desc';
 
-        parent._sortClickHandler = (e) => {
+              parent._sortClickHandler = (e) => {
             e.stopPropagation();
             const header = e.currentTarget;
             const sortBy = header.dataset.sort;
@@ -587,12 +587,22 @@ class TickerRenderer {
                 parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
             }
 
+            // 🚀 ИСПРАВЛЕНО: Сбрасываем ВСЕ стрелочки в дефолтное состояние
             document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                icon.className = 'fas fa-sort';
+                icon.className = 'fas fa-sort'; // Возвращаем нейтральную иконку
+                icon.style.display = '';        // <--- ДОБАВЛЕНО: Гарантированно показываем иконку (если она была скрыта флагом)
             });
+
+            // Ставим активную стрелочку на ту колонку, на которую нажали
             const icon = header.querySelector('i');
             if (icon) {
-                icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                // Если это флаг - скрываем стрелочку (по вашей логике)
+                if (sortBy === 'flag') {
+                    icon.style.display = 'none';
+                } else {
+                    // Иначе показываем нужное направление
+                    icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                }
             }
 
             parent.filterCache = null;
