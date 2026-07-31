@@ -6,10 +6,9 @@ class TimeframeManager {
         this.currentInterval = localStorage.getItem('lastTimeframe') || (typeof CONFIG !== 'undefined' ? CONFIG.defaultInterval : '15m');
         console.log('📊 TimeframeManager: таймфрейм =', this.currentInterval);
         
-        // Убраны currentExchange и currentContractType — берем из chartManager!
-        
-        this.savedStartTime = null;
-        this.savedEndTime = null;
+        // Переменные для сохранения позиции (центр и ширина окна)
+        this.savedCenterTime = null;
+        this.savedTimeSpan = null;
 
         // Сохраняем подписку TimeScale для корректной отписки
         this.timeScaleUnsubscribe = null;
@@ -18,8 +17,6 @@ class TimeframeManager {
         this.handleDocumentClickBound = this.handleDocumentClick.bind(this);
         this.handleGlobalClickBound = this.handleGlobalClick.bind(this);
         this.handleGlobalKeydownBound = this.handleGlobalKeydown.bind(this);
-        this.handleScrollClickBound = this.scrollToLastCandle.bind(this);
-        this.handleAutoScaleClickBound = this.autoScaleChart.bind(this);
         
         this.init();
     }
@@ -37,7 +34,7 @@ class TimeframeManager {
         document.addEventListener('click', this.handleGlobalClickBound);
         document.addEventListener('keydown', this.handleGlobalKeydownBound);
         
-        // 🛡️ ИСПРАВЛЕНИЕ: Сохраняем функцию отписки, возвращаемую библиотекой
+        // 🛡️ Правильная подписка с сохранением функции отписки
         this.timeScaleUnsubscribe = this.chartManager.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             this.saveCurrentPosition();
         });
@@ -48,7 +45,7 @@ class TimeframeManager {
         document.removeEventListener('click', this.handleGlobalClickBound);
         document.removeEventListener('keydown', this.handleGlobalKeydownBound);
         
-        // 🛡️ ИСПРАВЛЕНИЕ: Корректная отписка через сохраненную функцию
+        // 🛡️ Корректная отписка от графика
         if (this.timeScaleUnsubscribe && typeof this.timeScaleUnsubscribe === 'function') {
             this.timeScaleUnsubscribe();
         } else if (this.timeScaleUnsubscribe && typeof this.timeScaleUnsubscribe.unsubscribe === 'function') {
@@ -56,6 +53,7 @@ class TimeframeManager {
         }
     }
 
+    // 🎨 НОВАЯ ЛОГИКА: Сохраняем центр экрана и временную ширину окна
     saveCurrentPosition() {
         const timeScale = this.chartManager.chart.timeScale();
         const visibleRange = timeScale.getVisibleLogicalRange();
@@ -66,38 +64,75 @@ class TimeframeManager {
             const toIndex = Math.min(data.length - 1, Math.ceil(visibleRange.to));
             
             if (fromIndex < toIndex) {
-                // 🚀 Надежнее сохранять границы, а не центр+ширину при смене ТФ
-                this.savedStartTime = data[fromIndex].time;
-                this.savedEndTime = data[toIndex].time;
+                const centerIndex = Math.floor((fromIndex + toIndex) / 2);
+                this.savedCenterTime = data[centerIndex].time;
+                this.savedTimeSpan = data[toIndex].time - data[fromIndex].time;
             }
         }
     }
 
+    // 🎨 НОВАЯ ЛОГИКА: Восстановление с отступами (Whitespace padding)
     restorePosition() {
-        if (!this.savedStartTime || !this.savedEndTime || !this.chartManager.chartData || this.chartManager.chartData.length === 0) return;
+        if (!this.savedCenterTime || !this.chartManager.chartData || this.chartManager.chartData.length === 0) {
+            this.chartManager.chart.timeScale().scrollToRealTime();
+            return;
+        }
         
-        const timeScale = this.chartManager.chart.timeScale();
         const data = this.chartManager.chartData;
+        const timeScale = this.chartManager.chart.timeScale();
         
-        // 🚀 ОПТИМИЗАЦИЯ: Бинарный поиск O(log N) вместо циклов O(N)
-        const findIndexByTime = (targetTime) => {
-            let left = 0;
-            let right = data.length - 1;
-            while (left <= right) {
-                const mid = Math.floor((left + right) / 2);
-                if (data[mid].time === targetTime) return mid;
-                if (data[mid].time < targetTime) left = mid + 1;
-                else right = mid - 1;
-            }
-            return Math.max(0, Math.min(left, data.length - 1)); // Зажимаем индекс
-        };
+        // Если мы смотрели самый край графика (где формируется свеча), 
+        // при смене ТФ оставляем экран на реальном времени
+        const latestTime = data[data.length - 1].time;
+        if (latestTime <= this.savedCenterTime + (this.savedTimeSpan || 0)) {
+            timeScale.scrollToRealTime();
+            return;
+        }
 
-        const startIndex = findIndexByTime(this.savedStartTime);
-        const endIndex = findIndexByTime(this.savedEndTime);
+        // 🚀 Бинарный поиск O(log N) для нахождения индекса центра
+        let left = 0;
+        let right = data.length - 1;
+        let centerIndex = -1;
         
-        // Небольшой отступ по краям для красоты
-        const from = Math.max(0, startIndex - 1);
-        const to = Math.min(data.length - 1, endIndex + 1);
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            if (data[mid].time === this.savedCenterTime) {
+                centerIndex = mid;
+                break;
+            }
+            if (data[mid].time < this.savedCenterTime) left = mid + 1;
+            else right = mid - 1;
+        }
+        
+        // Если точного времени нет (при переходе на старший ТФ), берем ближайшую свечу
+        if (centerIndex === -1) centerIndex = left;
+        centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
+
+        // Вычисляем, сколько свечей нужно показать слева и справа от центра
+        let radius = 40; // Дефолтный радиус
+        
+        if (this.savedTimeSpan > 0 && data.length > 1) {
+            const avgCandleDuration = (data[data.length - 1].time - data[0].time) / (data.length - 1);
+            if (avgCandleDuration > 0) {
+                radius = Math.round((this.savedTimeSpan / 2) / avgCandleDuration);
+                radius = Math.max(15, Math.min(radius, 250)); // Ограничиваем от 15 до 250 свечей
+            }
+        }
+        
+        // ДОБАВЛЯЕМ КРАСИВЫЕ ОТСТУПЫ (по 15% пустого пространства с каждой стороны)
+        const padding = Math.max(3, Math.floor(radius * 0.15)); 
+        
+        let from = centerIndex - radius - padding;
+        let to = centerIndex + radius + padding;
+        
+        // Защита от выхода за границы массива
+        from = Math.max(0, from);
+        to = Math.min(data.length - 1, to);
+        
+        // Если справа не хватило места, сдвигаем окно влево
+        if (to - from < radius * 1.5) {
+            from = Math.max(0, to - (radius * 1.5));
+        }
 
         if (from < to) {
             timeScale.setVisibleLogicalRange({ from, to });
@@ -122,11 +157,10 @@ class TimeframeManager {
     }
 
     handleGlobalKeydown(event) {
-        // 🛡️ ИСПРАВЛЕНИЕ: Alt+T вместо Ctrl+T (чтобы не блокировать новую вкладку браузера)
+        // Заменено на Alt+T (Ctrl+T открывает новую вкладку браузера)
         if (event.altKey && event.key === 't') {
             event.preventDefault();
             const newType = this.chartManager.currentMarketType === 'futures' ? 'spot' : 'futures';
-            // 🛡️ ИСПРАВЛЕНИЕ: Реально переключаем график, а не просто меняем текст
             this.chartManager.switchSymbol(
                 this.chartManager.currentSymbol, 
                 this.chartManager.currentExchange, 
@@ -202,13 +236,12 @@ class TimeframeManager {
         }
     }
     
-    // 🛡️ ИСПРАВЛЕНИЕ: Убран cloneNode, используем привязанные методы
     setupControlButtons() {
         const scrollBtn = document.getElementById('scrollToLastCandleButton');
         if (scrollBtn) {
             scrollBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.handleScrollClickBound();
+                this.scrollToLastCandle();
             });
         }
         
@@ -216,7 +249,7 @@ class TimeframeManager {
         if (autoScaleBtn) {
             autoScaleBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.handleAutoScaleClickBound();
+                this.autoScaleChart();
             });
         }
     }
@@ -312,7 +345,6 @@ class TimeframeManager {
         localStorage.setItem('lastTimeframe', tf);
         this.chartManager.setCurrentInterval(tf);
         
-        // 🛡️ ИСПРАВЛЕНИЕ: Проверка на null
         const panel = document.getElementById('timeframePanel');
         if (panel) panel.classList.remove('expanded');
 
@@ -344,11 +376,9 @@ class TimeframeManager {
             
             this.timerManager.start(tf);
             
-            // 🚀 ИСПРАВЛЕНИЕ: Убраны setTimeout. 
-            // Если setDataQuick отработал, данные уже в массиве chartData.
-            // Вызываем немедленно, чтобы избежать мигания пустого экрана.
+            // Вызываем немедленно после загрузки данных (без setTimeout)
             this.chartManager.autoScale();
-            this.restorePosition(); 
+            this.restorePosition(); // Вызывает новую логику с отступами
             
             // Синхронизация рисунков
             if (window.rayManager) window.rayManager.syncWithNewTimeframe();
