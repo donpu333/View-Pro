@@ -214,7 +214,6 @@ class TimeframeManager {
  async switchToTimeframe(tf) {
     if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
 
-    // Отменяем предыдущий запрос
     if (this.chartManager._currentFetchController) {
         this.chartManager._currentFetchController.abort();
     }
@@ -226,16 +225,13 @@ class TimeframeManager {
     });
 
     const previousInterval = this.currentInterval;
-    this.currentInterval = tf;
-    localStorage.setItem('lastTimeframe', tf);
-    this.chartManager.setCurrentInterval(tf);
     
     document.getElementById('timeframePanel')?.classList.remove('expanded');
 
     try {
         if (this.wsManager) this.wsManager.disconnect?.();
 
-        // ✅ Вот тут правильно — chartManager.fetchKlines
+        // ✅ СНАЧАЛА загружаем данные, ПОТОМ меняем интервал
         const candles = await this.chartManager.fetchKlines(
             this.chartManager.currentSymbol,
             this.chartManager.currentExchange,
@@ -244,10 +240,15 @@ class TimeframeManager {
             1000
         );
 
-        if (this.currentInterval !== tf) {
+        if (this.currentInterval !== previousInterval) {
             console.log('⏭️ Таймфрейм уже другой, пропускаем');
             return;
         }
+
+        // ✅ Только теперь меняем интервал — когда данные уже готовы
+        this.currentInterval = tf;
+        localStorage.setItem('lastTimeframe', tf);
+        this.chartManager.setCurrentInterval(tf);
 
         if (candles?.length > 0) {
             this.chartManager.setDataQuick(
