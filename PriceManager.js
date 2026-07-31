@@ -19,7 +19,7 @@ class PriceManager {
             reconnectDelay: 15000,
             maxReconnectDelay: 120000,
             restPollInterval: 10000,
-            bybitPingInterval: 20000,
+            bybitPingInterval: 15000, 
             startupDelay: 2000
         };
         
@@ -30,11 +30,11 @@ class PriceManager {
         if (this._initInProgress) return;
         this._initInProgress = true;
         
+        // ✅ ИСПРАВЛЕНО: Bybit убран из автоматического запуска. 
+        // Он подключится только тогда, когда действительно понадобится.
         const connectSequence = [
             () => this._connectBinanceFutures(),
-            () => this._connectBinanceSpot(),
-            () => this._connectBybitLinear(),
-            () => this._connectBybitSpot()
+            () => this._connectBinanceSpot()
         ];
         
         connectSequence.forEach((fn, index) => {
@@ -48,40 +48,22 @@ class PriceManager {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v12 запущен (Safe Close + Real-time Price)');
+        console.log('✅ PriceManager v12 запущен (Bybit подключается только по требованию)');
     }
 
-    // 🚀 НОВЫЙ МЕТОД: Безопасное уничтожение соединения
-    _safeCloseConnection(key) {
-        // 1. Отменяем запланированный реконнект
-        if (this.reconnectTimers.has(key)) {
-            clearTimeout(this.reconnectTimers.get(key));
-            this.reconnectTimers.delete(key);
+    // ✅ НОВЫЙ МЕТОД: Проверяет, нужен ли Bybit, и подключает его только при наличии подписок
+    _ensureBybitConnected() {
+        const hasLinear = this._bybitSubscriptions.linear.size > 0;
+        const hasSpot = this._bybitSubscriptions.spot.size > 0;
+
+        if (hasLinear && (!this.connections['bybit:linear'] || this.connections['bybit:linear'].readyState !== WebSocket.OPEN)) {
+            console.log('🔌 Подключение Bybit Linear (появилась подписка/алерт)');
+            this._connectBybitLinear();
         }
-        
-        // 2. Останавливаем пинг
-        this._stopPing(key);
-        
-        // 3. Безопасно закрываем сокет
-        const ws = this.connections[key];
-        if (ws) {
-            // ГЛАВНОЕ: Глушим обработчики ДО закрытия, чтобы старый сокет не мог вызвать реконнект
-            ws.onopen = null;
-            ws.onmessage = null;
-            ws.onerror = null;
-            ws.onclose = null;
-            
-            // Вызываем close() ТОЛЬКО если сокет уже открыт.
-            // Если он в состоянии CONNECTING, мы его просто "забываем", и браузер тихо его убьет без ошибок.
-            if (ws.readyState === WebSocket.OPEN) {
-                try { ws.close(1000, 'Intentional cleanup'); } catch(e) {}
-            }
-            
-            this.connections[key] = null;
+        if (hasSpot && (!this.connections['bybit:spot'] || this.connections['bybit:spot'].readyState !== WebSocket.OPEN)) {
+            console.log('🔌 Подключение Bybit Spot (появилась подписка/алерт)');
+            this._connectBybitSpot();
         }
-        
-        // Сбрасываем счетчик попыток для чистого старта при следующем подключении
-        this._connectionAttempts[key] = 0;
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
@@ -114,8 +96,14 @@ class PriceManager {
     }
     
     _connectBinance(key, url, onMessageHandler) {
-        // Используем безопасное закрытие вместо ручного .close()
-        this._safeCloseConnection(key);
+        if (this.reconnectTimers.has(key)) {
+            clearTimeout(this.reconnectTimers.get(key));
+            this.reconnectTimers.delete(key);
+        }
+        if (this.connections[key]) {
+            try { this.connections[key].close(1000); } catch(e) {}
+            this.connections[key] = null;
+        }
         
         const ws = new WebSocket(url);
         this.connections[key] = ws;
@@ -124,7 +112,7 @@ class PriceManager {
         
         ws.onopen = () => {
             this._lastWsMessage[key] = Date.now();
-            this._connectionAttempts[key] = 0; // Сброс при успешном открытии
+            this._connectionAttempts[key] = 0;
             this._connectionState[key] = 'open';
         };
         
@@ -140,7 +128,7 @@ class PriceManager {
             } catch(e) {}
         };
         
-        ws.onclose = (e) => {
+        ws.onclose = (event) => {
             this._connectionState[key] = 'closed';
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
             
@@ -149,14 +137,16 @@ class PriceManager {
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
                 this.config.maxReconnectDelay
             );
-            console.warn(`⚠️ ${key} закрыт (код ${e.code}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            console.warn(`⚠️ ${key} закрыт (код ${event.code || 'неизвестен'}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
             
             this.reconnectTimers.set(key, setTimeout(() => {
                 this._connectBinance(key, url, onMessageHandler);
             }, delay));
         };
         
-        ws.onerror = () => {};
+        ws.onerror = (error) => {
+            console.error(`❌ Ошибка WebSocket ${key}:`, error);
+        };
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BYBIT ==========
@@ -169,8 +159,14 @@ class PriceManager {
     }
     
     _connectBybit(key, url, marketKey, marketType) {
-        // Используем безопасное закрытие
-        this._safeCloseConnection(key);
+        if (this.reconnectTimers.has(key)) {
+            clearTimeout(this.reconnectTimers.get(key));
+            this.reconnectTimers.delete(key);
+        }
+        if (this.connections[key]) {
+            try { this.connections[key].close(1000); } catch(e) {}
+            this.connections[key] = null;
+        }
         
         const ws = new WebSocket(url);
         this.connections[key] = ws;
@@ -179,6 +175,7 @@ class PriceManager {
         ws.onopen = () => {
             this._lastWsMessage[key] = Date.now();
             this._connectionState[key] = 'open';
+            this._connectionAttempts[key] = 0; 
             this._startPingBybit(key, ws);
             this._resubscribeBybit(marketKey);
         };
@@ -200,7 +197,7 @@ class PriceManager {
             } catch(e) {}
         };
         
-        ws.onclose = (e) => {
+        ws.onclose = (event) => {
             this._connectionState[key] = 'closed';
             this._stopPing(key);
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
@@ -210,14 +207,16 @@ class PriceManager {
                 this.config.reconnectDelay * Math.pow(1.5, attempts),
                 this.config.maxReconnectDelay
             );
-            console.warn(`⚠️ ${key} закрыт (код ${e.code}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            console.warn(`⚠️ ${key} закрыт (код ${event.code || 'неизвестен'}, reason: ${event.reason || 'нет'}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
             
             this.reconnectTimers.set(key, setTimeout(() => {
                 this._connectBybit(key, url, marketKey, marketType);
             }, delay));
         };
         
-        ws.onerror = () => {};
+        ws.onerror = (error) => {
+            console.error(`❌ Ошибка WebSocket ${key}:`, error);
+        };
     }
     
     // ========== ПИНГИ ДЛЯ BYBIT ==========
@@ -241,6 +240,8 @@ class PriceManager {
         const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         const symbols = [...this._bybitSubscriptions[marketKey]];
+        if (symbols.length === 0) return; // ✅ Не отправляем пустые запросы
+        
         for (let i = 0; i < symbols.length; i += 10) {
             const batch = symbols.slice(i, i + 10).map(s => `tickers.${s}`);
             ws.send(JSON.stringify({ op: 'subscribe', args: batch }));
@@ -251,7 +252,10 @@ class PriceManager {
         const marketKey = marketType === 'futures' ? 'linear' : 'spot';
         const clean = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
         if (this._bybitSubscriptions[marketKey].has(clean)) return;
+        
         this._bybitSubscriptions[marketKey].add(clean);
+        this._ensureBybitConnected(); // ✅ ИСПРАВЛЕНО: инициируем подключение при добавлении символа
+        
         const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${clean}`] }));
@@ -265,7 +269,6 @@ class PriceManager {
             const a = item.alert;
             return !a.triggered && a.status !== 'completed' && a.status !== 'paused';
         });
-        if (activeAlerts.length === 0) return;
         
         const groups = { 'binance:futures': new Set(), 'binance:spot': new Set(), 'bybit:futures': new Set(), 'bybit:spot': new Set() };
         for (const item of activeAlerts) {
@@ -273,6 +276,14 @@ class PriceManager {
             const key = `${(a.exchange || 'binance').toLowerCase()}:${(a.marketType || 'futures').toLowerCase()}`;
             if (groups[key]) groups[key].add(a.symbol);
         }
+        
+        // ✅ ИСПРАВЛЕНО: Если в алертах появился Bybit, принудительно подключаем его WS
+        if (groups['bybit:futures'].size > 0 || groups['bybit:spot'].size > 0) {
+            this._ensureBybitConnected();
+        }
+
+        // Если активных алертов нет вообще, выходим раньше
+        if (activeAlerts.length === 0) return;
         
         const tasks = [];
         if (groups['binance:futures'].size > 0) tasks.push(this._fetchBinanceRest([...groups['binance:futures']], 'futures'));
@@ -399,7 +410,7 @@ class PriceManager {
         this.subscribers.get(key).push(callback);
         const parts = key.split(':');
         if (parts.length === 3 && parts[1] === 'bybit') {
-            this.subscribeBybitSymbol(parts[0], parts[2]);
+            this.subscribeBybitSymbol(parts[0], parts[2]); // Здесь уже вызовется _ensureBybitConnected
         }
         const cached = this.prices.get(key);
         if (cached) {
@@ -491,13 +502,22 @@ class PriceManager {
         }
         this._pendingUpdates.clear();
         
-        // 🚀 Используем безопасное закрытие для всех ключей
-        const keys = Object.keys(this.connections);
-        for (const key of keys) {
-            this._safeCloseConnection(key);
+        for (const key in this.pingIntervals) {
+            this._stopPing(key);
         }
         
-        this.subscribers.clear(); 
+        for (const ws of Object.values(this.connections)) { 
+            if (ws) {
+                ws.onclose = null; 
+                ws.onerror = null;
+                try { ws.close(1000); } catch(e) {} 
+            }
+        }
+        
+        for (const timer of this.reconnectTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.reconnectTimers.clear();
     }
 }
 
