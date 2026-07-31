@@ -211,14 +211,15 @@ class TimeframeManager {
     }
 
     // ==================== ПЕРЕКЛЮЧЕНИЕ (с отменой) ====================
-  async switchToTimeframe(tf) {
+ async switchToTimeframe(tf) {
     if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
 
-    // Отменяем предыдущую загрузку
-    if (this._abortController) this._abortController.abort();
-    this._abortController = new AbortController();
-    
-    console.log('Переключение на таймфрейм:', tf);
+    // Отменяем предыдущий запрос
+    if (this.chartManager._currentFetchController) {
+        this.chartManager._currentFetchController.abort();
+    }
+
+    console.log('🔄 Переключение на таймфрейм:', tf);
     
     document.querySelectorAll('.timeframe-item').forEach(i => {
         i.classList.toggle('active', i.dataset.tf === tf);
@@ -234,7 +235,7 @@ class TimeframeManager {
     try {
         if (this.wsManager) this.wsManager.disconnect?.();
 
-        // Вызываем БЕЗ signal (5 аргументов как в оригинале)
+        // ✅ Вот тут правильно — chartManager.fetchKlines
         const candles = await this.chartManager.fetchKlines(
             this.chartManager.currentSymbol,
             this.chartManager.currentExchange,
@@ -242,6 +243,11 @@ class TimeframeManager {
             tf,
             1000
         );
+
+        if (this.currentInterval !== tf) {
+            console.log('⏭️ Таймфрейм уже другой, пропускаем');
+            return;
+        }
 
         if (candles?.length > 0) {
             this.chartManager.setDataQuick(
@@ -269,8 +275,11 @@ class TimeframeManager {
         window.textManager?.syncWithNewTimeframe();
 
     } catch (error) {
-        if (error.name === 'AbortError') return;
-        console.error('Ошибка при переключении:', error);
+        if (error.name === 'AbortError') {
+            console.log('🛑 Переключение отменено');
+            return;
+        }
+        console.error('❌ Ошибка при переключении:', error);
         
         this.currentInterval = previousInterval;
         this.chartManager.setCurrentInterval(previousInterval);
