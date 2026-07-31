@@ -358,17 +358,18 @@ class TickerPanel {
         ticker.change = newChange;
         ticker._lastUpdateTime = Date.now();
 
-        // 🚀 ПАКЕТНОЕ ОБНОВЛЕНИЕ DOM: Копим изменения и применяем за 1 раз
+        // ПАКЕТНОЕ ОБНОВЛЕНИЕ DOM
         if (!this._blockDOMUpdates && this.renderer) {
-            if (!this._pendingPriceUpdates) 
+            if (!this._pendingPriceUpdates) this._pendingPriceUpdates = new Map(); // <--- ИСПРАВЛЕНО
+            
             this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: ticker.change });
             
             if (!this._priceUpdateRaf) {
                 this._priceUpdateRaf = requestAnimationFrame(() => {
+                    this._priceUpdateRaf = null; // <--- ИСПРАВЛЕНО (сброс флага)
                     const batch = this._pendingPriceUpdates;
-                    this._pendingPriceUpdates = new Map(); // Создаем новую для следующих обновлений
+                    this._pendingPriceUpdates = new Map(); 
                 
-                    
                     for (const [key, val] of batch.entries()) {
                         this.renderer.updatePriceForSymbol(key, val.price, val.change);
                     }
@@ -631,6 +632,7 @@ class TickerPanel {
         }
         this.filterCache = null; 
         this.formatCache = { prices: new Map(), volumes: new Map(), changes: new Map() };
+if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш рендерера
         
         if (this.watchlistManager) {
             const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
@@ -769,10 +771,7 @@ class TickerPanel {
         this.tickerElements.clear();
         this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
         
-        addedKeys.forEach(key => {
-            const [sym, ex, mt] = key.split(':');
-            this.fetchInitialDataForSymbol(sym, ex, mt);
-        });
+        
         
         if (this._restDebounceTimer) clearTimeout(this._restDebounceTimer);
         this._restDebounceTimer = setTimeout(() => { 
@@ -897,7 +896,7 @@ class TickerPanel {
                 ticker.change = parseFloat(d.price24hPcnt) * 100; 
                 ticker.volume = parseFloat(d.turnover24h) || parseFloat(d.volume24h) * parseFloat(d.lastPrice);
             }
-            if (!this._blockDOMUpdates) this.renderer.updatePriceElements(); 
+          
         } catch (error) { 
             console.warn(`⚠️ Не удалось загрузить ${symbol}:`, error); 
         }
@@ -998,12 +997,7 @@ class TickerPanel {
             console.error('❌ Ошибка переключения символа:', error);
         }
         
-        const pairDisplay = document.getElementById('pairDisplay');
-        if (pairDisplay) pairDisplay.textContent = nextTicker.symbol;
-        const exchangeDisplay = document.getElementById('exchangeDisplay');
-        if (exchangeDisplay) exchangeDisplay.textContent = nextTicker.exchange === 'binance' ? 'Binance' : 'Bybit';
-        const contractTypeDisplay = document.getElementById('contractTypeDisplay');
-        if (contractTypeDisplay) contractTypeDisplay.textContent = nextTicker.marketType === 'futures' ? 'PERP' : 'SPOT';
+     
     } else if (wasCurrentSymbol) {
         this.state.currentSymbol = '';
         this.state.currentExchange = 'binance';
@@ -1046,7 +1040,7 @@ class TickerPanel {
         }
     }
 
-    handleTickerClick(e) {
+       handleTickerClick(e) {
         const star = e.target.closest('.star');
         if (star) { e.preventDefault(); e.stopPropagation(); this.handleStarClick(star); return; }
         const flag = e.target.closest('.flag');
@@ -1072,12 +1066,8 @@ class TickerPanel {
                 if (this.coordinator?.chartManager) this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
             } catch (error) { console.error('❌ Ошибка переключения символа:', error); }
             
-            const pairDisplay = document.getElementById('pairDisplay');
-            if (pairDisplay) pairDisplay.textContent = symbol;
-            const exchangeDisplay = document.getElementById('exchangeDisplay');
-            if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
-            const contractTypeDisplay = document.getElementById('contractTypeDisplay');
-            if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+            // 🚀 ИСПРАВЛЕНО: Обновляем шапку графика через единый центральный метод, а не вручную
+            if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
         }
     }
 
@@ -1087,9 +1077,15 @@ class TickerPanel {
         const index = this.state.favorites.indexOf(symbol);
         if (index === -1) this.state.favorites.push(symbol); 
         else this.state.favorites.splice(index, 1);
+        
         this.filterCache = null; 
         this.saveState(); 
         star.classList.toggle('favorite', index === -1);
+        
+        // 🚀 ИСПРАВЛЕНО: Перерисовываем список, если мы находимся на вкладке Избранного
+        if (this.state.activeTab === 'favorites') {
+            this._scheduleRender();
+        }
     }
 
     handleContextMenu(e) {
@@ -1149,7 +1145,8 @@ class TickerPanel {
             this.watchlistManager.listOrder.forEach(listId => { 
                 const list = this.watchlistManager.lists.get(listId); 
                 if (list) { 
-                    html += `<div class="context-menu-item" data-action="add-wl" data-list-id="${listId}" data-symbol="${symbol}" data-exchange="${exchange}" data-market-type="${marketType}">${listId === this.watchlistManager.activeListId ? '⭐' : '📋'} ${this.watchlistManager.escapeHtml(list.name)} <span style="margin-left:auto;color:#666;font-size:11px">${list.symbols.length}</span></div>`; 
+                    // 🛡️ ИСПРАВЛЕНО: Используем this._escapeHtml вместо потенциально отсутствующего метода watchlistManager
+                    html += `<div class="context-menu-item" data-action="add-wl" data-list-id="${listId}" data-symbol="${symbol}" data-exchange="${exchange}" data-market-type="${marketType}">${listId === this.watchlistManager.activeListId ? '⭐' : '📋'} ${this._escapeHtml(list.name)} <span style="margin-left:auto;color:#666;font-size:11px">${list.symbols.length}</span></div>`; 
                 } 
             }); 
         }
@@ -1220,6 +1217,11 @@ class TickerPanel {
         }
         this.filterCache = null; 
         this.saveState();
+        
+        // 🚀 ИСПРАВЛЕНО: Если мы на вкладке флагов, перерисовываем, чтобы строка пропала
+        if (this.state.activeTab === 'flags') {
+            this._scheduleRender();
+        }
     }
 
     focusOnSymbol(symbol, exchange, marketType) {
@@ -1236,23 +1238,21 @@ class TickerPanel {
             if (index !== -1) {
                 const container = document.getElementById('tickerListContainer');
                 container.scrollTop = Math.max(0, index * (this.renderer.rowHeight || 36) - container.clientHeight / 2);
+                
+                // Скролл сам триггерит рендер, оставляем только установку класса
                 setTimeout(() => {
-                    this.renderer.renderVisibleTickers();
                     const el = document.querySelector(`.ticker-item[data-symbol="${symbol}"][data-exchange="${exchange}"][data-market-type="${marketType}"]`);
                     if (el) el.classList.add('active');
-                }, 100);
+                }, 50); 
             }
         }
         try {
             if (this.coordinator?.chartManager) this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
         } catch (error) { console.error('❌ Ошибка переключения символа:', error); }
         
-        const pairDisplay = document.getElementById('pairDisplay');
-        if (pairDisplay) pairDisplay.textContent = symbol;
-        const exchangeDisplay = document.getElementById('exchangeDisplay');
-        if (exchangeDisplay) exchangeDisplay.textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
-        const contractTypeDisplay = document.getElementById('contractTypeDisplay');
-        if (contractTypeDisplay) contractTypeDisplay.textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
+        // 🚀 ИСПРАВЛЕНО: Обновление шапки через единый метод
+        if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
+        
         document.getElementById('addInstrumentModal').classList.remove('show');
     }
 
@@ -1286,6 +1286,11 @@ class TickerPanel {
         this.filterCache = null; 
         this.saveState(); 
         contextMenu.style.display = 'none';
+        
+        // 🚀 ИСПРАВЛЕНО: Если на вкладке флагов - добавляем перерисовку
+        if (this.state.activeTab === 'flags') {
+            this._scheduleRender();
+        }
     }
 
     closeContextMenu() {
