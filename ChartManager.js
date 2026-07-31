@@ -103,20 +103,24 @@ class ChartManager {
         this._pendingDrawingsRedraw = false;
 
         // ============ VISIBILITY HANDLER ============
-        this._visibilityHandler = () => {
-            if (!document.hidden) {
-                if (window.wsManager) {
-                    window.wsManager.ensureConnected?.();
-                }
-                const price = this.getCurrentPrice();
-                if (price != null) {
-                    this._syncPriceLine(price);
-                }
-                this.scheduleDrawingsUpdate(true);
-                this.requestDrawingsRedraw();
-                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            }
-        };
+       this._visibilityHandler = () => {
+    if (!document.hidden) {
+        // Вернулись на вкладку — переподключаемся
+        if (window.wsManager) {
+            window.wsManager.ensureConnected?.();
+        }
+        const price = this.getCurrentPrice();
+        if (price != null) {
+            this._syncPriceLine(price);
+        }
+        this.scheduleDrawingsUpdate(true);
+        this.requestDrawingsRedraw();
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+    } else {
+        // Ушли с вкладки — запускаем фоновый интервал для тайтла
+        this._startBackgroundTitleUpdate();
+    }
+};
         document.addEventListener('visibilitychange', this._visibilityHandler);
        
         // ============ ХЕНДЛЕРЫ ============
@@ -350,8 +354,31 @@ class ChartManager {
     _addToTimeMap(time, index) {
         this._candleTimeMap.set(time, index);
     }
-
+_startBackgroundTitleUpdate() {
+    // Убиваем старый интервал, если был
+    if (this._bgTitleInterval) {
+        clearInterval(this._bgTitleInterval);
+        this._bgTitleInterval = null;
+    }
+    
+    // Запускаем новый — раз в секунду
+    this._bgTitleInterval = setInterval(() => {
+        if (document.hidden && this.currentRealPrice != null) {
+            this._updatePageTitle();
+        }
+        // Если вкладка активна — останавливаем интервал
+        if (!document.hidden && this._bgTitleInterval) {
+            clearInterval(this._bgTitleInterval);
+            this._bgTitleInterval = null;
+        }
+    }, 1000);
+}
     destroy() {
+if (this._bgTitleInterval) {
+    clearInterval(this._bgTitleInterval);
+    this._bgTitleInterval = null;
+}
+
         this._abortAllProcesses();
         
         if (window._dailySeparator && typeof window._dailySeparator.destroy === 'function') {
@@ -721,10 +748,11 @@ class ChartManager {
                     if (prim.isEnabled) prim.requestRedraw();
                 }
                 
-                if (!document.hidden) {
-                    this.scheduleUpdatePosition();
-                    this._updatePageTitle();
-                }
+                // Заголовок обновляем всегда, даже в фоне
+this._updatePageTitle();
+if (!document.hidden) {
+    this.scheduleUpdatePosition();
+}
                 this.requestDrawingsRedraw();
             });
         }
@@ -1516,6 +1544,8 @@ class ChartManager {
         };
 
         this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+        // Запускаем фоновое обновление заголовка
+this._startBackgroundTitleUpdate();
     }
 
     setSymbol(symbol) {
@@ -1688,101 +1718,109 @@ class ChartManager {
         }
     }
 
-    async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null) {
-        if (this._fetchPromise) {
-            try { await this._fetchPromise; } catch(e) {}
-        }
-        if (this._currentFetchController) {
-            this._currentFetchController.abort();
-        }
-        this._currentFetchController = new AbortController();
+   async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null) {
+    // ❌ УДАЛЯЕМ ЭТО НАХУЙ:
+    // if (this._fetchPromise) {
+    //     try { await this._fetchPromise; } catch(e) {}
+    // }
+    
+    // ✅ СРАЗУ ОТМЕНЯЕМ ПРЕДЫДУЩИЙ
+    if (this._currentFetchController) {
+        this._currentFetchController.abort();
+    }
+    this._currentFetchController = new AbortController();
+    const signal = this._currentFetchController.signal; // сохраняем signal
 
-        const bybitIntervalMap = { 
-            '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', 
-            '1h': '60', '4h': '240', '6h': '360', '12h': '720', 
-            '1d': 'D', '1w': 'W', '1M': 'M' 
-        };
+    const bybitIntervalMap = { 
+        '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', 
+        '1h': '60', '4h': '240', '6h': '360', '12h': '720', 
+        '1d': 'D', '1w': 'W', '1M': 'M' 
+    };
 
-        let url;
-        if (exchange === 'binance') {
-            url = marketType === 'futures'
-                ? `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-                : `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-            if (endTime) url += `&endTime=${endTime}`;
-        } else {
-            const bybitInt = bybitIntervalMap[interval] || interval;
-            const cat = marketType === 'futures' ? 'linear' : 'spot';
-            url = `https://api.bybit.com/v5/market/kline?category=${cat}&symbol=${symbol}&interval=${bybitInt}&limit=${limit}`;
-            if (endTime) url += `&end=${endTime}`;
-        }
-
-        this._fetchPromise = (async () => {
-            try {
-                const response = await fetch(url, { signal: this._currentFetchController.signal });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json();
-
-                let rawCandles;
-                if (exchange === 'binance') {
-                    if (!Array.isArray(data)) {
-                        throw new Error('Binance: ожидался массив, получен ' + typeof data);
-                    }
-                    rawCandles = data.map(item => ({
-                        time: Math.floor(item[0] / 1000),
-                        open: parseFloat(item[1]),
-                        high: parseFloat(item[2]),
-                        low: parseFloat(item[3]),
-                        close: parseFloat(item[4]),
-                        volume: parseFloat(item[5]),
-                        quoteVolume: parseFloat(item[7])
-                    }));
-                } else {
-                    if (data.retCode !== 0) {
-                        throw new Error(`Bybit error: ${data.retCode} - ${data.retMsg}`);
-                    }
-                    if (!data.result || !data.result.list) {
-                        throw new Error('Bybit: неожиданный формат ответа');
-                    }
-                    rawCandles = data.result.list
-                        .map(item => ({
-                            time: Math.floor(parseInt(item[0]) / 1000),
-                            open: parseFloat(item[1]),
-                            high: parseFloat(item[2]),
-                            low: parseFloat(item[3]),
-                            close: parseFloat(item[4]),
-                            volume: parseFloat(item[5] || 0),
-                            quoteVolume: parseFloat(item[6] || 0)
-                        }))
-                        .filter(c => c.time > 0 && !isNaN(c.open))
-                        .reverse();
-                }
-                
-                const seenTimes = new Set();
-                const noDupes = rawCandles.filter(c => {
-                    if (seenTimes.has(c.time)) return false;
-                    seenTimes.add(c.time);
-                    return true;
-                });
-                const validCandles = noDupes.filter(c => this._isValidCandle(c));
-                validCandles.sort((a, b) => a.time - b.time);
-                
-                return validCandles;
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    console.log('🛑 fetchKlines прерван');
-                } else {
-                    console.error('❌ Ошибка fetchKlines:', error);
-                }
-                return [];
-            } finally {
-                this._currentFetchController = null;
-                this._fetchPromise = null;
-            }
-        })();
-
-        return this._fetchPromise;
+    let url;
+    if (exchange === 'binance') {
+        url = marketType === 'futures'
+            ? `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+            : `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+        if (endTime) url += `&endTime=${endTime}`;
+    } else {
+        const bybitInt = bybitIntervalMap[interval] || interval;
+        const cat = marketType === 'futures' ? 'linear' : 'spot';
+        url = `https://api.bybit.com/v5/market/kline?category=${cat}&symbol=${symbol}&interval=${bybitInt}&limit=${limit}`;
+        if (endTime) url += `&end=${endTime}`;
     }
 
+    // ✅ ПРОСТО ДЕЛАЕМ ЗАПРОС, БЕЗ _fetchPromise
+    try {
+        const response = await fetch(url, { signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        let rawCandles;
+        if (exchange === 'binance') {
+            if (!Array.isArray(data)) {
+                throw new Error('Binance: ожидался массив, получен ' + typeof data);
+            }
+            rawCandles = data.map(item => ({
+                time: Math.floor(item[0] / 1000),
+                open: parseFloat(item[1]),
+                high: parseFloat(item[2]),
+                low: parseFloat(item[3]),
+                close: parseFloat(item[4]),
+                volume: parseFloat(item[5]),
+                quoteVolume: parseFloat(item[7])
+            }));
+        } else {
+            if (data.retCode !== 0) {
+                throw new Error(`Bybit error: ${data.retCode} - ${data.retMsg}`);
+            }
+            if (!data.result || !data.result.list) {
+                throw new Error('Bybit: неожиданный формат ответа');
+            }
+            rawCandles = data.result.list
+                .map(item => ({
+                    time: Math.floor(parseInt(item[0]) / 1000),
+                    open: parseFloat(item[1]),
+                    high: parseFloat(item[2]),
+                    low: parseFloat(item[3]),
+                    close: parseFloat(item[4]),
+                    volume: parseFloat(item[5] || 0),
+                    quoteVolume: parseFloat(item[6] || 0)
+                }))
+                .filter(c => c.time > 0 && !isNaN(c.open))
+                .reverse();
+        }
+        
+        // Проверяем, не отменили ли пока парсили
+        if (signal.aborted) {
+            return [];
+        }
+        
+        const seenTimes = new Set();
+        const noDupes = rawCandles.filter(c => {
+            if (seenTimes.has(c.time)) return false;
+            seenTimes.add(c.time);
+            return true;
+        });
+        const validCandles = noDupes.filter(c => this._isValidCandle(c));
+        validCandles.sort((a, b) => a.time - b.time);
+        
+        return validCandles;
+        
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log('🛑 fetchKlines прерван');
+        } else {
+            console.error('❌ Ошибка fetchKlines:', error);
+        }
+        return [];
+    } finally {
+        // Сбрасываем контроллер ТОЛЬКО если он наш
+        if (this._currentFetchController?.signal === signal) {
+            this._currentFetchController = null;
+        }
+    }
+}
     _updatePageTitle() {
         const symbol = this.currentSymbol || '';
         let price = this.currentRealPrice;
@@ -1857,7 +1895,10 @@ class ChartManager {
             clearInterval(this._pingInterval);
             this._pingInterval = null;
         }
-
+if (this._bgTitleInterval) {
+    clearInterval(this._bgTitleInterval);
+    this._bgTitleInterval = null;
+}
         if (this.priceManager && this._priceUpdateHandler) {
             this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
             this._priceUpdateHandler = null;
