@@ -71,7 +71,10 @@ class WebSocketManager {
             "        scheduleReconnect(d);",
             "    };",
             "",
-            "    ws.onerror = function() {};",
+            "    ws.onerror = function(e) {",
+            // ✅ ИСПРАВЛЕНИЕ: Не глушим ошибку полностью, чтобы видеть реальные проблемы сети
+            "        console.warn('[WS Worker] Connection error:', e);",
+            "    };",
             "}",
             "",
             "self.onmessage = function(e) {",
@@ -81,12 +84,17 @@ class WebSocketManager {
             "        currentUrl = m.url;",
             "        reconnectAttempts = 0;",
             "        if (ws) {",
-            "            try { ws.onclose = null; ws.close(1000); } catch(e) {}",
+            "            try {",
+            // ✅ ИСПРАВЛЕНИЕ: Проверяем статус перед закрытием, чтобы избежать ошибки "closed before established"
+            "                if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {",
+            "                    ws.onclose = null; // Отключаем старый обработчик, чтобы не сработал ложный реконнект",
+            "                    ws.close(1000, 'Switching streams');",
+            "                }",
+            "            } catch(e) {}",
             "            ws = null;",
-            "            setTimeout(function() { createSocket(currentUrl); }, 150);",
-            "        } else {",
-            "            createSocket(currentUrl);",
             "        }",
+            // ✅ ИСПРАВЛЕНИЕ: Уменьшили задержку до 50мс для более плавного переключения без гонок
+            "        setTimeout(function() { createSocket(currentUrl); }, 50);",
             "    } else if (m.type === 'send') {",
             "        if (ws && ws.readyState === WebSocket.OPEN) ws.send(m.data);",
             "    } else if (m.type === 'close') {",
@@ -206,45 +214,48 @@ class WebSocketManager {
         return exchange === 'bybit' ? symbol.trim().toUpperCase() : symbol.trim().toLowerCase();
     }
 
-   connect(symbol, interval, exchange, marketType) {
-    symbol = (symbol || this.currentSymbol).trim();
-    exchange = exchange || this.currentExchange;
-    marketType = marketType || this.currentMarketType;
-    interval = (interval || this.currentInterval).trim().toLowerCase();
-    
-    if (exchange === 'binance' && marketType === 'futures' && this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
-        marketType = 'spot';
-    }
-    
-    this.currentSymbol = symbol;
-    this.currentInterval = interval;
-    this.currentExchange = exchange;
-    this.currentMarketType = marketType;
-    this.retryCount = 0;
-    
-    if (this.reconnectTimer) {
-        clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-    }
-    
-    const fs = this.formatSymbol(symbol, exchange);
-    let wsUrl;
-    if (exchange === 'binance') {
-        wsUrl = (marketType === 'spot' ? 'wss://data-stream.binance.com/stream' : 'wss://fstream.binance.com/stream') +
-                '?streams=' + fs + '@kline_' + interval + '/' + fs + '@trade';
-    } else {
-        wsUrl = 'wss://stream.bybit.com/v5/public/' + (marketType === 'spot' ? 'spot' : 'linear');
-    }
-    
-    if (!this.worker) this._initWorker();
-    
-    // Задержка перед подключением WebSocket,
-    // чтобы setDataQuick успел отрисовать исторические свечи
-    setTimeout(() => {
-        this.worker.postMessage({ type: 'connect', url: wsUrl });
-    }, 200);
-}
+      connect(symbol, interval, exchange, marketType) {
+        symbol = (symbol || this.currentSymbol).trim();
+        exchange = exchange || this.currentExchange;
+        marketType = marketType || this.currentMarketType;
+        interval = (interval || this.currentInterval).trim().toLowerCase();
+        
+        if (exchange === 'binance' && marketType === 'futures' && this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
+            marketType = 'spot';
+        }
+        
+        this.currentSymbol = symbol;
+        this.currentInterval = interval;
+        this.currentExchange = exchange;
+        this.currentMarketType = marketType;
+        this.retryCount = 0;
+        
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
 
+        // ✅ ИСПРАВЛЕНИЕ: Debounce (защита от частых вызовов)
+        // Если метод вызывается несколько раз подряд за 100мс, выполнится только последний
+        if (this._connectDebounceTimer) {
+            clearTimeout(this._connectDebounceTimer);
+        }
+        
+        const fs = this.formatSymbol(symbol, exchange);
+        let wsUrl;
+        if (exchange === 'binance') {
+            wsUrl = (marketType === 'spot' ? 'wss://data-stream.binance.com/stream' : 'wss://fstream.binance.com/stream') +
+                    '?streams=' + fs + '@kline_' + interval + '/' + fs + '@trade';
+        } else {
+            wsUrl = 'wss://stream.bybit.com/v5/public/' + (marketType === 'spot' ? 'spot' : 'linear');
+        }
+        
+        if (!this.worker) this._initWorker();
+        
+        this._connectDebounceTimer = setTimeout(() => {
+            this.worker.postMessage({ type: 'connect', url: wsUrl });
+        }, 100); // 100мс достаточно, чтобы график отрисовался, но пользователь не заметит задержки
+    }
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         this.connect(symbol, interval, exchange, marketType);
     }
