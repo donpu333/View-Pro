@@ -3147,10 +3147,8 @@ class TrendLineManager {
         this._selectedLine = line;
     }
 }
-              
-class RulerLine {
+ class RulerLine {
     constructor(point1, point2, chartManager, options = {}) {
-        // FIX: substr заменен на substring
         this.id = `ruler_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         this.point1 = point1 || { price: 0, time: 0 };
         this.point2 = point2 || { price: 0, time: 0 };
@@ -3159,8 +3157,11 @@ class RulerLine {
         this.anchorTime1 = point1?.time || 0;
         this.anchorTime2 = point2?.time || 0;
         
-        this.options = {
-            color: options.color || (this._isBullish() ? '#00bcd4' : '#f23645'),
+               this.options = {
+            color: options.color || (this._isBullish() 
+                ? (this.chartManager?.bullishColor || '#00bcd4') 
+                : (this.chartManager?.bearishColor || '#f23645')
+            ),
             lineWidth: options.lineWidth || 1,
             lineStyle: options.lineStyle || 'solid',
             opacity: options.opacity !== undefined ? options.opacity : 0.25,
@@ -3222,176 +3223,248 @@ class RulerLineRenderer {
         this._hitAreaInfo = null;
     }
 
-   draw(target) {
-    // Сброс hit-областей
-    this._hitAreaLine = null;
-    this._hitAreaPoint1 = null;
-    this._hitAreaPoint2 = null;
-    this._hitAreaInfo = null;
-
-    const currentKey = this._chartManager.getCurrentSymbolKey?.();
-    if (currentKey && this._ruler.symbolKey !== currentKey) return;
-
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const ruler = this._ruler;
+    // ✅ НОВЫЙ МЕТОД: получение координаты времени даже за пределами графика
+    _extendedTimeToCoordinate(time) {
         const chartManager = this._chartManager;
+        const standardCoord = chartManager.timeToCoordinate(time);
+        if (standardCoord !== null) return standardCoord;
+        
+        const chartData = chartManager.chartData;
+        if (!chartData || chartData.length === 0) return null;
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        
+        const firstCoord = chartManager.timeToCoordinate(firstTime);
+        const lastCoord = chartManager.timeToCoordinate(lastTime);
+        
+        if (firstCoord === null || lastCoord === null) return null;
+        
+        const barInterval = chartData[1]?.time - chartData[0]?.time || 60;
+        const barWidth = (lastCoord - firstCoord) / (chartData.length - 1);
+        
+        if (time < firstTime) {
+            const barsBefore = Math.round((firstTime - time) / barInterval);
+            return firstCoord - barsBefore * barWidth;
+        } else {
+            const barsAfter = Math.round((time - lastTime) / barInterval);
+            return lastCoord + barsAfter * barWidth;
+        }
+    }
 
-        const currentTf = chartManager.currentInterval;
-        if (!ruler.isVisibleOnTimeframe(currentTf)) return;
+    // ✅ НОВЫЙ МЕТОД: получение координаты цены даже за пределами графика
+    _extendedPriceToCoordinate(price) {
+        const chartManager = this._chartManager;
+        const standardCoord = chartManager.priceToCoordinate(price);
+        if (standardCoord !== null) return standardCoord;
+        
+        // Получаем видимый диапазон цен
+        const priceScale = chartManager.priceScale;
+        if (!priceScale) return null;
+        
+        try {
+            // Пробуем получить границы видимой области
+            const visibleRange = priceScale.visibleRange();
+            if (visibleRange) {
+                const topPrice = visibleRange.to;
+                const bottomPrice = visibleRange.from;
+                
+                // Получаем координаты границ
+                const topCoord = chartManager.priceToCoordinate(topPrice);
+                const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
+                
+                if (topCoord !== null && bottomCoord !== null) {
+                    const priceRange = topPrice - bottomPrice;
+                    const coordRange = bottomCoord - topCoord;
+                    const pricePerPixel = priceRange / coordRange;
+                    
+                    if (price > topPrice) {
+                        const pixelsAbove = (price - topPrice) / pricePerPixel;
+                        return topCoord - pixelsAbove;
+                    } else {
+                        const pixelsBelow = (bottomPrice - price) / pricePerPixel;
+                        return bottomCoord + pixelsBelow;
+                    }
+                }
+            }
+        } catch(e) {}
+        
+        return null;
+    }
 
-        const point1X = chartManager.timeToCoordinate(ruler.point1.time);
-        const point1Y = chartManager.priceToCoordinate(ruler.point1.price);
-        const point2X = chartManager.timeToCoordinate(ruler.point2.time);
-        const point2Y = chartManager.priceToCoordinate(ruler.point2.price);
+    draw(target) {
+        this._hitAreaLine = null;
+        this._hitAreaPoint1 = null;
+        this._hitAreaPoint2 = null;
+        this._hitAreaInfo = null;
 
-        if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
+        const currentKey = this._chartManager.getCurrentSymbolKey?.();
+        if (currentKey && this._ruler.symbolKey !== currentKey) return;
 
-        const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
-        const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
-        const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
-        const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const ruler = this._ruler;
+            const chartManager = this._chartManager;
 
-        this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
-        this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
-        this._hitAreaLine = {
-            x1, y1: y1 + y1Length/2,
-            x2, y2: y2 + y2Length/2,
-            height: y1Length
-        };
+            const currentTf = chartManager.currentInterval;
+            if (!ruler.isVisibleOnTimeframe(currentTf)) return;
 
-        ctx.save();
+            // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЕ МЕТОДЫ
+            const point1X = this._extendedTimeToCoordinate(ruler.point1.time);
+            const point1Y = this._extendedPriceToCoordinate(ruler.point1.price);
+            const point2X = this._extendedTimeToCoordinate(ruler.point2.time);
+            const point2Y = this._extendedPriceToCoordinate(ruler.point2.price);
 
-        const leftX = Math.min(x1, x2);
-        const rightX = Math.max(x1, x2);
-        const topY = Math.min(y1, y2) - y1Length/2;
-        const bottomY = Math.max(y1, y2) + y1Length/2;
-        const width = rightX - leftX;
-        const height = bottomY - topY;
+            if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
 
-        if (width > 0 && height > 0) {
-            const fillColor = ruler.fillColor;
-            const opacity = ruler.options.fillOpacity !== undefined ? ruler.options.fillOpacity : 0.25;
+            const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
+            const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+            const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
+            const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
 
-            const parseHex = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? {
-                    r: parseInt(result[1], 16),
-                    g: parseInt(result[2], 16),
-                    b: parseInt(result[3], 16)
-                } : null;
+            this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
+            this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
+            this._hitAreaLine = {
+                x1, y1: y1 + y1Length/2,
+                x2, y2: y2 + y2Length/2,
+                height: y1Length
             };
-            const parseRgb = (rgb) => {
-                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
-                return result ? {
-                    r: parseInt(result[1], 10),
-                    g: parseInt(result[2], 10),
-                    b: parseInt(result[3], 10)
-                } : null;
-            };
-            let rgbaFill;
-            let parsed = parseHex(fillColor) || parseRgb(fillColor);
-            if (parsed) {
-                rgbaFill = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
-            } else {
-                rgbaFill = fillColor;
+
+            ctx.save();
+
+            const leftX = Math.min(x1, x2);
+            const rightX = Math.max(x1, x2);
+            const topY = Math.min(y1, y2) - y1Length/2;
+            const bottomY = Math.max(y1, y2) + y1Length/2;
+            const width = rightX - leftX;
+            const height = bottomY - topY;
+
+            // Рисуем заливку прямоугольника
+            if (width > 0 && height > 0) {
+                const fillColor = ruler.fillColor;
+                const opacity = ruler.options.fillOpacity !== undefined ? ruler.options.fillOpacity : 0.25;
+
+                const parseHex = (hex) => {
+                    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                    return result ? {
+                        r: parseInt(result[1], 16),
+                        g: parseInt(result[2], 16),
+                        b: parseInt(result[3], 16)
+                    } : null;
+                };
+                const parseRgb = (rgb) => {
+                    const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+                    return result ? {
+                        r: parseInt(result[1], 10),
+                        g: parseInt(result[2], 10),
+                        b: parseInt(result[3], 10)
+                    } : null;
+                };
+                let rgbaFill;
+                let parsed = parseHex(fillColor) || parseRgb(fillColor);
+                if (parsed) {
+                    rgbaFill = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+                } else {
+                    rgbaFill = fillColor;
+                }
+
+                ctx.fillStyle = rgbaFill;
+                ctx.fillRect(leftX, topY, width, height);
+                ctx.strokeStyle = fillColor;
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.setLineDash([]);
+                ctx.strokeRect(leftX, topY, width, height);
             }
 
-            ctx.fillStyle = rgbaFill;
-            ctx.fillRect(leftX, topY, width, height);
-            ctx.strokeStyle = fillColor;
-            ctx.lineWidth = 1 * scope.horizontalPixelRatio;
-            ctx.setLineDash([]);
-            ctx.strokeRect(leftX, topY, width, height);
-        }
-
-        ctx.strokeStyle = ruler.fillColor;
-        ctx.lineWidth = y1Length;
-        ctx.setLineDash([5, 3]);
-        ctx.beginPath();
-        ctx.moveTo(x1, y1 + y1Length/2);
-        ctx.lineTo(x2, y2 + y2Length/2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        if (ruler.showDragPoint1 || ruler.showDragPoint2) {
-            ctx.shadowColor = 'rgba(0,0,0,0.5)';
-            ctx.shadowBlur = 4;
-
-            ctx.fillStyle = '#FFFFFF';
+            // Рисуем пунктирную линию
+            ctx.strokeStyle = ruler.fillColor;
+            ctx.lineWidth = y1Length;
+            ctx.setLineDash([5, 3]);
             ctx.beginPath();
-            ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-            ctx.fill();
-            ctx.fillStyle = ruler.fillColor;
-            ctx.beginPath();
-            ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-            ctx.fill();
-
-            ctx.fillStyle = '#FFFFFF';
-            ctx.beginPath();
-            ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-            ctx.fill();
-            ctx.fillStyle = ruler.fillColor;
-            ctx.beginPath();
-            ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-            ctx.fill();
-
-            ctx.shadowBlur = 0;
-        }
-
-        // Информационная панель
-        const pixelRatio = window.devicePixelRatio || 1;
-        const scale = Math.min(pixelRatio, 2);
-        const infoY = topY - 5 * scope.verticalPixelRatio * scale;
-        if (infoY > 10) {
-            const priceChange = ruler.point2.price - ruler.point1.price;
-            const percentChange = (priceChange / ruler.point1.price) * 100;
-            const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
-            const timeStr = Utils.formatTime(timeDiffSec);
-            const sign = priceChange >= 0 ? '+' : '';
-            const percentStr = `${sign}${percentChange.toFixed(2)}%`;
-            const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
-
-            const baseFontSize = 12;
-            const fontSize = baseFontSize * scale;
-            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-            const textWidth = ctx.measureText(infoText).width;
-            
-            const paddingX = 10 * scope.horizontalPixelRatio * scale;
-            const paddingY = 6 * scope.verticalPixelRatio * scale;
-            const labelWidth = textWidth + paddingX * 2;
-            const labelHeight = (fontSize + 10 * scale) * scope.verticalPixelRatio;
-            
-            const labelX = leftX + width/2 - labelWidth/2;
-            const labelY = infoY - labelHeight;
-
-            this._hitAreaInfo = {
-                x: labelX, y: labelY,
-                width: labelWidth, height: labelHeight
-            };
-
-            ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
-            ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-            ctx.beginPath();
-            this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
-            ctx.fill();
-            
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-            ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+            ctx.moveTo(x1, y1 + y1Length/2);
+            ctx.lineTo(x2, y2 + y2Length/2);
             ctx.stroke();
+            ctx.setLineDash([]);
 
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
-        }
+            // Рисуем точки перетаскивания
+            if (ruler.showDragPoint1 || ruler.showDragPoint2) {
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
 
-        ctx.restore();
-    });
-}
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = ruler.fillColor;
+                ctx.beginPath();
+                ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = ruler.fillColor;
+                ctx.beginPath();
+                ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+            }
+
+            // Информационная панель
+            const pixelRatio = window.devicePixelRatio || 1;
+            const scale = Math.min(pixelRatio, 2);
+            const infoY = topY - 5 * scope.verticalPixelRatio * scale;
+            if (infoY > 10) {
+                const priceChange = ruler.point2.price - ruler.point1.price;
+                const percentChange = (priceChange / ruler.point1.price) * 100;
+                const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
+                const timeStr = Utils.formatTime(timeDiffSec);
+                const sign = priceChange >= 0 ? '+' : '';
+                const percentStr = `${sign}${percentChange.toFixed(2)}%`;
+                const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
+
+                const baseFontSize = 12;
+                const fontSize = baseFontSize * scale;
+                ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+                const textWidth = ctx.measureText(infoText).width;
+                
+                const paddingX = 10 * scope.horizontalPixelRatio * scale;
+                const paddingY = 6 * scope.verticalPixelRatio * scale;
+                const labelWidth = textWidth + paddingX * 2;
+                const labelHeight = (fontSize + 10 * scale) * scope.verticalPixelRatio;
+                
+                const labelX = leftX + width/2 - labelWidth/2;
+                const labelY = infoY - labelHeight;
+
+                this._hitAreaInfo = {
+                    x: labelX, y: labelY,
+                    width: labelWidth, height: labelHeight
+                };
+
+                ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
+                ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+                ctx.beginPath();
+                this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
+                ctx.fill();
+                
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.stroke();
+
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(infoText, labelX + labelWidth/2, labelY + labelHeight/2);
+            }
+
+            ctx.restore();
+        });
+    }
 
     _roundRect(ctx, x, y, w, h, r) {
         if (w < 2 * r) r = w / 2;
@@ -3407,12 +3480,10 @@ class RulerLineRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ hitTest - возвращает distance, выбирает ближайшую зону
     hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
 
-        // Point 1
         if (this._hitAreaPoint1) {
             const dx = x - this._hitAreaPoint1.x;
             const dy = y - this._hitAreaPoint1.y;
@@ -3423,7 +3494,6 @@ class RulerLineRenderer {
             }
         }
 
-        // Point 2
         if (this._hitAreaPoint2) {
             const dx = x - this._hitAreaPoint2.x;
             const dy = y - this._hitAreaPoint2.y;
@@ -3434,7 +3504,6 @@ class RulerLineRenderer {
             }
         }
 
-        // Line (расстояние до отрезка)
         if (this._hitAreaLine) {
             const buffer = 10;
             const x1 = this._hitAreaLine.x1;
@@ -3467,7 +3536,6 @@ class RulerLineRenderer {
             }
         }
 
-        // Info label
         if (this._hitAreaInfo) {
             const inX = x >= this._hitAreaInfo.x && x <= this._hitAreaInfo.x + this._hitAreaInfo.width;
             const inY = y >= this._hitAreaInfo.y && y <= this._hitAreaInfo.y + this._hitAreaInfo.height;
@@ -3498,6 +3566,71 @@ class TempRulerPointPrimitive {
         this._requestUpdate = null;
     }
 
+    // ✅ Добавляем расширенные методы для временной точки
+    _extendedTimeToCoordinate(time) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.timeToCoordinate(time);
+        if (standardCoord !== null) return standardCoord;
+        
+        const chartData = chartManager.chartData;
+        if (!chartData || chartData.length === 0) return null;
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        
+        const firstCoord = chartManager.timeToCoordinate(firstTime);
+        const lastCoord = chartManager.timeToCoordinate(lastTime);
+        
+        if (firstCoord === null || lastCoord === null) return null;
+        
+        const barInterval = chartData[1]?.time - chartData[0]?.time || 60;
+        const barWidth = (lastCoord - firstCoord) / (chartData.length - 1);
+        
+        if (time < firstTime) {
+            const barsBefore = Math.round((firstTime - time) / barInterval);
+            return firstCoord - barsBefore * barWidth;
+        } else {
+            const barsAfter = Math.round((time - lastTime) / barInterval);
+            return lastCoord + barsAfter * barWidth;
+        }
+    }
+
+    _extendedPriceToCoordinate(price) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.priceToCoordinate(price);
+        if (standardCoord !== null) return standardCoord;
+        
+        const priceScale = chartManager.priceScale;
+        if (!priceScale) return null;
+        
+        try {
+            const visibleRange = priceScale.visibleRange();
+            if (visibleRange) {
+                const topPrice = visibleRange.to;
+                const bottomPrice = visibleRange.from;
+                
+                const topCoord = chartManager.priceToCoordinate(topPrice);
+                const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
+                
+                if (topCoord !== null && bottomCoord !== null) {
+                    const priceRange = topPrice - bottomPrice;
+                    const coordRange = bottomCoord - topCoord;
+                    const pricePerPixel = priceRange / coordRange;
+                    
+                    if (price > topPrice) {
+                        const pixelsAbove = (price - topPrice) / pricePerPixel;
+                        return topCoord - pixelsAbove;
+                    } else {
+                        const pixelsBelow = (bottomPrice - price) / pricePerPixel;
+                        return bottomCoord + pixelsBelow;
+                    }
+                }
+            }
+        } catch(e) {}
+        
+        return null;
+    }
+
     paneViews() {
         if (!this._manager || !this._manager._tempPoint) return [];
         
@@ -3512,8 +3645,9 @@ class TempRulerPointPrimitive {
                         
                         if (!point) return;
                         
-                        const xCoord = chartManager.timeToCoordinate(point.time);
-                        const yCoord = chartManager.priceToCoordinate(point.price);
+                        // ✅ Используем расширенные методы
+                        const xCoord = this._extendedTimeToCoordinate(point.time);
+                        const yCoord = this._extendedPriceToCoordinate(point.price);
                         
                         if (xCoord === null || yCoord === null) return;
                         
@@ -3561,6 +3695,71 @@ class TempRulerLinePrimitive {
         this._requestUpdate = null;
     }
 
+    // ✅ Добавляем расширенные методы для временной линии
+    _extendedTimeToCoordinate(time) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.timeToCoordinate(time);
+        if (standardCoord !== null) return standardCoord;
+        
+        const chartData = chartManager.chartData;
+        if (!chartData || chartData.length === 0) return null;
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        
+        const firstCoord = chartManager.timeToCoordinate(firstTime);
+        const lastCoord = chartManager.timeToCoordinate(lastTime);
+        
+        if (firstCoord === null || lastCoord === null) return null;
+        
+        const barInterval = chartData[1]?.time - chartData[0]?.time || 60;
+        const barWidth = (lastCoord - firstCoord) / (chartData.length - 1);
+        
+        if (time < firstTime) {
+            const barsBefore = Math.round((firstTime - time) / barInterval);
+            return firstCoord - barsBefore * barWidth;
+        } else {
+            const barsAfter = Math.round((time - lastTime) / barInterval);
+            return lastCoord + barsAfter * barWidth;
+        }
+    }
+
+    _extendedPriceToCoordinate(price) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.priceToCoordinate(price);
+        if (standardCoord !== null) return standardCoord;
+        
+        const priceScale = chartManager.priceScale;
+        if (!priceScale) return null;
+        
+        try {
+            const visibleRange = priceScale.visibleRange();
+            if (visibleRange) {
+                const topPrice = visibleRange.to;
+                const bottomPrice = visibleRange.from;
+                
+                const topCoord = chartManager.priceToCoordinate(topPrice);
+                const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
+                
+                if (topCoord !== null && bottomCoord !== null) {
+                    const priceRange = topPrice - bottomPrice;
+                    const coordRange = bottomCoord - topCoord;
+                    const pricePerPixel = priceRange / coordRange;
+                    
+                    if (price > topPrice) {
+                        const pixelsAbove = (price - topPrice) / pricePerPixel;
+                        return topCoord - pixelsAbove;
+                    } else {
+                        const pixelsBelow = (bottomPrice - price) / pricePerPixel;
+                        return bottomCoord + pixelsBelow;
+                    }
+                }
+            }
+        } catch(e) {}
+        
+        return null;
+    }
+
     paneViews() {
         if (!this._manager || !this._manager._tempLine) return [];
         
@@ -3575,10 +3774,11 @@ class TempRulerLinePrimitive {
                         
                         if (!tempLine || !tempLine.point1 || !tempLine.point2) return;
                         
-                        const point1X = chartManager.timeToCoordinate(tempLine.point1.time);
-                        const point1Y = chartManager.priceToCoordinate(tempLine.point1.price);
-                        const point2X = chartManager.timeToCoordinate(tempLine.point2.time);
-                        const point2Y = chartManager.priceToCoordinate(tempLine.point2.price);
+                        // ✅ Используем расширенные методы
+                        const point1X = this._extendedTimeToCoordinate(tempLine.point1.time);
+                        const point1Y = this._extendedPriceToCoordinate(tempLine.point1.price);
+                        const point2X = this._extendedTimeToCoordinate(tempLine.point2.time);
+                        const point2Y = this._extendedPriceToCoordinate(tempLine.point2.price);
                         
                         if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
                         
@@ -3588,8 +3788,11 @@ class TempRulerLinePrimitive {
                         const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, 2, false);
                         
                         ctx.save();
-                        const isBullish = point2Y <= point1Y;
-                        const lineColor = isBullish ? '#00bcd4' : '#f23645';
+                      // ✅ СТАЛО (динамические цвета из настроек графика)
+const isBullish = point2Y <= point1Y;
+const bullishColor = chartManager?.bullishColor || '#00bcd4';
+const bearishColor = chartManager?.bearishColor || '#f23645';
+const lineColor = isBullish ? bullishColor : bearishColor;
                         ctx.strokeStyle = lineColor;
                         ctx.lineWidth = y1Length;
                         ctx.setLineDash([5, 3]);
@@ -3667,7 +3870,6 @@ class RulerLinePrimitive {
         }
     }
 
-    // FIX: Бинарный поиск вместо цикла для высокой производительности
     _syncPointsTime() {
         const chartData = this._chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
@@ -3744,15 +3946,13 @@ class RulerLineManager {
         this._handleMouseLeave = this._handleMouseLeave.bind(this);
         this._handleContextMenu = this._handleContextMenu.bind(this);
     
-    
         this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
         window.addEventListener('mouseup', this._handleGlobalMouseUp);
         this._setupEventListeners();
         this._setupHotkeys();
-               // ✅ Регистрируем в координаторе
+        
         window.drawingLoaderCoordinator.register(this, 'ruler');
         
-        // ✅ Единая задержка 150ms
         setTimeout(async () => {
             try {
                 if (!window.dbReady) {
@@ -3764,7 +3964,6 @@ class RulerLineManager {
         this._isLoading = false;
     }
 
-    // Универсальный метод перевода координат
     _toBitmapCoords(cssX, cssY) {
         return {
             x: cssX * this._pixelRatio,
@@ -3787,21 +3986,19 @@ class RulerLineManager {
             this._lastMouseY = y;
         });
     }
-_setupHotkeys() {
-    document.addEventListener('keydown', (e) => {
-        const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-        
-        // ... обработка Y ...
-        
-        // ✅ Удаляем только если есть активная точка перетаскивания
-        if (e.key === 'Delete' && this._selectedRuler && (this._selectedRuler.showDragPoint1 || this._selectedRuler.showDragPoint2)) {
-            e.preventDefault();
-            this.deleteRuler(this._selectedRuler.id);
-            this._selectedRuler = null;
-        }
-    });
-}
+
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            
+            if (e.key === 'Delete' && this._selectedRuler && (this._selectedRuler.showDragPoint1 || this._selectedRuler.showDragPoint2)) {
+                e.preventDefault();
+                this.deleteRuler(this._selectedRuler.id);
+                this._selectedRuler = null;
+            }
+        });
+    }
 
     _getCurrentSymbolKey() {
         const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
@@ -3843,9 +4040,8 @@ _setupHotkeys() {
         }
     }
 
-    // ✅ ЗАГЛУШКА: магнит отключён
     setMagnetEnabled(enabled) {
-        // ничего не делаем
+        // Магнит отключён
     }
 
     createRuler(point1, point2, options = {}) {
@@ -4120,10 +4316,12 @@ _setupHotkeys() {
         }
         this._potentialDrag = null;
     }
+
     _handleGlobalMouseUp(e) {
         if (!this._isDragging) return;
         this._handleMouseUp(e); 
     }
+
     _handleMouseLeave() {
         if (this._hoveredRuler) {
             this._hoveredRuler.hovered = false;
@@ -4173,9 +4371,6 @@ _setupHotkeys() {
         }
     }
 
-   
-
-
     _startDrawing(x, y) {
         let price = this._chartManager.coordinateToPrice(y);
         let time = this._chartManager.coordinateToTime(x);
@@ -4188,7 +4383,6 @@ _setupHotkeys() {
             } else return;
         }
         
-        // Магнит отключён – привязка к свечам не используется
         this._drawingStartPoint = { price, time, x, y, anchorCandle: null };
         this._isDrawingSecondPoint = true;
         this._tempPoint = { price, time, x, y };
@@ -4215,7 +4409,6 @@ _setupHotkeys() {
             } else return;
         }
         
-        // Магнит отключён – привязка к свечам не используется
         const startTime = this._drawingStartPoint.time; 
         const endTime = time;
         let point1, point2;
@@ -4247,83 +4440,78 @@ _setupHotkeys() {
         this.setDrawingMode(false);
     }
 
-   _showSettings(ruler) {
-    const panel = document.getElementById('rulerSettingsPanel');
-    if (!panel) return;
+    _showSettings(ruler) {
+        const panel = document.getElementById('rulerSettingsPanel');
+        if (!panel) return;
 
-    // ✅ Устанавливаем выбранную линейку
-    this._selectedRuler = ruler;
+        this._selectedRuler = ruler;
 
-    const opacitySlider = document.getElementById('rulerFillOpacity');
-    const opacityValue = document.getElementById('rulerFillOpacityValue');
+        const opacitySlider = document.getElementById('rulerFillOpacity');
+        const opacityValue = document.getElementById('rulerFillOpacityValue');
 
-    if (opacitySlider && opacityValue) {
-        opacitySlider.value = Math.round((ruler.options.fillOpacity || 0.25) * 100);
-        opacityValue.textContent = opacitySlider.value + '%';
-    }
-
-    // === Кнопки закрытия, сохранения и удаления (без cloneNode!) ===
-    const closeBtn = panel.querySelector('.close-settings');
-    if (closeBtn) {
-        closeBtn.onclick = null;
-        closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
-    }
-
-    const saveBtn = document.getElementById('rulerSaveSettings');
-    if (saveBtn) {
-        saveBtn.onclick = null;
-        saveBtn.addEventListener('click', () => {
-            if (opacitySlider) {
-                ruler.updateOptions({ fillOpacity: parseInt(opacitySlider.value) / 100 });
-                this._requestRedraw();
-                this._saveRulers();
-            }
-            panel.style.display = 'none';
-        });
-    }
-
-    const deleteBtn = document.getElementById('rulerDeleteFromSettings');
-    if (deleteBtn) {
-        deleteBtn.onclick = null;
-        deleteBtn.addEventListener('click', () => {
-            this.deleteRuler(ruler.id);
-            panel.style.display = 'none';
-        });
-    }
-
-    // Показываем панель
-    panel.style.display = 'block';
-    panel.style.left = '50%';
-    panel.style.top = '50%';
-    panel.style.transform = 'translate(-50%, -50%)';
-
-    // Закрытие по клику вне панели
-    const closeOnOutsideClick = (e) => {
-        if (!panel.contains(e.target) && panel.style.display === 'block') {
-            panel.style.display = 'none';
-            document.removeEventListener('mousedown', closeOnOutsideClick);
-        }
-    };
-    setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
-
-    // ========== МГНОВЕННОЕ ИЗМЕНЕНИЕ ПРОЗРАЧНОСТИ (однократно) ==========
-    if (!panel.dataset.instantBound) {
-        panel.dataset.instantBound = 'true';
-
-        opacitySlider.addEventListener('input', () => {
-            const val = parseInt(opacitySlider.value) / 100;
+        if (opacitySlider && opacityValue) {
+            opacitySlider.value = Math.round((ruler.options.fillOpacity || 0.25) * 100);
             opacityValue.textContent = opacitySlider.value + '%';
-            if (this._selectedRuler) {
-                this._selectedRuler.options.fillOpacity = val;
-                if (this._selectedRuler.primitive?.requestRedraw) {
-                    this._selectedRuler.primitive.requestRedraw();
+        }
+
+        const closeBtn = panel.querySelector('.close-settings');
+        if (closeBtn) {
+            closeBtn.onclick = null;
+            closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
+        }
+
+        const saveBtn = document.getElementById('rulerSaveSettings');
+        if (saveBtn) {
+            saveBtn.onclick = null;
+            saveBtn.addEventListener('click', () => {
+                if (opacitySlider) {
+                    ruler.updateOptions({ fillOpacity: parseInt(opacitySlider.value) / 100 });
+                    this._requestRedraw();
+                    this._saveRulers();
                 }
-                this._requestRedraw();
-                this._saveRulers();
+                panel.style.display = 'none';
+            });
+        }
+
+        const deleteBtn = document.getElementById('rulerDeleteFromSettings');
+        if (deleteBtn) {
+            deleteBtn.onclick = null;
+            deleteBtn.addEventListener('click', () => {
+                this.deleteRuler(ruler.id);
+                panel.style.display = 'none';
+            });
+        }
+
+        panel.style.display = 'block';
+        panel.style.left = '50%';
+        panel.style.top = '50%';
+        panel.style.transform = 'translate(-50%, -50%)';
+
+        const closeOnOutsideClick = (e) => {
+            if (!panel.contains(e.target) && panel.style.display === 'block') {
+                panel.style.display = 'none';
+                document.removeEventListener('mousedown', closeOnOutsideClick);
             }
-        });
+        };
+        setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
+
+        if (!panel.dataset.instantBound) {
+            panel.dataset.instantBound = 'true';
+
+            opacitySlider.addEventListener('input', () => {
+                const val = parseInt(opacitySlider.value) / 100;
+                opacityValue.textContent = opacitySlider.value + '%';
+                if (this._selectedRuler) {
+                    this._selectedRuler.options.fillOpacity = val;
+                    if (this._selectedRuler.primitive?.requestRedraw) {
+                        this._selectedRuler.primitive.requestRedraw();
+                    }
+                    this._requestRedraw();
+                    this._saveRulers();
+                }
+            });
+        }
     }
-}
 
     _requestRedraw() {
         this._rulers.forEach(item => { if (item.primitive?.requestRedraw) item.primitive.requestRedraw(); });
@@ -4350,11 +4538,12 @@ _setupHotkeys() {
         await Promise.all(promises);
     }
 
-       async loadRulers() {
+    async loadRulers() {
         const currentKey = this._getCurrentSymbolKey();
         await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
     }
-       async loadFromData(symbolKey, rulerRecords) {
+
+    async loadFromData(symbolKey, rulerRecords) {
         if (this._getCurrentSymbolKey() !== symbolKey) return;
 
         try {
@@ -4364,7 +4553,6 @@ _setupHotkeys() {
 
             if (!series) return;
 
-            // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
             const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
             const defaultVisibility = {};
             ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
@@ -4377,7 +4565,6 @@ _setupHotkeys() {
             
             const newRecordIds = new Set(rulerRecords.map(r => r.id));
             
-            // ✅ Удаляем только те, которых больше нет в БД
             const toDetach = this._rulers.filter(item => 
                 item.ruler.symbolKey === symbolKey && !newRecordIds.has(item.ruler.id)
             );
@@ -4400,20 +4587,14 @@ _setupHotkeys() {
                     const existing = this._rulers.find(item => item.ruler.id === rec.id);
                     
                     if (existing) {
-                        // Обновляем данные существующего
                         existing.ruler.point1 = rec.data.point1;
                         existing.ruler.point2 = rec.data.point2;
                         existing.ruler.options = { ...existing.ruler.options, ...rec.data.options };
-                        
-                        // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
                         existing.ruler.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
-                        
-                        // ✅ Восстанавливаем якоря
                         existing.ruler.anchorTime1 = rec.data.anchorTime1;
                         existing.ruler.anchorTime2 = rec.data.anchorTime2;
                         existing.ruler.anchorCandle1 = rec.data.anchorCandle1;
                         existing.ruler.anchorCandle2 = rec.data.anchorCandle2;
-                        
                         continue;
                     }
 
@@ -4423,10 +4604,7 @@ _setupHotkeys() {
                     ruler.symbol = rec.data.symbol;
                     ruler.exchange = rec.data.exchange;
                     ruler.marketType = rec.data.marketType;
-                    
-                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
                     ruler.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
-                    
                     ruler.anchorCandle1 = rec.data.anchorCandle1;
                     ruler.anchorCandle2 = rec.data.anchorCandle2;
                     ruler.anchorTime1 = rec.data.anchorTime1;
@@ -4448,17 +4626,19 @@ _setupHotkeys() {
             throw error;
         }
     }
-_detachAllPrimitivesForSymbol(symbolKey) {
-    const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
-    for (const item of itemsForSymbol) {
-        if (item.primitive && item.series) {
-            try { 
-                item.series.detachPrimitive(item.primitive); 
-            } catch(e) {}
+
+    _detachAllPrimitivesForSymbol(symbolKey) {
+        const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
+        for (const item of itemsForSymbol) {
+            if (item.primitive && item.series) {
+                try { 
+                    item.series.detachPrimitive(item.primitive); 
+                } catch(e) {}
+            }
         }
+        this._rulers = this._rulers.filter(item => item.ruler.symbolKey !== symbolKey);
     }
-    this._rulers = this._rulers.filter(item => item.ruler.symbolKey !== symbolKey);
-}
+
     syncWithNewTimeframe() {}
 
     deactivateAll() {
