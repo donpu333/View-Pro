@@ -46,19 +46,16 @@ class TimerRenderer {
 
             let yCoord = null;
             
-            // Пытаемся получить координату через API графика (LWC v4+)
-            if (this._timerManager._primitive?._chart) {
+            // 🛡️ ИСПРАВЛЕНИЕ ДЕСИНХРОНА: Используем ТОЛЬКО серию, к которой привязан примитив.
+            // Запрос через chart.priceScale() дает погрешность из-за внутренних отступов графика.
+            const primitiveSeries = this._timerManager._primitive?._series;
+            if (primitiveSeries) {
                 try {
-                    const coordinate = this._timerManager._primitive._chart.priceScale().priceToCoordinate(price);
-                    if (coordinate != null && !isNaN(coordinate)) yCoord = coordinate;
+                    const coordinate = primitiveSeries.priceToCoordinate(price);
+                    if (coordinate != null && !isNaN(coordinate)) {
+                        yCoord = coordinate;
+                    }
                 } catch(e) {}
-            }
-            
-            // Fallback для старых версий (через серию)
-            if (yCoord == null) {
-                const activeSeries = chartManager.currentChartType === 'candle' 
-                    ? chartManager.candleSeries : chartManager.barSeries;
-                if (activeSeries) yCoord = activeSeries.priceToCoordinate(price);
             }
             
             if (yCoord == null || isNaN(yCoord)) return;
@@ -78,7 +75,7 @@ class TimerRenderer {
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // 🧹 УПРОЩЕНА ЛОГИКА ЦВЕТА: Рендерер больше не пытается анализировать свечи сам
+            // Упрощенная логика цвета
             let bgColor = this._cachedColor;
 
             if (this._colorDirty || !bgColor) {
@@ -103,7 +100,6 @@ class TimerRenderer {
             if (!bgColor) bgColor = '#26a69a';
 
             ctx.save();
-            // Предполагается, что цвет всегда в HEX формате
             ctx.fillStyle = bgColor + 'DD'; 
             ctx.shadowColor = 'rgba(0,0,0,0.3)';
             ctx.shadowBlur = 3 * hpr;
@@ -156,12 +152,13 @@ class TimerPrimitive {
         this._chart = chart;
         this._series = series;
         this._requestUpdate = requestUpdate;
-        this._paneView._renderer.invalidateColor(); // Сброс цвета при привязке
+        this._paneView._renderer.invalidateColor();
         if (this._chartManager?.chartData?.length > 0) this._dataReady = true;
     }
 
     detached() { 
         this._dataReady = false;
+        this._series = null; // 🛡️ Очищаем серию, чтобы рендерер не использовал старые координаты
     }
     
     updateAllViews() {}
@@ -211,7 +208,7 @@ class TimerManager {
         this._colorChangeHandler = null;
         this._initialized = false;
         
-        // 🛡️ ЗАЩИТА ОТ УТЕЧКИ: Сохраняем функцию отписки от изменений данных
+        // Защита от утечки памяти
         this._dataChangedUnsubscribe = null; 
 
         chartManager.timerManager = this;
@@ -227,9 +224,8 @@ class TimerManager {
         this._initialized = true;
     }
     
-    // 🛡️ ВЫНЕСЕНА ОБЩАЯ ЛОГИКА ПРИКРЕПЛЕНИЯ С ОТПИСКОЙ
     _attachToSeries(series) {
-        this._detachPrimitive(); // Сначала безопасно отпишем старое
+        this._detachPrimitive(); // Безопасно отпишем старое
         
         if (!series) return;
 
@@ -238,7 +234,7 @@ class TimerManager {
             series.attachPrimitive(this._primitive);
             this._primitive.setEnabled(false);
 
-            // 🛡️ СОХРАНЯЕМ ОТПИСКУ!
+            // Сохраняем функцию отписки!
             this._dataChangedUnsubscribe = series.subscribeDataChanged(() => {
                 if (this._primitive && this._chartManager.chartData?.length > 0) {
                     if (!this._primitive.isDataReady()) {
@@ -262,7 +258,7 @@ class TimerManager {
     }
 
     _detachPrimitive() {
-        // 🛡️ ВАЖНО: Вызываем сохраненную функцию отписки ПЕРЕД удалением примитива
+        // ВАЖНО: Вызываем отписку ПЕРЕД удалением примитива
         if (this._dataChangedUnsubscribe) {
             this._dataChangedUnsubscribe();
             this._dataChangedUnsubscribe = null;
@@ -350,7 +346,6 @@ class TimerManager {
 
         this.stop();
         
-        // Если сменился ТФ, просто сбрасываем состояние, а не пересоздаем объекты
         if (tfChanged) {
             if (this._primitive) {
                 this._primitive.invalidateColor();
@@ -375,7 +370,6 @@ class TimerManager {
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
 
-        // Рисуем ТОЛЬКО если изменился текст
         if (this._timerElement.textContent !== txt) {
             this._timerElement.textContent = txt;
             if (this._primitive?.isEnabled()) {
@@ -384,7 +378,6 @@ class TimerManager {
         }
     }
 
-    // Вызывается извне, если тип графика сменился (например, свечи на бары)
     reattach() {
         if (this._disabled || !this._initialized) return;
         const series = this._chartManager.currentChartType === 'candle'
