@@ -14,12 +14,82 @@ class TickerRenderer {
         this._escapeDiv = document.createElement('div');
 
         this._lastUpdateTime = 0;
-        this._updateInterval = 66; 
+        this._updateInterval = 66;
 
         this.SCROLL_BUFFER = 10;
         this._formatCache = new Map();
 
+        // Сохраняем последнюю известную позицию скролла
+        this._lastKnownScrollTop = 0;
+        // Флаг для восстановления скролла
+        this._pendingScrollRestore = false;
+        // Флаг для прокрутки к активному тикеру
+        this._pendingScrollToActive = false;
+
+        // Отслеживаем видимость вкладки браузера
+        this._boundHandleVisibility = this._handleVisibilityChange.bind(this);
+        document.addEventListener('visibilitychange', this._boundHandleVisibility);
+
+        // Наблюдатель за изменением размеров контейнера
+        this._resizeObserver = null;
+        this._containerCheckTimer = null;
+        this._setupResizeObserver();
+
         this._injectFlashCSS();
+    }
+
+    // Обработчик видимости вкладки браузера
+    _handleVisibilityChange() {
+        if (!document.hidden) {
+            setTimeout(() => {
+                this.renderTickerList();
+                this.handleTabVisible();
+            }, 150);
+        }
+    }
+
+    // Настройка ResizeObserver для отслеживания показа/скрытия контейнера
+    _setupResizeObserver() {
+        if (this._containerCheckTimer) {
+            clearTimeout(this._containerCheckTimer);
+            this._containerCheckTimer = null;
+        }
+
+        const container = document.getElementById('tickerListContainer');
+        
+        if (!container) {
+            this._containerCheckTimer = setTimeout(() => {
+                this._containerCheckTimer = null;
+                this._setupResizeObserver();
+            }, 500);
+            return;
+        }
+
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+        }
+
+        let wasHidden = container.offsetHeight === 0 || getComputedStyle(container).display === 'none';
+
+        this._resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const isHidden = entry.contentRect.height === 0 || 
+                               entry.contentRect.width === 0 ||
+                               getComputedStyle(entry.target).display === 'none';
+
+                if (!isHidden && wasHidden) {
+                    wasHidden = false;
+                    setTimeout(() => {
+                        this.renderTickerList();
+                        this.handleTabVisible();
+                    }, 100);
+                } else if (isHidden) {
+                    wasHidden = true;
+                }
+            }
+        });
+
+        this._resizeObserver.observe(container);
     }
 
     _escapeHtml(str) {
@@ -59,6 +129,9 @@ class TickerRenderer {
         const now = performance.now();
         if (now - this._lastUpdateTime < this._updateInterval) return;
         this._lastUpdateTime = now;
+
+        const container = document.getElementById('tickerListContainer');
+        if (container && (container.offsetHeight === 0 || getComputedStyle(container).display === 'none')) return;
 
         if (this._updatePriceRaf) return;
         this._updatePriceRaf = requestAnimationFrame(() => {
@@ -132,7 +205,7 @@ class TickerRenderer {
 
         for (const item of elementsToFlash) {
             item.el.classList.remove('flash-up', 'flash-down');
-            void item.el.offsetWidth; 
+            void item.el.offsetWidth;
             item.el.classList.add(item.flashClass);
         }
 
@@ -150,22 +223,22 @@ class TickerRenderer {
 
         const els = el._cachedEls || {};
         const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
-        
+
         if (els.price) {
             const newPrice = this.formatPrice(price);
             if (els.price.textContent !== newPrice) {
                 els.price.textContent = newPrice;
                 els.price.className = `ticker-price ${colorClass}`;
-                
+
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
                     const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
                     els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth; 
+                    void els.price.offsetWidth;
                     els.price.classList.add(flashClass);
                 }
             }
         }
-        
+
         if (els.change) {
             const newChange = this.formatChange(change) + '%';
             if (els.change.textContent !== newChange) {
@@ -281,6 +354,9 @@ class TickerRenderer {
         const container = document.getElementById('tickerListContainer');
         if (!container) return;
 
+        const currentScroll = container.scrollTop;
+        const savedScrollTop = (currentScroll > 0) ? currentScroll : this._lastKnownScrollTop;
+
         const displayed = this.getFilteredTickers();
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
@@ -316,10 +392,28 @@ class TickerRenderer {
         itemsContainer.style.right = '0';
         container.appendChild(itemsContainer);
 
+        // 🔥 FIX: Устанавливаем lastKnownScrollTop ДО рендера, чтобы renderVisibleTickers 
+        // не перезаписал его в 0 из-за сброса скролла браузером при смене display
+        this._lastKnownScrollTop = savedScrollTop;
+
         this.renderVisibleTickers();
+
+        if (savedScrollTop > 0) {
+            this._pendingScrollRestore = true;
+            requestAnimationFrame(() => {
+                if (container && container.offsetHeight > 0) {
+                    const maxScroll = container.scrollHeight - container.clientHeight;
+                    const safeScroll = Math.min(savedScrollTop, maxScroll);
+                    container.scrollTop = safeScroll;
+                    this._lastKnownScrollTop = safeScroll;
+                }
+                this._pendingScrollRestore = false;
+            });
+        }
 
         let ticking = false;
         this._scrollHandler = () => {
+            this._lastKnownScrollTop = container.scrollTop;
             if (!ticking) {
                 requestAnimationFrame(() => {
                     this.renderVisibleTickers();
@@ -338,7 +432,25 @@ class TickerRenderer {
         const itemsContainer = container.querySelector('.ticker-items-container');
         if (!itemsContainer) return;
 
-        const scrollTop = container.scrollTop;
+        const currentScroll = container.scrollTop;
+        let scrollTop;
+        
+        const isHidden = container.offsetHeight === 0 || getComputedStyle(container).display === 'none';
+        
+        if (isHidden) {
+            scrollTop = this._lastKnownScrollTop;
+        } else {
+            // 🔥 FIX: Если скролл равен 0, но у нас есть сохраненная позиция > 0, 
+            // значит браузер сбросил его. Используем сохраненное значение, чтобы избежать 
+            // рендера с начала списка и последующего "прыжка" (мерцания).
+            if (currentScroll === 0 && this._lastKnownScrollTop > 0) {
+                scrollTop = this._lastKnownScrollTop;
+            } else {
+                scrollTop = currentScroll;
+                this._lastKnownScrollTop = currentScroll;
+            }
+        }
+
         const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight));
         const endIndex = Math.min(startIndex + this.visibleCount + this.SCROLL_BUFFER, this.totalItems);
         if (startIndex >= endIndex) return;
@@ -369,14 +481,14 @@ class TickerRenderer {
                 el.style.right = '0';
                 el.style.width = '100%';
                 el.style.display = '';
-                
+
                 if (!isNewElement) {
                     const isActive = (
                         ticker.symbol === this.parent?.state?.currentSymbol &&
                         ticker.exchange === this.parent?.state?.currentExchange &&
                         ticker.marketType === this.parent?.state?.currentMarketType
                     );
-                    
+
                     if (isActive && !el.classList.contains('active')) {
                         el.classList.add('active');
                     } else if (!isActive && el.classList.contains('active')) {
@@ -429,7 +541,52 @@ class TickerRenderer {
                 el.style.display = 'none';
             }
         }
-    } // <--- ВОТ ЭТА СКОБКА БЫЛА ПОТЕРЯНА
+    }
+
+    scrollToActiveTicker() {
+        const container = document.getElementById('tickerListContainer');
+        if (!container) return;
+        
+        if (container.offsetHeight === 0 || getComputedStyle(container).display === 'none') {
+            this._pendingScrollToActive = true;
+            return;
+        }
+
+        const state = this.parent?.state;
+        if (!state?.currentSymbol) return;
+
+        const idx = this.displayedTickers.findIndex(t =>
+            t.symbol === state.currentSymbol &&
+            t.exchange === state.currentExchange &&
+            t.marketType === state.currentMarketType
+        );
+
+        if (idx < 0) return;
+
+        const targetScroll = idx * this.rowHeight;
+        const maxScroll = container.scrollHeight - container.clientHeight;
+        const safeScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+
+        container.scrollTo({ top: safeScroll, behavior: 'smooth' });
+        this._lastKnownScrollTop = safeScroll;
+    }
+
+    handleTabVisible() {
+        const container = document.getElementById('tickerListContainer');
+        if (!container) return;
+
+        setTimeout(() => {
+            if (container.offsetHeight === 0 || getComputedStyle(container).display === 'none') return;
+
+            if (this._pendingScrollToActive) {
+                this._pendingScrollToActive = false;
+                this.scrollToActiveTicker();
+                return;
+            }
+
+            this.renderVisibleTickers();
+        }, 100);
+    }
 
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
@@ -508,13 +665,13 @@ class TickerRenderer {
         while (end > 0 && str[end - 1] === '0') end--;
         if (end > 0 && str[end - 1] === '.') end--;
         str = str.substring(0, end);
-        
+
         if (!str.includes('.')) str += '.00';
         else {
             const parts = str.split('.');
             if (parts[1].length < 2) str += '0'.repeat(2 - parts[1].length);
         }
-        
+
         this._formatCache.set(key, str);
         if (this._formatCache.size > 5000) this._formatCache.clear();
         return str;
@@ -542,7 +699,7 @@ class TickerRenderer {
         else if (volume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
         else if (volume < 1) result = volume.toFixed(4);
         else result = volume.toFixed(2);
-        
+
         this._formatCache.set(key, result);
         if (this._formatCache.size > 5000) this._formatCache.clear();
         return result;
@@ -558,7 +715,7 @@ class TickerRenderer {
         else if (trades > 1e6) result = (trades / 1e6).toFixed(1) + 'M';
         else if (trades > 1e3) result = (trades / 1e3).toFixed(1) + 'K';
         else result = trades.toString();
-        
+
         this._formatCache.set(key, result);
         if (this._formatCache.size > 5000) this._formatCache.clear();
         return result;
@@ -602,8 +759,8 @@ class TickerRenderer {
             }
 
             document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                icon.className = 'fas fa-sort'; 
-                icon.style.display = '';        
+                icon.className = 'fas fa-sort';
+                icon.style.display = '';
             });
 
             const icon = header.querySelector('i');
@@ -638,11 +795,24 @@ class TickerRenderer {
     }
 
     destroy() {
+        document.removeEventListener('visibilitychange', this._boundHandleVisibility);
+        
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+
+        if (this._containerCheckTimer) {
+            clearTimeout(this._containerCheckTimer);
+            this._containerCheckTimer = null;
+        }
+
         if (this._scrollHandler) {
             const container = document.getElementById('tickerListContainer');
             container?.removeEventListener('scroll', this._scrollHandler);
             this._scrollHandler = null;
         }
+        
         this.tickerElements.clear();
         if (this.parent?._rowDomCache) {
             this.parent._rowDomCache.clear();
