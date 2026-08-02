@@ -18,8 +18,6 @@ class AppCoordinator {
     }
     
     async init() {
-        
-
         this.chartManager = new ChartManager(document.getElementById('chart-container'));
         window.chartManagerInstance = this.chartManager;
         window.chartManager = this.chartManager;
@@ -50,8 +48,6 @@ class AppCoordinator {
                 this.tickerPanel.init().catch(e => console.warn('TickerPanel error:', e));
             }
         }, 300);
-        
-        
     }
 
     _waitForChart() {
@@ -67,19 +63,14 @@ class AppCoordinator {
         });
     }
 
-    // ✅ ИСПРАВЛЕНО: использует switchSymbol
     async loadInitialData() {
         const defaultSymbol = this.chartManager.currentSymbol || 'BTCUSDT';
         const defaultExchange = this.chartManager.currentExchange || 'binance';
         const defaultMarketType = this.chartManager.currentMarketType || 'futures';
         const defaultInterval = localStorage.getItem('lastTimeframe') || '1h';
         
-        
-        
-        // ✅ ОДИН ВЫЗОВ ВМЕСТО fetchKlines + setDataQuick + wsManager.updateSymbol
         await this.chartManager.switchSymbol(defaultSymbol, defaultExchange, defaultMarketType);
         
-        // Обновляем WebSocket и таймер
         if (this.wsManager) {
             this.wsManager.updateSymbolAndTimeframe(defaultSymbol, defaultInterval, defaultExchange);
         }
@@ -88,7 +79,6 @@ class AppCoordinator {
             this.timerManager.start(defaultInterval);
         }
         
-        // Обновляем заголовок
         document.getElementById('pairDisplay').textContent = defaultSymbol;
         document.getElementById('exchangeDisplay').textContent = defaultExchange === 'binance' ? 'Binance' : 'Bybit';
         document.getElementById('contractTypeDisplay').textContent = defaultMarketType === 'futures' ? 'PERP' : 'SPOT';
@@ -129,6 +119,10 @@ class AppCoordinator {
         });
     }
 
+    // ═══════════════════════════════════════════
+    // ИНИЦИАЛИЗАЦИЯ ИНСТРУМЕНТОВ РИСОВАНИЯ
+    // ═══════════════════════════════════════════
+    
     async initDrawingTools() {
         const rayManager = new HorizontalRayManager(this.chartManager);
         window.rayManager = rayManager;
@@ -145,11 +139,16 @@ class AppCoordinator {
         const textManager = new TextManager(this.chartManager);
         window.textManager = textManager;
         
+        // ✅ ТОРГОВЫЙ УРОВЕНЬ
+        const tradeLevelManager = new TradeLevelManager(this.chartManager);
+        window.tradeLevelManager = tradeLevelManager;
+        
         await rayManager.loadRays();
         await trendLineManager.loadTrendLines();
         await rulerLineManager.loadRulers();
         await alertLineManager.loadAlerts();
         await textManager.loadTexts();
+        await tradeLevelManager.loadTrades();
         
         setTimeout(() => {
             rayManager.syncWithNewTimeframe();
@@ -157,12 +156,20 @@ class AppCoordinator {
             rulerLineManager.syncWithNewTimeframe();
             alertLineManager.syncWithNewTimeframe();
             textManager.syncWithNewTimeframe();
+            tradeLevelManager.syncWithNewTimeframe();
         }, 200);
         
         this.setupToolButtons();
     }
 
+    // ═══════════════════════════════════════════
+    // НАСТРОЙКА КНОПОК ИНСТРУМЕНТОВ
+    // ═══════════════════════════════════════════
+    
     setupToolButtons() {
+        // =============================================
+        // 1. ГОРИЗОНТАЛЬНЫЙ ЛУЧ (O)
+        // =============================================
         const rayBtn = document.getElementById('toolHorizontalRay');
         if (rayBtn) {
             rayBtn.onclick = (e) => {
@@ -173,12 +180,16 @@ class AppCoordinator {
                 if (window.alertLineManager) window.alertLineManager.setDrawingMode(false);
                 if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
                 if (window.textManager) window.textManager.setDrawingMode(false);
+                if (window.tradeLevelManager) window.tradeLevelManager.setDrawingMode(false);
                 
                 const newMode = !window.rayManager._isDrawingMode;
                 window.rayManager.setDrawingMode(newMode);
             };
         }
         
+        // =============================================
+        // 2. ТРЕНДОВАЯ ЛИНИЯ (U)
+        // =============================================
         const trendBtn = document.getElementById('toolTrendLine');
         if (trendBtn) {
             trendBtn.onclick = (e) => {
@@ -189,12 +200,16 @@ class AppCoordinator {
                 if (window.alertLineManager) window.alertLineManager.setDrawingMode(false);
                 if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
                 if (window.textManager) window.textManager.setDrawingMode(false);
+                if (window.tradeLevelManager) window.tradeLevelManager.setDrawingMode(false);
                 
                 const newMode = !window.trendLineManager._isDrawingMode;
                 window.trendLineManager.setDrawingMode(newMode);
             };
         }
         
+        // =============================================
+        // 3. АЛЕРТ (i)
+        // =============================================
         const alertBtn = document.getElementById('toolAlert');
         if (alertBtn) {
             alertBtn.onclick = (e) => {
@@ -205,12 +220,16 @@ class AppCoordinator {
                 if (window.trendLineManager) window.trendLineManager.setDrawingMode(false);
                 if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
                 if (window.textManager) window.textManager.setDrawingMode(false);
+                if (window.tradeLevelManager) window.tradeLevelManager.setDrawingMode(false);
                 
                 const newMode = !window.alertLineManager._isDrawingMode;
                 window.alertLineManager.setDrawingMode(newMode);
             };
         }
         
+        // =============================================
+        // 4. ЛИНЕЙКА (Y)
+        // =============================================
         const rulerBtn = document.getElementById('toolRuler');
         if (rulerBtn) {
             rulerBtn.onclick = (e) => {
@@ -221,12 +240,16 @@ class AppCoordinator {
                 if (window.trendLineManager) window.trendLineManager.setDrawingMode(false);
                 if (window.alertLineManager) window.alertLineManager.setDrawingMode(false);
                 if (window.textManager) window.textManager.setDrawingMode(false);
+                if (window.tradeLevelManager) window.tradeLevelManager.setDrawingMode(false);
                 
                 const newMode = !window.rulerLineManager._isDrawingMode;
                 window.rulerLineManager.setDrawingMode(newMode);
             };
         }
         
+        // =============================================
+        // 5. ТЕКСТ (T)
+        // =============================================
         const textBtn = document.getElementById('toolText');
         if (textBtn) {
             textBtn.onclick = (e) => {
@@ -237,12 +260,36 @@ class AppCoordinator {
                 if (window.trendLineManager) window.trendLineManager.setDrawingMode(false);
                 if (window.alertLineManager) window.alertLineManager.setDrawingMode(false);
                 if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
+                if (window.tradeLevelManager) window.tradeLevelManager.setDrawingMode(false);
                 
                 const newMode = !window.textManager._isDrawingMode;
                 window.textManager.setDrawingMode(newMode);
             };
         }
         
+        // =============================================
+        // 6. ТОРГОВЫЙ УРОВЕНЬ (L)
+        // =============================================
+        const tradeBtn = document.getElementById('toolTradeLevel');
+        if (tradeBtn) {
+            tradeBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                if (window.rayManager) window.rayManager.setDrawingMode(false);
+                if (window.trendLineManager) window.trendLineManager.setDrawingMode(false);
+                if (window.alertLineManager) window.alertLineManager.setDrawingMode(false);
+                if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
+                if (window.textManager) window.textManager.setDrawingMode(false);
+                
+                const newMode = !window.tradeLevelManager._isDrawingMode;
+                window.tradeLevelManager.setDrawingMode(newMode);
+            };
+        }
+        
+        // =============================================
+        // 7. МАГНИТ (Z)
+        // =============================================
         const magnetBtn = document.getElementById('toolMagnet');
         if (magnetBtn) {
             magnetBtn.onclick = (e) => {
@@ -256,6 +303,7 @@ class AppCoordinator {
                 if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(newState);
                 if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(newState);
                 if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(newState);
+                if (window.tradeLevelManager) window.tradeLevelManager.setMagnetEnabled(newState);
                 
                 magnetBtn.classList.toggle('magnet-active', newState);
             };
@@ -265,8 +313,12 @@ class AppCoordinator {
             if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(true);
             if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(true);
             if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(true);
+            if (window.tradeLevelManager) window.tradeLevelManager.setMagnetEnabled(true);
         }
 
+        // =============================================
+        // 8. КОРЗИНА (УДАЛИТЬ ВСЁ)
+        // =============================================
         const trashBtn = document.getElementById('toolTrash');
         if (trashBtn) {
             trashBtn.onclick = (e) => {
@@ -278,13 +330,17 @@ class AppCoordinator {
                 if (window.rulerLineManager) window.rulerLineManager.deleteAllRulers();
                 if (window.alertLineManager) window.alertLineManager.deleteAllAlerts();
                 if (window.textManager) window.textManager.deleteAllTexts();
+                if (window.tradeLevelManager) window.tradeLevelManager.deleteAllTrades();
                 
                 if (window.alertLineManager) window.alertLineManager._updateAlertsListUI();
             };
         }
     }
 
-    // ✅ ИСПРАВЛЕНО: теперь делегирует в switchSymbol
+    // ═══════════════════════════════════════════
+    // ЗАГРУЗКА СИМВОЛА
+    // ═══════════════════════════════════════════
+    
     async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
         console.log(`📊 Загрузка символа: ${symbol} (${exchange} ${marketType})`);
         
@@ -297,15 +353,12 @@ class AppCoordinator {
         this._isLoading = true;
         
         try {
-            // ✅ ВСЁ ДЕЛАЕТ ОДИН МЕТОД
             await this.chartManager.switchSymbol(symbol, exchange, marketType);
             
-            // Обновляем WebSocket
             if (this.wsManager) {
                 this.wsManager.updateSymbolAndTimeframe(symbol, this.chartManager.currentInterval, exchange, marketType);
             }
             
-            // Обновляем заголовок
             document.getElementById('pairDisplay').textContent = symbol;
             document.getElementById('exchangeDisplay').textContent = exchange === 'binance' ? 'Binance' : 'Bybit';
             document.getElementById('contractTypeDisplay').textContent = marketType === 'futures' ? 'PERP' : 'SPOT';
@@ -337,6 +390,10 @@ class AppCoordinator {
         }
     }
 
+    // ═══════════════════════════════════════════
+    // СИНХРОНИЗАЦИЯ ВСЕХ РИСОВАЛОК
+    // ═══════════════════════════════════════════
+    
     async syncAllDrawings() {
         await this.chartManager.waitForChartReady?.();
         
@@ -345,17 +402,28 @@ class AppCoordinator {
         if (window.rulerLineManager) await window.rulerLineManager.loadRulers();
         if (window.alertLineManager) await window.alertLineManager.loadAlerts();
         if (window.textManager) await window.textManager.loadTexts();
+        if (window.tradeLevelManager) await window.tradeLevelManager.loadTrades();
     }
 }
+
+// ═══════════════════════════════════════════
+// ЭКСПОРТ
+// ═══════════════════════════════════════════
 
 if (typeof window !== 'undefined') {
     window.AppCoordinator = AppCoordinator;
 }
+
+// ═══════════════════════════════════════════
+// ГЛОБАЛЬНЫЙ ОБРАБОТЧИК КОНТЕКСТНОГО МЕНЮ
+// ═══════════════════════════════════════════
 (function() {
     const container = document.getElementById('chart-container');
     if (!container) return;
 
     container.addEventListener('contextmenu', (e) => {
+        if (e.target.closest('.drawing-context-menu')) return;
+
         const rect = container.getBoundingClientRect();
         const pixelRatio = window.devicePixelRatio || 1;
         const x = (e.clientX - rect.left) * pixelRatio;
@@ -366,7 +434,8 @@ if (typeof window !== 'undefined') {
             window.trendLineManager,
             window.rulerLineManager,
             window.alertLineManager,
-            window.textManager
+            window.textManager,
+            window.tradeLevelManager
         ];
 
         let hitFound = false;
@@ -380,20 +449,26 @@ if (typeof window !== 'undefined') {
             }
         }
 
-        // Если нет ни одного объекта под курсором – скрываем все меню
         if (!hitFound) {
-            const menuIds = ['drawingContextMenu', 'trendContextMenu', 'alertContextMenu', 'rulerContextMenu', 'textContextMenu'];
+            const menuIds = [
+                'drawingContextMenu',
+                'trendContextMenu',
+                'alertContextMenu',
+                'rulerContextMenu',
+                'textContextMenu',
+                'tradeContextMenu'
+            ];
             for (const id of menuIds) {
                 const menu = document.getElementById(id);
                 if (menu) menu.style.display = 'none';
             }
-            // Предотвращаем стандартное контекстное меню браузера
-            e.preventDefault();
-            e.stopPropagation();
         }
-        // Если хит есть – ничего не делаем, пусть менеджер сам показывает своё меню
-    }, true); // Фаза перехвата, чтобы сработать до других обработчиков
+    }, true);
 })();
+
+// ═══════════════════════════════════════════
+// ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДВОЙНОГО КЛИКА
+// ═══════════════════════════════════════════
 (function setupGlobalDblClick() {
     const container = document.getElementById('chart-container');
     if (!container) return;
@@ -415,7 +490,8 @@ if (typeof window !== 'undefined') {
             window.trendLineManager,
             window.rulerLineManager,
             window.alertLineManager,
-            window.textManager
+            window.textManager,
+            window.tradeLevelManager
         ].filter(m => m && typeof m.hitTest === 'function');
         
         let bestHit = null;
@@ -434,7 +510,12 @@ if (typeof window !== 'undefined') {
         }
         
         if (bestHit && bestHit.manager.activateObject) {
-            const obj = bestHit.hit.ray || bestHit.hit.trendLine || bestHit.hit.ruler || bestHit.hit.alert || bestHit.hit.text;
+            const obj = bestHit.hit.ray || 
+                        bestHit.hit.trendLine || 
+                        bestHit.hit.ruler || 
+                        bestHit.hit.alert || 
+                        bestHit.hit.text ||
+                        bestHit.hit.trade;
             if (obj) bestHit.manager.activateObject(obj);
         }
         
