@@ -8384,14 +8384,20 @@ class TradeLevelRenderer {
             ctx.fillText(trade.entryPrice.toFixed(2), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
             ctx.restore();
 
-            // ─── ЛИНИЯ SL ───
-            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `SL ${trade.stopLossPrice.toFixed(2)}`, sl, trade.options.slColor);
+         // ✅ РАСЧЕТ ПРОЦЕНТОВ ДЛЯ ПОДПИСЕЙ НА ГРАФИКЕ
+const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
+const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
+const rewardPercent = riskPercent * trade.riskRewardRatio;
 
-            // ─── ЛИНИЯ TP ───
-            this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `TP ${trade.takeProfitPrice.toFixed(2)} (1:${trade.riskRewardRatio})`, tp, trade.options.tpColor);
+// ─── ЛИНИЯ SL ───
+this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+// ✅ ДОБАВЛЯЕМ ПРОЦЕНТ В ПОДПИСЬ SL
+this._drawLabel(ctx, scope, `SL ${trade.stopLossPrice.toFixed(2)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
 
+// ─── ЛИНИЯ TP ───
+this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+// ✅ ДОБАВЛЯЕМ ПРОЦЕНТ В ПОДПИСЬ TP
+this._drawLabel(ctx, scope, `TP ${trade.takeProfitPrice.toFixed(2)} (1:${trade.riskRewardRatio} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
             // ─── ПЛЕЧИ ───
             if (trade.selected && trade.options.showPlechi) {
                 ctx.save();
@@ -8950,14 +8956,15 @@ class TradeLevelManager {
                 this._selectedTrade = hit.trade;
                 
                 this._potentialDrag = {
-                    trade: hit.trade,
-                    type: hit.type,
-                    startX: x,
-                    startY: y,
-                    startEntry: hit.trade.entryPrice,
-                    startSL: hit.trade.stopLossPrice,
-                    startTP: hit.trade.takeProfitPrice
-                };
+    trade: hit.trade,
+    type: hit.type,
+    startX: x,
+    startY: y,
+    startEntry: hit.trade.entryPrice,
+    startSL: hit.trade.stopLossPrice,
+    startTP: hit.trade.takeProfitPrice,
+    startTime: hit.trade.entryTime // ✅ ДОБАВЬТЕ ЭТУ СТРОКУ
+};
                 this._requestRedraw();
             } else {
                 if (this._selectedTrade) {
@@ -8996,26 +9003,54 @@ class TradeLevelManager {
                 }
             }
 
-            if (this._isDragging && this._dragTrade) {
-                e.preventDefault();
-                e.stopPropagation();
-                const deltaY = (y - this._dragStartY) / this._pixelRatio;
-                const price = this._chartManager.coordinateToPrice(
-                    this._chartManager.priceToCoordinate(this._dragStartPrice) + deltaY
-                );
-                
-                if (price !== null) {
-                    if (this._dragType === 'entry') this._dragTrade.entryPrice = price;
-                    else if (this._dragType === 'sl') this._dragTrade.stopLossPrice = price;
-                    else if (this._dragType === 'tp') {
-                        this._dragTrade.takeProfitPrice = price;
-                        this._dragTrade.manualTP = true; 
-                    }
-                    this._dragTrade.update();
-                    this._requestRedraw();
-                }
-                return;
+          if (this._isDragging && this._dragTrade) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Считаем дельту смещения мыши в CSS-пикселях
+    const deltaCssX = (x - this._potentialDrag.startX) / this._pixelRatio;
+    const deltaCssY = (y - this._potentialDrag.startY) / this._pixelRatio;
+
+    if (this._dragType === 'entry') {
+        // 1. Двигаем цену входа (по оси Y)
+        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startEntry);
+        if (startPriceY !== null) {
+            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+            if (newPrice !== null) this._dragTrade.entryPrice = newPrice;
+        }
+        
+        // 2. Двигаем время входа (по оси X) — перемещение на другую свечу
+        const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
+        if (startTimeX !== null) {
+            const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
+            if (newTime !== null) this._dragTrade.entryTime = newTime;
+        }
+    } 
+    else if (this._dragType === 'sl') {
+        // Стоп-лосс двигаем только по цене (Y)
+        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
+        if (startPriceY !== null) {
+            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+            if (newPrice !== null) this._dragTrade.stopLossPrice = newPrice;
+        }
+    } 
+    else if (this._dragType === 'tp') {
+        // Тейк-профит двигаем только по цене (Y)
+        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
+        if (startPriceY !== null) {
+            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+            if (newPrice !== null) {
+                this._dragTrade.takeProfitPrice = newPrice;
+                this._dragTrade.manualTP = true; // Фиксируем ручной TP
             }
+        }
+    }
+    
+    // Пересчитываем TP (если он не ручной) и обновляем график
+    this._dragTrade.update();
+    this._requestRedraw();
+    return;
+}
 
             const hit = this.hitTest(x, y);
             container.style.cursor = hit ? 'grab' : 'crosshair';
@@ -9213,13 +9248,13 @@ class TradeLevelManager {
             slInput.value = trade.stopLossPrice.toFixed(2);
             rrInput.value = trade.riskRewardRatio;
             this._setDirection(trade.direction);
-            if (createBtn) createBtn.textContent = '💾 Сохранить';
+            if (createBtn) createBtn.textContent = ' Сохранить';
         } else {
             entryInput.value = '';
             slInput.value = '';
             rrInput.value = '2';
             this._setDirection('long');
-            if (createBtn) createBtn.textContent = '✅ Создать';
+            if (createBtn) createBtn.textContent = ' Создать';
         }
 
         panel.onmousedown = (e) => e.stopPropagation();
@@ -9315,31 +9350,41 @@ class TradeLevelManager {
         const longBtn = document.getElementById('tradeDirectionLong');
         const shortBtn = document.getElementById('tradeDirectionShort');
         if (direction === 'long') {
-            if (longBtn) { longBtn.style.background = '#4A90E2'; longBtn.style.borderColor = '#4A90E2'; }
+            if (longBtn) { longBtn.style.background = '#0aa037'; longBtn.style.borderColor = '#0aa037'; }
             if (shortBtn) { shortBtn.style.background = '#2D2D2D'; shortBtn.style.borderColor = '#404040'; }
         } else {
-            if (shortBtn) { shortBtn.style.background = '#4A90E2'; shortBtn.style.borderColor = '#4A90E2'; }
+            if (shortBtn) { shortBtn.style.background = '#ad1010'; shortBtn.style.borderColor = '#ad1010'; }
             if (longBtn) { longBtn.style.background = '#2D2D2D'; longBtn.style.borderColor = '#404040'; }
         }
     }
 
-    _updatePreview() {
-        const entry = parseFloat(document.getElementById('tradeEntryInput').value);
-        const sl = parseFloat(document.getElementById('tradeSLInput').value);
-        const rr = parseInt(document.getElementById('tradeRRInput').value) || 2;
-        const direction = this._selectedDirection || 'long';
-        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
-            document.getElementById('tradePreviewTP').textContent = '—';
-            document.getElementById('tradePreviewRisk').textContent = '—';
-            document.getElementById('tradePreviewReward').textContent = '—';
-            return;
-        }
-        const risk = Math.abs(entry - sl);
-        let tp = direction === 'long' ? entry + (risk * rr) : entry - (risk * rr);
-        document.getElementById('tradePreviewTP').textContent = tp.toFixed(2);
-        document.getElementById('tradePreviewRisk').textContent = risk.toFixed(2);
-        document.getElementById('tradePreviewReward').textContent = (risk * rr).toFixed(2);
+   _updatePreview() {
+    const entry = parseFloat(document.getElementById('tradeEntryInput').value);
+    const sl = parseFloat(document.getElementById('tradeSLInput').value);
+    const rr = parseInt(document.getElementById('tradeRRInput').value) || 2;
+    const direction = this._selectedDirection || 'long';
+
+    if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
+        document.getElementById('tradePreviewTP').textContent = '—';
+        document.getElementById('tradePreviewRisk').textContent = '—';
+        document.getElementById('tradePreviewReward').textContent = '—';
+        return;
     }
+
+    const risk = Math.abs(entry - sl);
+    const reward = risk * rr;
+    let tp = direction === 'long' ? entry + reward : entry - reward;
+
+    // ✅ РАСЧЕТ ПРОЦЕНТОВ ОТ ЦЕНЫ ВХОДА
+    const riskPercent = (risk / entry) * 100;
+    const rewardPercent = (reward / entry) * 100;
+
+    document.getElementById('tradePreviewTP').textContent = tp.toFixed(2);
+    
+    // ✅ ДОБАВЛЯЕМ ПРОЦЕНТЫ РЯДОМ С СУММАМИ
+    document.getElementById('tradePreviewRisk').textContent = `${risk.toFixed(2)} (${riskPercent.toFixed(2)}%)`;
+    document.getElementById('tradePreviewReward').textContent = `${reward.toFixed(2)} (${rewardPercent.toFixed(2)}%)`;
+}
 
     _makeDraggable(panel) {
         if (panel._draggableSetup) return;
