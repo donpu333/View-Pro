@@ -469,16 +469,16 @@ class DrawingLoaderCoordinator {
             }
         }
     }
-
-    _categorizeDrawings(allDrawings) {
-        return {
-            ray: allDrawings.filter(d => d.type === 'ray'),
-            trendline: allDrawings.filter(d => d.type === 'trendline'),
-            ruler: allDrawings.filter(d => d.type === 'ruler'),
-            alert: allDrawings.filter(d => d.type === 'alert'),
-            text: allDrawings.filter(d => d.type === 'text')
-        };
-    }
+_categorizeDrawings(allDrawings) {
+    return {
+        ray: allDrawings.filter(d => d.type === 'ray'),
+        trendline: allDrawings.filter(d => d.type === 'trendline'),
+        ruler: allDrawings.filter(d => d.type === 'ruler'),
+        alert: allDrawings.filter(d => d.type === 'alert'),
+        text: allDrawings.filter(d => d.type === 'text'),
+        tradelevel: allDrawings.filter(d => d.type === 'tradelevel') // ✅ ИСПРАВЛЕНО: теперь тип совпадает с TradeLevelManager
+    };
+}
 
     onSymbolChange(newSymbolKey) {
         if (newSymbolKey && newSymbolKey !== this._currentSymbolKey) {
@@ -8259,8 +8259,1187 @@ hitTest(x, y) {
         this._selectedText = text;
     }
 }
+// ============================================================
+// ТОРГОВЫЙ УРОВЕНЬ (ПОЛНАЯ, ИСПРАВЛЕННАЯ И РАБОЧАЯ ВЕРСИЯ)
+// ============================================================
 
+class TradeLevel {
+    constructor(entryPrice, stopLossPrice, options = {}) {
+        this.entryPrice = entryPrice;
+        this.stopLossPrice = stopLossPrice;
+        this.takeProfitPrice = null;
+        this.direction = options.direction || (stopLossPrice > entryPrice ? 'short' : 'long');
+        this.riskRewardRatio = options.riskRewardRatio || 2;
+        this.manualTP = options.manualTP || false;
+        this.entryTime = options.time || Date.now() / 1000;
+        this.id = `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        this.symbolKey = options.symbolKey || null;
+        this.symbol = options.symbol || null;
+        this.exchange = options.exchange || null;
+        this.marketType = options.marketType || null;
+        
+        this.options = {
+            slColor: options.slColor || '#f23645',
+            tpColor: options.tpColor || '#00ff88',
+            lineWidth: options.lineWidth || 1,
+            showLabels: options.showLabels !== undefined ? options.showLabels : true,
+            showPlechi: options.showPlechi !== undefined ? options.showPlechi : true,
+        };
+        
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+        this.timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        
+        this.selected = false;
+        this.hovered = false;
+        this.dragging = false;
+        this.showDragPoints = false;
+        this.updateTP();
+    }
 
+    updateTP() {
+        if (this.manualTP && this.takeProfitPrice !== null) return;
+        const risk = Math.abs(this.entryPrice - this.stopLossPrice);
+        const multiplier = this.riskRewardRatio;
+        if (this.direction === 'long') {
+            this.takeProfitPrice = this.entryPrice + (risk * multiplier);
+        } else {
+            this.takeProfitPrice = this.entryPrice - (risk * multiplier);
+        }
+    }
+
+    update() {
+        this.direction = this.stopLossPrice > this.entryPrice ? 'short' : 'long';
+        this.updateTP();
+    }
+
+    isVisibleOnTimeframe(timeframe) {
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+}
+
+class TradeLevelRenderer {
+    constructor(trade, chartManager) {
+        this._trade = trade;
+        this._chartManager = chartManager;
+        this._hitAreas = [];
+        this._pixelRatio = window.devicePixelRatio || 1;
+    }
+
+    draw(target) {
+        this._hitAreas = [];
+        const trade = this._trade;
+        const chartManager = this._chartManager;
+        const currentKey = chartManager.getCurrentSymbolKey?.();
+        if (currentKey && trade.symbolKey !== currentKey) return;
+
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const currentTf = chartManager.currentInterval;
+            if (!trade.isVisibleOnTimeframe(currentTf)) return;
+
+            const entryY = chartManager.priceToCoordinate(trade.entryPrice);
+            const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
+            const tpY = chartManager.priceToCoordinate(trade.takeProfitPrice);
+            const xCoord = chartManager.timeToCoordinate(trade.entryTime);
+
+            if (entryY === null || slY === null || tpY === null || xCoord === null) return;
+
+            const x = xCoord * scope.horizontalPixelRatio;
+            const entry = entryY * scope.verticalPixelRatio;
+            const sl = slY * scope.verticalPixelRatio;
+            const tp = tpY * scope.verticalPixelRatio;
+
+            const isLong = trade.direction === 'long';
+            const entryColor = isLong ? '#00ff88' : '#f23645';
+            const arrowSize = 10 * scope.horizontalPixelRatio;
+
+            // ─── СТРЕЛКА ───
+            ctx.save();
+            ctx.fillStyle = entryColor;
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            if (isLong) {
+                ctx.moveTo(x, entry - arrowSize);
+                ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
+                ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
+            } else {
+                ctx.moveTo(x, entry + arrowSize);
+                ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
+                ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+
+            // ─── ЦЕНА ENTRY ───
+            ctx.save();
+            const fontSize = 10 * scope.horizontalPixelRatio;
+            ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+            ctx.fillStyle = entryColor;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(trade.entryPrice.toFixed(2), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
+            ctx.restore();
+
+            // ─── ЛИНИЯ SL ───
+            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+            this._drawLabel(ctx, scope, `SL ${trade.stopLossPrice.toFixed(2)}`, sl, trade.options.slColor);
+
+            // ─── ЛИНИЯ TP ───
+            this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+            this._drawLabel(ctx, scope, `TP ${trade.takeProfitPrice.toFixed(2)} (1:${trade.riskRewardRatio})`, tp, trade.options.tpColor);
+
+            // ─── ПЛЕЧИ ───
+            if (trade.selected && trade.options.showPlechi) {
+                ctx.save();
+                ctx.setLineDash([4, 4]);
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.globalAlpha = 0.3;
+                ctx.strokeStyle = trade.options.slColor;
+                ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke();
+                ctx.strokeStyle = trade.options.tpColor;
+                ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke();
+                ctx.restore();
+            }
+
+            // ─── ТОЧКИ ДЛЯ ПЕРЕТАСКИВАНИЯ ───
+            if (trade.showDragPoints) {
+                this._drawDragPoint(ctx, scope, x, entry, entryColor);
+                this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
+                this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor); 
+            }
+
+            // ─── HIT-ОБЛАСТИ ───
+            const hitBuffer = 15 * scope.horizontalPixelRatio;
+            this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
+            this._hitAreas.push({ type: 'sl', x1: 0, x2: scope.mediaSize.width * scope.horizontalPixelRatio, y: sl, buffer: hitBuffer, trade });
+            this._hitAreas.push({ type: 'tp', x1: 0, x2: scope.mediaSize.width * scope.horizontalPixelRatio, y: tp, buffer: hitBuffer, trade });
+        });
+    }
+
+    _drawLine(ctx, scope, y, color, style, opacity) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = opacity;
+        ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+        ctx.setLineDash(style === 'dashed' ? [6, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(scope.mediaSize.width * scope.horizontalPixelRatio, y);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    _drawLabel(ctx, scope, text, y, color) {
+        ctx.save();
+        const fontSize = 10 * scope.horizontalPixelRatio;
+        ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+        const metrics = ctx.measureText(text);
+        const padding = 6 * scope.horizontalPixelRatio;
+        const labelWidth = metrics.width + padding * 2;
+        const labelHeight = fontSize + padding * 2;
+        
+        const labelX = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 5 * scope.horizontalPixelRatio;
+        const labelY = y - labelHeight / 2;
+
+        ctx.fillStyle = 'rgba(20, 20, 20, 0.85)';
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = color;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, labelX + labelWidth - padding, labelY + labelHeight / 2);
+        ctx.restore();
+    }
+
+    _drawDragPoint(ctx, scope, x, y, color) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillStyle = color;
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
+
+    hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+        
+        for (const area of this._hitAreas) {
+            if (area.type === 'entry') {
+                const dx = x - area.x;
+                const dy = y - area.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < area.radius && distance < bestDistance) {
+                    bestHit = { type: 'entry', trade: area.trade, distance };
+                    bestDistance = distance;
+                }
+            } else {
+                if (x >= area.x1 && x <= area.x2) {
+                    const distance = Math.abs(y - area.y);
+                    if (distance < area.buffer && distance < bestDistance) {
+                        bestHit = { type: area.type, trade: area.trade, distance };
+                        bestDistance = distance;
+                    }
+                }
+            }
+        }
+        return bestHit;
+    }
+}
+
+class TradeLevelPaneView {
+    constructor(trade, chartManager) {
+        this._trade = trade;
+        this._chartManager = chartManager;
+        this._renderer = new TradeLevelRenderer(trade, chartManager);
+    }
+    renderer() { return this._renderer; }
+    zOrder() { return 'top'; }
+}
+
+class TradeLevelPrimitive {
+    constructor(trade, chartManager) {
+        this._trade = trade;
+        this._chartManager = chartManager;
+        this._paneView = new TradeLevelPaneView(trade, chartManager);
+        this._requestUpdate = null;
+    }
+    paneViews() { return [this._paneView]; }
+    attached({ chart, series, requestUpdate }) {
+        this._requestUpdate = requestUpdate;
+        this._syncTime();
+    }
+    updateAllViews() { this._syncTime(); }
+    _syncTime() {
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length === 0) return;
+        let closest = chartData[0];
+        let minDiff = Math.abs(chartData[0].time - this._trade.entryTime);
+        for (let i = 1; i < chartData.length; i++) {
+            const diff = Math.abs(chartData[i].time - this._trade.entryTime);
+            if (diff < minDiff) { minDiff = diff; closest = chartData[i]; }
+        }
+        this._trade.entryTime = closest.time;
+    }
+    getTrade() { return this._trade; }
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class TradeLevelManager {
+    constructor(chartManager) {
+        this._trades = [];
+        this._chartManager = chartManager;
+        this._selectedTrade = null;
+        this._hoveredTrade = null;
+        this._isDrawingMode = false;
+        
+        // Механика плавного перетаскивания
+        this._potentialDrag = null;
+        this._isDragging = false;
+        this._dragTrade = null;
+        this._dragType = null;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragThreshold = 4;
+        
+        this._drawingEntry = null;
+        this._isWaitingForSL = false;
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._magnetEnabled = true;
+        this._selectedDirection = 'long';
+        this._editingTrade = null;
+
+        // ✅ ФИКС: трекаем последнюю позицию мыши для синтетического mouseup
+        this._lastMouseClientX = 0;
+        this._lastMouseClientY = 0;
+
+        if (window.drawingLoaderCoordinator) {
+            window.drawingLoaderCoordinator.register(this, 'tradelevel');
+        }
+
+        this._setupEventListeners();
+        this._setupHotkeys();
+
+        // ✅ ФИКС: глобальный mouseup — страховка от залипания
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+
+      setTimeout(async () => {
+    try {
+        if (this._trades.length > 0) return; // Уже загружено координатором
+        if (!window.dbReady) {
+            await new Promise(r => { 
+                const c = () => window.dbReady ? r() : setTimeout(c, 50); 
+                c(); 
+            });
+        }
+        await this.loadAllTradesFromDB();
+    } catch (error) {
+        console.error('❌ Auto-load trades failed:', error);
+    }
+}, 150);
+    }
+
+    // ═══════════════════════════════════════════
+    // ✅ ФИКС: глобальный mouseup — гарантированный сброс состояния
+    // Срабатывает даже если панель перехватила событие
+    // ═══════════════════════════════════════════
+    _handleGlobalMouseUp() {
+        if (this._potentialDrag && !this._isDragging) {
+            this._potentialDrag = null;
+        }
+        if (this._isDragging) {
+            this._isDragging = false;
+            if (this._dragTrade) {
+                this._dragTrade.dragging = false;
+                this._saveTrades();
+                this._dragTrade = null;
+                this._dragType = null;
+                this._chartManager.chartContainer.style.cursor = 'crosshair';
+                this._requestRedraw();
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // ЗАГРУЗКА / СОХРАНЕНИЕ / CRUD
+    // ═══════════════════════════════════════════
+       async loadFromData(symbolKey, tradeRecords) {
+        try {
+            const currentSymbolKey = this._getCurrentSymbolKey();
+            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+            const series = isCurrentSymbol
+                ? (this._chartManager.currentChartType === 'candle' 
+                    ? this._chartManager.candleSeries 
+                    : this._chartManager.barSeries)
+                : null;
+
+            if (isCurrentSymbol && !series) {
+                console.warn('No series available for current symbol');
+                return;
+            }
+
+            const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+            const defaultVisibility = {};
+            ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+            const newRecordIds = new Set(tradeRecords.map(t => t.id));
+
+            if (isCurrentSymbol) {
+                const toDetach = this._trades.filter(item => 
+                    item.trade.symbolKey === symbolKey && !newRecordIds.has(item.trade.id)
+                );
+                for (const item of toDetach) {
+                    try { 
+                        if (item.primitive && item.series) item.series.detachPrimitive(item.primitive); 
+                        item.primitive = null;
+                        item.series = null;
+                    } catch(e) {}
+                }
+            }
+
+            this._trades = this._trades.filter(item => 
+                item.trade.symbolKey !== symbolKey || newRecordIds.has(item.trade.id)
+            );
+
+            const newTrades = [];
+            for (const rec of tradeRecords) {
+                try {
+                    const existing = this._trades.find(item => item.trade.id === rec.id);
+                    
+                    if (existing) {
+                        // Обновляем цены и настройки
+                        existing.trade.entryPrice = rec.data.entryPrice;
+                        existing.trade.stopLossPrice = rec.data.stopLossPrice;
+                        existing.trade.takeProfitPrice = rec.data.takeProfitPrice;
+                        existing.trade.direction = rec.data.direction;
+                        existing.trade.riskRewardRatio = rec.data.riskRewardRatio;
+                        existing.trade.manualTP = rec.data.manualTP || false;
+                        existing.trade.entryTime = rec.data.entryTime;
+                        existing.trade.options = { ...existing.trade.options, ...rec.data.options };
+                        existing.trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+
+                        // ✅ ФИКС ПЕРЕКЛЮЧЕНИЯ МОНЕТ: 
+                        // Если мы вернулись на эту монету, и старая серия умерла (или это новая серия графика) — 
+                        // пересоздаём примитив и привязываем к НОВОЙ живой серии!
+                        if (isCurrentSymbol && (!existing.primitive || !existing.series || existing.series !== series)) {
+                            try {
+                                if (existing.primitive && existing.series) {
+                                    existing.series.detachPrimitive(existing.primitive);
+                                }
+                                const primitive = new TradeLevelPrimitive(existing.trade, this._chartManager);
+                                series.attachPrimitive(primitive);
+                                existing.primitive = primitive;
+                                existing.series = series;
+                            } catch(e) {
+                                console.warn('Failed to re-attach trade:', e);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Создаем новый объект из БД
+                    const trade = new TradeLevel(rec.data.entryPrice, rec.data.stopLossPrice, rec.data.options);
+                    trade.id = rec.id;
+                    trade.symbolKey = rec.symbolKey;
+                    trade.takeProfitPrice = rec.data.takeProfitPrice;
+                    trade.direction = rec.data.direction;
+                    trade.riskRewardRatio = rec.data.riskRewardRatio;
+                    trade.manualTP = rec.data.manualTP || false;
+                    trade.entryTime = rec.data.entryTime;
+                    trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    trade.symbol = rec.data.symbol;
+                    trade.exchange = rec.data.exchange || 'binance';
+                    trade.marketType = rec.data.marketType || 'futures';
+
+                    if (isCurrentSymbol) {
+                        const primitive = new TradeLevelPrimitive(trade, this._chartManager);
+                        try {
+                            series.attachPrimitive(primitive);
+                            newTrades.push({ trade, primitive, series });
+                        } catch(e) {
+                            newTrades.push({ trade, primitive: null, series: null });
+                        }
+                    } else {
+                        newTrades.push({ trade, primitive: null, series: null });
+                    }
+                } catch (e) {
+                    console.warn('Failed to load trade:', rec.id, e);
+                }
+            }
+
+            this._trades.push(...newTrades);
+
+            if (isCurrentSymbol) {
+                this._requestRedraw();
+            }
+
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+        }
+    }
+
+    async loadTrades() {
+        const key = this._getCurrentSymbolKey();
+        if (window.drawingLoaderCoordinator) await window.drawingLoaderCoordinator.loadAllForSymbol(key);
+    }
+
+        async _saveTrades() {
+        if (!window.db) {
+            console.warn('⚠️ DB not available, trades saved to memory only');
+            return;
+        }
+        
+        const promises = this._trades.map(item => {
+            const trade = item.trade;
+            return window.db.put('drawings', {
+                id: trade.id, 
+                type: 'tradelevel',
+                symbolKey: trade.symbolKey || this._getCurrentSymbolKey(),
+                data: {
+                    entryPrice: trade.entryPrice, 
+                    stopLossPrice: trade.stopLossPrice,
+                    takeProfitPrice: trade.takeProfitPrice, 
+                    direction: trade.direction,
+                    riskRewardRatio: trade.riskRewardRatio, 
+                    manualTP: trade.manualTP,
+                    entryTime: trade.entryTime, 
+                    options: trade.options,
+                    timeframeVisibility: trade.timeframeVisibility,
+                    symbol: trade.symbol, 
+                    exchange: trade.exchange, 
+                    marketType: trade.marketType
+                }
+            }).catch(e => {
+                console.error(`❌ Save trade error (${trade.id}):`, e); // ✅ Логируем ошибку
+            });
+        });
+        
+        await Promise.allSettled(promises);
+    }
+    async loadAllTradesFromDB() {
+        try {
+            if (!window.db) return;
+            const allRecords = await window.db.getAll('drawings');
+            if (!allRecords || allRecords.length === 0) return;
+
+            const tradesBySymbol = {};
+            for (const record of allRecords) {
+                if (record.type !== 'tradelevel') continue; // Берем только риски
+                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+                if (!tradesBySymbol[key]) tradesBySymbol[key] = [];
+                tradesBySymbol[key].push(record);
+            }
+
+            for (const [symbolKey, records] of Object.entries(tradesBySymbol)) {
+                await this.loadFromData(symbolKey, records);
+            }
+
+            console.log(`✅ All trades loaded (${this._trades.length} total)`);
+        } catch (error) {
+            console.error('❌ loadAllTradesFromDB failed:', error);
+        }
+    }
+      createTrade(entryPrice, stopLossPrice, options = {}) {
+        // ✅ КАК В ALERT: Очистка символа от мусора и приведение к верхнему регистру
+        const rawSymbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const cleanSymbol = rawSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const exchange = (this._chartManager.currentExchange || 'binance').toLowerCase();
+        const marketType = (this._chartManager.currentMarketType || 'futures').toLowerCase();
+
+        const trade = new TradeLevel(entryPrice, stopLossPrice, {
+            ...options, 
+            time: options.time || Date.now() / 1000,
+            symbolKey: `${cleanSymbol}:${exchange}:${marketType}`, // ✅ Чистый ключ
+            symbol: cleanSymbol,
+            exchange: exchange,
+            marketType: marketType
+        });
+        
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        const primitive = new TradeLevelPrimitive(trade, this._chartManager);
+        series.attachPrimitive(primitive);
+        this._trades.push({ trade, primitive, series });
+        
+        this._saveTrades(); // ✅ Вызов сохранения
+        this._requestRedraw();
+        return trade;
+    }
+
+       deleteTrade(tradeId) {
+        const index = this._trades.findIndex(t => t.trade.id === tradeId);
+        if (index === -1) return false;
+        const { trade, primitive, series } = this._trades[index];
+        
+        if (window.db) window.db.delete('drawings', tradeId).catch(e => console.warn(e));
+        if (primitive && series) { try { series.detachPrimitive(primitive); } catch(e) {} }
+        
+        this._trades.splice(index, 1);
+        if (this._selectedTrade?.id === tradeId) this._selectedTrade = null;
+        if (this._dragTrade?.id === tradeId) this._dragTrade = null;
+        
+        this._saveTrades(); // ✅ Синхронизация
+        this._requestRedraw();
+        return true;
+    }
+
+    deleteAllTrades() {
+        const currentKey = this._getCurrentSymbolKey();
+        const toDelete = this._trades.filter(t => t.trade.symbolKey === currentKey);
+        for (const item of toDelete) {
+            if (window.db) window.db.delete('drawings', item.trade.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) { try { item.series.detachPrimitive(item.primitive); } catch(e) {} }
+        }
+        this._trades = this._trades.filter(t => t.trade.symbolKey !== currentKey);
+        this._selectedTrade = null;
+        this._dragTrade = null;
+        
+        this._saveTrades(); // ✅ Синхронизация
+        this._requestRedraw();
+    }
+ 
+
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const btn = document.getElementById('toolTradeLevel');
+        if (btn) {
+            if (enabled) { btn.style.background = '#4A90E2'; btn.style.color = '#FFFFFF'; btn.classList.add('active'); }
+            else { btn.style.background = ''; btn.style.color = ''; btn.classList.remove('active'); }
+        }
+        if (!enabled) {
+            this._drawingEntry = null;
+            this._isWaitingForSL = false;
+            this._editingTrade = null;
+            const panel = document.getElementById('tradeCreatePanel');
+            if (panel) panel.style.display = 'none';
+        }
+    }
+
+    setMagnetEnabled(enabled) { this._magnetEnabled = enabled; }
+
+    hitTest(x, y) {
+        if (this._selectedTrade) {
+            const item = this._trades.find(t => t.trade === this._selectedTrade);
+            if (item && item.primitive) {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                if (hit) return hit;
+            }
+        }
+        for (const item of this._trades) {
+            if (item.trade === this._selectedTrade) continue;
+            if (!item.primitive) continue;
+            const hit = item.primitive._paneView._renderer.hitTest(x, y);
+            if (hit) return hit;
+        }
+        return null;
+    }
+
+    // ═══════════════════════════════════════════
+    // СОБЫТИЯ
+    // ═══════════════════════════════════════════
+    _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+        
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('#tradeCreatePanel') || e.target.closest('#tradeSettingsPanel')) return;
+
+            // ✅ ЗАЩИТА КОНТЕКСТНОГО МЕНЮ
+            const tradeMenu = document.getElementById('tradeContextMenu');
+            if (tradeMenu && tradeMenu.style.display === 'flex') {
+                const menuRect = tradeMenu.getBoundingClientRect();
+                if (e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
+                    e.clientY >= menuRect.top && e.clientY <= menuRect.bottom) {
+                    return;
+                }
+            }
+
+            const rect = container.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * this._pixelRatio;
+            const y = (e.clientY - rect.top) * this._pixelRatio;
+
+            if (this._isDrawingMode) {
+                // ✅ ФИКС: stopImmediatePropagation — LWC вообще не получит mousedown
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                this._handleDrawingClick(e, x, y);
+                return;
+            }
+
+            const hit = this.hitTest(x, y);
+            if (hit) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this._selectedTrade && this._selectedTrade !== hit.trade) {
+                    this._selectedTrade.selected = false;
+                    this._selectedTrade.showDragPoints = false;
+                }
+                hit.trade.selected = true;
+                hit.trade.showDragPoints = true;
+                this._selectedTrade = hit.trade;
+                
+                this._potentialDrag = {
+                    trade: hit.trade,
+                    type: hit.type,
+                    startX: x,
+                    startY: y,
+                    startEntry: hit.trade.entryPrice,
+                    startSL: hit.trade.stopLossPrice,
+                    startTP: hit.trade.takeProfitPrice
+                };
+                this._requestRedraw();
+            } else {
+                if (this._selectedTrade) {
+                    this._selectedTrade.selected = false;
+                    this._selectedTrade.showDragPoints = false;
+                    this._selectedTrade = null;
+                    this._requestRedraw();
+                }
+                if (tradeMenu) tradeMenu.style.display = 'none';
+            }
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            // ✅ ФИКС: трекаем позицию мыши
+            this._lastMouseClientX = e.clientX;
+            this._lastMouseClientY = e.clientY;
+
+            const rect = container.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * this._pixelRatio;
+            const y = (e.clientY - rect.top) * this._pixelRatio;
+
+            if (this._potentialDrag && !this._isDragging) {
+                const dx = Math.abs(x - this._potentialDrag.startX);
+                const dy = Math.abs(y - this._potentialDrag.startY);
+                if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                    this._isDragging = true;
+                    this._dragTrade = this._potentialDrag.trade;
+                    this._dragType = this._potentialDrag.type;
+                    this._dragStartY = this._potentialDrag.startY;
+                    
+                    if (this._dragType === 'entry') this._dragStartPrice = this._potentialDrag.startEntry;
+                    else if (this._dragType === 'sl') this._dragStartPrice = this._potentialDrag.startSL;
+                    else if (this._dragType === 'tp') this._dragStartPrice = this._potentialDrag.startTP;
+                    
+                    container.style.cursor = 'grabbing';
+                }
+            }
+
+            if (this._isDragging && this._dragTrade) {
+                e.preventDefault();
+                e.stopPropagation();
+                const deltaY = (y - this._dragStartY) / this._pixelRatio;
+                const price = this._chartManager.coordinateToPrice(
+                    this._chartManager.priceToCoordinate(this._dragStartPrice) + deltaY
+                );
+                
+                if (price !== null) {
+                    if (this._dragType === 'entry') this._dragTrade.entryPrice = price;
+                    else if (this._dragType === 'sl') this._dragTrade.stopLossPrice = price;
+                    else if (this._dragType === 'tp') {
+                        this._dragTrade.takeProfitPrice = price;
+                        this._dragTrade.manualTP = true; 
+                    }
+                    this._dragTrade.update();
+                    this._requestRedraw();
+                }
+                return;
+            }
+
+            const hit = this.hitTest(x, y);
+            container.style.cursor = hit ? 'grab' : 'crosshair';
+            
+            if (this._hoveredTrade !== hit?.trade) {
+                if (this._hoveredTrade) this._hoveredTrade.hovered = false;
+                this._hoveredTrade = hit?.trade || null;
+                if (this._hoveredTrade) this._hoveredTrade.hovered = true;
+                this._requestRedraw();
+            }
+        });
+
+        container.addEventListener('mouseup', (e) => {
+            this._potentialDrag = null;
+            if (this._isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+                this._isDragging = false;
+                if (this._dragTrade) {
+                    this._dragTrade.dragging = false;
+                    this._saveTrades();
+                    this._dragTrade = null;
+                    this._dragType = null;
+                    container.style.cursor = 'crosshair';
+                    this._requestRedraw();
+                }
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            if (this._hoveredTrade) {
+                this._hoveredTrade.hovered = false;
+                this._hoveredTrade = null;
+                this._requestRedraw();
+            }
+        });
+
+        container.addEventListener('contextmenu', (e) => {
+            this._handleContextMenu(e);
+        });
+    }
+
+    _handleDrawingClick(e, x, y) {
+        if (e.target.closest('#tradeCreatePanel')) return;
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const cssY = (e.clientY - rect.top);
+        const cssX = (e.clientX - rect.left);
+        let price = this._chartManager.coordinateToPrice(cssY);
+        let time = this._chartManager.coordinateToTime(cssX);
+        if (price === null || time === null) {
+            const last = this._chartManager.getLastCandle();
+            if (last) { price = last.close; time = last.time; } else return;
+        }
+        if (this._magnetEnabled) {
+            const snapped = this._snapToCandle(price, time);
+            price = snapped.price;
+            time = snapped.time;
+        }
+        
+        const panel = document.getElementById('tradeCreatePanel');
+        const isPanelOpen = panel && panel.style.display === 'block';
+        
+        if (isPanelOpen) {
+            const slInput = document.getElementById('tradeSLInput');
+            if (slInput && price !== null) {
+                slInput.value = price.toFixed(2);
+                this._updatePreview();
+            }
+            return;
+        }
+        
+        if (!this._isWaitingForSL) {
+            this._drawingEntry = { price, time };
+            this._isWaitingForSL = true;
+            this._showSettings(null);
+            document.getElementById('tradeEntryInput').value = price.toFixed(2);
+            this._updatePreview();
+        } else {
+            this._showSettings(null);
+            document.getElementById('tradeEntryInput').value = this._drawingEntry.price.toFixed(2);
+            document.getElementById('tradeSLInput').value = price.toFixed(2);
+            this._updatePreview();
+            this._drawingEntry = null;
+            this._isWaitingForSL = false;
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // КОНТЕКСТНОЕ МЕНЮ
+    // ═══════════════════════════════════════════
+    _handleContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * this._pixelRatio;
+        const y = (e.clientY - rect.top) * this._pixelRatio;
+        const hit = this.hitTest(x, y);
+        
+        if (!hit) {
+            const menu = document.getElementById('tradeContextMenu');
+            if (menu) menu.style.display = 'none';
+            return;
+        }
+        
+        if (this._selectedTrade && this._selectedTrade !== hit.trade) {
+            this._selectedTrade.selected = false;
+            this._selectedTrade.showDragPoints = false;
+        }
+        
+        hit.trade.selected = true;
+        hit.trade.showDragPoints = true;
+        this._selectedTrade = hit.trade;
+        this._requestRedraw();
+        
+        const menu = document.getElementById('tradeContextMenu');
+        if (menu) {
+            ['drawingContextMenu', 'trendContextMenu', 'alertContextMenu', 'rulerContextMenu', 'textContextMenu']
+            .forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+            
+            menu.style.display = 'flex';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            
+            const settingsBtn = document.getElementById('tradeContextSettingsBtn');
+            if (settingsBtn) {
+                const newSettingsBtn = settingsBtn.cloneNode(true);
+                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
+                newSettingsBtn.onclick = (ev) => {
+                    ev.stopPropagation();
+                    this._showSettings(hit.trade);
+                    menu.style.display = 'none';
+                };
+            }
+            
+            const deleteBtn = document.getElementById('tradeContextDeleteBtn');
+            if (deleteBtn) {
+                const newDeleteBtn = deleteBtn.cloneNode(true);
+                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+                newDeleteBtn.onclick = (ev) => {
+                    ev.stopPropagation();
+                    this.deleteTrade(hit.trade.id);
+                    menu.style.display = 'none';
+                };
+            }
+        }
+    }
+
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            if (e.code === 'KeyL' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                const newMode = !this._isDrawingMode;
+                this.setDrawingMode(newMode);
+                if (newMode) {
+                    if (window.rayManager) window.rayManager.setDrawingMode(false);
+                    if (window.trendLineManager) window.trendLineManager.setDrawingMode(false);
+                    if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
+                    if (window.alertLineManager) window.alertLineManager.setDrawingMode(false);
+                    if (window.textManager) window.textManager.setDrawingMode(false);
+                }
+            }
+            if (e.key === 'Delete' && this._selectedTrade) {
+                e.preventDefault();
+                this.deleteTrade(this._selectedTrade.id);
+                this._selectedTrade = null;
+            }
+        });
+    }
+
+    // ═══════════════════════════════════════════
+    // УНИВЕРСАЛЬНАЯ ПАНЕЛЬ (СОЗДАНИЕ И РЕДАКТИРОВАНИЕ)
+    // ═══════════════════════════════════════════
+    _showSettings(trade = null) {
+        const panel = document.getElementById('tradeCreatePanel');
+        if (!panel) return;
+
+        // ✅ ФИКС: сбрасываем состояние перетаскивания ПЕРЕД открытием панели
+        this._potentialDrag = null;
+        this._isDragging = false;
+
+        this._editingTrade = trade;
+
+        const entryInput = document.getElementById('tradeEntryInput');
+        const slInput = document.getElementById('tradeSLInput');
+        const rrInput = document.getElementById('tradeRRInput');
+        const createBtn = document.getElementById('tradeCreateBtn');
+
+        if (trade) {
+            entryInput.value = trade.entryPrice.toFixed(2);
+            slInput.value = trade.stopLossPrice.toFixed(2);
+            rrInput.value = trade.riskRewardRatio;
+            this._setDirection(trade.direction);
+            if (createBtn) createBtn.textContent = '💾 Сохранить';
+        } else {
+            entryInput.value = '';
+            slInput.value = '';
+            rrInput.value = '2';
+            this._setDirection('long');
+            if (createBtn) createBtn.textContent = '✅ Создать';
+        }
+
+        panel.onmousedown = (e) => e.stopPropagation();
+        panel.onmousemove = (e) => e.stopPropagation();
+        panel.onmouseup = (e) => e.stopPropagation();
+        panel.onclick = (e) => e.stopPropagation();
+
+        entryInput.oninput = () => this._updatePreview();
+        slInput.oninput = () => this._updatePreview();
+        rrInput.oninput = () => this._updatePreview();
+
+        const longBtn = document.getElementById('tradeDirectionLong');
+        const shortBtn = document.getElementById('tradeDirectionShort');
+
+        if (longBtn) longBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('long'); this._updatePreview(); };
+        if (shortBtn) shortBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('short'); this._updatePreview(); };
+
+        createBtn.onclick = (e) => {
+            e.stopPropagation();
+            this._handlePanelSubmit();
+        };
+
+        document.getElementById('tradeCancelBtn').onclick = (e) => { 
+            e.stopPropagation(); 
+            panel.style.display = 'none'; 
+            this.setDrawingMode(false); 
+        };
+        document.getElementById('closeTradeCreate').onclick = (e) => { 
+            e.stopPropagation(); 
+            panel.style.display = 'none'; 
+            this.setDrawingMode(false); 
+        };
+
+        panel.style.display = 'block';
+        panel.style.position = 'fixed';
+        panel.style.left = '50%';
+        panel.style.top = '50%';
+        panel.style.transform = 'translate(-50%, -50%)';
+        panel.style.zIndex = '99999';
+
+        // ✅ ФИКС: синтетический mouseup сбрасывает залипание LWC
+        const container = this._chartManager.chartContainer;
+        if (container) {
+            container.dispatchEvent(new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: this._lastMouseClientX || 0,
+                clientY: this._lastMouseClientY || 0
+            }));
+        }
+        
+        this._makeDraggable(panel);
+        this._updatePreview();
+        setTimeout(() => entryInput.focus(), 100);
+    }
+
+    _handlePanelSubmit() {
+        const entry = parseFloat(document.getElementById('tradeEntryInput').value);
+        const sl = parseFloat(document.getElementById('tradeSLInput').value);
+        const rr = parseInt(document.getElementById('tradeRRInput').value) || 2;
+        const direction = this._selectedDirection || 'long';
+
+        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) { alert('Введите корректные цены'); return; }
+        if (entry === sl) { alert('Цена входа и стоп-лосс не могут быть равны'); return; }
+        if (direction === 'long' && sl > entry) { alert('Для Long стоп-лосс должен быть ниже цены входа'); return; }
+        if (direction === 'short' && sl < entry) { alert('Для Short стоп-лосс должен быть выше цены входа'); return; }
+
+        if (this._editingTrade) {
+            this._editingTrade.entryPrice = entry;
+            this._editingTrade.stopLossPrice = sl;
+            this._editingTrade.riskRewardRatio = rr;
+            this._editingTrade.direction = direction;
+            this._editingTrade.manualTP = false; 
+            this._editingTrade.update();
+            this._editingTrade = null;
+        } else {
+            this.createTrade(entry, sl, { riskRewardRatio: rr, direction: direction, time: Date.now() / 1000 });
+        }
+
+        const panel = document.getElementById('tradeCreatePanel');
+        if (panel) panel.style.display = 'none';
+        
+        this._drawingEntry = null;
+        this._isWaitingForSL = false;
+        this.setDrawingMode(false);
+        this._saveTrades();
+        this._requestRedraw();
+    }
+
+    _setDirection(direction) {
+        this._selectedDirection = direction;
+        const longBtn = document.getElementById('tradeDirectionLong');
+        const shortBtn = document.getElementById('tradeDirectionShort');
+        if (direction === 'long') {
+            if (longBtn) { longBtn.style.background = '#4A90E2'; longBtn.style.borderColor = '#4A90E2'; }
+            if (shortBtn) { shortBtn.style.background = '#2D2D2D'; shortBtn.style.borderColor = '#404040'; }
+        } else {
+            if (shortBtn) { shortBtn.style.background = '#4A90E2'; shortBtn.style.borderColor = '#4A90E2'; }
+            if (longBtn) { longBtn.style.background = '#2D2D2D'; longBtn.style.borderColor = '#404040'; }
+        }
+    }
+
+    _updatePreview() {
+        const entry = parseFloat(document.getElementById('tradeEntryInput').value);
+        const sl = parseFloat(document.getElementById('tradeSLInput').value);
+        const rr = parseInt(document.getElementById('tradeRRInput').value) || 2;
+        const direction = this._selectedDirection || 'long';
+        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = '—';
+            document.getElementById('tradePreviewReward').textContent = '—';
+            return;
+        }
+        const risk = Math.abs(entry - sl);
+        let tp = direction === 'long' ? entry + (risk * rr) : entry - (risk * rr);
+        document.getElementById('tradePreviewTP').textContent = tp.toFixed(2);
+        document.getElementById('tradePreviewRisk').textContent = risk.toFixed(2);
+        document.getElementById('tradePreviewReward').textContent = (risk * rr).toFixed(2);
+    }
+
+    _makeDraggable(panel) {
+        if (panel._draggableSetup) return;
+        panel._draggableSetup = true;
+        let isDragging = false, startX, startY, origX, origY;
+        const header = panel.querySelector('.settings-header');
+        if (!header) return;
+        header.style.cursor = 'move';
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+            isDragging = true;
+            startX = e.clientX; startY = e.clientY;
+            origX = panel.offsetLeft; origY = panel.offsetTop;
+            panel.style.cursor = 'move';
+            e.preventDefault(); e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            panel.style.left = (origX + e.clientX - startX) + 'px';
+            panel.style.top = (origY + e.clientY - startY) + 'px';
+            panel.style.transform = 'none';
+            e.preventDefault();
+        });
+        document.addEventListener('mouseup', () => {
+            if (isDragging) { isDragging = false; panel.style.cursor = ''; }
+        });
+    }
+
+    _snapToCandle(price, time) {
+        const data = this._chartManager.chartData;
+        if (!data || data.length === 0) return { price, time };
+        let closest = data[0];
+        let minDiff = Math.abs(data[0].time - time);
+        for (let i = 1; i < data.length; i++) {
+            const diff = Math.abs(data[i].time - time);
+            if (diff < minDiff) { minDiff = diff; closest = data[i]; }
+        }
+        const newTime = closest.time;
+        if (this._magnetEnabled) {
+            const priceY = this._chartManager.priceToCoordinate(price);
+            const highY = this._chartManager.priceToCoordinate(closest.high);
+            const lowY = this._chartManager.priceToCoordinate(closest.low);
+            const closeY = this._chartManager.priceToCoordinate(closest.close);
+            if (priceY !== null && highY !== null) {
+                const dHigh = Math.abs(highY - priceY);
+                const dLow = Math.abs(lowY - priceY);
+                const dClose = Math.abs(closeY - priceY);
+                const minDist = Math.min(dHigh, dLow, dClose);
+                if (minDist < 150) {
+                    if (minDist === dHigh) price = closest.high;
+                    else if (minDist === dLow) price = closest.low;
+                    else price = closest.close;
+                }
+            }
+        }
+        return { price, time: newTime };
+    }
+
+     _getCurrentSymbolKey() {
+        const rawSymbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const cleanSymbol = rawSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const exchange = (this._chartManager.currentExchange || 'binance').toLowerCase();
+        const marketType = (this._chartManager.currentMarketType || 'futures').toLowerCase();
+        return `${cleanSymbol}:${exchange}:${marketType}`;
+    }
+
+    _requestRedraw() {
+        for (const item of this._trades) {
+            if (item.primitive && item.primitive.requestRedraw) item.primitive.requestRedraw();
+        }
+    }
+
+    syncWithNewTimeframe() {
+        for (const item of this._trades) {
+            if (item.primitive && item.primitive.updateAllViews) item.primitive.updateAllViews();
+        }
+        this._requestRedraw();
+    }
+
+    deactivateAll() {
+        for (const item of this._trades) {
+            item.trade.selected = false;
+            item.trade.showDragPoints = false;
+        }
+        this._selectedTrade = null;
+    }
+
+    activateObject(trade) {
+        trade.selected = true;
+        trade.showDragPoints = true;
+        this._selectedTrade = trade;
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.TradeLevel = TradeLevel;
+    window.TradeLevelRenderer = TradeLevelRenderer;
+    window.TradeLevelPrimitive = TradeLevelPrimitive;
+    window.TradeLevelManager = TradeLevelManager;
+}
 // ========== ГОРЯЧИЕ КЛАВИШИ ==========
 function isTyping() {
     const a = document.activeElement;
