@@ -8262,6 +8262,29 @@ hitTest(x, y) {
 // ============================================================
 // ТОРГОВЫЙ УРОВЕНЬ (ПОЛНАЯ, ИСПРАВЛЕННАЯ И РАБОЧАЯ ВЕРСИЯ)
 // ============================================================
+// ✅ Глобальные хелперы для динамического форматирования цены
+function getDecimals(price) {
+    if (price === null || price === undefined) return 2;
+    const p = Math.abs(price);
+    if (p >= 100) return 2;
+    if (p >= 1) return 4;
+    if (p >= 0.01) return 5;
+    return 6;
+}
+
+function formatPriceDynamic(price) {
+    if (price === null || price === undefined) return '';
+    return Number(price).toFixed(getDecimals(price));
+}
+
+function getStepForPrice(price) {
+    const decimals = getDecimals(price);
+    return Math.pow(10, -decimals);
+}
+
+function getFormattedPrice(price) {
+    return window.formatPrice ? window.formatPrice(price) : formatPriceDynamic(price);
+}
 
 class TradeLevel {
     constructor(entryPrice, stopLossPrice, options = {}) {
@@ -8269,7 +8292,7 @@ class TradeLevel {
         this.stopLossPrice = stopLossPrice;
         this.takeProfitPrice = null;
         this.direction = options.direction || (stopLossPrice > entryPrice ? 'short' : 'long');
-        this.riskRewardRatio = options.riskRewardRatio || 2;
+        this.riskRewardRatio = options.riskRewardRatio || 3;
         this.manualTP = options.manualTP || false;
         this.entryTime = options.time || Date.now() / 1000;
         this.id = `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
@@ -8355,7 +8378,6 @@ class TradeLevelRenderer {
             const entryColor = isLong ? '#00ff88' : '#f23645';
             const arrowSize = 10 * scope.horizontalPixelRatio;
 
-            // ─── СТРЕЛКА ───
             ctx.save();
             ctx.fillStyle = entryColor;
             ctx.shadowColor = 'rgba(0,0,0,0.5)';
@@ -8374,31 +8396,25 @@ class TradeLevelRenderer {
             ctx.fill();
             ctx.restore();
 
-            // ─── ЦЕНА ENTRY ───
             ctx.save();
             const fontSize = 10 * scope.horizontalPixelRatio;
             ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
             ctx.fillStyle = entryColor;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(window.formatPrice(trade.entryPrice),  x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
+            ctx.fillText(getFormattedPrice(trade.entryPrice), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
             ctx.restore();
 
-         // ✅ РАСЧЕТ ПРОЦЕНТОВ ДЛЯ ПОДПИСЕЙ НА ГРАФИКЕ
-const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
-const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
-const rewardPercent = riskPercent * trade.riskRewardRatio;
+            const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
+            const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
+            const rewardPercent = riskPercent * trade.riskRewardRatio;
 
-// ─── ЛИНИЯ SL ───
-this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-// ✅ ДОБАВЛЯЕМ ПРОЦЕНТ В ПОДПИСЬ SL
-this._drawLabel(ctx, scope, `SL ${trade.stopLossPrice.toFixed(2)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
+            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+            this._drawLabel(ctx, scope, `SL ${getFormattedPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
 
-// ─── ЛИНИЯ TP ───
-this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-// ✅ ДОБАВЛЯЕМ ПРОЦЕНТ В ПОДПИСЬ TP
-this._drawLabel(ctx, scope, `TP ${trade.takeProfitPrice.toFixed(2)} (1:${trade.riskRewardRatio} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
-            // ─── ПЛЕЧИ ───
+            this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+            this._drawLabel(ctx, scope, `TP ${getFormattedPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+
             if (trade.selected && trade.options.showPlechi) {
                 ctx.save();
                 ctx.setLineDash([4, 4]);
@@ -8411,14 +8427,12 @@ this._drawLabel(ctx, scope, `TP ${trade.takeProfitPrice.toFixed(2)} (1:${trade.r
                 ctx.restore();
             }
 
-            // ─── ТОЧКИ ДЛЯ ПЕРЕТАСКИВАНИЯ ───
             if (trade.showDragPoints) {
                 this._drawDragPoint(ctx, scope, x, entry, entryColor);
                 this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
                 this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor); 
             }
 
-            // ─── HIT-ОБЛАСТИ ───
             const hitBuffer = 15 * scope.horizontalPixelRatio;
             this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
             this._hitAreas.push({ type: 'sl', x1: 0, x2: scope.mediaSize.width * scope.horizontalPixelRatio, y: sl, buffer: hitBuffer, trade });
@@ -8569,7 +8583,6 @@ class TradeLevelManager {
         this._hoveredTrade = null;
         this._isDrawingMode = false;
         
-        // Механика плавного перетаскивания
         this._potentialDrag = null;
         this._isDragging = false;
         this._dragTrade = null;
@@ -8584,8 +8597,8 @@ class TradeLevelManager {
         this._magnetEnabled = true;
         this._selectedDirection = 'long';
         this._editingTrade = null;
+        this._tpManuallySet = false;
 
-        // Трекаем последнюю позицию мыши для синтетического mouseup
         this._lastMouseClientX = 0;
         this._lastMouseClientY = 0;
 
@@ -8596,13 +8609,12 @@ class TradeLevelManager {
         this._setupEventListeners();
         this._setupHotkeys();
 
-        // Глобальный mouseup — страховка от залипания
         this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
         window.addEventListener('mouseup', this._handleGlobalMouseUp);
 
         setTimeout(async () => {
             try {
-                if (this._trades.length > 0) return; // Уже загружено координатором
+                if (this._trades.length > 0) return;
                 if (!window.dbReady) {
                     await new Promise(r => { 
                         const c = () => window.dbReady ? r() : setTimeout(c, 50); 
@@ -8616,23 +8628,6 @@ class TradeLevelManager {
         }, 150);
     }
 
-    // ═══════════════════════════════════════════
-    // ФОРМАТИРОВАНИЕ ЦЕНЫ (ДИНАМИЧЕСКОЕ КОЛ-ВО ЗНАКОВ)
-    // ═══════════════════════════════════════════
-    formatPrice(price) {
-        if (price === null || price === undefined || isNaN(price)) return '—';
-        const abs = Math.abs(price);
-        if (abs < 1e-6) return price.toFixed(10);
-        if (abs < 0.0001) return price.toFixed(8);
-        if (abs < 0.01) return price.toFixed(6);
-        if (abs < 1) return price.toFixed(4);
-        if (abs < 100) return price.toFixed(3);
-        return price.toFixed(2);
-    }
-
-    // ═══════════════════════════════════════════
-    // ГЛОБАЛЬНЫЙ MOUSEUP
-    // ═══════════════════════════════════════════
     _handleGlobalMouseUp() {
         if (this._potentialDrag && !this._isDragging) {
             this._potentialDrag = null;
@@ -8650,9 +8645,10 @@ class TradeLevelManager {
         }
     }
 
-    // ═══════════════════════════════════════════
-    // ЗАГРУЗКА / СОХРАНЕНИЕ / CRUD
-    // ═══════════════════════════════════════════
+    _formatPriceInput(price) {
+        return formatPriceDynamic(price);
+    }
+
     async loadFromData(symbolKey, tradeRecords) {
         try {
             const currentSymbolKey = this._getCurrentSymbolKey();
@@ -8842,9 +8838,7 @@ class TradeLevelManager {
             marketType: marketType
         });
         
-        const series = this._chartManager.currentChartType === 'candle' 
-            ? this._chartManager.candleSeries 
-            : this._chartManager.barSeries;
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
         const primitive = new TradeLevelPrimitive(trade, this._chartManager);
         series.attachPrimitive(primitive);
         this._trades.push({ trade, primitive, series });
@@ -8904,9 +8898,6 @@ class TradeLevelManager {
 
     setMagnetEnabled(enabled) { this._magnetEnabled = enabled; }
 
-    // ═══════════════════════════════════════════
-    // ХИТ-ТЕСТ
-    // ═══════════════════════════════════════════
     hitTest(x, y) {
         if (this._selectedTrade) {
             const item = this._trades.find(t => t.trade === this._selectedTrade);
@@ -8924,9 +8915,6 @@ class TradeLevelManager {
         return null;
     }
 
-    // ═══════════════════════════════════════════
-    // СОБЫТИЯ МЫШИ
-    // ═══════════════════════════════════════════
     _setupEventListeners() {
         const container = this._chartManager.chartContainer;
         
@@ -9094,9 +9082,6 @@ class TradeLevelManager {
         });
     }
 
-    // ═══════════════════════════════════════════
-    // КЛИКИ В РЕЖИМЕ РИСОВАНИЯ
-    // ═══════════════════════════════════════════
     _handleDrawingClick(e, x, y) {
         if (e.target.closest('#tradeCreatePanel')) return;
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
@@ -9113,26 +9098,51 @@ class TradeLevelManager {
             price = snapped.price;
             time = snapped.time;
         }
-
-        // Первый клик: точка входа (Entry)
+        
+        const panel = document.getElementById('tradeCreatePanel');
+        const isPanelOpen = panel && panel.style.display === 'block';
+        
+        if (isPanelOpen) {
+            const slInput = document.getElementById('tradeSLInput');
+            if (slInput && price !== null) {
+                slInput.value = this._formatPriceInput(price);
+                this._updateStep();
+                this._updatePreview();
+            }
+            return;
+        }
+        
         if (!this._isWaitingForSL) {
             this._drawingEntry = { price, time };
             this._isWaitingForSL = true;
             this._showSettings(null);
-            document.getElementById('tradeEntryInput').value = this.formatPrice(price);
+            
+            const formattedPrice = this._formatPriceInput(price);
+            document.getElementById('tradeEntryInput').value = formattedPrice;
+            document.getElementById('tradeSLInput').value = formattedPrice;
+            
+            const tpInput = document.getElementById('tradeTPInput');
+            if (tpInput) tpInput.value = '';
+            this._tpManuallySet = false;
+            
+            this._updateStep();
             this._updatePreview();
         } else {
-            // Второй клик: стоп-лосс (SL)
-            document.getElementById('tradeSLInput').value = this.formatPrice(price);
+            this._showSettings(null);
+            document.getElementById('tradeEntryInput').value = this._formatPriceInput(this._drawingEntry.price);
+            document.getElementById('tradeSLInput').value = this._formatPriceInput(price);
+            
+            const tpInput = document.getElementById('tradeTPInput');
+            if (tpInput) tpInput.value = '';
+            this._tpManuallySet = false;
+            
+            this._updateStep();
             this._updatePreview();
             this._drawingEntry = null;
             this._isWaitingForSL = false;
         }
     }
 
-    // ═══════════════════════════════════════════
-    // КОНТЕКСТНОЕ МЕНЮ
-    // ═══════════════════════════════════════════
     _handleContextMenu(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -9193,9 +9203,6 @@ class TradeLevelManager {
         }
     }
 
-    // ═══════════════════════════════════════════
-    // ГОРЯЧИЕ КЛАВИШИ
-    // ═══════════════════════════════════════════
     _setupHotkeys() {
         document.addEventListener('keydown', (e) => {
             const active = document.activeElement;
@@ -9220,52 +9227,80 @@ class TradeLevelManager {
         });
     }
 
-    // ═══════════════════════════════════════════
-    // ПАНЕЛЬ СОЗДАНИЯ / РЕДАКТИРОВАНИЯ
-    // ═══════════════════════════════════════════
+    _updateStep() {
+        const entryInput = document.getElementById('tradeEntryInput');
+        const slInput = document.getElementById('tradeSLInput');
+        const tpInput = document.getElementById('tradeTPInput');
+        const price = parseFloat(entryInput.value) || 100;
+        const step = getStepForPrice(price);
+        if (entryInput) entryInput.step = step;
+        if (slInput) slInput.step = step;
+        if (tpInput) tpInput.step = step;
+    }
+
     _showSettings(trade = null) {
         const panel = document.getElementById('tradeCreatePanel');
         if (!panel) return;
 
         this._potentialDrag = null;
         this._isDragging = false;
-
         this._editingTrade = trade;
 
         const entryInput = document.getElementById('tradeEntryInput');
         const slInput = document.getElementById('tradeSLInput');
-        const rrInput = document.getElementById('tradeRRInput');
         const tpInput = document.getElementById('tradeTPInput');
+        const rrInput = document.getElementById('tradeRRInput');
         const createBtn = document.getElementById('tradeCreateBtn');
 
         if (trade) {
-            entryInput.value = this.formatPrice(trade.entryPrice);
-            slInput.value = this.formatPrice(trade.stopLossPrice);
-            rrInput.value = trade.riskRewardRatio;
-            tpInput.value = trade.manualTP ? this.formatPrice(trade.takeProfitPrice) : '';
+            entryInput.value = this._formatPriceInput(trade.entryPrice);
+            slInput.value = this._formatPriceInput(trade.stopLossPrice);
+            if (tpInput) tpInput.value = this._formatPriceInput(trade.takeProfitPrice);
+            if (rrInput) rrInput.value = trade.riskRewardRatio.toFixed(2);
             this._setDirection(trade.direction);
             if (createBtn) createBtn.textContent = ' Сохранить';
+            this._tpManuallySet = trade.manualTP || false;
         } else {
             entryInput.value = '';
             slInput.value = '';
-            rrInput.value = '2';
-            tpInput.value = '';
+            if (tpInput) tpInput.value = '';
+            if (rrInput) rrInput.value = '3.00';
             this._setDirection('long');
             if (createBtn) createBtn.textContent = ' Создать';
+            this._tpManuallySet = false;
         }
+
+        [entryInput, slInput, tpInput, rrInput].forEach(inp => {
+            if (inp) inp.oncontextmenu = (e) => e.stopPropagation();
+        });
 
         panel.onmousedown = (e) => e.stopPropagation();
         panel.onmousemove = (e) => e.stopPropagation();
         panel.onmouseup = (e) => e.stopPropagation();
         panel.onclick = (e) => e.stopPropagation();
 
-        entryInput.oninput = () => this._updatePreview();
-        slInput.oninput = () => this._updatePreview();
-        rrInput.oninput = () => this._updatePreview();
-        tpInput.oninput = () => this._updatePreview();
+        entryInput.oninput = () => { 
+            this._tpManuallySet = false;
+            this._updateStep(); 
+            this._updatePreview(); 
+        };
+        slInput.oninput = () => { 
+            this._tpManuallySet = false;
+            this._updateStep(); 
+            this._updatePreview(); 
+        };
+        if (rrInput) rrInput.oninput = () => {
+            this._tpManuallySet = false;
+            this._updatePreview();
+        };
+        if (tpInput) tpInput.oninput = () => {
+            this._tpManuallySet = true;
+            this._updatePreview();
+        };
 
         const longBtn = document.getElementById('tradeDirectionLong');
         const shortBtn = document.getElementById('tradeDirectionShort');
+
         if (longBtn) longBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('long'); this._updatePreview(); };
         if (shortBtn) shortBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('short'); this._updatePreview(); };
 
@@ -9304,94 +9339,55 @@ class TradeLevelManager {
         }
         
         this._makeDraggable(panel);
+        this._updateStep();
         this._updatePreview();
         setTimeout(() => entryInput.focus(), 100);
     }
 
-    // ═══════════════════════════════════════════
-    // ПРЕВЬЮ (ОБНОВЛЕНИЕ РАСЧЁТОВ)
-    // ═══════════════════════════════════════════
-    _updatePreview() {
-        const entry = parseFloat(document.getElementById('tradeEntryInput').value);
-        const sl = parseFloat(document.getElementById('tradeSLInput').value);
-        const rrInput = document.getElementById('tradeRRInput');
-        const tpInput = document.getElementById('tradeTPInput');
-        const direction = this._selectedDirection || 'long';
-
-        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
-            document.getElementById('tradePreviewTP').textContent = '—';
-            document.getElementById('tradePreviewRisk').textContent = '—';
-            document.getElementById('tradePreviewReward').textContent = '—';
-            return;
-        }
-
-        const risk = Math.abs(entry - sl);
-        const tp = parseFloat(tpInput.value);
-        let reward, tpPrice, currentRR;
-
-        if (!isNaN(tp)) {
-            // Ручной TP
-            tpPrice = tp;
-            currentRR = (Math.abs(tpPrice - entry) / risk).toFixed(1);
-            reward = Math.abs(tpPrice - entry);
-        } else {
-            // Автоматический TP по R:R
-            currentRR = parseInt(rrInput.value) || 2;
-            tpPrice = direction === 'long' ? entry + risk * currentRR : entry - risk * currentRR;
-            reward = risk * currentRR;
-        }
-
-        const riskPercent = (risk / entry) * 100;
-        const rewardPercent = (reward / entry) * 100;
-
-        document.getElementById('tradePreviewTP').textContent = this.formatPrice(tpPrice);
-        document.getElementById('tradePreviewRisk').textContent = 
-            `${this.formatPrice(risk)} (${riskPercent.toFixed(2)}%)`;
-        document.getElementById('tradePreviewReward').textContent = 
-            `${this.formatPrice(reward)} (${rewardPercent.toFixed(2)}%)`;
-
-        if (!isNaN(tp) && rrInput) {
-            rrInput.value = currentRR;
-        }
-    }
-
-    // ═══════════════════════════════════════════
-    // ОТПРАВКА ФОРМЫ (СОЗДАТЬ / СОХРАНИТЬ)
-    // ═══════════════════════════════════════════
     _handlePanelSubmit() {
         const entry = parseFloat(document.getElementById('tradeEntryInput').value);
         const sl = parseFloat(document.getElementById('tradeSLInput').value);
-        const rr = parseInt(document.getElementById('tradeRRInput').value) || 2;
-        const tp = parseFloat(document.getElementById('tradeTPInput').value);
+        const tpInput = document.getElementById('tradeTPInput');
+        const tp = tpInput && tpInput.value !== '' ? parseFloat(tpInput.value) : NaN;
+        const rrInput = document.getElementById('tradeRRInput');
+        const rr = parseFloat(rrInput.value) || 2;
         const direction = this._selectedDirection || 'long';
 
-        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) { alert('Введите корректные цены'); return; }
-        if (entry === sl) { alert('Цена входа и стоп-лосс не могут быть равны'); return; }
-        if (direction === 'long' && sl > entry) { alert('Для Long стоп-лосс должен быть ниже цены входа'); return; }
-        if (direction === 'short' && sl < entry) { alert('Для Short стоп-лосс должен быть выше цены входа'); return; }
+        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) { return; }
+        if (entry === sl) { return; }
+        if (direction === 'long' && sl >= entry) { return; }
+        if (direction === 'short' && sl <= entry) { return; }
+
+        if (!isNaN(tp) && tp !== 0) {
+            if (direction === 'long' && tp <= entry) { return; }
+            if (direction === 'short' && tp >= entry) { return; }
+        }
+
+        const risk = Math.abs(entry - sl);
 
         if (this._editingTrade) {
             this._editingTrade.entryPrice = entry;
             this._editingTrade.stopLossPrice = sl;
             this._editingTrade.direction = direction;
-            if (!isNaN(tp)) {
+            
+            if (!isNaN(tp) && tp !== 0) {
                 this._editingTrade.takeProfitPrice = tp;
                 this._editingTrade.manualTP = true;
-                this._editingTrade.riskRewardRatio = Math.abs(tp - entry) / Math.abs(entry - sl);
+                const reward = Math.abs(tp - entry);
+                this._editingTrade.riskRewardRatio = risk > 0 ? (reward / risk) : rr;
             } else {
-                this._editingTrade.manualTP = false;
                 this._editingTrade.riskRewardRatio = rr;
+                this._editingTrade.manualTP = false;
+                this._editingTrade.update();
             }
-            this._editingTrade.update();
             this._editingTrade = null;
         } else {
-            this.createTrade(entry, sl, { 
-                riskRewardRatio: rr, 
-                direction: direction, 
-                time: Date.now() / 1000,
-                takeProfitPrice: isNaN(tp) ? undefined : tp,
-                manualTP: !isNaN(tp)
-            });
+            const options = { riskRewardRatio: rr, direction: direction, time: Date.now() / 1000 };
+            const trade = this.createTrade(entry, sl, options);
+            if (!isNaN(tp) && tp !== 0) {
+                trade.takeProfitPrice = tp;
+                trade.manualTP = true;
+            }
         }
 
         const panel = document.getElementById('tradeCreatePanel');
@@ -9404,9 +9400,6 @@ class TradeLevelManager {
         this._requestRedraw();
     }
 
-    // ═══════════════════════════════════════════
-    // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
-    // ═══════════════════════════════════════════
     _setDirection(direction) {
         this._selectedDirection = direction;
         const longBtn = document.getElementById('tradeDirectionLong');
@@ -9418,6 +9411,97 @@ class TradeLevelManager {
             if (shortBtn) { shortBtn.style.background = '#ad1010'; shortBtn.style.borderColor = '#ad1010'; }
             if (longBtn) { longBtn.style.background = '#2D2D2D'; longBtn.style.borderColor = '#404040'; }
         }
+    }
+
+    _updatePreview() {
+        const entry = parseFloat(document.getElementById('tradeEntryInput').value);
+        const sl = parseFloat(document.getElementById('tradeSLInput').value);
+        const tpInput = document.getElementById('tradeTPInput');
+        const rrInput = document.getElementById('tradeRRInput');
+        const createBtn = document.getElementById('tradeCreateBtn');
+        const direction = this._selectedDirection || 'long';
+
+        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = '—';
+            document.getElementById('tradePreviewReward').textContent = '—';
+            if (rrInput) rrInput.value = '3.00';
+            if (createBtn) { createBtn.disabled = false; createBtn.style.opacity = '1'; }
+            return;
+        }
+
+        // ✅ ВАЛИДАЦИЯ SL
+        if (direction === 'long' && sl >= entry) {
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = '—';
+            document.getElementById('tradePreviewReward').innerHTML = '<span style="color:#f23645;">❌ Для Long SL должен быть НИЖЕ Entry</span>';
+            if (createBtn) { createBtn.disabled = true; createBtn.style.opacity = '0.5'; }
+            return;
+        }
+        if (direction === 'short' && sl <= entry) {
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = '—';
+            document.getElementById('tradePreviewReward').innerHTML = '<span style="color:#f23645;">❌ Для Short SL должен быть ВЫШЕ Entry</span>';
+            if (createBtn) { createBtn.disabled = true; createBtn.style.opacity = '0.5'; }
+            return;
+        }
+
+        const risk = Math.abs(entry - sl);
+        let tp, rr;
+        const tpIsEmpty = !tpInput || tpInput.value === '';
+        const tpFocused = tpInput && document.activeElement === tpInput;
+
+        if (this._tpManuallySet || tpFocused) {
+            if (!tpIsEmpty) {
+                tp = parseFloat(tpInput.value);
+                if (!isNaN(tp) && tp !== 0) {
+                    // ✅ ВАЛИДАЦИЯ TP
+                    if (direction === 'long' && tp <= entry) {
+                        document.getElementById('tradePreviewTP').textContent = this._formatPriceInput(tp);
+                        document.getElementById('tradePreviewRisk').textContent = `${this._formatPriceInput(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
+                        document.getElementById('tradePreviewReward').innerHTML = '<span style="color:#f23645;">❌ Для Long TP должен быть ВЫШЕ Entry</span>';
+                        if (createBtn) { createBtn.disabled = true; createBtn.style.opacity = '0.5'; }
+                        return;
+                    }
+                    if (direction === 'short' && tp >= entry) {
+                        document.getElementById('tradePreviewTP').textContent = this._formatPriceInput(tp);
+                        document.getElementById('tradePreviewRisk').textContent = `${this._formatPriceInput(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
+                        document.getElementById('tradePreviewReward').innerHTML = '<span style="color:#f23645;">❌ Для Short TP должен быть НИЖЕ Entry</span>';
+                        if (createBtn) { createBtn.disabled = true; createBtn.style.opacity = '0.5'; }
+                        return;
+                    }
+                    const reward = Math.abs(tp - entry);
+                    rr = risk > 0 ? (reward / risk) : 2;
+                    if (rrInput) rrInput.value = rr.toFixed(2);
+                } else {
+                    rr = parseFloat(rrInput.value) || 2;
+                    tp = direction === 'long' ? entry + (risk * rr) : entry - (risk * rr);
+                }
+            } else {
+                rr = parseFloat(rrInput.value) || 2;
+                tp = direction === 'long' ? entry + (risk * rr) : entry - (risk * rr);
+            }
+        } else if (tpIsEmpty) {
+            rr = parseFloat(rrInput.value) || 2;
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = `${this._formatPriceInput(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
+            document.getElementById('tradePreviewReward').textContent = '—';
+            if (createBtn) { createBtn.disabled = false; createBtn.style.opacity = '1'; }
+            return;
+        } else {
+            rr = parseFloat(rrInput.value) || 2;
+            tp = direction === 'long' ? entry + (risk * rr) : entry - (risk * rr);
+            if (tpInput) tpInput.value = this._formatPriceInput(tp);
+        }
+
+        const reward = Math.abs(tp - entry);
+        const riskPercent = (risk / entry) * 100;
+        const rewardPercent = (reward / entry) * 100;
+
+        document.getElementById('tradePreviewTP').textContent = this._formatPriceInput(tp);
+        document.getElementById('tradePreviewRisk').textContent = `${this._formatPriceInput(risk)} (${riskPercent.toFixed(2)}%)`;
+        document.getElementById('tradePreviewReward').textContent = `${this._formatPriceInput(reward)} (${rewardPercent.toFixed(2)}%) | R:R 1:${rr.toFixed(2)}`;
+        if (createBtn) { createBtn.disabled = false; createBtn.style.opacity = '1'; }
     }
 
     _makeDraggable(panel) {
@@ -9512,7 +9596,6 @@ class TradeLevelManager {
         this._selectedTrade = trade;
     }
 }
-
 
 if (typeof window !== 'undefined') {
     window.TradeLevel = TradeLevel;
