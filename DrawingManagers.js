@@ -8350,7 +8350,7 @@ class TradeLevelRenderer {
         this._pixelRatio = window.devicePixelRatio || 1;
     }
 
-    draw(target) {
+     draw(target) {
         this._hitAreas = [];
         const trade = this._trade;
         const chartManager = this._chartManager;
@@ -8396,13 +8396,14 @@ class TradeLevelRenderer {
             ctx.fill();
             ctx.restore();
 
+            // ✅ ИСПОЛЬЗУЕМ formatPriceDynamic ВМЕСТО getFormattedPrice
             ctx.save();
             const fontSize = 10 * scope.horizontalPixelRatio;
             ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
             ctx.fillStyle = entryColor;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(getFormattedPrice(trade.entryPrice), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
+            ctx.fillText(formatPriceDynamic(trade.entryPrice), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
             ctx.restore();
 
             const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
@@ -8410,10 +8411,10 @@ class TradeLevelRenderer {
             const rewardPercent = riskPercent * trade.riskRewardRatio;
 
             this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `SL ${getFormattedPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
+            this._drawLabel(ctx, scope, `SL ${formatPriceDynamic(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
 
             this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `TP ${getFormattedPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+            this._drawLabel(ctx, scope, `TP ${formatPriceDynamic(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
 
             if (trade.selected && trade.options.showPlechi) {
                 ctx.save();
