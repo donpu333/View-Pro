@@ -477,6 +477,9 @@ updateModalResults(reset = false) {
     
     if (!source || source.length === 0) {
         resultsContainer.innerHTML = '<div class="no-results">Загрузка данных...</div>';
+        // ✅ Обновляем счетчик даже если нет данных
+        const foundSpan = document.getElementById('modalFoundCount');
+        if (foundSpan) foundSpan.textContent = '0';
         return;
     }
     
@@ -500,7 +503,6 @@ updateModalResults(reset = false) {
             for (let i = 0; i < priorityPrefixes.length; i++) {
                 if (symbol.startsWith(priorityPrefixes[i])) return i;
             }
-            // Тикеры с числами в начале — в самый конец
             if (/^\d/.test(symbol)) return 1000;
             return 100;
         };
@@ -514,9 +516,10 @@ updateModalResults(reset = false) {
     
     this.modalAllResults = filteredResults;
     
+    // ✅ НЕМЕДЛЕННО обновляем счетчик
     const foundSpan = document.getElementById('modalFoundCount');
     if (foundSpan) {
-        foundSpan.textContent = this.modalAllResults.length;
+        foundSpan.textContent = this.modalAllResults.length.toString();
     }
     
     const pageSize = this.parent.state.modalPageSize || 50;
@@ -821,59 +824,58 @@ updateModalResults(reset = false) {
         }
     }
 
-    async _finalizeAddAllFixed(allPairs) {
-        console.log(`✅ В памяти: ${this.parent.tickersMap.size} тикеров`);
-        
-        this.parent.state.isAddingAllInProgress = false;
-        
-        const btn = document.getElementById('modalAddAllBtn');
-        if (btn) {
-            btn.classList.remove('loading');
-            btn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
-        }
-
-        // 1. Рендерим
-        this.parent.filterCache = null;
-        this.parent.renderTickerList();
-        
-        this._showNotification(`⏳ Синхронизация...`, '#ffa500');
-
-        // 2. Синхронизируем вотчлист
-        const wm = this.parent.watchlistManager;
-        if (wm) {
-            const activeList = wm.lists.get(wm.activeListId);
-            if (activeList) {
-                activeList.symbols = [];
-                
-                for (const [key] of this.parent.tickersMap.entries()) {
-                    activeList.symbols.push(key);
-                }
-                
-                this.parent.state.customSymbols = [...activeList.symbols];
-                
-                console.log(`📝 Вотчлист: ${activeList.symbols.length} символов (без дублей!)`);
-                
-                wm.saveToStorage();
-                wm.renderDropdown();
-            }
-        } else {
-            this.parent.state.customSymbols = [];
-            for (const [key] of this.parent.tickersMap.entries()) {
-                this.parent.state.customSymbols.push(key);
-            }
-        }
-        
-        // 3. Сохраняем
-        this.parent.saveState();
-
-        // 4. Обновляем счётчик модалки
-        const counterSpan = document.getElementById('modalFoundCount');
-        if (counterSpan) counterSpan.textContent = this.parent.tickersMap.size;
-
-        // 5. Загружаем цены
-        await new Promise(r => setTimeout(r, 1000));
-        await this._safeLoadPricesFixed();
+ async _finalizeAddAllFixed(allPairs) {
+    console.log(`✅ В памяти: ${this.parent.tickersMap.size} тикеров`);
+    
+    this.parent.state.isAddingAllInProgress = false;
+    
+    const btn = document.getElementById('modalAddAllBtn');
+    if (btn) {
+        btn.classList.remove('loading');
+        btn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить все';
     }
+
+    // 1. Рендерим
+    this.parent.filterCache = null;
+    this.parent.renderTickerList();
+    
+    this._showNotification(`⏳ Синхронизация...`, '#ffa500');
+
+    // 2. Синхронизируем вотчлист
+    const wm = this.parent.watchlistManager;
+    if (wm) {
+        const activeList = wm.lists.get(wm.activeListId);
+        if (activeList) {
+            activeList.symbols = [];
+            
+            for (const [key] of this.parent.tickersMap.entries()) {
+                activeList.symbols.push(key);
+            }
+            
+            this.parent.state.customSymbols = [...activeList.symbols];
+            
+            console.log(`📝 Вотчлист: ${activeList.symbols.length} символов (без дублей!)`);
+            
+            wm.saveToStorage();
+            wm.renderDropdown();
+        }
+    } else {
+        this.parent.state.customSymbols = [];
+        for (const [key] of this.parent.tickersMap.entries()) {
+            this.parent.state.customSymbols.push(key);
+        }
+    }
+    
+    // 3. Сохраняем
+    this.parent.saveState();
+
+    // 4. ✅ ОБНОВЛЯЕМ счетчик правильно - вызываем updateModalResults
+    this.updateModalResults(true); // Это обновит счетчик правильно
+
+    // 5. Загружаем цены
+    await new Promise(r => setTimeout(r, 1000));
+    await this._safeLoadPricesFixed();
+}
 
     async _safeLoadPricesFixed() {
         const total = this.parent.tickersMap.size;
