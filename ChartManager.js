@@ -373,11 +373,11 @@ _startBackgroundTitleUpdate() {
         }
     }, 1000);
 }
-    destroy() {
-if (this._bgTitleInterval) {
-    clearInterval(this._bgTitleInterval);
-    this._bgTitleInterval = null;
-}
+     destroy() {
+        if (this._bgTitleInterval) {
+            clearInterval(this._bgTitleInterval);
+            this._bgTitleInterval = null;
+        }
 
         this._abortAllProcesses();
         
@@ -400,6 +400,10 @@ if (this._bgTitleInterval) {
         if (this._scrollStopTimeout) clearTimeout(this._scrollStopTimeout);
         if (this._setDataTimeout) clearTimeout(this._setDataTimeout);
         
+        if (this._globalMouseUpHandler) {
+            window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
+        }
+        
         document.removeEventListener('visibilitychange', this._visibilityHandler);
         if (this._resizeObserver) this._resizeObserver.disconnect();
         
@@ -414,7 +418,6 @@ if (this._bgTitleInterval) {
         this._symbolChangeCallbacks = [];
         console.log('✅ ChartManager полностью уничтожен, утечек памяти нет');
     }
-
     _startNewCandleChecker() {
         const check = () => {
             if (!this.chartData?.length || !this.currentInterval || this._updatesSuspended) {
@@ -513,47 +516,97 @@ if (this._bgTitleInterval) {
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
-    setupEventListeners() {
-        let resizeTimeout;
-        window.addEventListener('resize', () => {
-            clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(() => {
-                if (this.chart) {
-                    const width = this.chartContainer.clientWidth;
-                    const height = this.chartContainer.clientHeight;
-                    this.chart.applyOptions({ width, height });
-                    if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                    if (this._updateMainChartHeight) this._updateMainChartHeight();
-                    setTimeout(() => this.scrollToLast(), 50);
-                }
-                if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
-                this.scheduleDrawingsUpdate(true);
-            }, 100);
-        });
-
-        this.chartContainer.addEventListener('mouseleave', () => {
-            if (this.overlay) this.overlay.classList.remove('visible');
-            this._latestCrosshairData = null;
-            if (this._crosshairRafId) { 
-                cancelAnimationFrame(this._crosshairRafId); 
-                this._crosshairRafId = null; 
+setupEventListeners() {
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            if (this.chart) {
+                const width = this.chartContainer.clientWidth;
+                const height = this.chartContainer.clientHeight;
+                this.chart.applyOptions({ width, height });
+                if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                if (this._updateMainChartHeight) this._updateMainChartHeight();
+                setTimeout(() => this.scrollToLast(), 50);
             }
-            try { this.chart.clearCrosshairPosition(); } catch(e) {}
-        });
+            if (this.timerManager?._primitive) this.timerManager._primitive.requestRedraw();
+            this.scheduleDrawingsUpdate(true);
+        }, 100);
+    });
 
-        window.addEventListener('blur', () => {
-            if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
-            if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
-            if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
-            if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
-            if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
-            
-            try { 
-                this.chart?.clearCrosshairPosition(); 
-            } catch(e) {}
-        });
+    this.chartContainer.addEventListener('mouseleave', () => {
+        if (this.overlay) this.overlay.classList.remove('visible');
+        this._latestCrosshairData = null;
+        if (this._crosshairRafId) { 
+            cancelAnimationFrame(this._crosshairRafId); 
+            this._crosshairRafId = null; 
+        }
+        try { this.chart.clearCrosshairPosition(); } catch(e) {}
+        
+        // 👇 При выходе за пределы графика — "отпускаем" зависшую ось
+        this._fixStuckAxisDrag();
+    });
+
+    // 🛡️ УМНЫЙ АНТИ-ЗАЛИПАТЕЛЬ
+    // Если mouseup произошёл НАД оверлеем (не над canvas) —
+    // библиотека его не получила. Эмулируем mouseup на canvas.
+    this._globalMouseUpHandler = (e) => {
+        if (!this.chartContainer) return;
+        
+        const canvas = this.chartContainer.querySelector('canvas');
+        if (!canvas) return;
+        
+        // Если mouseup произошёл ПРЯМО на canvas — библиотека сама всё обработает
+        if (e.target === canvas) return;
+        
+        // Если mouseup произошёл НЕ на canvas, проверим — находится ли курсор
+        // в пределах контейнера графика (т.е. над оверлеем, лежащим поверх графика)
+        const rect = this.chartContainer.getBoundingClientRect();
+        const isOverChart = (
+            e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top && e.clientY <= rect.bottom
+        );
+        
+        // Если курсор над графиком, но событие ушло в оверлей —
+        // эмулируем mouseup на canvas, чтобы "отпустить" зависшую ось
+        if (isOverChart) {
+            this._fixStuckAxisDrag();
+        }
+    };
+    window.addEventListener('mouseup', this._globalMouseUpHandler, true);
+
+    window.addEventListener('blur', () => {
+        this._fixStuckAxisDrag();
+        
+        if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
+        if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
+        if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
+        if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
+        if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
+        
+        try { this.chart?.clearCrosshairPosition(); } catch(e) {}
+    });
+}
+
+// 🛠 Вспомогательный метод — эмулирует mouseup на canvas
+_fixStuckAxisDrag() {
+    if (!this.chart || !this.chartContainer) return;
+    try {
+        const canvas = this.chartContainer.querySelector('canvas');
+        if (canvas) {
+            // lightweight-charts слушает mouseup на canvas.
+            // Отправляя это событие, мы корректно "отпускаем" ось
+            // без сброса текущего масштаба/зума.
+            canvas.dispatchEvent(new MouseEvent('mouseup', { 
+                bubbles: true, 
+                cancelable: true,
+                view: window
+            }));
+        }
+    } catch (e) {
+        // Игнорируем ошибки эмуляции
     }
-
+}
     setChartType(type) {
         if (!this.chart) return;
         this.currentChartType = type;
