@@ -4702,26 +4702,24 @@ class RulerLineManager {
 }
 class AlertLine {  
     constructor(price, time, options = {}) {
-        // ✅ 1. Нормализуем время СРАЗУ. getTs теперь корректно возвращает СЕКУНДЫ для LWC
         const normalizedTime = AlertLine.getTs(time);
         
         this.price = price;
         this.time = normalizedTime;
         this.anchorTime = normalizedTime;
         
-        // ✅ 2. Используем ?? для защиты от falsy-значений (0, false)
         this.triggered = options.triggered ?? false;
         this.id = `alert_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         
         this.symbol = options.symbol || 'BTCUSDT';
         this.exchange = options.exchange || 'binance';
         this.marketType = options.marketType || 'futures';
-        this.direction = options.direction || 'both'; // 'above', 'below', 'both'
+        this.direction = options.direction || 'both';
         
         this.createdAt = Date.now();
-        this.status = options.status || 'active'; 
+        this.status = options.status || 'active';
         
-        this.active = false; // Временный флаг для предотвращения спама на каждом тике
+        this.active = false;
         
         this.triggerCount = options.triggerCount ?? 0;
         this.repeatCount = options.repeatCount ?? 5;
@@ -4729,7 +4727,6 @@ class AlertLine {
         this.lastTriggerTime = options.lastTriggerTime ?? null;
         this.triggerLimit = this.repeatCount === Infinity ? Infinity : this.repeatCount;
         
-        // ✅ 3. ?? идеально подходит здесь (0 ?? 0.26 вернет 0, а не 0.26)
         this.options = {
             color: options.color || '#808080',
             lineWidth: options.lineWidth ?? 2,
@@ -4758,10 +4755,13 @@ class AlertLine {
         this.dragPointX = 0;
         this.dragPointY = 0;
         this.symbolKey = options.symbolKey || null;
+        
+        this._processing = false;
+        this._firstTriggerTime = null;
+        this._firstTriggerPrice = null;
     }
 
     updateOptions(newOptions) {
-        // ✅ 4. Убрали 'direction' отсюда, чтобы не дублировать в this.options
         const allowedKeys = ['color', 'lineWidth', 'lineStyle', 'opacity', 'extendLeft', 
                             'extendRight', 'showPrice', 'showBell', 'fontSize'];
         const filtered = {};
@@ -4777,7 +4777,6 @@ class AlertLine {
         if (newOptions.repeatInterval !== undefined) {
             this.repeatInterval = newOptions.repeatInterval;
         }
-        // ✅ 5. direction обновляется только здесь, на уровне корня объекта
         if (newOptions.direction !== undefined) {
             this.direction = newOptions.direction;
         }
@@ -4788,7 +4787,7 @@ class AlertLine {
     }
     
     canTriggerAgain() {
-        if (this.status === 'paused' || this.status === 'completed') return false;
+        if (this.status !== 'active') return false;
         if (this.triggerLimit === Infinity) return true;
         return this.triggerCount < this.triggerLimit;
     }
@@ -4810,7 +4809,9 @@ class AlertLine {
     }
     
     pause() {
-        this.status = 'paused';
+        if (this.status === 'active') {
+            this.status = 'paused';
+        }
     }
     
     resume() {
@@ -4821,25 +4822,25 @@ class AlertLine {
     
     complete() {
         this.status = 'completed';
-        this.triggered = true; // ✅ 6. ВОССТАНОВЛЕНО: критически важно для loadFromData
+        this.triggered = true;
+        this.active = false;
     }
     
     resetPriceTrigger() {
         this.active = false;
     }
     
-    // ✅ 7. ПУЛЕНЕПРОБИВАЕМЫЙ getTs: возвращает СЕКУНДЫ для Lightweight Charts
     static getTs(time) {
-        if (typeof time === 'number') return time; // Если число — верим ему (LWC дал секунды)
+        if (typeof time === 'number') return time;
         if (typeof time === 'string') {
-            const parsed = Date.parse(time); // Date.parse возвращает миллисекунды
-            if (!isNaN(parsed)) return Math.floor(parsed / 1000); // Конвертируем МС -> Секунды
-            return Number(time); // Фолбэк
+            const parsed = Date.parse(time);
+            if (!isNaN(parsed)) return Math.floor(parsed / 1000);
+            return Number(time);
         }
         return Number(time) || 0;
     }
 }
-// ✅ ГАРАНТИРОВАННЫЕ ХЕЛПЕРЫ (защита от ReferenceError)
+
 function positionsLine(position, pixelRatio, lineWidth, isHorizontal) {
     const pos = Math.round(position * pixelRatio);
     const length = Math.max(1, Math.round(lineWidth * pixelRatio));
@@ -4861,8 +4862,6 @@ class AlertLineRenderer {
         this._hitArea = null;
         this._priceLabelHitArea = null;
         
-        // ✅ 1. МИКРООПТИМИЗАЦИЯ: Резолвим форматтер ОДИН РАЗ в конструкторе.
-        // Метод draw() вызывается 30-60 раз в секунду, проверка typeof там не нужна.
         this._formatPrice = (typeof Utils !== 'undefined' && typeof Utils.formatPrice === 'function')
             ? Utils.formatPrice 
             : formatPriceSafe;
@@ -4927,7 +4926,7 @@ class AlertLineRenderer {
             ctx.lineTo(endPos, yPos + yLength / 2);
             ctx.stroke();
             
-            ctx.setLineDash([]); // Сброс для следующих примитивов
+            ctx.setLineDash([]);
 
             if (alert.showDragPoint) {
                 ctx.fillStyle = '#FFFFFF';
@@ -4957,17 +4956,16 @@ class AlertLineRenderer {
             }
 
             if (alert.options.showPrice) {
-                // ✅ 2. ИСПОЛЬЗУЕМ КЭШИРОВАННЫЙ ФОРМАТТЕР (0 накладных расходов на кадр)
                 let priceText = this._formatPrice(alert.price);
                 
-             let statusIcon = '';
-if (alert.status === 'active') {
-    statusIcon = alert.active ? '🔔 ' : '🔔 ';  // Всегда колокольчик
-} else if (alert.status === 'paused') {
-    statusIcon = '⏸️ ';
-} else if (alert.status === 'completed' || alert.triggered) {
-    statusIcon = '✅ ';
-}
+                let statusIcon = '';
+                if (alert.status === 'active') {
+                    statusIcon = alert.active ? '🔔 ' : '🔔 ';
+                } else if (alert.status === 'paused') {
+                    statusIcon = '⏸️ ';
+                } else if (alert.status === 'completed' || alert.triggered) {
+                    statusIcon = '✅ ';
+                }
                 priceText = statusIcon + priceText;
 
                 ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
@@ -5018,16 +5016,12 @@ if (alert.status === 'active') {
             const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
             return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
         };
-        
-        // ✅ 3. ДОБАВЛЕН ПАРСЕР RGBA: теперь opacity корректно перезаписывает альфа-канал, 
-        // даже если цвет пришел в формате 'rgba(255, 0, 0, 0.8)'
         const parseRgba = (rgba) => {
             const result = /rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/i.exec(rgba);
             return result ? { 
                 r: parseInt(result[1], 10), 
                 g: parseInt(result[2], 10), 
                 b: parseInt(result[3], 10) 
-                // alpha игнорируем, так как мы принудительно применяем переданную opacity
             } : null;
         };
 
@@ -5035,7 +5029,7 @@ if (alert.status === 'active') {
         if (parsed) {
             return `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
         }
-        return color; // Фолбэк (например, если это именованный цвет 'red' или уже валидная строка)
+        return color;
     }
 
     _roundRect(ctx, x, y, w, h, r) {
@@ -5088,7 +5082,7 @@ if (alert.status === 'active') {
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 if (distance < bestDistance) {
                     bestHit = { type: 'label', alert: this._alert, distance: distance };
-                    bestDistance = distance; // Консистентное обновление
+                    bestDistance = distance;
                 }
             }
         }
@@ -5118,10 +5112,7 @@ class AlertLinePrimitive {
         this._alert = alert;
         this._chartManager = chartManager;
         this._paneView = new AlertLinePaneView(alert, chartManager);
-        
-        // ✅ Кэшируем массив один раз (исправлено)
         this._paneViews = [this._paneView];
-        
         this._chart = null;
         this._series = null;
         this._requestUpdate = null;
@@ -5142,7 +5133,6 @@ class AlertLinePrimitive {
         const oldTime = this._alert.time;
         this._syncTime();
         
-        // ✅ Вызываем перерисовку только если время действительно изменилось
         if (this._alert.time !== oldTime && this._requestUpdate) {
             this._requestUpdate();
         }
@@ -5155,8 +5145,6 @@ class AlertLinePrimitive {
         const anchor = AlertLine.getTs(this._alert.anchorTime);
         if (isNaN(anchor)) return;
 
-        // ✅ БИНАРНЫЙ ПОИСК $O(\log N)$ вместо линейного $O(N)$
-        // Данные LWC всегда отсортированы по времени, поэтому это безопасно и молниеносно.
         let left = 0;
         let right = chartData.length - 1;
         let closest = chartData[0];
@@ -5177,13 +5165,11 @@ class AlertLinePrimitive {
             } else if (midTime > anchor) {
                 right = mid - 1;
             } else {
-                // Точное совпадение найдено, дальше искать нет смысла
                 closest = chartData[mid];
                 break;
             }
         }
 
-        // ✅ Обновляем только при реальном изменении
         if (this._alert.time !== closest.time) {
             this._alert.time = closest.time;
         }
@@ -5225,7 +5211,8 @@ class AlertLineManager {
         this._dblClickTimeout = 350;
         this._lastClickTime = 0;
         this._needsRedraw = false;
-        this._subscribedSymbols = new Set();
+        this._subscriptions = new Map();
+        this._subCheckInterval = null;
 
         this._handleContextMenu = this._handleContextMenu.bind(this);
         this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
@@ -5234,11 +5221,6 @@ class AlertLineManager {
         this._setupEventListeners();
         this._setupHotkeys();
         this._setupSettingsListeners();
-
-        // Подписка на цены через PriceManager
-        this._priceHandler = (price, symbol, exchange, marketType) => {
-            this._checkAlerts(symbol, price, exchange, marketType);
-        };
 
         if (window.drawingLoaderCoordinator) {
             window.drawingLoaderCoordinator.register(this, 'alert');
@@ -5261,48 +5243,100 @@ class AlertLineManager {
         }, 150);
     }
 
-    // ==================== ПОДПИСКА НА ЦЕНЫ ====================
+    _normalizeSymbol(symbol) {
+        return String(symbol || '').toUpperCase().replace(/[_\-]?(PERP|SPOT)$/i, '').replace(/[^A-Z0-9]/g, '');
+    }
 
-    _subscribeAlertsToPriceManager() {
-        if (!window.priceManagerInstance) return;
-        
-        const subscribed = new Set();
+    _getSubscriptionKey(symbol, exchange, marketType) {
+        const cleanSymbol = this._normalizeSymbol(symbol);
+        const cleanExchange = String(exchange || 'binance').toLowerCase();
+        const cleanMarket = String(marketType || 'futures').toLowerCase();
+        return `${cleanSymbol}:${cleanExchange}:${cleanMarket}`;
+    }
+
+    _hasActiveAlertsForSymbol(symbol, exchange, marketType, excludeAlertId = null) {
+        const targetKey = this._getSubscriptionKey(symbol, exchange, marketType);
         
         for (const item of this._alerts) {
             const a = item.alert;
-            if (a.triggered || a.status === 'paused' || a.status === 'completed') continue;
+            if (!a) continue;
+            if (excludeAlertId && a.id === excludeAlertId) continue;
+            if (a.status !== 'active') continue;
             
-            const ex = (a.exchange || 'binance').toLowerCase();
-            const mk = (a.marketType || 'futures').toLowerCase();
-            const key = `${a.symbol}:${ex}:${mk}`;
+            const aKey = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+            if (aKey === targetKey) return true;
+        }
+        
+        return false;
+    }
+
+    _subscribeAlertsToPriceManager() {
+        if (!window.priceManagerInstance) {
+            console.warn('⚠️ PriceManager not available, retrying in 1s...');
+            setTimeout(() => this._subscribeAlertsToPriceManager(), 1000);
+            return;
+        }
+        
+        for (const item of this._alerts) {
+            const a = item.alert;
+            if (a.status !== 'active') continue;
             
-            if (subscribed.has(key)) continue;
-            subscribed.add(key);
+            const key = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
             
-            window.priceManagerInstance.subscribe(key, (price, symbol, exchange, marketType) => {
+            if (this._subscriptions.has(key)) continue;
+            
+            const handler = (price, symbol, exchange, marketType) => {
                 this._checkAlerts(symbol, price, exchange, marketType);
-            });
+            };
+            
+            this._subscriptions.set(key, handler);
+            window.priceManagerInstance.subscribe(key, handler);
+            console.log(`✅ Подписка: ${key}`);
+        }
+        
+        if (!this._subCheckInterval) {
+            this._subCheckInterval = setInterval(() => {
+                this._verifySubscriptions();
+            }, 10000);
+        }
+    }
+    
+    _verifySubscriptions() {
+        if (!window.priceManagerInstance) {
+            this._subscriptions.clear();
+            this._subscribeAlertsToPriceManager();
+            return;
+        }
+        
+        for (const item of this._alerts) {
+            const a = item.alert;
+            if (a.status !== 'active') continue;
+            
+            const key = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+            
+            if (!this._subscriptions.has(key)) {
+                console.warn(`⚠️ Lost subscription for ${key}, resubscribing...`);
+                this._subscribeAlertsToPriceManager();
+                break;
+            }
         }
     }
 
-    // ==================== ПРОВЕРКА АЛЕРТОВ ====================
-
-     _checkAlerts(symbol, price, exchange, market) {
+    _checkAlerts(symbol, price, exchange, market) {
         if (!symbol || !price || isNaN(price)) return;
 
-        const cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const cleanExchange = (exchange || 'binance').toLowerCase();
-        const cleanMarket = (market || 'futures').toLowerCase();
+        const cleanSymbol = this._normalizeSymbol(symbol);
+        const cleanExchange = String(exchange || 'binance').toLowerCase();
+        const cleanMarket = String(market || 'futures').toLowerCase();
 
-        // ✅ НЕ фильтруем по triggered, чтобы алерт мог проверять интервалы после первого срабатывания
         const items = this._alerts.filter(item => {
             const a = item.alert;
             if (!a) return false;
-            if (a.status === 'paused' || a.status === 'completed') return false;
+            if (a.status !== 'active') return false;
             
-            const aSym = (a.symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-            const aEx = (a.exchange || 'binance').toLowerCase();
-            const aMk = (a.marketType || 'futures').toLowerCase();
+            const aSym = this._normalizeSymbol(a.symbol);
+            const aEx = String(a.exchange || 'binance').toLowerCase();
+            const aMk = String(a.marketType || 'futures').toLowerCase();
             
             return aSym === cleanSymbol && aEx === cleanExchange && aMk === cleanMarket;
         });
@@ -5314,7 +5348,6 @@ class AlertLineManager {
         for (const item of items) {
             const alert = item.alert;
             
-            // Защита от двойной обработки в одном тике
             if (alert._processing) continue;
             alert._processing = true;
             
@@ -5322,23 +5355,20 @@ class AlertLineManager {
                 const lastPrice = this._lastPrices.get(alert.id);
                 this._lastPrices.set(alert.id, price);
 
-                if (lastPrice === undefined) continue; // Первый тик, просто запоминаем цену
+                if (lastPrice === undefined) continue;
                 if (now - alert.createdAt < 100) continue;
 
                 const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
                 if (alert.triggerCount >= triggerLimit) {
-                    alert.status = 'completed';
+                    alert.complete();
+                    this._handleAlertCompletion(alert);
                     continue;
                 }
 
-                // =============================================
-                // 🔥 ЛОГИКА: первое пересечение → потом только таймер
-                // =============================================
                 const isFirstTrigger = alert.triggerCount === 0;
                 let shouldTrigger = false;
                 
                 if (isFirstTrigger) {
-                    // 1️⃣ ПЕРВОЕ срабатывание: строго по пересечению цены
                     const crossedUp = lastPrice <= alert.price && price >= alert.price;
                     const crossedDown = lastPrice >= alert.price && price <= alert.price;
 
@@ -5351,7 +5381,6 @@ class AlertLineManager {
                         alert._firstTriggerPrice = price;
                     }
                 } else {
-                    // 2️⃣ ПОВТОРНЫЕ срабатывания: ТОЛЬКО по интервалу времени!
                     const intervalMs = (alert.repeatInterval || 1) * 60000;
                     const msSinceLast = now - alert.lastTriggerTime;
                     
@@ -5360,12 +5389,9 @@ class AlertLineManager {
                     }
                 }
 
-                // =============================================
-                // 🔥 ВЫПОЛНЯЕМ ТРИГГЕР
-                // =============================================
                 if (shouldTrigger) {
                     const isRepeat = alert.triggerCount > 0;
-                    console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit})`);
+                    console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit === Infinity ? '∞' : triggerLimit})`);
                     
                     alert.triggerCount++;
                     alert.lastTriggerTime = now;
@@ -5378,31 +5404,9 @@ class AlertLineManager {
                     this._sendTelegramAlert(alert, price, isRepeat);
                     this._requestRedraw();
 
-                    // ✅ ИСПРАВЛЕНО: Если достигнут лимит — завершаем, но НЕ удаляем
                     if (alert.triggerCount >= triggerLimit) {
-                        alert.triggered = true;       // Помечаем как сработавший (для фильтрации в UI)
-                        alert.status = 'completed';   // Статус для вкладки "Сработавшие"
-                        alert.active = false;
-                        
-                        this._stopHighlight(alert.id);
-                        
-                        // 1. Убираем линию с графика, но оставляем объект алерта в памяти
-                        const alertItem = this._alerts.find(i => i.alert.id === alert.id);
-                        if (alertItem && alertItem.primitive && alertItem.series) {
-                            try { 
-                                alertItem.series.detachPrimitive(alertItem.primitive); 
-                            } catch(e) {}
-                            alertItem.primitive = null;
-                            alertItem.series = null;
-                        }
-                        
-                        // 2. Сохраняем новый статус (completed) в базу данных
-                        this._saveAlerts();
-                        
-                        // 3. Обновляем интерфейс, чтобы алерт переместился во вкладку "Сработавшие"
-                        this._updateAlertsListUI();
-                        
-                        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+                        alert.complete();
+                        this._handleAlertCompletion(alert);
                     }
                 }
             } finally {
@@ -5410,7 +5414,33 @@ class AlertLineManager {
             }
         }
     }
-    // ==================== ЗАГРУЗКА ====================
+    
+    _handleAlertCompletion(alert) {
+        this._stopHighlight(alert.id);
+        
+        const alertItem = this._alerts.find(i => i.alert.id === alert.id);
+        if (alertItem && alertItem.primitive && alertItem.series) {
+            try { 
+                alertItem.series.detachPrimitive(alertItem.primitive); 
+            } catch(e) {
+                console.warn('Failed to detach primitive:', e);
+            }
+            alertItem.primitive = null;
+            alertItem.series = null;
+        }
+        
+        const key = this._getSubscriptionKey(alert.symbol, alert.exchange, alert.marketType);
+        
+        if (!this._hasActiveAlertsForSymbol(alert.symbol, alert.exchange, alert.marketType, alert.id)) {
+            this._subscriptions.delete(key);
+            console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
+        }
+        
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        
+        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+    }
 
     async loadFromData(symbolKey, alertRecords) {
         try {
@@ -5475,8 +5505,7 @@ class AlertLineManager {
                         existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
 
                         if (isCurrentSymbol && 
-                            !existing.alert.triggered && 
-                            existing.alert.status !== 'completed' &&
+                            existing.alert.status === 'active' &&
                             (!existing.primitive || !existing.series)) {
                             const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
                             try {
@@ -5505,7 +5534,7 @@ class AlertLineManager {
                     alert.status = rec.data.status || 'active';
                     alert.anchorCandle = rec.data.anchorCandle || null;
 
-                    if (isCurrentSymbol && !alert.triggered && alert.status !== 'completed') {
+                    if (isCurrentSymbol && alert.status === 'active') {
                         const primitive = new AlertLinePrimitive(alert, this._chartManager);
                         try {
                             series.attachPrimitive(primitive);
@@ -5524,6 +5553,7 @@ class AlertLineManager {
             this._alerts.push(...newAlerts);
 
             if (isCurrentSymbol) {
+                this._subscribeAlertsToPriceManager();
                 this._updateAlertsListUI();
                 this._requestRedraw();
             }
@@ -5553,6 +5583,7 @@ class AlertLineManager {
                 await this.loadFromData(symbolKey, records);
             }
 
+            this._subscribeAlertsToPriceManager();
             console.log(`✅ All alerts loaded (${this._alerts.length} total)`);
         } catch (error) {
             console.error('❌ loadAllAlertsFromDB failed:', error);
@@ -5565,8 +5596,6 @@ class AlertLineManager {
             await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
         }
     }
-
-    // ==================== CRUD ====================
 
     createAlert(price, time, options = {}) {
         const defaultVisibility = {
@@ -5601,7 +5630,7 @@ class AlertLineManager {
         let primitive = null;
         let series = null;
 
-        if (!alert.triggered && alert.status !== 'completed') {
+        if (alert.status === 'active') {
             primitive = new AlertLinePrimitive(alert, this._chartManager);
             series = this._chartManager.currentChartType === 'candle' 
                 ? this._chartManager.candleSeries 
@@ -5646,6 +5675,13 @@ class AlertLineManager {
             }
         }
 
+        const key = this._getSubscriptionKey(alert.symbol, alert.exchange, alert.marketType);
+        
+        if (!this._hasActiveAlertsForSymbol(alert.symbol, alert.exchange, alert.marketType, alertId)) {
+            this._subscriptions.delete(key);
+            console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
+        }
+
         this._alerts.splice(index, 1);
 
         if (this._selectedAlert?.id === alertId) {
@@ -5668,6 +5704,13 @@ class AlertLineManager {
         const item = this._alerts.find(a => a.alert.id === alertId);
         if (item && item.alert.status === 'active') {
             item.alert.pause();
+            
+            const key = this._getSubscriptionKey(item.alert.symbol, item.alert.exchange, item.alert.marketType);
+            if (!this._hasActiveAlertsForSymbol(item.alert.symbol, item.alert.exchange, item.alert.marketType)) {
+                this._subscriptions.delete(key);
+                console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
+            }
+            
             this._saveAlerts();
             this._updateAlertsListUI();
             this._requestRedraw();
@@ -5678,16 +5721,22 @@ class AlertLineManager {
 
     resumeAlert(alertId) {
         const item = this._alerts.find(a => a.alert.id === alertId);
-        if (item && item.alert.status === 'paused' && !item.alert.triggered) {
+        if (item && item.alert.status === 'paused') {
             item.alert.resume();
-            if (!item.primitive && !item.alert.triggered) {
+            if (!item.primitive && item.alert.status === 'active') {
                 const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
                 const series = this._chartManager.currentChartType === 'candle' 
                     ? this._chartManager.candleSeries 
                     : this._chartManager.barSeries;
-                series.attachPrimitive(primitive);
-                item.primitive = primitive;
-                item.series = series;
+                if (series) {
+                    try {
+                        series.attachPrimitive(primitive);
+                        item.primitive = primitive;
+                        item.series = series;
+                    } catch(e) {
+                        console.warn('Failed to attach primitive on resume:', e);
+                    }
+                }
             }
             this._subscribeAlertsToPriceManager();
             this._saveAlerts();
@@ -5705,15 +5754,26 @@ class AlertLineManager {
         if (alertsToDelete.length === 0) return;
         if (!confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
 
+        const keysToRemove = new Set();
+
         alertsToDelete.forEach(item => {
             if (window.db) window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
             if (item.primitive && item.series) {
                 try { item.series.detachPrimitive(item.primitive); } catch(e) {}
             }
+            
+            const key = this._getSubscriptionKey(item.alert.symbol, item.alert.exchange, item.alert.marketType);
+            keysToRemove.add(key);
+            
             this._lastPrices.delete(item.alert.id);
             const index = this._alerts.indexOf(item);
             if (index !== -1) this._alerts.splice(index, 1);
         });
+
+        for (const key of keysToRemove) {
+            this._subscriptions.delete(key);
+            console.log(`🔌 Отписка: ${key}`);
+        }
 
         this._saveAlerts();
         this._updateAlertsListUI();
@@ -5722,7 +5782,7 @@ class AlertLineManager {
 
     deleteCompletedAlerts() {
         const completedAlerts = this._alerts.filter(item => 
-            item.alert.status === 'completed' || item.alert.triggered
+            item.alert.status === 'completed'
         );
         if (completedAlerts.length === 0) return;
         if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
@@ -5741,8 +5801,6 @@ class AlertLineManager {
         this._updateAlertsListUI();
         this._requestRedraw();
     }
-
-    // ==================== HIT TEST ====================
 
     hitTest(x, y) {
         if (this._selectedAlert) {
@@ -5772,8 +5830,6 @@ class AlertLineManager {
 
         return bestHit;
     }
-
-    // ==================== DRAWING MODE ====================
 
     setDrawingMode(enabled) {
         this._isDrawingMode = enabled;
@@ -5806,7 +5862,6 @@ class AlertLineManager {
     }
 
     setMagnetEnabled(enabled) {
-        // Заглушка — магнит для алертов не используется
     }
 
     activateObject(alert) {
@@ -5820,8 +5875,6 @@ class AlertLineManager {
             if (item.primitive) item.primitive.updateAllViews();
         }
     }
-
-    // ==================== UTILS ====================
 
     _toBitmapCoords(cssX, cssY) {
         return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
@@ -5870,8 +5923,6 @@ class AlertLineManager {
         });
     }
 
-    // ==================== SAVE ====================
-
     async _saveAlerts() {
         if (!window.db) {
             console.warn('⚠️ DB not available, alerts saved to memory only');
@@ -5909,8 +5960,6 @@ class AlertLineManager {
         
         await Promise.allSettled(promises);
     }
-
-    // ==================== EVENTS ====================
 
     _setupHotkeys() {
         document.addEventListener('keydown', (e) => {
@@ -6230,8 +6279,6 @@ class AlertLineManager {
         }
     }
 
-    // ==================== SETTINGS ====================
-
     _showSettings(alert) {
         const settings = document.getElementById('alertSettings');
         if (!settings) return;
@@ -6408,8 +6455,6 @@ class AlertLineManager {
         }
     }
 
-    // ==================== NOTIFICATIONS ====================
-
     _startInfiniteHighlight(alertId) {
         this._stopHighlight(alertId);
 
@@ -6539,30 +6584,22 @@ class AlertLineManager {
         this._showSystemNotification(alert, currentPrice, isRepeat);
     }
 
-      _playAlertSound() {
+    _playAlertSound() {
         try {
-            // 1. Пробуем использовать стандартный аудио-тег, если он есть
             const audio = document.getElementById('alertSound');
             if (audio && audio.src && audio.src !== '') {
                 audio.currentTime = 0;
-                // Добавляем catch, чтобы ошибка не ломала выполнение
-                audio.play().catch(e => {
-                    // Тихо игнорируем ошибку автовоспроизведения
-                });
+                audio.play().catch(e => {});
                 return;
             }
 
-            // 2. Если тега нет, используем Web Audio API
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             if (!AudioContext) return;
 
             const ctx = new AudioContext();
             
-            // ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Пытаемся возобновить контекст
             if (ctx.state === 'suspended') {
-                ctx.resume().catch(() => {
-                    // Если браузер все еще блокирует, просто игнорируем
-                });
+                ctx.resume().catch(() => {});
             }
 
             const now = ctx.currentTime;
@@ -6582,10 +6619,7 @@ class AlertLineManager {
                 osc.start(startTime);
                 osc.stop(startTime + 0.2);
             });
-        } catch (e) {
-            // ✅ Полностью подавляем спам в консоль от ошибок автовоспроизведения
-            // console.warn('Звук заблокирован браузером. Кликните по странице, чтобы включить.');
-        }
+        } catch (e) {}
     }
 
     _showSystemNotification(alert, currentPrice, isRepeat = false) {
@@ -6637,15 +6671,13 @@ class AlertLineManager {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-    // ==================== UI ====================
-
     _updateAlertsListUI() {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
 
         const activeAlerts = this._alerts
             .map(a => a.alert)
-            .filter(alert => !alert.triggered && alert.status !== 'completed')
+            .filter(alert => alert.status === 'active' || alert.status === 'paused')
             .sort((a, b) => {
                 if (a.active && !b.active) return -1;
                 if (!a.active && b.active) return 1;
@@ -6654,7 +6686,7 @@ class AlertLineManager {
 
         const completedAlerts = this._alerts
             .map(a => a.alert)
-            .filter(alert => alert.triggered || alert.status === 'completed')
+            .filter(alert => alert.status === 'completed')
             .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
 
         const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
@@ -6804,37 +6836,43 @@ class AlertLineManager {
         }
     }
 
-    // ==================== DEBUG ====================
-
     debugAlertTimers() {
         console.log('=== ДЕБАГ ИНТЕРВАЛОВ АЛЕРТОВ ===');
         
         for (const item of this._alerts) {
             const a = item.alert;
-            if (a.triggered || a.status === 'completed') continue;
+            if (a.status !== 'active') continue;
             
             const now = Date.now();
             const lastPrice = this._lastPrices.get(a.id);
             const msSinceLastTrigger = a.lastTriggerTime ? now - a.lastTriggerTime : Infinity;
             const intervalMs = (a.repeatInterval || 1) * 60000;
             const canTrigger = a.triggerCount === 0 || msSinceLastTrigger >= intervalMs;
+            const key = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+            const subscribed = this._subscriptions.has(key);
             
             console.log(`📌 ${a.symbol} @ ${a.price}:`);
+            console.log(`   Ключ: ${key}`);
+            console.log(`   Подписан: ${subscribed ? '✅' : '❌'}`);
             console.log(`   Срабатываний: ${a.triggerCount}`);
             console.log(`   Последний триггер: ${a.lastTriggerTime ? new Date(a.lastTriggerTime).toLocaleTimeString() : 'никогда'}`);
             console.log(`   Прошло: ${msSinceLastTrigger === Infinity ? '∞' : (msSinceLastTrigger/1000).toFixed(1)}с`);
             console.log(`   Интервал: ${a.repeatInterval}мин (${intervalMs/1000}с)`);
             console.log(`   Может триггерить: ${canTrigger ? '✅ ДА' : '❌ НЕТ (ждем)'}`);
             console.log(`   Последняя цена: ${lastPrice || 'нет'}`);
+            console.log(`   Статус: ${a.status}`);
             console.log('');
         }
+        
+        console.log(`📊 Всего подписок: ${this._subscriptions.size}`);
+        console.log(`📊 Подписанные символы:`, [...this._subscriptions.keys()]);
     }
 
     getAlertsStats() {
         const total = this._alerts.length;
-        const active = this._alerts.filter(a => a.alert.status === 'active' && !a.alert.triggered).length;
+        const active = this._alerts.filter(a => a.alert.status === 'active').length;
         const paused = this._alerts.filter(a => a.alert.status === 'paused').length;
-        const completed = this._alerts.filter(a => a.alert.status === 'completed' || a.alert.triggered).length;
+        const completed = this._alerts.filter(a => a.alert.status === 'completed').length;
         const withPrimitive = this._alerts.filter(a => a.primitive !== null).length;
         
         console.log('=== ALERTS STATS ===');
@@ -6844,11 +6882,10 @@ class AlertLineManager {
         console.log(`✅ Завершено: ${completed}`);
         console.log(`🎨 С примитивом: ${withPrimitive}`);
         console.log(`💰 В lastPrices: ${this._lastPrices.size}`);
+        console.log(`📡 Подписок: ${this._subscriptions.size}`);
         
-        return { total, active, paused, completed, withPrimitive, lastPrices: this._lastPrices.size };
+        return { total, active, paused, completed, withPrimitive, lastPrices: this._lastPrices.size, subscriptions: this._subscriptions.size };
     }
-
-    // ==================== DESTROY ====================
 
     destroy() {
         window.removeEventListener('mouseup', this._handleGlobalMouseUp);
@@ -6857,7 +6894,13 @@ class AlertLineManager {
             document.removeEventListener('mousedown', document._alertSettingsCloseHandler);
             document._alertSettingsCloseHandler = null;
         }
+        
+        if (this._subCheckInterval) {
+            clearInterval(this._subCheckInterval);
+            this._subCheckInterval = null;
+        }
 
+        this._subscriptions.clear();
         this._alerts = [];
         this._lastPrices.clear();
         this._selectedAlert = null;
