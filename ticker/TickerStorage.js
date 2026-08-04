@@ -375,35 +375,20 @@ class TickerStorage {
     }
     
     // ✅ ВОЗВРАЩАЕМ updateModalCount (критично для TickerPanel!)
-    updateModalCount() {
-        const foundSpan = document.getElementById('modalFoundCount');
-        if (!foundSpan) return;
-        
-        if (!this.state) {
-            console.warn('updateModalCount: this.state не определен');
-            foundSpan.textContent = '0';
-            return;
-        }
-        
-        let source;
-        if (this.state.modalExchange === 'binance') {
-            source = this.state.modalMarketType === 'futures' 
-                ? this.allBinanceFutures 
-                : this.allBinanceSpot;
-        } else {
-            source = this.state.modalMarketType === 'futures' 
-                ? this.allBybitFutures 
-                : this.allBybitSpot;
-        }
-        
-        let count = source ? source.length : 0;
-        const query = this.state.modalSearchQuery;
-        if (query && source) {
-            count = source.filter(s => s.symbol.includes(query.toUpperCase())).length;
-        }
-        
-        foundSpan.textContent = count;
+ updateModalCount() {
+    const foundSpan = document.getElementById('modalFoundCount');
+    if (!foundSpan) return;
+    
+    // ✅ ИСПРАВЛЕНО: используем глобальный экземпляр TickerPanel
+    // В TickerStorage нет ссылки на modal, поэтому берём через window
+    const panel = window.tickerPanelInstance;
+    if (panel?.modal?.modalAllResults) {
+        foundSpan.textContent = panel.modal.modalAllResults.length;
+        return;
     }
+    
+    foundSpan.textContent = '0';
+}
 
     // ✅ ВОЗВРАЩАЕМ removeDuplicates (для совместимости)
     removeDuplicates(arr, key) {
