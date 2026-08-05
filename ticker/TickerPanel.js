@@ -418,47 +418,36 @@ class TickerPanel {
         });
     }
 
-   addInitialSymbols() {
-    const savedSymbols = this.state.customSymbols;
-    savedSymbols.forEach(symbolKey => {
-        const parts = symbolKey.split(':');
-        if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
-    });
-    this.updateModalCount();
-    this.filterCache = null;
-    
-    // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ вместо прямого вызова
-    this._scheduleRender();
-    
-    requestAnimationFrame(() => {
-        const container = document.getElementById('tickerListContainer');
-        const loader = document.getElementById('tickerLoader');
-        if (container) container.classList.add('ready');
-        if (loader) loader.style.display = 'none';
-        this._blockDOMUpdates = false;
-        this.startTickerPanelPriceEngine();
-        this.setupDelegatedEvents();
-        setTimeout(() => {
-            if (this.renderer) {
-                this.filterCache = null;
-                this.renderer.updatePriceElements?.();
-                
-                // ✅ ИСПРАВЛЕНО: Возвращаем пересортировку после загрузки цен
-                // Проверяем что цены реально загрузились, чтобы не было лагов
-                const firstTicker = this.displayedTickers?.[0];
-                if (firstTicker && firstTicker.price > 0) {
-                    // Используем requestAnimationFrame для плавности
-                    requestAnimationFrame(() => {
-                        this.renderTickerList();
-                    });
+    addInitialSymbols() {
+        const savedSymbols = this.state.customSymbols;
+        savedSymbols.forEach(symbolKey => {
+            const parts = symbolKey.split(':');
+            if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
+        });
+        this.updateModalCount();
+        this.filterCache = null;
+        
+        // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ вместо прямого вызова
+        this._scheduleRender();
+        
+        requestAnimationFrame(() => {
+            const container = document.getElementById('tickerListContainer');
+            const loader = document.getElementById('tickerLoader');
+            if (container) container.classList.add('ready');
+            if (loader) loader.style.display = 'none';
+            this._blockDOMUpdates = false;
+            this.startTickerPanelPriceEngine();
+            this.setupDelegatedEvents();
+            setTimeout(() => {
+                if (this.renderer) {
+                    this.filterCache = null;
+                    this.renderer.updatePriceElements?.();
+                    // 🚀 УДАЛЕНО: this.renderTickerList() — это лишняя тяжелая операция, которая вызывала лаг через 3 сек после старта
+                    console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
                 }
-                
-                console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
-            }
-        }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
-    });
-}
-
+            }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
+        });
+    }
     _syncToPriceManager() {
         if (!window.priceManagerInstance) return;
         let count = 0;
