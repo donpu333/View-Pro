@@ -675,54 +675,58 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-       addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
-        symbol = symbol.trim().toUpperCase();
-        if (!this._isValidSymbol(symbol)) return false;
-        const key = `${symbol}:${exchange}:${marketType}`;
-        
-        if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
-            this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
-            this.watchlistManager.renderDropdown(); 
-        }
+   addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
+    symbol = symbol.trim().toUpperCase();
+    if (!this._isValidSymbol(symbol)) return false;
+    const key = `${symbol}:${exchange}:${marketType}`;
+    
+    if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
+        this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
+        this.watchlistManager.renderDropdown(); 
+    }
 
-        if (this.tickersMap.has(key)) {
-            const existingTicker = this.tickersMap.get(key);
-            if (!this.tickers.includes(existingTicker)) {
-                this.tickers.push(existingTicker);
-                this.filterCache = null;
-                if (render) this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
-            }
-            return true;
+    if (this.tickersMap.has(key)) {
+        const existingTicker = this.tickersMap.get(key);
+        if (!this.tickers.includes(existingTicker)) {
+            this.tickers.push(existingTicker);
+            this.filterCache = null;
+            if (render) this._scheduleRender();
         }
-        
-        const newTicker = {
-            symbol, price: 0, change: 0, volume: 0, trades: null,
-            custom: true, prevPrice: 0, exchange, marketType,
-            flag: this.state.flags[key] || null
-        };
-        
-        this.tickers.push(newTicker);
-        this.tickersMap.set(key, newTicker);
-        if (!this.state.customSymbols.includes(key)) this.state.customSymbols.push(key);
-        
-        if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
-            window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
-            this._subscribedSymbols.add(key);
-        }
-        
-        this.filterCache = null;
-        if (render) this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
-        
-        if (!skipInitialFetch && !this._isBulkAdding) {
-            // ✅ Оставляем ТОЛЬКО точечный запрос для конкретного нового символа
-            this.fetchInitialDataForSymbol(symbol, exchange, marketType);
-            
-            // ❌ УДАЛЕНО: setTimeout с вызовом pollRestData(), который вызывал 
-            // массовую перезагрузку ВСЕХ тикеров и создавал лаги.
-        }
-        
         return true;
     }
+    
+    const newTicker = {
+        symbol, price: 0, change: 0, volume: 0, trades: null,
+        custom: true, prevPrice: 0, exchange, marketType,
+        flag: this.state.flags[key] || null
+    };
+    
+    this.tickers.push(newTicker);
+    this.tickersMap.set(key, newTicker);
+    if (!this.state.customSymbols.includes(key)) this.state.customSymbols.push(key);
+    
+    if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
+        window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
+        this._subscribedSymbols.add(key);
+    }
+    
+    this.filterCache = null;
+    if (render) this._scheduleRender();
+    
+    if (!skipInitialFetch && !this._isBulkAdding) {
+        // После получения данных с биржи — принудительная перерисовка списка
+        this.fetchInitialDataForSymbol(symbol, exchange, marketType).then(() => {
+            // Небольшая задержка, чтобы точно отработали все внутренние процессы
+            setTimeout(() => {
+                this.renderTickerList(); // Прямой вызов, а не _scheduleRender
+            }, 50);
+        }).catch(err => {
+            console.warn('⚠️ Ошибка получения начальных данных:', err);
+        });
+    }
+    
+    return true;
+}
     async addSymbolsBatch(symbolsData) {
         if (!symbolsData || symbolsData.length === 0) return;
         const addedKeys = [];
@@ -874,17 +878,14 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-        async fetchInitialDataForSymbol(symbol, exchange, marketType) {
+    async fetchInitialDataForSymbol(symbol, exchange, marketType) {
         try {
             const url = exchange === 'binance' 
                 ? (marketType === 'futures' ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}` : `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
                 : `https://api.bybit.com/v5/market/tickers?category=${marketType === 'futures' ? 'linear' : 'spot'}&symbol=${symbol}`;
-                
             const response = await fetch(url);
             const data = await response.json();
-            
-            const key = `${symbol}:${exchange}:${marketType}`;
-            const ticker = this.tickersMap.get(key);
+            const ticker = this.tickersMap.get(`${symbol}:${exchange}:${marketType}`);
             if (!ticker) return;
 
             if (exchange === 'binance') {
@@ -899,22 +900,11 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 ticker.volume = parseFloat(d.turnover24h) || parseFloat(d.volume24h) * parseFloat(d.lastPrice);
             }
           
-            // 🔥 ИСПРАВЛЕНИЕ: Принудительно синхронизируем DOM с новыми данными!
-            if (!this._blockDOMUpdates && this.renderer) {
-                // 1. Обновляем цену (на случай, если WebSocket еще не успел прийти)
-                if (typeof this.renderer.updatePriceForSymbol === 'function') {
-                    this.renderer.updatePriceForSymbol(key, ticker.price, ticker.change);
-                }
-                // 2. Обновляем объемы, сделки и остальные поля для видимых строк
-                if (typeof this.renderer.updatePriceElements === 'function') {
-                    this.renderer.updatePriceElements();
-                }
-            }
-            
         } catch (error) { 
             console.warn(`⚠️ Не удалось загрузить ${symbol}:`, error); 
         }
     }
+
     async fetchBybitSnapshots() {
         try {
             const [futRes, spotRes] = await Promise.all([
