@@ -8302,6 +8302,7 @@ hitTest(x, y) {
         this._selectedText = text;
     }
 }
+
 function getFormattedPriceFromChart(chartManager, price) {
     try {
         const series = chartManager.currentChartType === 'candle' 
@@ -8323,6 +8324,9 @@ class TradeLevel {
         this.riskRewardRatio = options.riskRewardRatio || 3;
         this.manualTP = options.manualTP || false;
         this.entryTime = options.time || Date.now() / 1000;
+        // ✅ ДОБАВЛЕНО: якорное время, как в других примитивах (ray, trendline)
+        // Оно НЕ меняется при _syncTime — предотвращает прыжки точки входа
+        this.anchorTime = this.entryTime;
         this.id = `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         this.symbolKey = options.symbolKey || null;
         this.symbol = options.symbol || null;
@@ -8429,13 +8433,32 @@ class TradeLevelRenderer {
                 ctx.fill();
                 ctx.restore();
 
+                // ✅ ИСПРАВЛЕНО: цена входа — белый текст на чёрном фоне
                 ctx.save();
                 const fontSize = 10 * scope.horizontalPixelRatio;
                 ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
-                ctx.fillStyle = entryColor;
+                const priceText = getFormattedPriceFromChart(chartManager, trade.entryPrice);
+                const textMetrics = ctx.measureText(priceText);
+                const padding = 4 * scope.horizontalPixelRatio;
+                const labelX = x + arrowSize + 4 * scope.horizontalPixelRatio;
+                const labelY = entry - (fontSize + padding * 2) / 2;
+                const labelW = textMetrics.width + padding * 2;
+                const labelH = fontSize + padding * 2;
+                
+                // Чёрный фон
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 3;
+                ctx.beginPath();
+                this._roundRect(ctx, labelX, labelY, labelW, labelH, 3 * scope.horizontalPixelRatio);
+                ctx.fill();
+                
+                // Белый текст
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#FFFFFF';
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(getFormattedPriceFromChart(chartManager, trade.entryPrice), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
+                ctx.fillText(priceText, labelX + padding, labelY + labelH / 2);
                 ctx.restore();
             }
 
@@ -8604,17 +8627,29 @@ class TradeLevelPrimitive {
     paneViews() { return [this._paneView]; }
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
+        // ✅ ДОБАВЛЕНО: фиксируем время на ближайшей свече при прикреплении
+        // (как в HorizontalRayPrimitive, TrendLinePrimitive)
+        this._syncTime();
     }
     updateAllViews() { 
-        if (this._requestUpdate) this._requestUpdate();
+        // ✅ ДОБАВЛЕНО: фиксируем время на ближайшей свече при смене ТФ
+        // Используем anchorTime, поэтому результат стабилен — прыжков нет
+        const oldTime = this._trade.entryTime;
+        this._syncTime();
+        if (this._trade.entryTime !== oldTime && this._requestUpdate) {
+            this._requestUpdate();
+        }
     }
     _syncTime() {
         const chartData = this._chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
+        // ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: ищем ближайшую свечу к anchorTime (неизменяемый якорь)
+        // а не к entryTime (который мог меняться). Это предотвращает прыжки.
+        const anchor = this._trade.anchorTime ?? this._trade.entryTime;
         let closest = chartData[0];
-        let minDiff = Math.abs(chartData[0].time - this._trade.entryTime);
+        let minDiff = Math.abs(chartData[0].time - anchor);
         for (let i = 1; i < chartData.length; i++) {
-            const diff = Math.abs(chartData[i].time - this._trade.entryTime);
+            const diff = Math.abs(chartData[i].time - anchor);
             if (diff < minDiff) { minDiff = diff; closest = chartData[i]; }
         }
         this._trade.entryTime = closest.time;
@@ -8646,7 +8681,6 @@ class TradeLevelManager {
         this._selectedDirection = 'long';
         this._editingTrade = null;
         this._tpManuallySet = false;
-
         this._pendingTradeTime = null;
 
         this._lastMouseClientX = 0;
@@ -8756,6 +8790,8 @@ class TradeLevelManager {
                         existing.trade.riskRewardRatio = rec.data.riskRewardRatio;
                         existing.trade.manualTP = rec.data.manualTP || false;
                         existing.trade.entryTime = rec.data.entryTime;
+                        // ✅ ДОБАВЛЕНО: загружаем anchorTime
+                        existing.trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
                         existing.trade.options = { ...existing.trade.options, ...rec.data.options };
                         existing.trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
                         if (!existing.trade.manualTP) {
@@ -8780,6 +8816,8 @@ class TradeLevelManager {
                     trade.riskRewardRatio = rec.data.riskRewardRatio;
                     trade.manualTP = rec.data.manualTP || false;
                     trade.entryTime = rec.data.entryTime;
+                    // ✅ ДОБАВЛЕНО: загружаем anchorTime
+                    trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
                     trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
                     trade.symbol = rec.data.symbol;
                     trade.exchange = rec.data.exchange || 'binance';
@@ -8813,7 +8851,22 @@ class TradeLevelManager {
             const trade = item.trade;
             return window.db.put('drawings', {
                 id: trade.id, type: 'tradelevel', symbolKey: trade.symbolKey || this._getCurrentSymbolKey(),
-                data: { entryPrice: trade.entryPrice, stopLossPrice: trade.stopLossPrice, takeProfitPrice: trade.takeProfitPrice, direction: trade.direction, riskRewardRatio: trade.riskRewardRatio, manualTP: trade.manualTP, entryTime: trade.entryTime, options: trade.options, timeframeVisibility: trade.timeframeVisibility, symbol: trade.symbol, exchange: trade.exchange, marketType: trade.marketType }
+                data: { 
+                    entryPrice: trade.entryPrice, 
+                    stopLossPrice: trade.stopLossPrice, 
+                    takeProfitPrice: trade.takeProfitPrice, 
+                    direction: trade.direction, 
+                    riskRewardRatio: trade.riskRewardRatio, 
+                    manualTP: trade.manualTP, 
+                    entryTime: trade.entryTime, 
+                    // ✅ ДОБАВЛЕНО: сохраняем anchorTime
+                    anchorTime: trade.anchorTime ?? trade.entryTime,
+                    options: trade.options, 
+                    timeframeVisibility: trade.timeframeVisibility, 
+                    symbol: trade.symbol, 
+                    exchange: trade.exchange, 
+                    marketType: trade.marketType 
+                }
             }).catch(e => console.error(`❌ Save trade error (${trade.id}):`, e));
         });
         await Promise.allSettled(promises);
@@ -9014,7 +9067,11 @@ class TradeLevelManager {
                     const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
                     if (startTimeX !== null) {
                         const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
-                        if (newTime !== null) this._dragTrade.entryTime = newTime;
+                        if (newTime !== null) {
+                            this._dragTrade.entryTime = newTime;
+                            // ✅ ДОБАВЛЕНО: обновляем и anchorTime при перетаскивании
+                            this._dragTrade.anchorTime = newTime;
+                        }
                     }
                 } else if (this._dragType === 'sl') {
                     const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
@@ -9029,7 +9086,6 @@ class TradeLevelManager {
                         if (newPrice !== null) {
                             this._dragTrade.takeProfitPrice = newPrice;
                             this._dragTrade.manualTP = true;
-                            // ✅ ИСПРАВЛЕНО: ПЕРЕСЧИТЫВАЕМ R:R НА ОСНОВЕ НОВОЙ TP ЦЕНЫ
                             const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
                             const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
                             this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
