@@ -9052,50 +9052,52 @@ class TradeLevelManager {
                 }
             }
 
-            if (this._isDragging && this._dragTrade) {
-                e.preventDefault();
-                e.stopPropagation();
-                const deltaCssX = (x - this._potentialDrag.startX) / this._pixelRatio;
-                const deltaCssY = (y - this._potentialDrag.startY) / this._pixelRatio;
+       if (this._isDragging && this._dragTrade) {
+    e.preventDefault();
+    e.stopPropagation();
+    const deltaCssX = (x - this._potentialDrag.startX) / this._pixelRatio;
+    const deltaCssY = (y - this._potentialDrag.startY) / this._pixelRatio;
 
-                if (this._dragType === 'entry') {
-                    const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startEntry);
-                    if (startPriceY !== null) {
-                        const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-                        if (newPrice !== null) this._dragTrade.entryPrice = newPrice;
-                    }
-                    const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
-                    if (startTimeX !== null) {
-                        const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
-                        if (newTime !== null) {
-                            this._dragTrade.entryTime = newTime;
-                            // ✅ ДОБАВЛЕНО: обновляем и anchorTime при перетаскивании
-                            this._dragTrade.anchorTime = newTime;
-                        }
-                    }
-                } else if (this._dragType === 'sl') {
-                    const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
-                    if (startPriceY !== null) {
-                        const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-                        if (newPrice !== null) this._dragTrade.stopLossPrice = newPrice;
-                    }
-                } else if (this._dragType === 'tp') {
-                    const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
-                    if (startPriceY !== null) {
-                        const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-                        if (newPrice !== null) {
-                            this._dragTrade.takeProfitPrice = newPrice;
-                            this._dragTrade.manualTP = true;
-                            const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
-                            const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
-                            this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
-                        }
-                    }
-                }
-                this._dragTrade.update();
-                this._requestRedraw();
-                return;
+    if (this._dragType === 'entry') {
+        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startEntry);
+        if (startPriceY !== null) {
+            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+            if (newPrice !== null) {
+                this._dragTrade.entryPrice = newPrice;
+                this._dragTrade.manualTP = false; // ✅ СБРАСЫВАЕМ — TP пересчитается
             }
+        }
+        const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
+        if (startTimeX !== null) {
+            const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
+            if (newTime !== null) this._dragTrade.entryTime = newTime;
+        }
+    } else if (this._dragType === 'sl') {
+        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
+        if (startPriceY !== null) {
+            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+            if (newPrice !== null) {
+                this._dragTrade.stopLossPrice = newPrice;
+                this._dragTrade.manualTP = false; // ✅ СБРАСЫВАЕМ — TP пересчитается по R:R
+            }
+        }
+    } else if (this._dragType === 'tp') {
+        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
+        if (startPriceY !== null) {
+            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+            if (newPrice !== null) {
+                this._dragTrade.takeProfitPrice = newPrice;
+                this._dragTrade.manualTP = true;
+                const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
+                const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
+                this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
+            }
+        }
+    }
+    this._dragTrade.update();
+    this._requestRedraw();
+    return;
+}
 
             const hit = this.hitTest(x, y);
             container.style.cursor = hit ? 'grab' : 'crosshair';
