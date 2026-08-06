@@ -8379,242 +8379,211 @@ class TradeLevelRenderer {
         this._pixelRatio = window.devicePixelRatio || 1;
     }
 
-   draw(target) {
-    this._hitAreas = [];
-    const trade = this._trade;
-    const chartManager = this._chartManager;
-    const currentKey = chartManager.getCurrentSymbolKey?.();
-    if (currentKey && trade.symbolKey !== currentKey) return;
+    draw(target) {
+        this._hitAreas = [];
+        const trade = this._trade;
+        const chartManager = this._chartManager;
+        const currentKey = chartManager.getCurrentSymbolKey?.();
+        if (currentKey && trade.symbolKey !== currentKey) return;
 
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const currentTf = chartManager.currentInterval;
-        if (!trade.isVisibleOnTimeframe(currentTf)) return;
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const currentTf = chartManager.currentInterval;
+            if (!trade.isVisibleOnTimeframe(currentTf)) return;
 
-        const entryY = chartManager.priceToCoordinate(trade.entryPrice);
-        const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
-        const tpY = trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice) 
-            ? chartManager.priceToCoordinate(trade.takeProfitPrice) 
-            : null;
-        const xCoord = chartManager.timeToCoordinate(trade.entryTime);
+            const entryY = chartManager.priceToCoordinate(trade.entryPrice);
+            const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
+            const tpY = trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice) 
+                ? chartManager.priceToCoordinate(trade.takeProfitPrice) 
+                : null;
+            const xCoord = chartManager.timeToCoordinate(trade.entryTime);
 
-        const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
-        const mediaH = scope.mediaSize.height * scope.verticalPixelRatio;
+            const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
+            const mediaH = scope.mediaSize.height * scope.verticalPixelRatio;
 
-        const x = (xCoord !== null ? xCoord : mediaW / (2 * scope.horizontalPixelRatio)) * scope.horizontalPixelRatio;
-        const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
-        const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
-        const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
+            const x = (xCoord !== null ? xCoord : mediaW / (2 * scope.horizontalPixelRatio)) * scope.horizontalPixelRatio;
+            const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
+            const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
+            const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
 
-        const isLong = trade.direction === 'long';
-        const entryColor = isLong ? '#00ff88' : '#f23645';
-        const arrowSize = 10 * scope.horizontalPixelRatio;
+            const isLong = trade.direction === 'long';
+            const entryColor = isLong ? '#00ff88' : '#f23645';
+            const arrowSize = 10 * scope.horizontalPixelRatio;
 
-        // СТРЕЛКА ENTRY
-        if (entry !== null) {
-            ctx.save();
-            ctx.fillStyle = entryColor;
-            ctx.shadowColor = 'rgba(0,0,0,0.5)';
-            ctx.shadowBlur = 4;
-            ctx.beginPath();
-            if (isLong) {
-                ctx.moveTo(x, entry - arrowSize);
-                ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
-                ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
-            } else {
-                ctx.moveTo(x, entry + arrowSize);
-                ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
-                ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+            if (entry !== null) {
+                ctx.save();
+                ctx.fillStyle = entryColor;
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                if (isLong) {
+                    ctx.moveTo(x, entry - arrowSize);
+                    ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
+                    ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
+                } else {
+                    ctx.moveTo(x, entry + arrowSize);
+                    ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
+                    ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+
+                ctx.save();
+                const fontSize = 10 * scope.horizontalPixelRatio;
+                ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+                ctx.fillStyle = entryColor;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(getFormattedPriceFromChart(chartManager, trade.entryPrice), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
+                ctx.restore();
             }
-            ctx.closePath();
-            ctx.fill();
-            ctx.restore();
-        }
 
-        const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
-        const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
-        const rewardPercent = riskPercent * trade.riskRewardRatio;
+            const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
+            const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
+            const rewardPercent = riskPercent * trade.riskRewardRatio;
 
-        // ЛИНИЯ SL
-        if (sl !== null) {
-            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `SL ${getFormattedPriceFromChart(chartManager, trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
-        }
-
-        // ЛИНИЯ TP
-        if (tp !== null) {
-            this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `TP ${getFormattedPriceFromChart(chartManager, trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
-        }
-
-        // ПЛЕЧИ
-        if (trade.selected && trade.options.showPlechi && entry !== null) {
-            ctx.save();
-            ctx.setLineDash([4, 4]);
-            ctx.lineWidth = 1 * scope.horizontalPixelRatio;
-            ctx.globalAlpha = 0.3;
             if (sl !== null) {
-                ctx.strokeStyle = trade.options.slColor;
-                ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke();
+                this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `SL ${getFormattedPriceFromChart(chartManager, trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
+            }
+
+            if (tp !== null) {
+                this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `TP ${getFormattedPriceFromChart(chartManager, trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+            }
+
+            if (trade.selected && trade.options.showPlechi && entry !== null) {
+                ctx.save();
+                ctx.setLineDash([4, 4]);
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.globalAlpha = 0.3;
+                if (sl !== null) {
+                    ctx.strokeStyle = trade.options.slColor;
+                    ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke();
+                }
+                if (tp !== null) {
+                    ctx.strokeStyle = trade.options.tpColor;
+                    ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            if (trade.showDragPoints) {
+                if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
+                if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
+                if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor); 
+            }
+
+            const hitBuffer = 15 * scope.horizontalPixelRatio;
+            if (entry !== null) {
+                this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
+            }
+            if (sl !== null) {
+                this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
             }
             if (tp !== null) {
-                ctx.strokeStyle = trade.options.tpColor;
-                ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke();
+                this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
             }
-            ctx.restore();
-        }
+        });
+    }
 
-        // ТОЧКИ ПЕРЕТАСКИВАНИЯ
-        if (trade.showDragPoints) {
-            if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
-            if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
-            if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor); 
-        }
+    _drawLine(ctx, scope, y, color, style, opacity) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = opacity;
+        ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+        ctx.setLineDash(style === 'dashed' ? [6, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(scope.mediaSize.width * scope.horizontalPixelRatio, y);
+        ctx.stroke();
+        ctx.restore();
+    }
 
-        // ПЛАШКА ЦЕНЫ ВХОДА
-        if (entry !== null) {
-            ctx.save();
-            const fz = 11 * scope.horizontalPixelRatio;
-            ctx.font = `bold ${fz}px Arial, sans-serif`;
-            const txt = getFormattedPriceFromChart(chartManager, trade.entryPrice);
-            const tw = ctx.measureText(txt).width;
-            const px = 5 * scope.horizontalPixelRatio;
-            const py = 2 * scope.horizontalPixelRatio;
-            const bw = tw + px * 2;
-            const bh = fz + py * 2;
-            const bx = x + arrowSize + 3 * scope.horizontalPixelRatio;
-            const by = entry - bh / 2;
-            const br = 3 * scope.horizontalPixelRatio;
+    _drawLabel(ctx, scope, text, y, color) {
+        ctx.save();
+        const fontSize = 10 * scope.horizontalPixelRatio;
+        ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+        const metrics = ctx.measureText(text);
+        const padding = 6 * scope.horizontalPixelRatio;
+        const labelWidth = metrics.width + padding * 2;
+        const labelHeight = fontSize + padding * 2;
+        
+        const labelX = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 5 * scope.horizontalPixelRatio;
+        const labelY = y - labelHeight / 2;
 
-            ctx.fillStyle = '#000000';
-            ctx.beginPath();
-            ctx.moveTo(bx + br, by);
-            ctx.lineTo(bx + bw - br, by);
-            ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + br);
-            ctx.lineTo(bx + bw, by + bh - br);
-            ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - br, by + bh);
-            ctx.lineTo(bx + br, by + bh);
-            ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - br);
-            ctx.lineTo(bx, by + br);
-            ctx.quadraticCurveTo(bx, by, bx + br, by);
-            ctx.fill();
+        ctx.fillStyle = 'rgba(20, 20, 20, 0.85)';
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+        ctx.fill();
 
-            ctx.fillStyle = '#FFFFFF';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(txt, bx + px, entry);
-            ctx.restore();
-        }
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = color;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, labelX + labelWidth - padding, labelY + labelHeight / 2);
+        ctx.restore();
+    }
 
-        // HIT AREAS
-        const hitBuffer = 15 * scope.horizontalPixelRatio;
-        if (entry !== null) {
-            this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
-        }
-        if (sl !== null) {
-            this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
-        }
-        if (tp !== null) {
-            this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
-        }
-    });
-}
+    _drawDragPoint(ctx, scope, x, y, color) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillStyle = color;
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
+    }
 
-_drawLine(ctx, scope, y, color, style, opacity) {
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = opacity;
-    ctx.lineWidth = 1 * scope.horizontalPixelRatio;
-    ctx.setLineDash(style === 'dashed' ? [6, 4] : []);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(scope.mediaSize.width * scope.horizontalPixelRatio, y);
-    ctx.stroke();
-    ctx.restore();
-}
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
 
-_drawLabel(ctx, scope, text, y, color) {
-    ctx.save();
-    const fontSize = 10 * scope.horizontalPixelRatio;
-    ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
-    const metrics = ctx.measureText(text);
-    const padding = 6 * scope.horizontalPixelRatio;
-    const labelWidth = metrics.width + padding * 2;
-    const labelHeight = fontSize + padding * 2;
-    
-    const labelX = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 5 * scope.horizontalPixelRatio;
-    const labelY = y - labelHeight / 2;
-
-    ctx.fillStyle = 'rgba(20, 20, 20, 0.85)';
-    ctx.shadowBlur = 4;
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.beginPath();
-    this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
-    ctx.fill();
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = color;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, labelX + labelWidth - padding, labelY + labelHeight / 2);
-    ctx.restore();
-}
-
-_drawDragPoint(ctx, scope, x, y, color) {
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = 4;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath();
-    ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.fillStyle = color;
-    ctx.shadowBlur = 0;
-    ctx.beginPath();
-    ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.restore();
-}
-
-_roundRect(ctx, x, y, w, h, r) {
-    if (w < 2 * r) r = w / 2;
-    if (h < 2 * r) r = h / 2;
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-}
-
-hitTest(x, y) {
-    let bestHit = null;
-    let bestDistance = Infinity;
-    for (const area of this._hitAreas) {
-        if (area.type === 'entry') {
-            const dx = x - area.x;
-            const dy = y - area.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < area.radius && distance < bestDistance) {
-                bestHit = { type: 'entry', trade: area.trade, distance };
-                bestDistance = distance;
-            }
-        } else {
-            if (x >= area.x1 && x <= area.x2) {
-                const distance = Math.abs(y - area.y);
-                if (distance < area.buffer && distance < bestDistance) {
-                    bestHit = { type: area.type, trade: area.trade, distance };
+    hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+        for (const area of this._hitAreas) {
+            if (area.type === 'entry') {
+                const dx = x - area.x;
+                const dy = y - area.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < area.radius && distance < bestDistance) {
+                    bestHit = { type: 'entry', trade: area.trade, distance };
                     bestDistance = distance;
+                }
+            } else {
+                if (x >= area.x1 && x <= area.x2) {
+                    const distance = Math.abs(y - area.y);
+                    if (distance < area.buffer && distance < bestDistance) {
+                        bestHit = { type: area.type, trade: area.trade, distance };
+                        bestDistance = distance;
+                    }
                 }
             }
         }
+        return bestHit;
     }
-    return bestHit;
 }
-}
+
 class TradeLevelPaneView {
     constructor(trade, chartManager) {
         this._trade = trade;
@@ -8635,10 +8604,8 @@ class TradeLevelPrimitive {
     paneViews() { return [this._paneView]; }
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
-        // ❌ УБРАНО: _syncTime() сдвигал entryTime при смене ТФ
     }
     updateAllViews() { 
-        // ❌ УБРАНО: _syncTime() — больше не трогаем entryTime при смене ТФ
         if (this._requestUpdate) this._requestUpdate();
     }
     _syncTime() {
@@ -8680,7 +8647,6 @@ class TradeLevelManager {
         this._editingTrade = null;
         this._tpManuallySet = false;
 
-        // ✅ СОХРАНЯЕМ ВРЕМЯ КЛИКА ДЛЯ СОЗДАНИЯ ТРЕЙДА
         this._pendingTradeTime = null;
 
         this._lastMouseClientX = 0;
@@ -8792,7 +8758,6 @@ class TradeLevelManager {
                         existing.trade.entryTime = rec.data.entryTime;
                         existing.trade.options = { ...existing.trade.options, ...rec.data.options };
                         existing.trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
-                        // ✅ ГАРАНТИРУЕМ ЧТО TP РАССЧИТАН ПРИ ЗАГРУЗКЕ ИЗ БД
                         if (!existing.trade.manualTP) {
                             existing.trade.updateTP();
                         }
@@ -8820,7 +8785,6 @@ class TradeLevelManager {
                     trade.exchange = rec.data.exchange || 'binance';
                     trade.marketType = rec.data.marketType || 'futures';
 
-                    // ✅ ГАРАНТИРУЕМ ЧТО TP РАССЧИТАН
                     if (!trade.manualTP) {
                         trade.updateTP();
                     }
@@ -8883,11 +8847,9 @@ class TradeLevelManager {
             ...options, time: options.time || Date.now() / 1000, symbolKey: `${cleanSymbol}:${exchange}:${marketType}`, symbol: cleanSymbol, exchange, marketType
         });
         
-        // ✅ ГАРАНТИРУЕМ ЧТО TP РАССЧИТАН СРАЗУ ПОСЛЕ СОЗДАНИЯ
         if (trade.takeProfitPrice === null || isNaN(trade.takeProfitPrice)) {
             trade.updateTP();
         }
-        // Финальная проверка
         if (trade.takeProfitPrice === null || isNaN(trade.takeProfitPrice)) {
             const risk = Math.abs(entryPrice - stopLossPrice);
             if (trade.direction === 'long') {
@@ -9067,6 +9029,10 @@ class TradeLevelManager {
                         if (newPrice !== null) {
                             this._dragTrade.takeProfitPrice = newPrice;
                             this._dragTrade.manualTP = true;
+                            // ✅ ИСПРАВЛЕНО: ПЕРЕСЧИТЫВАЕМ R:R НА ОСНОВЕ НОВОЙ TP ЦЕНЫ
+                            const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
+                            const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
+                            this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
                         }
                     }
                 }
@@ -9139,7 +9105,6 @@ class TradeLevelManager {
             const slInput = document.getElementById('tradeSLInput');
             if (slInput && price !== null) {
                 slInput.value = this._formatPrice(price);
-                // ✅ СОХРАНЯЕМ ВРЕМЯ SL ДЛЯ СОЗДАНИЯ ТРЕЙДА
                 this._pendingTradeTime = time;
                 this._updateStep();
                 this._updatePreview();
@@ -9149,7 +9114,7 @@ class TradeLevelManager {
         
         if (!this._isWaitingForSL) {
             this._drawingEntry = { price, time };
-            this._pendingTradeTime = time; // ✅ СОХРАНЯЕМ ВРЕМЯ ENTRY
+            this._pendingTradeTime = time;
             this._isWaitingForSL = true;
             this._showSettings(null);
             
@@ -9165,7 +9130,7 @@ class TradeLevelManager {
             this._showSettings(null);
             document.getElementById('tradeEntryInput').value = this._formatPrice(this._drawingEntry.price);
             document.getElementById('tradeSLInput').value = this._formatPrice(price);
-            this._pendingTradeTime = this._drawingEntry.time; // ✅ ИСПОЛЬЗУЕМ ВРЕМЯ ПЕРВОГО КЛИКА (ENTRY)
+            this._pendingTradeTime = this._drawingEntry.time;
             
             const tpInput = document.getElementById('tradeTPInput');
             if (tpInput) tpInput.value = '';
@@ -9477,9 +9442,7 @@ class TradeLevelManager {
             } else {
                 this._editingTrade.manualTP = false;
                 this._editingTrade.riskRewardRatio = rr;
-                // ✅ ПЕРЕСЧИТЫВАЕМ TP ИЗ R:R
                 this._editingTrade.update();
-                // ФИНАЛЬНАЯ ПРОВЕРКА
                 if (this._editingTrade.takeProfitPrice === null || isNaN(this._editingTrade.takeProfitPrice)) {
                     if (direction === 'long') {
                         this._editingTrade.takeProfitPrice = entry + (risk * rr);
@@ -9490,7 +9453,6 @@ class TradeLevelManager {
             }
             this._editingTrade = null;
         } else {
-            // ✅ ИСПОЛЬЗУЕМ СОХРАНЁННОЕ ВРЕМЯ КЛИКА НА ГРАФИКЕ
             const tradeTime = this._pendingTradeTime || Date.now() / 1000;
             const options = { riskRewardRatio: rr, direction: direction, time: tradeTime };
             const trade = this.createTrade(entry, sl, options);
@@ -9498,9 +9460,10 @@ class TradeLevelManager {
             if (tp !== null && !isNaN(tp)) {
                 trade.takeProfitPrice = tp;
                 trade.manualTP = true;
+                const reward = Math.abs(tp - entry);
+                trade.riskRewardRatio = risk > 0 ? (reward / risk) : rr;
             } else {
                 trade.manualTP = false;
-                // ✅ ПЕРЕСЧИТЫВАЕМ TP ИЗ R:R (createTrade уже вызывает updateTP, но на всякий случай)
                 trade.update();
                 if (trade.takeProfitPrice === null || isNaN(trade.takeProfitPrice)) {
                     if (direction === 'long') {
