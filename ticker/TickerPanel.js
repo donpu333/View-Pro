@@ -418,7 +418,7 @@ class TickerPanel {
         });
     }
 
-addInitialSymbols() {
+aaddInitialSymbols() {
     const savedSymbols = this.state.customSymbols;
     savedSymbols.forEach(symbolKey => {
         const parts = symbolKey.split(':');
