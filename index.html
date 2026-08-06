@@ -2085,225 +2085,332 @@ left: 0 !important;
 (function() {
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const body = document.body;
-    const chartContainer = document.getElementById('chart-container');
-    let resizeTimeout = null;
-    let isResizing = false;
+    const containerId = 'chart-container';
 
-    // Кроссбраузерная функция запроса полного экрана
-    function requestFullscreen(elem) {
-        if (elem.requestFullscreen) return elem.requestFullscreen();
-        if (elem.webkitRequestFullscreen) return elem.webkitRequestFullscreen(); // Safari
-        if (elem.msRequestFullscreen) return elem.msRequestFullscreen(); // IE/Edge
+    let isTransitioning = false;
+    let stabilizeRAF = null;
+    let resizeDebounce = null;
+
+    // =========================================================
+    // Сохраняем весь вьюпорт графика ПЕРЕД сменой размеров
+    // =========================================================
+    function saveViewport(cm) {
+        if (!cm || !cm.chart) return null;
+        const ts = cm.chart.timeScale();
+        const opts = ts.options();
+        return {
+            timeRange:   ts.getVisibleTimeRange?.()    || null,
+            logicalRange:ts.getVisibleLogicalRange?.() || null,
+            rightOffset: typeof opts.rightOffset === 'number' ? opts.rightOffset : 12,
+            barSpacing:  typeof opts.barSpacing  === 'number' ? opts.barSpacing  : 6
+        };
     }
 
-    function exitFullscreen() {
-        if (document.exitFullscreen) return document.exitFullscreen();
-        if (document.webkitExitFullscreen) return document.webkitExitFullscreen(); // Safari
-        if (document.msExitFullscreen) return document.msExitFullscreen();
+    // =========================================================
+    // Восстанавливаем вьюпорт. СНАЧАЛА applyOptions (rightOffset,
+    // barSpacing), ПОТОМ диапазон — иначе зум "поедет".
+    // =========================================================
+    function restoreViewport(cm, saved) {
+        if (!cm || !cm.chart) return;
+        const ts = cm.chart.timeScale();
+
+        if (!saved) {
+            ts.fitContent();
+            return;
+        }
+
+        // сначала опции
+        ts.applyOptions({
+            rightOffset: saved.rightOffset,
+            barSpacing:  saved.barSpacing
+        });
+
+        // потом диапазон, с проверкой на NaN
+        const tr = saved.timeRange;
+        const lr = saved.logicalRange;
+
+        if (tr && tr.from && tr.to) {
+            ts.setVisibleTimeRange(tr);
+        } else if (lr && isFinite(lr.from) && isFinite(lr.to)) {
+            ts.setVisibleLogicalRange(lr);
+        } else {
+            ts.fitContent();
+        }
     }
 
+    // =========================================================
+    // Перерисовка всех оверлеев и индикаторов
+    // =========================================================
+    function redrawOverlays(cm) {
+        if (!cm) return;
+        ['rayManager','trendLineManager','alertLineManager','rulerLineManager']
+            .forEach(name => {
+                const mgr = window[name];
+                if (mgr && mgr._requestRedraw) mgr._requestRedraw();
+            });
+        cm.indicatorManager?.redrawAll?.();
+    }
+
+    // =========================================================
+    // Ждём, пока размеры контейнера устоятся (RAF-луп вместо setTimeout)
+    // =========================================================
+    function stableResize(cm, container, savedViewport, onFinish) {
+        if (stabilizeRAF) cancelAnimationFrame(stabilizeRAF);
+
+        let lastW = container.clientWidth;
+        let lastH = container.clientHeight;
+        let stableFrames = 0;
+        const REQUIRED_STABLE = 3;   // 3 кадра подряд без изменений
+        const MAX_ATTEMPTS = 120;    // ~2 секунды максимум
+        let attempts = 0;
+
+        function step() {
+            attempts++;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+
+            if (w === lastW && h === lastH && w > 0 && h > 0) {
+                stableFrames++;
+            } else {
+                stableFrames = 0;
+                lastW = w; lastH = h;
+                if (w > 0 && h > 0) cm.chart.resize(w, h);
+            }
+
+            if (stableFrames >= REQUIRED_STABLE || attempts >= MAX_ATTEMPTS) {
+                // финальный ресайз
+                if (container.clientWidth > 0 && container.clientHeight > 0) {
+                    cm.chart.resize(container.clientWidth, container.clientHeight);
+                }
+                restoreViewport(cm, savedViewport);
+                redrawOverlays(cm);
+                stabilizeRAF = null;
+                onFinish && onFinish();
+            } else {
+                stabilizeRAF = requestAnimationFrame(step);
+            }
+        }
+        stabilizeRAF = requestAnimationFrame(step);
+    }
+
+    // =========================================================
+    // Клик по кнопке
+    // =========================================================
     function toggleFullscreen() {
         if (!document.fullscreenElement) {
-            requestFullscreen(document.documentElement).catch(err => {
-                console.error('Ошибка перехода в полный экран:', err);
-            });
+            document.documentElement.requestFullscreen?.()
+                || document.documentElement.webkitRequestFullscreen?.()
+                || document.documentElement.msRequestFullscreen?.();
         } else {
-            exitFullscreen();
+            document.exitFullscreen?.()
+                || document.webkitExitFullscreen?.()
+                || document.msExitFullscreen?.();
         }
     }
 
-    function smoothRedraw() {
-        if (isResizing) return;
-        isResizing = true;
-        
-        requestAnimationFrame(() => {
-            try {
-                const cm = window.chartManagerInstance;
-                if (!cm || !cm.chart) {
-                    isResizing = false;
-                    return;
-                }
-                
-                const container = chartContainer || document.getElementById('chart-container');
-                if (!container) {
-                    isResizing = false;
-                    return;
-                }
-                
-                const rect = container.getBoundingClientRect();
-                const width = rect.width || container.clientWidth || window.innerWidth;
-                const height = rect.height || container.clientHeight || window.innerHeight - 100;
-                
-                if (width < 100 || height < 100) {
-                    isResizing = false;
-                    return;
-                }
-                
-                // Изменяем размер и подгоняем масштаб
-                cm.chart.resize(width, Math.max(height, 200));
-                cm.chart.timeScale().fitContent();
-                
-                // Легкая перерисовка объектов
-                const managers = ['rayManager', 'trendLineManager', 'alertLineManager', 'rulerLineManager'];
-                managers.forEach(managerName => {
-                    const manager = window[managerName];
-                    if (manager && typeof manager._requestRedraw === 'function') {
-                        manager._requestRedraw();
-                    }
-                });
-                
-                console.log('✅ График адаптирован к размеру');
-            } catch (e) {
-                console.warn('⚠️ Ошибка при перерисовке:', e);
-            } finally {
-                // Гарантированный сброс флага в любом случае
-                isResizing = false;
-            }
-        });
-    }
-
+    // =========================================================
+    // Обработчик fullscreenchange
+    // =========================================================
     function handleFullscreenChange() {
-        const isFullscreen = !!document.fullscreenElement;
-        
+        const isFull = !!document.fullscreenElement;
+        body.classList.toggle('fullscreen-mode', isFull);
         if (fullscreenBtn) {
-            fullscreenBtn.style.backgroundColor = isFullscreen ? '#4A4A4A' : '';
+            fullscreenBtn.style.backgroundColor = isFull ? '#4A4A4A' : '';
         }
-        
-        if (isFullscreen) {
-            body.classList.add('fullscreen-mode');
-        } else {
-            body.classList.remove('fullscreen-mode');
-        }
-        
-        if (resizeTimeout) {
-            clearTimeout(resizeTimeout);
-            resizeTimeout = null;
-        }
-        
-        // Небольшая задержка нужна, чтобы браузер успел применить CSS-переходы полного экрана
-        resizeTimeout = setTimeout(() => {
-            smoothRedraw();
-            resizeTimeout = null;
-        }, isFullscreen ? 150 : 200);
-    }
 
-    // Назначаем обработчики
-    if (fullscreenBtn) {
-        fullscreenBtn.addEventListener('click', toggleFullscreen);
-    }
+        const cm = window.chartManagerInstance;
+        const container = document.getElementById(containerId);
+        if (!cm || !cm.chart || !container) return;
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Для Safari
+        isTransitioning = true;
 
-    // Оптимизированный обработчик resize
-    let resizeTimer = null;
-    window.addEventListener('resize', function() {
-        // УДАЛИТЕ эту строку, если график должен ресайзиться и в обычном режиме:
-        // if (!document.fullscreenElement) return; 
-        
-        if (resizeTimer) {
-            cancelAnimationFrame(resizeTimer);
-        }
-        
-        resizeTimer = requestAnimationFrame(() => {
-            smoothRedraw();
-            resizeTimer = null;
+        // 1) Сохраняем вьюпорт ДО того, как браузер начнёт анимацию
+        const saved = saveViewport(cm);
+
+        // 2) Ждём, пока layout устоится, и применяем
+        stableResize(cm, container, saved, () => {
+            // Буфер: ещё 350мс глушим обычные resize-ивенты от браузера,
+            // которые часто прилетают уже ПОСЛЕ fullscreenchange.
+            setTimeout(() => { isTransitioning = false; }, 350);
         });
-    });
+    }
 
-    // При возвращении на вкладку
-    document.addEventListener('visibilitychange', function() {
-        if (!document.hidden && document.fullscreenElement) {
-            setTimeout(smoothRedraw, 150);
-        }
-    });
+    // =========================================================
+    // Обычный resize окна — только если не в fullscreen-переходе
+    // =========================================================
+    function handleWindowResize() {
+        if (isTransitioning) return;
 
-    console.log('✅ Полноэкранный режим и ресайз оптимизированы');
+        const cm = window.chartManagerInstance;
+        const container = document.getElementById(containerId);
+        if (!cm || !cm.chart || !container) return;
+
+        clearTimeout(resizeDebounce);
+        resizeDebounce = setTimeout(() => {
+            const saved = saveViewport(cm);
+            stableResize(cm, container, saved, null);
+        }, 120);
+    }
+
+    // =========================================================
+    // Бинды
+    // =========================================================
+    if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.addEventListener('resize', handleWindowResize);
 })();
 </script>
 
+
 <!-- СКРИПТ ДЛЯ СКРИНШОТА -->
 <script>
+function getSymbolAndTimeframe() {
+  let symbol = null;
+  let timeframe = null;
+
+  // 1. Самый надёжный источник – ваш менеджер
+  if (window.chartManagerInstance) {
+    if (window.chartManagerInstance.currentSymbol) {
+      symbol = window.chartManagerInstance.currentSymbol;
+    }
+    if (window.chartManagerInstance.currentInterval) {
+      const tfMap = {
+        '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+        '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
+        '1d': '1D', '1w': '1W', '1M': '1M'
+      };
+      timeframe = tfMap[window.chartManagerInstance.currentInterval]
+        || window.chartManagerInstance.currentInterval;
+    }
+  }
+
+  // 2. DOM‑элементы (ваш исходный способ)
+  const pairDisplay = document.getElementById('pairDisplay');
+  const tfBadge = document.getElementById('currentTfBadge');
+
+  if (!symbol && pairDisplay) {
+    symbol = pairDisplay.textContent?.trim();
+  }
+  if (!timeframe && tfBadge) {
+    timeframe = tfBadge.textContent?.trim();
+  }
+
+  // 3. Парсим URL (например, /exchange/BTCUSDT или ?symbol=ETHUSDT)
+  if (!symbol) {
+    const urlParams = new URLSearchParams(window.location.search);
+    symbol = urlParams.get('symbol') || urlParams.get('pair');
+    if (!symbol) {
+      const pathParts = window.location.pathname.split('/');
+      const lastPart = pathParts[pathParts.length - 1];
+      if (lastPart && /^[A-Z0-9]+$/i.test(lastPart)) {
+        symbol = lastPart;
+      }
+    }
+  }
+  if (!timeframe) {
+    const urlParams = new URLSearchParams(window.location.search);
+    timeframe = urlParams.get('interval') || urlParams.get('tf') || urlParams.get('timeframe');
+  }
+
+  // 4. Глобальная переменная (если используется виджет TradingView)
+  if (!symbol && window.TradingViewSymbol) symbol = window.TradingViewSymbol;
+  if (!timeframe && window.TradingViewInterval) timeframe = window.TradingViewInterval;
+
+  // 5. Fallback
+  if (!symbol || symbol === '') symbol = 'chart';
+  if (!timeframe || timeframe === '') timeframe = 'unk';
+
+  return { symbol, timeframe };
+}
+
 function takeChartScreenshot() {
-const element = document.documentElement;
-let symbol = 'UNKNOWN';
-let timeframe = 'UNKNOWN';
-const pairDisplay = document.getElementById('pairDisplay');
-const currentTfBadge = document.getElementById('currentTfBadge');
+  const { symbol, timeframe } = getSymbolAndTimeframe();
+  const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `${cleanSymbol}_${timeframe}.png`;
 
-if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
-if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
+  const element = document.documentElement;
+  const originalWidth = window.innerWidth;
+  const originalHeight = window.innerHeight;
 
-if (window.chartManagerInstance) {
-if (window.chartManagerInstance.currentSymbol) {
-symbol = window.chartManagerInstance.currentSymbol;
+  // Ждём завершения отрисовки интерфейса (чтобы не захватить :active состояние кнопки и т.п.)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      html2canvas(element, {
+        scale: 2,
+        logging: false,
+        allowTaint: false,   // оставляем false для безопасности; если есть внешние картинки — настройте CORS
+        useCORS: true,
+        backgroundColor: '#000000',
+        windowWidth: originalWidth,
+        windowHeight: originalHeight,
+        onclone: function(clonedDoc) {
+          // Все манипуляции только в клоне – живая страница не меняется
+          clonedDoc.body.style.overflow = 'hidden';
+          clonedDoc.documentElement.style.overflow = 'hidden';
+          clonedDoc.documentElement.style.width = originalWidth + 'px';
+          clonedDoc.documentElement.style.height = originalHeight + 'px';
+        }
+      }).then((canvas) => {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      }).catch((error) => {
+        console.error('❌ Ошибка html2canvas:', error);
+        // Попытка с allowTaint:true, если проблема в cross-origin
+        html2canvas(element, {
+          scale: 2,
+          allowTaint: true,
+          useCORS: true,
+          backgroundColor: '#000000',
+          windowWidth: originalWidth,
+          windowHeight: originalHeight,
+          onclone: (clonedDoc) => {
+            clonedDoc.body.style.overflow = 'hidden';
+            clonedDoc.documentElement.style.overflow = 'hidden';
+            clonedDoc.documentElement.style.width = originalWidth + 'px';
+            clonedDoc.documentElement.style.height = originalHeight + 'px';
+          }
+        }).then((canvas2) => {
+          const link = document.createElement('a');
+          link.download = filename;
+          link.href = canvas2.toDataURL('image/png');
+          link.click();
+        }).catch((e) => console.error('❌ Полностью не удалось:', e));
+      });
+    });
+  });
 }
-if (window.chartManagerInstance.currentInterval) {
-const interval = window.chartManagerInstance.currentInterval;
-const tfMap = {
-'1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-'1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
-'1d': '1D', '1w': '1W', '1M': '1M'
-};
-timeframe = tfMap[interval] || interval;
-}
-}
 
-const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-const filename = `${cleanSymbol}_${timeframe}.png`;
-const originalOverflow = document.body.style.overflow;
-document.body.style.overflow = 'hidden';
-
-html2canvas(element, {
-scale: 2,
-logging: false,
-allowTaint: false,
-useCORS: true,
-backgroundColor: '#000000',
-windowWidth: window.innerWidth,
-windowHeight: window.innerHeight
-}).then((canvas) => {
-document.body.style.overflow = originalOverflow;
-const link = document.createElement('a');
-link.download = filename;
-link.href = canvas.toDataURL('image/png');
-link.click();
-}).catch((error) => {
-document.body.style.overflow = originalOverflow;
-console.error('❌ Ошибка html2canvas:', error);
-});
-}
-
+// Обработчики
 document.addEventListener('DOMContentLoaded', function() {
-const screenshotBtn = document.getElementById('toolScreenshot');
-if (screenshotBtn) {
-screenshotBtn.addEventListener('click', function(e) {
-e.preventDefault();
-e.stopPropagation();
-takeChartScreenshot();
-});
-}
+  const screenshotBtn = document.getElementById('toolScreenshot');
+  if (screenshotBtn) {
+    screenshotBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      takeChartScreenshot();
+    });
+  }
 
-document.addEventListener('keydown', function(e) {
-if (e.key === 's' || e.key === 'S') {
-if (document.activeElement.tagName !== 'INPUT' &&
-document.activeElement.tagName !== 'TEXTAREA' &&
-document.activeElement.tagName !== 'SELECT') {
-e.preventDefault();
-takeChartScreenshot();
-}
-}
-});
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 's' || e.key === 'S') {
+      const tag = document.activeElement?.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        e.preventDefault();
+        takeChartScreenshot();
+      }
+    }
+  });
 });
 
-// ✅ ВОССТАНОВЛЕНИЕ ПОЗИЦИИ И ОРИЕНТАЦИИ ПАНЕЛИ ПРИ ЗАГРУЗКЕ
+// Восстановление ориентации панели (ваш код, без изменений)
 (function() {
     const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
     const drawingToolbar = document.getElementById('drawingToolbar');
-    
     if (!toolbarOrientationBtn || !drawingToolbar) return;
 
-    // 1. Восстанавливаем ориентацию
     const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
     if (savedOrientation === 'vertical') {
         drawingToolbar.classList.add('vertical');
@@ -2312,30 +2419,17 @@ takeChartScreenshot();
         toolbarOrientationBtn.textContent = '⇄';
     }
 
-    // 2. Восстанавливаем позицию СТРОГО из localStorage (без сбросов)
     const savedLeft = localStorage.getItem('drawingToolbarLeft');
     const savedTop = localStorage.getItem('drawingToolbarTop');
-
     if (savedLeft) drawingToolbar.style.left = savedLeft;
     if (savedTop) drawingToolbar.style.top = savedTop;
 
-    // 3. Обработчик кнопки ориентации (с обновлением кэша размеров)
     toolbarOrientationBtn.addEventListener('click', (e) => {
-        e.stopPropagation(); // Предотвращаем всплытие, чтобы не сработал drag
+        e.stopPropagation();
         drawingToolbar.classList.toggle('vertical');
-        
-        if (drawingToolbar.classList.contains('vertical')) {
-            toolbarOrientationBtn.textContent = '⇅';
-            localStorage.setItem('drawingToolbarOrientation', 'vertical');
-        } else {
-            toolbarOrientationBtn.textContent = '⇄';
-            localStorage.setItem('drawingToolbarOrientation', 'horizontal');
-        }
-        
-        setTimeout(() => {
-            if (typeof toolbarWidth !== 'undefined') toolbarWidth = drawingToolbar.offsetWidth;
-            if (typeof toolbarHeight !== 'undefined') toolbarHeight = drawingToolbar.offsetHeight;
-        }, 50);
+        const isVertical = drawingToolbar.classList.contains('vertical');
+        toolbarOrientationBtn.textContent = isVertical ? '⇅' : '⇄';
+        localStorage.setItem('drawingToolbarOrientation', isVertical ? 'vertical' : 'horizontal');
     });
 })();
 </script>
