@@ -8302,11 +8302,6 @@ hitTest(x, y) {
         this._selectedText = text;
     }
 }
-// ============================================================
-// ТОРГОВЫЙ УРОВЕНЬ (ПОЛНАЯ, ИСПРАВЛЕННАЯ И РАБОЧАЯ ВЕРСИЯ)
-// ============================================================
-// ✅ Глобальные хелперы для динамического форматирования цены
-// ✅ ГЛОБАЛЬНАЯ ФУНКЦИЯ: Берет точность напрямую из настроек серии графика (как это делает ChartManager)
 function getFormattedPriceFromChart(chartManager, price) {
     try {
         const series = chartManager.currentChartType === 'candle' 
@@ -8397,15 +8392,30 @@ class TradeLevelRenderer {
 
             const entryY = chartManager.priceToCoordinate(trade.entryPrice);
             const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
-            const tpY = chartManager.priceToCoordinate(trade.takeProfitPrice);
-            const xCoord = chartManager.timeToCoordinate(trade.entryTime);
+            const tpY = trade.takeProfitPrice !== null ? chartManager.priceToCoordinate(trade.takeProfitPrice) : null;
+            
+            let xCoord = chartManager.timeToCoordinate(trade.entryTime);
+            
+            // ✅ ИСПРАВЛЕНИЕ: Если время не попадает в сетку таймфрейма, находим ближайшую свечу только для отрисовки
+            if (xCoord === null) {
+                const chartData = chartManager.chartData;
+                if (chartData && chartData.length > 0) {
+                    let closest = chartData[0];
+                    let minDiff = Math.abs(chartData[0].time - trade.entryTime);
+                    for (let i = 1; i < chartData.length; i++) {
+                        const diff = Math.abs(chartData[i].time - trade.entryTime);
+                        if (diff < minDiff) { minDiff = diff; closest = chartData[i]; }
+                    }
+                    xCoord = chartManager.timeToCoordinate(closest.time);
+                }
+            }
 
-            if (entryY === null || slY === null || tpY === null || xCoord === null) return;
+            if (entryY === null || slY === null || xCoord === null) return;
 
             const x = xCoord * scope.horizontalPixelRatio;
             const entry = entryY * scope.verticalPixelRatio;
             const sl = slY * scope.verticalPixelRatio;
-            const tp = tpY * scope.verticalPixelRatio;
+            const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
 
             const isLong = trade.direction === 'long';
             const entryColor = isLong ? '#00ff88' : '#f23645';
@@ -8435,7 +8445,6 @@ class TradeLevelRenderer {
             ctx.fillStyle = entryColor;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            // ✅ ИСПОЛЬЗУЕМ ФУНКЦИЮ, КОТОРАЯ БЕРЕТ ТОЧНОСТЬ У ГРАФИКА
             ctx.fillText(getFormattedPriceFromChart(chartManager, trade.entryPrice), x + arrowSize + 4 * scope.horizontalPixelRatio, entry);
             ctx.restore();
 
@@ -8443,11 +8452,28 @@ class TradeLevelRenderer {
             const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
             const rewardPercent = riskPercent * trade.riskRewardRatio;
 
-            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `SL ${getFormattedPriceFromChart(chartManager, trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
+            // ✅ ИСПРАВЛЕНИЕ: Предотвращаем слипание меток SL и TP
+            const padding = 6 * scope.horizontalPixelRatio;
+            const labelHeight = fontSize + padding * 2;
+            
+            let slLabelY = sl;
+            let tpLabelY = tp;
 
-            this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `TP ${getFormattedPriceFromChart(chartManager, trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+            if (tp !== null && Math.abs(tp - sl) < labelHeight) {
+                if (tp > sl) {
+                    tpLabelY = sl + labelHeight;
+                } else {
+                    slLabelY = tp + labelHeight;
+                }
+            }
+
+            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+            this._drawLabel(ctx, scope, `SL ${getFormattedPriceFromChart(chartManager, trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor, slLabelY);
+
+            if (tp !== null) {
+                this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `TP ${getFormattedPriceFromChart(chartManager, trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor, tpLabelY);
+            }
 
             if (trade.selected && trade.options.showPlechi) {
                 ctx.save();
@@ -8457,20 +8483,26 @@ class TradeLevelRenderer {
                 ctx.strokeStyle = trade.options.slColor;
                 ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke();
                 ctx.strokeStyle = trade.options.tpColor;
-                ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke();
+                if (tp !== null) {
+                    ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke();
+                }
                 ctx.restore();
             }
 
             if (trade.showDragPoints) {
                 this._drawDragPoint(ctx, scope, x, entry, entryColor);
                 this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
-                this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor); 
+                if (tp !== null) {
+                    this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor); 
+                }
             }
 
             const hitBuffer = 15 * scope.horizontalPixelRatio;
             this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
             this._hitAreas.push({ type: 'sl', x1: 0, x2: scope.mediaSize.width * scope.horizontalPixelRatio, y: sl, buffer: hitBuffer, trade });
-            this._hitAreas.push({ type: 'tp', x1: 0, x2: scope.mediaSize.width * scope.horizontalPixelRatio, y: tp, buffer: hitBuffer, trade });
+            if (tp !== null) {
+                this._hitAreas.push({ type: 'tp', x1: 0, x2: scope.mediaSize.width * scope.horizontalPixelRatio, y: tp, buffer: hitBuffer, trade });
+            }
         });
     }
 
@@ -8487,7 +8519,7 @@ class TradeLevelRenderer {
         ctx.restore();
     }
 
-    _drawLabel(ctx, scope, text, y, color) {
+    _drawLabel(ctx, scope, text, y, color, labelY = null) {
         ctx.save();
         const fontSize = 10 * scope.horizontalPixelRatio;
         ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
@@ -8496,21 +8528,24 @@ class TradeLevelRenderer {
         const labelWidth = metrics.width + padding * 2;
         const labelHeight = fontSize + padding * 2;
         
+        // ✅ ИСПРАВЛЕНИЕ: Используем labelY для позиционирования, если метки слиплись
+        const drawY = labelY !== null ? labelY : y;
+        
         const labelX = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 5 * scope.horizontalPixelRatio;
-        const labelY = y - labelHeight / 2;
+        const labelYRect = drawY - labelHeight / 2;
 
         ctx.fillStyle = 'rgba(20, 20, 20, 0.85)';
         ctx.shadowBlur = 4;
         ctx.shadowColor = 'rgba(0,0,0,0.5)';
         ctx.beginPath();
-        this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+        this._roundRect(ctx, labelX, labelYRect, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
         ctx.fill();
 
         ctx.shadowBlur = 0;
         ctx.fillStyle = color;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.fillText(text, labelX + labelWidth - padding, labelY + labelHeight / 2);
+        ctx.fillText(text, labelX + labelWidth - padding, labelYRect + labelHeight / 2);
         ctx.restore();
     }
 
@@ -8590,19 +8625,15 @@ class TradeLevelPrimitive {
     paneViews() { return [this._paneView]; }
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
-        this._syncTime();
+        // ✅ ИСПРАВЛЕНИЕ: Убрали вызов _syncTime()
     }
-    updateAllViews() { this._syncTime(); }
+    updateAllViews() { 
+        // ✅ ИСПРАВЛЕНИЕ: Убрали вызов _syncTime()
+    }
     _syncTime() {
-        const chartData = this._chartManager.chartData;
-        if (!chartData || chartData.length === 0) return;
-        let closest = chartData[0];
-        let minDiff = Math.abs(chartData[0].time - this._trade.entryTime);
-        for (let i = 1; i < chartData.length; i++) {
-            const diff = Math.abs(chartData[i].time - this._trade.entryTime);
-            if (diff < minDiff) { minDiff = diff; closest = chartData[i]; }
-        }
-        this._trade.entryTime = closest.time;
+        // ✅ ИСПРАВЛЕНИЕ: Пустой метод.
+        // Раньше он перезаписывал this._trade.entryTime, что ломало метки при смене таймфрейма.
+        // Поиск ближайшей свечи для отрисовки теперь безопасно делается в TradeLevelRenderer.draw
     }
     getTrade() { return this._trade; }
     requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
@@ -8678,7 +8709,6 @@ class TradeLevelManager {
         }
     }
 
-    // ✅ БЕРЕМ ТОЧНОСТЬ НАПРЯМУЮ У ГРАФИКА
     _getChartPrecision() {
         try {
             const series = this._chartManager.currentChartType === 'candle' 
@@ -8709,8 +8739,6 @@ class TradeLevelManager {
     }
 
     async loadFromData(symbolKey, tradeRecords) {
-        // ... (оставь свой существующий код loadFromData, loadTrades, _saveTrades, loadAllTradesFromDB, createTrade, deleteTrade, deleteAllTrades без изменений)
-        // Для краткости я не дублирую их здесь, они остаются такими же, как в твоем исходном коде.
         try {
             const currentSymbolKey = this._getCurrentSymbolKey();
             const isCurrentSymbol = (currentSymbolKey === symbolKey);
@@ -9078,7 +9106,6 @@ class TradeLevelManager {
             this._showSettings(null);
             
             const formattedPrice = this._formatPrice(price);
-            // ✅ ДУБЛИРУЕМ ТОЛЬКО В ENTRY И SL, TP ОСТАЕТСЯ ПУСТЫМ
             document.getElementById('tradeEntryInput').value = formattedPrice;
             document.getElementById('tradeSLInput').value = formattedPrice;
             const tpInput = document.getElementById('tradeTPInput');
@@ -9195,7 +9222,6 @@ class TradeLevelManager {
             this._tpManuallySet = false;
         }
 
-        // ✅ РАЗРЕШАЕМ КОНТЕКСТНОЕ МЕНЮ (КОПИРОВАТЬ/ВСТАВИТЬ)
         [entryInput, slInput, tpInput, rrInput].forEach(inp => {
             if (inp) inp.oncontextmenu = (e) => e.stopPropagation();
         });
@@ -9238,7 +9264,6 @@ class TradeLevelManager {
         setTimeout(() => entryInput.focus(), 100);
     }
 
-    // ✅ ИСПРАВЛЕННОЕ ПЕРЕТАСКИВАНИЕ (НЕ ЗАЛИПАЕТ)
   _makeDraggable(panel) {
     if (panel._draggableSetup) return;
     panel._draggableSetup = true;
@@ -9249,17 +9274,12 @@ class TradeLevelManager {
     header.style.cursor = 'move';
     
     header.addEventListener('pointerdown', (e) => {
-        // 1. Реагируем СТРОГО на левую кнопку мыши (0 = левая)
         if (e.button !== 0) return;
         
-        // 2. Игнорируем клики по кнопкам, инпутам и ссылкам внутри хедера
         if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'A'].includes(e.target.tagName)) return;
         
         e.preventDefault();
         
-        // 3. ЖЕСТКИЙ ЗАХВАТ КУРСОРА (setPointerCapture)
-        // Это гарантирует, что событие "отпускания" (pointerup) сработает В ЛЮБОМ СЛУЧАЕ, 
-        // даже если мышь улетит за пределы окна браузера. Залипания теперь невозможны.
         header.setPointerCapture(e.pointerId);
         
         let startX = e.clientX;
@@ -9267,14 +9287,10 @@ class TradeLevelManager {
         let origX = panel.offsetLeft;
         let origY = panel.offsetTop;
         
-        // Отключаем выделение текста, чтобы не было "вязкости"
         panel.style.userSelect = 'none';
         panel.style.cursor = 'grabbing';
         header.style.cursor = 'grabbing';
         
-        // 4. Включаем аппаратное ускорение GPU (will-change).
-        // Браузер выделяет панель в отдельный графический слой. 
-        // Именно это делает перетаскивание "легким" и плавным, убирая тормоза.
         panel.style.willChange = 'transform';
         
         const moveHandler = (ev) => {
@@ -9284,21 +9300,18 @@ class TradeLevelManager {
         };
 
         const upHandler = (ev) => {
-            // Фиксируем финальную позицию
             const dx = ev.clientX - startX;
             const dy = ev.clientY - startY;
             
             panel.style.left = (origX + dx) + 'px';
             panel.style.top = (origY + dy) + 'px';
             
-            // Сбрасываем всё в исходное состояние
             panel.style.transform = '';
-            panel.style.willChange = ''; // Убираем нагрузку на GPU, когда не тащим
+            panel.style.willChange = '';
             panel.style.userSelect = '';
             panel.style.cursor = '';
             header.style.cursor = 'move';
 
-            // 5. Освобождаем курсор и снимаем слушатели
             header.releasePointerCapture(e.pointerId);
             header.removeEventListener('pointermove', moveHandler);
             header.removeEventListener('pointerup', upHandler);
@@ -9310,7 +9323,7 @@ class TradeLevelManager {
         header.addEventListener('pointercancel', upHandler);
     });
 }
-    // ✅ ВАЛИДАЦИЯ ПРЯМО В ПАНЕЛИ (БЕЗ ALERT)
+
     _showPanelError(message) {
         const rewardEl = document.getElementById('tradePreviewReward');
         if (rewardEl) {
@@ -9320,7 +9333,6 @@ class TradeLevelManager {
         if (createBtn) { createBtn.disabled = true; createBtn.style.opacity = '0.5'; }
     }
 
-    // ✅ ОБНОВЛЕННЫЙ ПРЕВЬЮ С ПРАВИЛЬНОЙ ЛОГИКОЙ
     _updatePreview() {
         const entryInput = document.getElementById('tradeEntryInput');
         const slInput = document.getElementById('tradeSLInput');
@@ -9372,7 +9384,6 @@ class TradeLevelManager {
             document.getElementById('tradePreviewRisk').textContent = `${this._formatPrice(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
             document.getElementById('tradePreviewReward').textContent = `${this._formatPrice(reward)} (${((reward / entry) * 100).toFixed(2)}%) | R:R 1:${rr.toFixed(2)}`;
         } else {
-            // ✅ TP ПУСТОЙ (ОПЦИОНАЛЕН) - НИЧЕГО НЕ БЛОКИРУЕМ
             document.getElementById('tradePreviewTP').textContent = '—';
             document.getElementById('tradePreviewRisk').textContent = `${this._formatPrice(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
             document.getElementById('tradePreviewReward').textContent = '—';
@@ -9431,8 +9442,10 @@ class TradeLevelManager {
                 trade.takeProfitPrice = tp;
                 trade.manualTP = true;
             } else {
-                trade.takeProfitPrice = null;
+                // ✅ ИСПРАВЛЕНИЕ: Не обнуляем takeProfitPrice!
+                // Оставляем автоматически рассчитанный TP из конструктора на основе R:R
                 trade.manualTP = false;
+                trade.update(); 
             }
         }
 
@@ -9442,7 +9455,7 @@ class TradeLevelManager {
     _closePanel() {
         const panel = document.getElementById('tradeCreatePanel');
         if (panel) {
-            if (panel._destroyDrag) panel._destroyDrag(); // ✅ ГАРАНТИРОВАННЫЙ СБРОС ПЕРЕТАСКИВАНИЯ
+            if (panel._destroyDrag) panel._destroyDrag();
             panel.style.display = 'none';
         }
         this._drawingEntry = null;
