@@ -418,36 +418,41 @@ class TickerPanel {
         });
     }
 
-    addInitialSymbols() {
-        const savedSymbols = this.state.customSymbols;
-        savedSymbols.forEach(symbolKey => {
-            const parts = symbolKey.split(':');
-            if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
-        });
-        this.updateModalCount();
-        this.filterCache = null;
+addInitialSymbols() {
+    const savedSymbols = this.state.customSymbols;
+    savedSymbols.forEach(symbolKey => {
+        const parts = symbolKey.split(':');
+        if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
+    });
+    this.updateModalCount();
+    this.filterCache = null;
+    
+    // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ вместо прямого вызова
+    this._scheduleRender();
+    
+    requestAnimationFrame(() => {
+        const container = document.getElementById('tickerListContainer');
+        const loader = document.getElementById('tickerLoader');
+        if (container) container.classList.add('ready');
+        if (loader) loader.style.display = 'none';
+        this._blockDOMUpdates = false;
+        this.startTickerPanelPriceEngine();
+        this.setupDelegatedEvents();
         
-        // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ вместо прямого вызова
-        this._scheduleRender();
+        // ✅ ДОБАВЛЕНО: Обновляем стрелки сортировки после построения списка
+        if (this.renderer) {
+            this.renderer.updateSortIndicators();
+        }
         
-        requestAnimationFrame(() => {
-            const container = document.getElementById('tickerListContainer');
-            const loader = document.getElementById('tickerLoader');
-            if (container) container.classList.add('ready');
-            if (loader) loader.style.display = 'none';
-            this._blockDOMUpdates = false;
-            this.startTickerPanelPriceEngine();
-            this.setupDelegatedEvents();
-            setTimeout(() => {
-                if (this.renderer) {
-                    this.filterCache = null;
-                    this.renderer.updatePriceElements?.();
-                    // 🚀 УДАЛЕНО: this.renderTickerList() — это лишняя тяжелая операция, которая вызывала лаг через 3 сек после старта
-                    console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
-                }
-            }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
-        });
-    }
+        setTimeout(() => {
+            if (this.renderer) {
+                this.filterCache = null;
+                this.renderer.updatePriceElements?.();
+                console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
+            }
+        }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
+    });
+}
     _syncToPriceManager() {
         if (!window.priceManagerInstance) return;
         let count = 0;
