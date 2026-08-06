@@ -874,14 +874,17 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-    async fetchInitialDataForSymbol(symbol, exchange, marketType) {
+        async fetchInitialDataForSymbol(symbol, exchange, marketType) {
         try {
             const url = exchange === 'binance' 
                 ? (marketType === 'futures' ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}` : `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
                 : `https://api.bybit.com/v5/market/tickers?category=${marketType === 'futures' ? 'linear' : 'spot'}&symbol=${symbol}`;
+                
             const response = await fetch(url);
             const data = await response.json();
-            const ticker = this.tickersMap.get(`${symbol}:${exchange}:${marketType}`);
+            
+            const key = `${symbol}:${exchange}:${marketType}`;
+            const ticker = this.tickersMap.get(key);
             if (!ticker) return;
 
             if (exchange === 'binance') {
@@ -896,11 +899,22 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 ticker.volume = parseFloat(d.turnover24h) || parseFloat(d.volume24h) * parseFloat(d.lastPrice);
             }
           
+            // 🔥 ИСПРАВЛЕНИЕ: Принудительно синхронизируем DOM с новыми данными!
+            if (!this._blockDOMUpdates && this.renderer) {
+                // 1. Обновляем цену (на случай, если WebSocket еще не успел прийти)
+                if (typeof this.renderer.updatePriceForSymbol === 'function') {
+                    this.renderer.updatePriceForSymbol(key, ticker.price, ticker.change);
+                }
+                // 2. Обновляем объемы, сделки и остальные поля для видимых строк
+                if (typeof this.renderer.updatePriceElements === 'function') {
+                    this.renderer.updatePriceElements();
+                }
+            }
+            
         } catch (error) { 
             console.warn(`⚠️ Не удалось загрузить ${symbol}:`, error); 
         }
     }
-
     async fetchBybitSnapshots() {
         try {
             const [futRes, spotRes] = await Promise.all([
