@@ -2088,59 +2088,38 @@ left: 0 !important;
     const containerId = 'chart-container';
 
     let isTransitioning = false;
-    let stabilizeRAF = null;
+    let resizeRAF = null;
     let resizeDebounce = null;
 
-    // =========================================================
-    // Сохраняем весь вьюпорт графика ПЕРЕД сменой размеров
-    // =========================================================
+    // ============================================================
+    // 1. Сохраняем только логический диапазон (количество баров)
+    // ============================================================
     function saveViewport(cm) {
-        if (!cm || !cm.chart) return null;
+        if (!cm?.chart) return null;
         const ts = cm.chart.timeScale();
-        const opts = ts.options();
-        return {
-            timeRange:   ts.getVisibleTimeRange?.()    || null,
-            logicalRange:ts.getVisibleLogicalRange?.() || null,
-            rightOffset: typeof opts.rightOffset === 'number' ? opts.rightOffset : 12,
-            barSpacing:  typeof opts.barSpacing  === 'number' ? opts.barSpacing  : 6
-        };
+        const lr = ts.getVisibleLogicalRange();
+        if (lr && isFinite(lr.from) && isFinite(lr.to)) {
+            return { from: lr.from, to: lr.to };
+        }
+        return null;
     }
 
-    // =========================================================
-    // Восстанавливаем вьюпорт. СНАЧАЛА applyOptions (rightOffset,
-    // barSpacing), ПОТОМ диапазон — иначе зум "поедет".
-    // =========================================================
-    function restoreViewport(cm, saved) {
-        if (!cm || !cm.chart) return;
+    // ============================================================
+    // 2. Восстанавливаем диапазон (без rightOffset и barSpacing)
+    // ============================================================
+    function restoreViewport(cm, logicalRange) {
+        if (!cm?.chart) return;
         const ts = cm.chart.timeScale();
-
-        if (!saved) {
-            ts.fitContent();
-            return;
-        }
-
-        // сначала опции
-        ts.applyOptions({
-            rightOffset: saved.rightOffset,
-            barSpacing:  saved.barSpacing
-        });
-
-        // потом диапазон, с проверкой на NaN
-        const tr = saved.timeRange;
-        const lr = saved.logicalRange;
-
-        if (tr && tr.from && tr.to) {
-            ts.setVisibleTimeRange(tr);
-        } else if (lr && isFinite(lr.from) && isFinite(lr.to)) {
-            ts.setVisibleLogicalRange(lr);
+        if (logicalRange && isFinite(logicalRange.from) && isFinite(logicalRange.to)) {
+            ts.setVisibleLogicalRange(logicalRange);
         } else {
             ts.fitContent();
         }
     }
 
-    // =========================================================
-    // Перерисовка всех оверлеев и индикаторов
-    // =========================================================
+    // ============================================================
+    // 3. Перерисовка оверлеев (если нужна)
+    // ============================================================
     function redrawOverlays(cm) {
         if (!cm) return;
         ['rayManager','trendLineManager','alertLineManager','rulerLineManager']
@@ -2151,51 +2130,87 @@ left: 0 !important;
         cm.indicatorManager?.redrawAll?.();
     }
 
-    // =========================================================
-    // Ждём, пока размеры контейнера устоятся (RAF-луп вместо setTimeout)
-    // =========================================================
-    function stableResize(cm, container, savedViewport, onFinish) {
-        if (stabilizeRAF) cancelAnimationFrame(stabilizeRAF);
+    // ============================================================
+    // 4. Основная функция обновления размера графика
+    //    Вызывается на каждом кадре анимации (через RAF)
+    // ============================================================
+    function updateChartSize(keepRange = true) {
+        // Отменяем предыдущий RAF, если есть
+        if (resizeRAF) {
+            cancelAnimationFrame(resizeRAF);
+            resizeRAF = null;
+        }
 
-        let lastW = container.clientWidth;
-        let lastH = container.clientHeight;
-        let stableFrames = 0;
-        const REQUIRED_STABLE = 3;   // 3 кадра подряд без изменений
-        const MAX_ATTEMPTS = 120;    // ~2 секунды максимум
-        let attempts = 0;
+        resizeRAF = requestAnimationFrame(() => {
+            const cm = window.chartManagerInstance;
+            const container = document.getElementById(containerId);
+            if (!cm?.chart || !container) {
+                resizeRAF = null;
+                return;
+            }
 
-        function step() {
-            attempts++;
+            // Сохраняем текущий диапазон ДО изменения размера
+            const savedRange = keepRange ? saveViewport(cm) : null;
+
+            // Применяем новый размер
             const w = container.clientWidth;
             const h = container.clientHeight;
-
-            if (w === lastW && h === lastH && w > 0 && h > 0) {
-                stableFrames++;
-            } else {
-                stableFrames = 0;
-                lastW = w; lastH = h;
-                if (w > 0 && h > 0) cm.chart.resize(w, h);
+            if (w > 0 && h > 0) {
+                cm.chart.resize(w, h);
             }
 
-            if (stableFrames >= REQUIRED_STABLE || attempts >= MAX_ATTEMPTS) {
-                // финальный ресайз
-                if (container.clientWidth > 0 && container.clientHeight > 0) {
-                    cm.chart.resize(container.clientWidth, container.clientHeight);
-                }
-                restoreViewport(cm, savedViewport);
-                redrawOverlays(cm);
-                stabilizeRAF = null;
-                onFinish && onFinish();
+            // Восстанавливаем диапазон
+            if (savedRange) {
+                restoreViewport(cm, savedRange);
             } else {
-                stabilizeRAF = requestAnimationFrame(step);
+                cm.chart.timeScale().fitContent();
             }
-        }
-        stabilizeRAF = requestAnimationFrame(step);
+
+            // Перерисовываем оверлеи (один раз)
+            redrawOverlays(cm);
+
+            resizeRAF = null;
+        });
     }
 
-    // =========================================================
-    // Клик по кнопке
-    // =========================================================
+    // ============================================================
+    // 5. Обработчик fullscreenchange
+    // ============================================================
+    function handleFullscreenChange() {
+        const isFull = !!document.fullscreenElement;
+        body.classList.toggle('fullscreen-mode', isFull);
+
+        if (fullscreenBtn) {
+            fullscreenBtn.style.backgroundColor = isFull ? '#4A4A4A' : '';
+        }
+
+        // Сразу обновляем график (без задержек)
+        isTransitioning = true;
+        updateChartSize(true);
+
+        // Снимаем блокировку через 100 мс (чтобы не мешать последующим resize)
+        clearTimeout(window._fullscreenLock);
+        window._fullscreenLock = setTimeout(() => {
+            isTransitioning = false;
+        }, 100);
+    }
+
+    // ============================================================
+    // 6. Обработчик обычного resize (с debounce)
+    // ============================================================
+    function handleWindowResize() {
+        // Если идёт fullscreen-переход – игнорируем события resize
+        if (isTransitioning) return;
+
+        clearTimeout(resizeDebounce);
+        resizeDebounce = setTimeout(() => {
+            updateChartSize(true);
+        }, 50); // небольшой debounce для экономии ресурсов
+    }
+
+    // ============================================================
+    // 7. Кнопка переключения
+    // ============================================================
     function toggleFullscreen() {
         if (!document.fullscreenElement) {
             document.documentElement.requestFullscreen?.()
@@ -2208,57 +2223,25 @@ left: 0 !important;
         }
     }
 
-    // =========================================================
-    // Обработчик fullscreenchange
-    // =========================================================
-    function handleFullscreenChange() {
-        const isFull = !!document.fullscreenElement;
-        body.classList.toggle('fullscreen-mode', isFull);
-        if (fullscreenBtn) {
-            fullscreenBtn.style.backgroundColor = isFull ? '#4A4A4A' : '';
-        }
-
-        const cm = window.chartManagerInstance;
-        const container = document.getElementById(containerId);
-        if (!cm || !cm.chart || !container) return;
-
-        isTransitioning = true;
-
-        // 1) Сохраняем вьюпорт ДО того, как браузер начнёт анимацию
-        const saved = saveViewport(cm);
-
-        // 2) Ждём, пока layout устоится, и применяем
-        stableResize(cm, container, saved, () => {
-            // Буфер: ещё 350мс глушим обычные resize-ивенты от браузера,
-            // которые часто прилетают уже ПОСЛЕ fullscreenchange.
-            setTimeout(() => { isTransitioning = false; }, 350);
-        });
+    // ============================================================
+    // 8. Бинды событий
+    // ============================================================
+    if (fullscreenBtn) {
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
     }
 
-    // =========================================================
-    // Обычный resize окна — только если не в fullscreen-переходе
-    // =========================================================
-    function handleWindowResize() {
-        if (isTransitioning) return;
-
-        const cm = window.chartManagerInstance;
-        const container = document.getElementById(containerId);
-        if (!cm || !cm.chart || !container) return;
-
-        clearTimeout(resizeDebounce);
-        resizeDebounce = setTimeout(() => {
-            const saved = saveViewport(cm);
-            stableResize(cm, container, saved, null);
-        }, 120);
-    }
-
-    // =========================================================
-    // Бинды
-    // =========================================================
-    if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullscreen);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     window.addEventListener('resize', handleWindowResize);
+
+    // ============================================================
+    // 9. Инициализация: при загрузке подгоняем размер
+    // ============================================================
+    window.addEventListener('load', () => {
+        // Небольшая задержка, чтобы DOM точно отрисовался
+        setTimeout(() => updateChartSize(false), 50);
+    });
+
 })();
 </script>
 
@@ -2323,61 +2306,72 @@ function getSymbolAndTimeframe() {
 
   return { symbol, timeframe };
 }
-
 function takeChartScreenshot() {
   const { symbol, timeframe } = getSymbolAndTimeframe();
   const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `${cleanSymbol}_${timeframe}.png`;
 
-  const element = document.documentElement;
-  const originalWidth = window.innerWidth;
-  const originalHeight = window.innerHeight;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
 
-  // Ждём завершения отрисовки интерфейса (чтобы не захватить :active состояние кнопки и т.п.)
+  // Сохраняем оригинальные стили, чтобы потом восстановить
+  const originalStyles = [];
+  document.querySelectorAll('*').forEach(el => {
+    const orig = {
+      transform: el.style.transform,
+      willChange: el.style.willChange,
+    };
+    originalStyles.push({ el, orig });
+    // Временно убираем проблемные стили
+    el.style.transform = 'none';
+    el.style.willChange = 'auto';
+  });
+
+  // Два RAF для стабилизации
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      html2canvas(element, {
-        scale: 2,
-        logging: false,
-        allowTaint: false,   // оставляем false для безопасности; если есть внешние картинки — настройте CORS
+      html2canvas(document.documentElement, {
+        scale: 1, // 1 вместо 2 – меньше артефактов
         useCORS: true,
+        allowTaint: true,
         backgroundColor: '#000000',
-        windowWidth: originalWidth,
-        windowHeight: originalHeight,
-        onclone: function(clonedDoc) {
-          // Все манипуляции только в клоне – живая страница не меняется
-          clonedDoc.body.style.overflow = 'hidden';
+        width: width,
+        height: height,
+        windowWidth: width,
+        windowHeight: height,
+        x: 0,
+        y: 0,
+        foreignObjectRendering: true, // включаем альтернативный рендеринг
+        onclone: (clonedDoc) => {
+          // В клоне тоже сбрасываем всё лишнее
+          clonedDoc.querySelectorAll('*').forEach(el => {
+            el.style.transform = 'none';
+            el.style.willChange = 'auto';
+          });
           clonedDoc.documentElement.style.overflow = 'hidden';
-          clonedDoc.documentElement.style.width = originalWidth + 'px';
-          clonedDoc.documentElement.style.height = originalHeight + 'px';
+          clonedDoc.body.style.overflow = 'hidden';
+          clonedDoc.documentElement.style.width = width + 'px';
+          clonedDoc.documentElement.style.height = height + 'px';
+          clonedDoc.body.style.width = width + 'px';
+          clonedDoc.body.style.height = height + 'px';
         }
-      }).then((canvas) => {
+      }).then(canvas => {
+        // Восстанавливаем оригинальные стили
+        originalStyles.forEach(({ el, orig }) => {
+          el.style.transform = orig.transform || '';
+          el.style.willChange = orig.willChange || '';
+        });
         const link = document.createElement('a');
         link.download = filename;
         link.href = canvas.toDataURL('image/png');
         link.click();
-      }).catch((error) => {
-        console.error('❌ Ошибка html2canvas:', error);
-        // Попытка с allowTaint:true, если проблема в cross-origin
-        html2canvas(element, {
-          scale: 2,
-          allowTaint: true,
-          useCORS: true,
-          backgroundColor: '#000000',
-          windowWidth: originalWidth,
-          windowHeight: originalHeight,
-          onclone: (clonedDoc) => {
-            clonedDoc.body.style.overflow = 'hidden';
-            clonedDoc.documentElement.style.overflow = 'hidden';
-            clonedDoc.documentElement.style.width = originalWidth + 'px';
-            clonedDoc.documentElement.style.height = originalHeight + 'px';
-          }
-        }).then((canvas2) => {
-          const link = document.createElement('a');
-          link.download = filename;
-          link.href = canvas2.toDataURL('image/png');
-          link.click();
-        }).catch((e) => console.error('❌ Полностью не удалось:', e));
+      }).catch(err => {
+        console.error(err);
+        // Восстанавливаем стили даже при ошибке
+        originalStyles.forEach(({ el, orig }) => {
+          el.style.transform = orig.transform || '';
+          el.style.willChange = orig.willChange || '';
+        });
       });
     });
   });
