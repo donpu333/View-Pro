@@ -8985,159 +8985,155 @@ class TradeLevelManager {
         return null;
     }
 
-    _setupEventListeners() {
-        const container = this._chartManager.chartContainer;
-        container.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
-            if (e.target.closest('#tradeCreatePanel') || e.target.closest('#tradeSettingsPanel')) return;
-            const tradeMenu = document.getElementById('tradeContextMenu');
-            if (tradeMenu && tradeMenu.style.display === 'flex') {
-                const menuRect = tradeMenu.getBoundingClientRect();
-                if (e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom) return;
-            }
-            const rect = container.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * this._pixelRatio;
-            const y = (e.clientY - rect.top) * this._pixelRatio;
+  _setupEventListeners() {
+    const container = this._chartManager.chartContainer;
+    container.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('#tradeCreatePanel') || e.target.closest('#tradeSettingsPanel')) return;
+        const tradeMenu = document.getElementById('tradeContextMenu');
+        if (tradeMenu && tradeMenu.style.display === 'flex') {
+            const menuRect = tradeMenu.getBoundingClientRect();
+            if (e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom) return;
+        }
+        const rect = container.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * this._pixelRatio;
+        const y = (e.clientY - rect.top) * this._pixelRatio;
 
-            if (this._isDrawingMode) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                this._handleDrawingClick(e, x, y);
-                return;
-            }
+        if (this._isDrawingMode) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            this._handleDrawingClick(e, x, y);
+            return;
+        }
 
-            const hit = this.hitTest(x, y);
-            if (hit) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (this._selectedTrade && this._selectedTrade !== hit.trade) {
-                    this._selectedTrade.selected = false;
-                    this._selectedTrade.showDragPoints = false;
-                }
-                hit.trade.selected = true;
-                hit.trade.showDragPoints = true;
-                this._selectedTrade = hit.trade;
-                this._potentialDrag = { trade: hit.trade, type: hit.type, startX: x, startY: y, startEntry: hit.trade.entryPrice, startSL: hit.trade.stopLossPrice, startTP: hit.trade.takeProfitPrice, startTime: hit.trade.entryTime };
+        const hit = this.hitTest(x, y);
+        if (hit) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (this._selectedTrade && this._selectedTrade !== hit.trade) {
+                this._selectedTrade.selected = false;
+                this._selectedTrade.showDragPoints = false;
+            }
+            hit.trade.selected = true;
+            hit.trade.showDragPoints = true;
+            this._selectedTrade = hit.trade;
+            this._potentialDrag = { trade: hit.trade, type: hit.type, startX: x, startY: y, startEntry: hit.trade.entryPrice, startSL: hit.trade.stopLossPrice, startTP: hit.trade.takeProfitPrice, startTime: hit.trade.entryTime };
+            this._requestRedraw();
+        } else {
+            if (this._selectedTrade) {
+                this._selectedTrade.selected = false;
+                this._selectedTrade.showDragPoints = false;
+                this._selectedTrade = null;
                 this._requestRedraw();
-            } else {
-                if (this._selectedTrade) {
-                    this._selectedTrade.selected = false;
-                    this._selectedTrade.showDragPoints = false;
-                    this._selectedTrade = null;
-                    this._requestRedraw();
+            }
+            if (tradeMenu) tradeMenu.style.display = 'none';
+        }
+    });
+
+    container.addEventListener('mousemove', (e) => {
+        this._lastMouseClientX = e.clientX;
+        this._lastMouseClientY = e.clientY;
+        const rect = container.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * this._pixelRatio;
+        const y = (e.clientY - rect.top) * this._pixelRatio;
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(x - this._potentialDrag.startX);
+            const dy = Math.abs(y - this._potentialDrag.startY);
+            if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                this._isDragging = true;
+                this._dragTrade = this._potentialDrag.trade;
+                this._dragType = this._potentialDrag.type;
+                this._dragStartY = this._potentialDrag.startY;
+                if (this._dragType === 'entry') this._dragStartPrice = this._potentialDrag.startEntry;
+                else if (this._dragType === 'sl') this._dragStartPrice = this._potentialDrag.startSL;
+                else if (this._dragType === 'tp') this._dragStartPrice = this._potentialDrag.startTP;
+                container.style.cursor = 'grabbing';
+            }
+        }
+
+        if (this._isDragging && this._dragTrade) {
+            e.preventDefault();
+            e.stopPropagation();
+            const deltaCssX = (x - this._potentialDrag.startX) / this._pixelRatio;
+            const deltaCssY = (y - this._potentialDrag.startY) / this._pixelRatio;
+
+            if (this._dragType === 'entry') {
+                // ТОЛЬКО ВРЕМЯ — ЦЕНУ НЕ ТРОГАЕМ
+                const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
+                if (startTimeX !== null) {
+                    const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
+                    if (newTime !== null) {
+                        this._dragTrade.entryTime = newTime;
+                        this._dragTrade.anchorTime = newTime;
+                    }
                 }
-                if (tradeMenu) tradeMenu.style.display = 'none';
-            }
-        });
-
-        container.addEventListener('mousemove', (e) => {
-            this._lastMouseClientX = e.clientX;
-            this._lastMouseClientY = e.clientY;
-            const rect = container.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * this._pixelRatio;
-            const y = (e.clientY - rect.top) * this._pixelRatio;
-
-            if (this._potentialDrag && !this._isDragging) {
-                const dx = Math.abs(x - this._potentialDrag.startX);
-                const dy = Math.abs(y - this._potentialDrag.startY);
-                if (dx > this._dragThreshold || dy > this._dragThreshold) {
-                    this._isDragging = true;
-                    this._dragTrade = this._potentialDrag.trade;
-                    this._dragType = this._potentialDrag.type;
-                    this._dragStartY = this._potentialDrag.startY;
-                    if (this._dragType === 'entry') this._dragStartPrice = this._potentialDrag.startEntry;
-                    else if (this._dragType === 'sl') this._dragStartPrice = this._potentialDrag.startSL;
-                    else if (this._dragType === 'tp') this._dragStartPrice = this._potentialDrag.startTP;
-                    container.style.cursor = 'grabbing';
+            } else if (this._dragType === 'sl') {
+                const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
+                if (startPriceY !== null) {
+                    const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+                    if (newPrice !== null) {
+                        this._dragTrade.stopLossPrice = newPrice;
+                        this._dragTrade.manualTP = false;
+                    }
+                }
+            } else if (this._dragType === 'tp') {
+                const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
+                if (startPriceY !== null) {
+                    const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+                    if (newPrice !== null) {
+                        this._dragTrade.takeProfitPrice = newPrice;
+                        this._dragTrade.manualTP = true;
+                        const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
+                        const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
+                        this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
+                    }
                 }
             }
+            this._dragTrade.update();
+            this._requestRedraw();
+            return;
+        }
 
-       if (this._isDragging && this._dragTrade) {
-    e.preventDefault();
-    e.stopPropagation();
-    const deltaCssX = (x - this._potentialDrag.startX) / this._pixelRatio;
-    const deltaCssY = (y - this._potentialDrag.startY) / this._pixelRatio;
+        const hit = this.hitTest(x, y);
+        container.style.cursor = hit ? 'grab' : 'crosshair';
+        if (this._hoveredTrade !== hit?.trade) {
+            if (this._hoveredTrade) this._hoveredTrade.hovered = false;
+            this._hoveredTrade = hit?.trade || null;
+            if (this._hoveredTrade) this._hoveredTrade.hovered = true;
+            this._requestRedraw();
+        }
+    });
 
-    if (this._dragType === 'entry') {
-        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startEntry);
-        if (startPriceY !== null) {
-            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-            if (newPrice !== null) {
-                this._dragTrade.entryPrice = newPrice;
-                this._dragTrade.manualTP = false; // ✅ СБРАСЫВАЕМ — TP пересчитается
+    container.addEventListener('mouseup', (e) => {
+        this._potentialDrag = null;
+        if (this._isDragging) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._isDragging = false;
+            if (this._dragTrade) {
+                this._dragTrade.dragging = false;
+                this._saveTrades();
+                this._dragTrade = null;
+                this._dragType = null;
+                container.style.cursor = 'crosshair';
+                this._requestRedraw();
             }
         }
-        const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
-        if (startTimeX !== null) {
-            const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
-            if (newTime !== null) this._dragTrade.entryTime = newTime;
+    });
+
+    container.addEventListener('mouseleave', () => {
+        if (this._hoveredTrade) {
+            this._hoveredTrade.hovered = false;
+            this._hoveredTrade = null;
+            this._requestRedraw();
         }
-    } else if (this._dragType === 'sl') {
-        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
-        if (startPriceY !== null) {
-            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-            if (newPrice !== null) {
-                this._dragTrade.stopLossPrice = newPrice;
-                this._dragTrade.manualTP = false; // ✅ СБРАСЫВАЕМ — TP пересчитается по R:R
-            }
-        }
-    } else if (this._dragType === 'tp') {
-        const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
-        if (startPriceY !== null) {
-            const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-            if (newPrice !== null) {
-                this._dragTrade.takeProfitPrice = newPrice;
-                this._dragTrade.manualTP = true;
-                const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
-                const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
-                this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
-            }
-        }
-    }
-    this._dragTrade.update();
-    this._requestRedraw();
-    return;
+    });
+
+    container.addEventListener('contextmenu', (e) => {
+        this._handleContextMenu(e);
+    });
 }
-
-            const hit = this.hitTest(x, y);
-            container.style.cursor = hit ? 'grab' : 'crosshair';
-            if (this._hoveredTrade !== hit?.trade) {
-                if (this._hoveredTrade) this._hoveredTrade.hovered = false;
-                this._hoveredTrade = hit?.trade || null;
-                if (this._hoveredTrade) this._hoveredTrade.hovered = true;
-                this._requestRedraw();
-            }
-        });
-
-        container.addEventListener('mouseup', (e) => {
-            this._potentialDrag = null;
-            if (this._isDragging) {
-                e.preventDefault();
-                e.stopPropagation();
-                this._isDragging = false;
-                if (this._dragTrade) {
-                    this._dragTrade.dragging = false;
-                    this._saveTrades();
-                    this._dragTrade = null;
-                    this._dragType = null;
-                    container.style.cursor = 'crosshair';
-                    this._requestRedraw();
-                }
-            }
-        });
-
-        container.addEventListener('mouseleave', () => {
-            if (this._hoveredTrade) {
-                this._hoveredTrade.hovered = false;
-                this._hoveredTrade = null;
-                this._requestRedraw();
-            }
-        });
-
-        container.addEventListener('contextmenu', (e) => {
-            this._handleContextMenu(e);
-        });
-    }
 
     _handleDrawingClick(e, x, y) {
         if (e.target.closest('#tradeCreatePanel')) return;
