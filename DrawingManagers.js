@@ -4721,11 +4721,12 @@ class AlertLine {
         
         this.active = false;
         
-        this.triggerCount = options.triggerCount ?? 0;
-        this.repeatCount = options.repeatCount ?? 5;
+        // ИСПРАВЛЕНИЕ: Используем нормализацию вместо прямого присваивания
+        this.repeatCount = AlertLine.normalizeRepeatCount(options.repeatCount ?? 5);
         this.repeatInterval = options.repeatInterval ?? 1;
         this.lastTriggerTime = options.lastTriggerTime ?? null;
-        this.triggerLimit = this.repeatCount === Infinity ? Infinity : this.repeatCount;
+        this.triggerCount = options.triggerCount ?? 0;
+        this.triggerLimit = AlertLine.normalizeRepeatCount(this.repeatCount);
         
         this.options = {
             color: options.color || '#808080',
@@ -4756,9 +4757,20 @@ class AlertLine {
         this.dragPointY = 0;
         this.symbolKey = options.symbolKey || null;
         
-        this._processing = false;
         this._firstTriggerTime = null;
         this._firstTriggerPrice = null;
+    }
+
+    /**
+     * Нормализует значение repeatCount.
+     * Корректно обрабатывает Infinity (число и строку), NaN, отрицательные значения.
+     * @param {*} val - Значение для нормализации
+     * @returns {number|Infinity}
+     */
+    static normalizeRepeatCount(val) {
+        if (val === Infinity || val === 'Infinity' || val === 'infinity') return Infinity;
+        const n = parseInt(val, 10);
+        return isNaN(n) || n < 1 ? 5 : n;
     }
 
     updateOptions(newOptions) {
@@ -4770,9 +4782,10 @@ class AlertLine {
         }
         this.options = { ...this.options, ...filtered };
         
+        // ИСПРАВЛЕНИЕ: Используем нормализацию при обновлении
         if (newOptions.repeatCount !== undefined) {
-            this.repeatCount = newOptions.repeatCount;
-            this.triggerLimit = newOptions.repeatCount === Infinity ? Infinity : newOptions.repeatCount;
+            this.repeatCount = AlertLine.normalizeRepeatCount(newOptions.repeatCount);
+            this.triggerLimit = AlertLine.normalizeRepeatCount(this.repeatCount);
         }
         if (newOptions.repeatInterval !== undefined) {
             this.repeatInterval = newOptions.repeatInterval;
@@ -4840,21 +4853,6 @@ class AlertLine {
         return Number(time) || 0;
     }
 }
-
-function positionsLine(position, pixelRatio, lineWidth, isHorizontal) {
-    const pos = Math.round(position * pixelRatio);
-    const length = Math.max(1, Math.round(lineWidth * pixelRatio));
-    return { position: pos, length: length };
-}
-
-function formatPriceSafe(price) {
-    if (price == null || isNaN(price)) return '—';
-    if (price >= 1000) return price.toFixed(2);
-    if (price >= 1) return price.toFixed(4);
-    if (price >= 0.01) return price.toFixed(6);
-    return price.toFixed(8);
-}
-
 class AlertLineRenderer {
     constructor(alert, chartManager) {
         this._alert = alert;
@@ -5322,7 +5320,7 @@ class AlertLineManager {
         }
     }
 
-    _checkAlerts(symbol, price, exchange, market) {
+      _checkAlerts(symbol, price, exchange, market) {
         if (!symbol || !price || isNaN(price)) return;
 
         const cleanSymbol = this._normalizeSymbol(symbol);
@@ -5331,8 +5329,7 @@ class AlertLineManager {
 
         const items = this._alerts.filter(item => {
             const a = item.alert;
-            if (!a) return false;
-            if (a.status !== 'active') return false;
+            if (!a || a.status !== 'active') return false;
             
             const aSym = this._normalizeSymbol(a.symbol);
             const aEx = String(a.exchange || 'binance').toLowerCase();
@@ -5348,69 +5345,70 @@ class AlertLineManager {
         for (const item of items) {
             const alert = item.alert;
             
-            if (alert._processing) continue;
-            alert._processing = true;
+            // УБРАН флаг _processing - он не нужен в однопоточном JS 
+            // и вызывал пропуски при пакетной обработке тиков
             
-            try {
-                const lastPrice = this._lastPrices.get(alert.id);
-                this._lastPrices.set(alert.id, price);
+            const lastPrice = this._lastPrices.get(alert.id);
+            this._lastPrices.set(alert.id, price);
 
-                if (lastPrice === undefined) continue;
-                if (now - alert.createdAt < 100) continue;
+            // Фича: первый тик пропускаем для формирования базы сравнения
+            if (lastPrice === undefined) continue;
+            
+            // Защита от срабатывания в первые 100мс после создания
+            if (now - alert.createdAt < 100) continue;
 
-                const triggerLimit = alert.triggerLimit === Infinity ? Infinity : alert.triggerLimit;
+            const triggerLimit = AlertLine.normalizeRepeatCount(alert.repeatCount);
+            
+            if (alert.triggerCount >= triggerLimit) {
+                alert.complete();
+                this._handleAlertCompletion(alert);
+                continue;
+            }
+
+            const isFirstTrigger = alert.triggerCount === 0;
+            let shouldTrigger = false;
+            
+            if (isFirstTrigger) {
+                const crossedUp = lastPrice <= alert.price && price >= alert.price;
+                const crossedDown = lastPrice >= alert.price && price <= alert.price;
+
+                if (alert.direction === 'above' && crossedUp) shouldTrigger = true;
+                else if (alert.direction === 'below' && crossedDown) shouldTrigger = true;
+                else if (alert.direction === 'both' && (crossedUp || crossedDown)) shouldTrigger = true;
+                
+                if (shouldTrigger) {
+                    alert._firstTriggerTime = now;
+                    alert._firstTriggerPrice = price;
+                }
+            } else {
+                // Фича: повторные триггеры работают чисто по таймеру
+                const intervalMs = (alert.repeatInterval || 1) * 60000;
+                const msSinceLast = now - alert.lastTriggerTime;
+                
+                if (msSinceLast >= intervalMs) {
+                    shouldTrigger = true;
+                }
+            }
+
+            if (shouldTrigger) {
+                const isRepeat = alert.triggerCount > 0;
+                console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit === Infinity ? '∞' : triggerLimit})`);
+                
+                alert.triggerCount++;
+                alert.lastTriggerTime = now;
+                alert.active = true;
+
+                this._saveAlerts();
+                this._updateAlertsListUI();
+                this._startInfiniteHighlight(alert.id);
+                this._showAlertNotification(alert, price, isRepeat);
+                this._sendTelegramAlert(alert, price, isRepeat);
+                this._requestRedraw();
+
                 if (alert.triggerCount >= triggerLimit) {
                     alert.complete();
                     this._handleAlertCompletion(alert);
-                    continue;
                 }
-
-                const isFirstTrigger = alert.triggerCount === 0;
-                let shouldTrigger = false;
-                
-                if (isFirstTrigger) {
-                    const crossedUp = lastPrice <= alert.price && price >= alert.price;
-                    const crossedDown = lastPrice >= alert.price && price <= alert.price;
-
-                    if (alert.direction === 'above' && crossedUp) shouldTrigger = true;
-                    else if (alert.direction === 'below' && crossedDown) shouldTrigger = true;
-                    else if (alert.direction === 'both' && (crossedUp || crossedDown)) shouldTrigger = true;
-                    
-                    if (shouldTrigger) {
-                        alert._firstTriggerTime = now;
-                        alert._firstTriggerPrice = price;
-                    }
-                } else {
-                    const intervalMs = (alert.repeatInterval || 1) * 60000;
-                    const msSinceLast = now - alert.lastTriggerTime;
-                    
-                    if (msSinceLast >= intervalMs) {
-                        shouldTrigger = true;
-                    }
-                }
-
-                if (shouldTrigger) {
-                    const isRepeat = alert.triggerCount > 0;
-                    console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit === Infinity ? '∞' : triggerLimit})`);
-                    
-                    alert.triggerCount++;
-                    alert.lastTriggerTime = now;
-                    alert.active = true;
-
-                    this._saveAlerts();
-                    this._updateAlertsListUI();
-                    this._startInfiniteHighlight(alert.id);
-                    this._showAlertNotification(alert, price, isRepeat);
-                    this._sendTelegramAlert(alert, price, isRepeat);
-                    this._requestRedraw();
-
-                    if (alert.triggerCount >= triggerLimit) {
-                        alert.complete();
-                        this._handleAlertCompletion(alert);
-                    }
-                }
-            } finally {
-                alert._processing = false;
             }
         }
     }
