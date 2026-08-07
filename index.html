@@ -1178,120 +1178,159 @@ currentColorBox.style.backgroundColor = hex;
 colorOpacity.addEventListener('input', function() { colorOpacityValue.textContent = this.value + '%'; });
 let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
 let toolbarRafId = null; // Для плавности
-
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ==========
-
-// 1. ✅ ВОССТАНОВЛЕНИЕ ПОЗИЦИИ ПРИ ЗАГРУЗКЕ СТРАНИЦЫ
-const savedLeft = localStorage.getItem('drawingToolbarLeft');
-const savedTop = localStorage.getItem('drawingToolbarTop');
-if (savedLeft) drawingToolbar.style.left = savedLeft;
-if (savedTop) drawingToolbar.style.top = savedTop;
-
-// 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ
-toolbarHeader.addEventListener('mousedown', (e) => {
-    // Игнорируем клики по кнопкам управления, чтобы не начинать перетаскивание
-    if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) {
-        return;
-    }
+// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ИСПРАВЛЕННАЯ ВЕРСИЯ) ==========
+(function() {
+    const toolbar = document.getElementById('drawingToolbar');
+    const header = document.getElementById('toolbarHeader');
+    const toggleBtn = document.getElementById('toolbarToggle');
     
-    isDraggingToolbar = true;
-    const rect = drawingToolbar.getBoundingClientRect();
-    dragToolbarStartX = e.clientX; 
-    dragToolbarStartY = e.clientY; 
-    dragToolbarStartLeft = rect.left; 
-    dragToolbarStartTop = rect.top;
+    if (!toolbar || !header) return;
+
+    // 1. ВОССТАНОВЛЕНИЕ ПОЗИЦИИ
+    const savedLeft = localStorage.getItem('drawingToolbarLeft');
+    const savedTop = localStorage.getItem('drawingToolbarTop');
+    if (savedLeft) toolbar.style.left = savedLeft;
+    if (savedTop) toolbar.style.top = savedTop;
+
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let startLeft = 0, startTop = 0;
+    let containerWidth = 0, containerHeight = 0;
+    let toolbarWidth = 0, toolbarHeight = 0;
+    let rafId = null;
     
-    toolbarWidth = rect.width;
-    toolbarHeight = rect.height;
+    // Ссылка на ResizeObserver, чтобы отключать его во время драга
+    let resizeObserver = null; 
 
-    document.body.style.userSelect = 'none';
-    document.body.style.webkitUserSelect = 'none';
-    toolbarHeader.style.cursor = 'grabbing';
-    e.preventDefault();
-});
-
-// 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ
-document.addEventListener('mousemove', (e) => {
-    if (!isDraggingToolbar) return;
-
-    if (!toolbarRafId) {
-        toolbarRafId = requestAnimationFrame(() => {
-            const deltaX = e.clientX - dragToolbarStartX;
-            const deltaY = e.clientY - dragToolbarStartY;
-            let newLeft = dragToolbarStartLeft + deltaX;
-            let newTop = dragToolbarStartTop + deltaY;
-            
-            const containerRect = chartElement.getBoundingClientRect();
-            // Убрали жесткий отступ 60, теперь можно прижимать к самому верху (5px)
-            newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, newLeft));
-            newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, newTop));
-            
-            drawingToolbar.style.left = newLeft + 'px';
-            drawingToolbar.style.top = newTop + 'px';
-            
-            toolbarRafId = null;
-        });
-    }
-});
-
-// 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ И СОХРАНЕНИЕ
-document.addEventListener('mouseup', () => {
-    if (isDraggingToolbar) {
-        isDraggingToolbar = false;
-        toolbarHeader.style.cursor = 'grab';
+    // 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ
+    header.addEventListener('mousedown', (e) => {
+        // Игнорируем клики по кнопкам управления
+        if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) return;
         
+        isDragging = true;
+        
+        // Фиксируем начальные координаты курсора
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        // ✅ ИСПРАВЛЕНИЕ: Используем offsetLeft/offsetTop вместо getBoundingClientRect
+        // Это дает координаты относительно позиционированного родителя, 
+        // что совпадает с системой координат style.left/top
+        startLeft = toolbar.offsetLeft;
+        startTop = toolbar.offsetTop;
+        
+        // Кэшируем размеры один раз при старте, чтобы не вызывать reflow на каждом движении
+        const parent = toolbar.offsetParent || document.body;
+        containerWidth = parent.clientWidth;
+        containerHeight = parent.clientHeight;
+        toolbarWidth = toolbar.offsetWidth;
+        toolbarHeight = toolbar.offsetHeight;
+        
+        // Блокируем выделение текста и меняем курсор
+        document.body.style.userSelect = 'none';
+        document.body.style.webkitUserSelect = 'none';
+        header.style.cursor = 'grabbing';
+        
+        // ✅ Отключаем ResizeObserver, чтобы он не мешал перетаскиванию
+        if (resizeObserver) {
+            resizeObserver.disconnect();
+        }
+        
+        e.preventDefault();
+    });
+
+    // 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        // Используем RAF для плавности, но без пропуска кадров через флаг
+        if (rafId) cancelAnimationFrame(rafId);
+        
+        rafId = requestAnimationFrame(() => {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            let newLeft = startLeft + deltaX;
+            let newTop = startTop + deltaY;
+            
+            // Ограничение границами контейнера (с небольшим отступом 5px)
+            const maxLeft = containerWidth - toolbarWidth - 5;
+            const maxTop = containerHeight - toolbarHeight - 5;
+            
+            newLeft = Math.max(5, Math.min(maxLeft, newLeft));
+            newTop = Math.max(5, Math.min(maxTop, newTop));
+            
+            toolbar.style.left = newLeft + 'px';
+            toolbar.style.top = newTop + 'px';
+        });
+    });
+
+    // 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ
+    document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        header.style.cursor = 'grab';
         document.body.style.userSelect = '';
         document.body.style.webkitUserSelect = '';
         
-        if (toolbarRafId) {
-            cancelAnimationFrame(toolbarRafId);
-            toolbarRafId = null;
+        if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
         }
-
-        // ✅ Сохраняем точную позицию в память браузера
-        localStorage.setItem('drawingToolbarLeft', drawingToolbar.style.left);
-        localStorage.setItem('drawingToolbarTop', drawingToolbar.style.top);
-    }
-});
-
-// 5. СВОРАЧИВАНИЕ ПАНЕЛИ
-toolbarToggle.addEventListener('click', () => {
-    drawingToolbar.classList.toggle('collapsed');
-    toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
-    
-    setTimeout(() => {
-        const rect = drawingToolbar.getBoundingClientRect();
-        toolbarWidth = rect.width;
-        toolbarHeight = rect.height;
-    }, 50);
-});
-
-// 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА (БЕЗ СБИВАНИЯ СОХРАНЕННОЙ ПОЗИЦИИ)
-const chartContainerForToolbar = document.getElementById('chart-container');
-if (chartContainerForToolbar && window.ResizeObserver) {
-    const toolbarObserver = new ResizeObserver(() => {
-        if (!drawingToolbar) return;
-        const containerRect = chartContainerForToolbar.getBoundingClientRect();
         
-        toolbarWidth = drawingToolbar.offsetWidth;
-        toolbarHeight = drawingToolbar.offsetHeight;
+        // Сохраняем позицию
+        localStorage.setItem('drawingToolbarLeft', toolbar.style.left);
+        localStorage.setItem('drawingToolbarTop', toolbar.style.top);
         
-        let currentLeft = parseFloat(drawingToolbar.style.left) || 20;
-        let currentTop = parseFloat(drawingToolbar.style.top) || 60;
-        
-        let newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, currentLeft));
-        let newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, currentTop)); // Убрали 60
-        
-        // Обновляем координаты ТОЛЬКО если панель вылезла за границы из-за уменьшения окна
-        if (newLeft !== currentLeft || newTop !== currentTop) {
-            drawingToolbar.style.left = newLeft + 'px';
-            drawingToolbar.style.top = newTop + 'px';
-            localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
-            localStorage.setItem('drawingToolbarTop', newTop + 'px');
+        // ✅ Включаем ResizeObserver обратно
+        if (resizeObserver && toolbar.offsetParent) {
+            resizeObserver.observe(toolbar.offsetParent);
         }
     });
-    toolbarObserver.observe(chartContainerForToolbar);
-}
+
+    // 5. СВОРАЧИВАНИЕ ПАНЕЛИ
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            toolbar.classList.toggle('collapsed');
+            toggleBtn.textContent = toolbar.classList.contains('collapsed') ? '▶' : '◀';
+            // Обновляем кэш размеров после анимации сворачивания
+            setTimeout(() => {
+                toolbarWidth = toolbar.offsetWidth;
+                toolbarHeight = toolbar.offsetHeight;
+            }, 300);
+        });
+    }
+
+    // 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА
+    // ✅ Создаем Observer здесь, чтобы иметь ссылку для отключения в mousedown
+    if (window.ResizeObserver && toolbar.offsetParent) {
+        resizeObserver = new ResizeObserver(() => {
+            if (isDragging) return; // Не трогаем во время драга
+            
+            const parent = toolbar.offsetParent || document.body;
+            const cW = parent.clientWidth;
+            const cH = parent.clientHeight;
+            const tW = toolbar.offsetWidth;
+            const tH = toolbar.offsetHeight;
+            
+            let curLeft = parseFloat(toolbar.style.left) || 20;
+            let curTop = parseFloat(toolbar.style.top) || 60;
+            
+            // Корректируем только если панель вылезла за границы
+            const newLeft = Math.max(5, Math.min(cW - tW - 5, curLeft));
+            const newTop = Math.max(5, Math.min(cH - tH - 5, curTop));
+            
+            if (newLeft !== curLeft || newTop !== curTop) {
+                toolbar.style.left = newLeft + 'px';
+                toolbar.style.top = newTop + 'px';
+                localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
+                localStorage.setItem('drawingToolbarTop', newTop + 'px');
+            }
+        });
+        resizeObserver.observe(toolbar.offsetParent);
+    }
+})();
 
 // ========== TELEGRAM ==========
 function saveTelegramChatId(id) {
