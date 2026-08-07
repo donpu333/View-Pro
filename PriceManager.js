@@ -263,27 +263,35 @@ class PriceManager {
     }
     
     // ========== REST (главный источник цен для алертов) ==========
+       // ========== ИСПРАВЛЕННЫЙ REST ПОЛЛИНГ ==========
     async _pollAlertPricesViaRest() {
         if (!window.alertLineManager) return;
+        
+        // ИСПРАВЛЕНИЕ #1: Фильтруем только по статусу, 
+        // повторяющиеся алерты (triggered=true) НЕ пропускаем
         const activeAlerts = window.alertLineManager._alerts.filter(item => {
             const a = item.alert;
-            return !a.triggered && a.status !== 'completed' && a.status !== 'paused';
+            return a.status === 'active';
         });
         
-        const groups = { 'binance:futures': new Set(), 'binance:spot': new Set(), 'bybit:futures': new Set(), 'bybit:spot': new Set() };
+        if (activeAlerts.length === 0) return;
+        
+        const groups = { 
+            'binance:futures': new Set(), 
+            'binance:spot': new Set(), 
+            'bybit:futures': new Set(), 
+            'bybit:spot': new Set() 
+        };
+        
         for (const item of activeAlerts) {
             const a = item.alert;
             const key = `${(a.exchange || 'binance').toLowerCase()}:${(a.marketType || 'futures').toLowerCase()}`;
             if (groups[key]) groups[key].add(a.symbol);
         }
         
-        // ✅ ИСПРАВЛЕНО: Если в алертах появился Bybit, принудительно подключаем его WS
         if (groups['bybit:futures'].size > 0 || groups['bybit:spot'].size > 0) {
             this._ensureBybitConnected();
         }
-
-        // Если активных алертов нет вообще, выходим раньше
-        if (activeAlerts.length === 0) return;
         
         const tasks = [];
         if (groups['binance:futures'].size > 0) tasks.push(this._fetchBinanceRest([...groups['binance:futures']], 'futures'));
@@ -292,6 +300,64 @@ class PriceManager {
         if (groups['bybit:spot'].size > 0) tasks.push(this._fetchBybitRest([...groups['bybit:spot']], 'spot'));
         
         await Promise.allSettled(tasks);
+    }
+    
+    // ИСПРАВЛЕНИЕ #2: Убран прямой вызов _checkAlerts
+    async _fetchBinanceRest(symbols, marketType) {
+        try {
+            const url = symbols.length === 1 
+                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
+                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
+            
+            const response = await this._fetchWithRetry(url);
+            if (!response) return;
+            const data = await response.json();
+            const tickers = Array.isArray(data) ? data : [data];
+            
+            for (const ticker of tickers) {
+                const price = parseFloat(ticker.lastPrice || ticker.price);
+                const change = parseFloat(ticker.priceChangePercent) || 0;
+                if (ticker.symbol && price && !isNaN(price)) {
+                    // _setPrice сам уведомит подписчиков через RAF
+                    this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
+                }
+            }
+        } catch(e) {}
+    }
+    
+    // ИСПРАВЛЕНИЕ #2 + #3: Батч-запрос + убран прямой вызов _checkAlerts
+    async _fetchBybitRest(symbols, marketType) {
+        try {
+            const category = marketType === 'futures' ? 'linear' : 'spot';
+            
+            // Bybit V5 поддерживает батч через запятую (до 10 символов)
+            const batches = [];
+            for (let i = 0; i < symbols.length; i += 10) {
+                batches.push(symbols.slice(i, i + 10));
+            }
+            
+            const tasks = batches.map(batch => {
+                const symbolParam = batch.join(',');
+                return this._fetchWithRetry(
+                    `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${symbolParam}`
+                ).then(r => r?.json()).catch(() => null);
+            });
+            
+            const results = await Promise.all(tasks);
+            
+            for (const data of results) {
+                if (data?.retCode === 0 && Array.isArray(data.result?.list)) {
+                    for (const ticker of data.result.list) {
+                        const price = parseFloat(ticker.lastPrice);
+                        const change = parseFloat(ticker.price24hPcnt) || 0;
+                        if (ticker.symbol && price && !isNaN(price)) {
+                            // _setPrice сам уведомит подписчиков через RAF
+                            this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
+                        }
+                    }
+                }
+            }
+        } catch(e) {}
     }
     
     async _fetchBinanceRest(symbols, marketType) {
