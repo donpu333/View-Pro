@@ -1338,4 +1338,4 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
 
 if (typeof window !== 'undefined') {
     window.TickerPanel = TickerPanel;
-} 
+}
