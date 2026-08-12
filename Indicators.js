@@ -250,9 +250,9 @@ class MACDIndicator extends BaseIndicator {
 class MultiTimeframeATRIndicator extends BaseIndicator {
     constructor(manager) {
         super(manager, 'multiatr', 'ATR', '#FFA500', 'main');
-        
+
         const savedSettings = this._loadSettings();
-        
+
         this.settings = {
             atrPeriod: savedSettings.atrPeriod || 3,
             rangeMode: savedSettings.rangeMode || 'High-Low',
@@ -267,15 +267,30 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             minuteTF: savedSettings.minuteTF || '5',
             minuteATRPeriod: savedSettings.minuteATRPeriod || 3,
             minute1TF: savedSettings.minute1TF || '1',
-            minute1ATRPeriod: savedSettings.minute1ATRPeriod || 3
+            minute1ATRPeriod: savedSettings.minute1ATRPeriod || 3,
+
+            calcMode: savedSettings.calcMode || 'auto',
+            manualBars: savedSettings.manualBars || 20,
+            manualTimes: Array.isArray(savedSettings.manualTimes)
+                ? savedSettings.manualTimes
+                : []
         };
-        
-        this.metrics = { 
-            atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, 
-            trueRange: 0, rangeRatio: 0, isValid: true, upperBound: 0, lowerBound: 0, 
-            isAnomaly: false, anomalyType: null 
+
+        this.metrics = {
+            atr: 0,
+            natr: 0,
+            progress: 0,
+            remaining: 0,
+            remainingPoints: 0,
+            trueRange: 0,
+            rangeRatio: 0,
+            isValid: true,
+            upperBound: 0,
+            lowerBound: 0,
+            isAnomaly: false,
+            anomalyType: null
         };
-        
+
         this._lastCandleTime = 0;
         this._lastInterval = null;
         this._isUpdating = false;
@@ -284,20 +299,60 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this._currentApiInterval = '1h';
         this._decimals = null;
         this._wasDragged = false;
-        
+
+        this._manualDomMarkers = [];
+        this._manualMarkerData = new Map();
+
+        this._manualChart = null;
+        this._manualClickHandler = null;
+        this._documentMouseDownHandler = null;
+        this._crosshairHandler = null;
+        this._lastHoverTime = null;
+
+        this._chartContainer = null;
+
+        this._rafId = null;
+
+        this._timeScale = null;
+        this._timeScaleHandler = null;
+        this._timeScaleUnsubscribe = null;
+
+        this._priceScale = null;
+        this._priceScaleHandler = null;
+        this._priceScaleUnsubscribe = null;
+
+        this._resizeObserver = null;
+        this._resizeContainer = null;
+
+        this._windowScrollHandler = null;
+
         this._setupEventHandlers();
         this._initWidgetDOM();
-        setTimeout(() => this.updateMetrics(), 500);
+
+        this._startMarkerLoop();
+
+        setTimeout(() => {
+            this._setupManualSelection();
+            this._rebuildManualMarkers();
+            this.updateMetrics();
+        }, 500);
     }
-    
+
     _loadSettings() {
-        try { const saved = localStorage.getItem('atr_multi_settings'); return saved ? JSON.parse(saved) : {}; } catch (e) { return {}; }
+        try {
+            const saved = localStorage.getItem('atr_multi_settings');
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            return {};
+        }
     }
 
     _saveSettings() {
-        try { localStorage.setItem('atr_multi_settings', JSON.stringify(this.settings)); } catch (e) {}
+        try {
+            localStorage.setItem('atr_multi_settings', JSON.stringify(this.settings));
+        } catch (e) {}
     }
-    
+
     _loadPosition() {
         try {
             const saved = localStorage.getItem('multiatr_position');
@@ -308,31 +363,39 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         } catch (e) {}
         return { x: 20, y: 80 };
     }
-    
+
     _savePosition(x, y) {
         try {
             localStorage.setItem('multiatr_position', JSON.stringify({ x, y }));
         } catch (e) {}
     }
-    
-    get visible() { return this._visible; }
-    
+
+    get visible() {
+        return this._visible;
+    }
+
     set visible(value) {
         this._visible = value;
+
         const widget = document.getElementById('multiatr-widget');
         if (widget) widget.style.display = value ? 'flex' : 'none';
+
         this._saveSettings();
+
         if (this.manager) this.manager._saveIndicators();
     }
 
-    getWorkerType() { return null; }
+    getWorkerType() {
+        return null;
+    }
+
     calculateAsync() {}
-    
+
     _initWidgetDOM() {
         if (document.getElementById('multiatr-widget')) return;
-        
+
         const pos = this._loadPosition();
-        
+
         const wrapper = document.createElement('div');
         wrapper.id = 'multiatr-widget';
         wrapper.style.cssText = `
@@ -344,17 +407,30 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             display: none; align-items: center; gap: 4px; cursor: pointer;
             backdrop-filter: blur(6px); user-select: none;
         `;
-        
+
         document.body.appendChild(wrapper);
         this._setupDrag(wrapper, wrapper);
-        
+
         wrapper.addEventListener('click', (e) => {
             if (this._wasDragged || e.target.id === 'multiatr-close') return;
+
             if (this.metrics.atr > 0) {
-                navigator.clipboard.writeText(this.metrics.atr.toFixed(this._getPriceDecimals())).then(() => {
-                    const val = document.getElementById('matr-val');
-                    if(val) { val.style.color = '#22E00F'; setTimeout(() => val.style.color = '#FFFFFF', 400); }
-                }).catch(() => {});
+                navigator.clipboard.writeText(this.metrics.atr.toFixed(this._getPriceDecimals()))
+                    .then(() => {
+                        const val = document.getElementById('matr-val');
+                        if (val) {
+                            val.style.color = '#22E00F';
+                            setTimeout(() => val.style.color = '#FFFFFF', 400);
+                        }
+                    })
+                    .catch(() => {});
+            }
+        });
+
+        wrapper.addEventListener('contextmenu', (e) => {
+            if (this.settings.calcMode === 'manual') {
+                e.preventDefault();
+                this.clearManualSelection();
             }
         });
     }
@@ -362,35 +438,56 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     _setupDrag(handle, element) {
         let isDragging = false, startX, startY, initialLeft, initialTop;
         this._wasDragged = false;
+
         handle.addEventListener('mousedown', (e) => {
             if (e.target.id === 'multiatr-close') return;
-            isDragging = true; this._wasDragged = false;
-            startX = e.clientX; startY = e.clientY;
-            const rect = element.getBoundingClientRect(); initialLeft = rect.left; initialTop = rect.top;
-            element.style.transition = 'none'; element.style.right = 'auto'; element.style.bottom = 'auto';
+
+            isDragging = true;
+            this._wasDragged = false;
+            startX = e.clientX;
+            startY = e.clientY;
+
+            const rect = element.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
+
+            element.style.transition = 'none';
+            element.style.right = 'auto';
+            element.style.bottom = 'auto';
         });
-        this._dragMoveHandler = (e) => { 
-            if (!isDragging) return; e.preventDefault();
-            if (Math.abs(e.clientX - startX) > 2 || Math.abs(e.clientY - startY) > 2) this._wasDragged = true;
-            element.style.left = `${initialLeft + e.clientX - startX}px`; 
-            element.style.top = `${initialTop + e.clientY - startY}px`; 
+
+        this._dragMoveHandler = (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+
+            if (Math.abs(e.clientX - startX) > 2 || Math.abs(e.clientY - startY) > 2) {
+                this._wasDragged = true;
+            }
+
+            element.style.left = `${initialLeft + e.clientX - startX}px`;
+            element.style.top = `${initialTop + e.clientY - startY}px`;
         };
-        this._dragUpHandler = () => { 
-            if (isDragging) { 
-                isDragging = false; 
+
+        this._dragUpHandler = () => {
+            if (isDragging) {
+                isDragging = false;
                 element.style.transition = '';
+
                 const x = parseInt(element.style.left) || 20;
                 const y = parseInt(element.style.top) || 80;
                 this._savePosition(x, y);
-            } 
+            }
         };
+
         document.addEventListener('mousemove', this._dragMoveHandler);
         document.addEventListener('mouseup', this._dragUpHandler);
     }
 
     _normalizeInterval(interval) {
         if (!interval) return '1h';
+
         const i = interval.toString().toLowerCase().trim();
+
         if (['1', '1m', 'm1'].includes(i)) return '1m';
         if (['3', '3m', 'm3'].includes(i)) return '3m';
         if (['5', '5m', 'm5'].includes(i)) return '5m';
@@ -403,89 +500,362 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         if (['720', '12h', 'h12'].includes(i)) return '12h';
         if (['d', '1d', 'day'].includes(i)) return '1d';
         if (['w', '1w', 'week'].includes(i)) return '1w';
+
         return '1h';
     }
 
     _displayInterval(apiInterval) {
-        const map = { '1m': '1M', '3m': '3M', '5m': '5M', '15m': '15M', '30m': '30M', '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H', '1d': '1D', '1w': '1W' };
+        const map = {
+            '1m': '1M',
+            '3m': '3M',
+            '5m': '5M',
+            '15m': '15M',
+            '30m': '30M',
+            '1h': '1H',
+            '2h': '2H',
+            '4h': '4H',
+            '6h': '6H',
+            '12h': '12H',
+            '1d': '1D',
+            '1w': '1W'
+        };
+
         return map[apiInterval] || apiInterval.toUpperCase();
     }
 
     calculateCandlesFromHours(hours, minuteTFStr) {
-        return Math.max(Math.floor(hours * 60 / parseInt(minuteTFStr)), 1);
+        return Math.max(Math.floor((hours * 60) / parseInt(minuteTFStr)), 1);
     }
 
     getActualPeriod(apiInterval) {
         if (apiInterval === '1w') return this.settings.weekATRPeriod || 3;
         if (apiInterval === '1d') return this.settings.dayATRPeriod || 3;
-        if (['1h', '2h', '4h', '6h', '12h'].includes(apiInterval)) return this.settings.hourATRPeriod || 12;
-        
+
+        if (['1h', '2h', '4h', '6h', '12h'].includes(apiInterval)) {
+            return this.settings.hourATRPeriod || 12;
+        }
+
         const minuteApiTF = this.settings.minuteTF + 'm';
         if (apiInterval === minuteApiTF) {
-            return this.calculateCandlesFromHours(this.settings.minuteATRPeriod || 3, this.settings.minuteTF);
+            return this.calculateCandlesFromHours(
+                this.settings.minuteATRPeriod || 3,
+                this.settings.minuteTF
+            );
         }
 
         const minute1ApiTF = this.settings.minute1TF + 'm';
         if (apiInterval === minute1ApiTF) {
-            return this.calculateCandlesFromHours(this.settings.minute1ATRPeriod || 3, this.settings.minute1TF);
+            return this.calculateCandlesFromHours(
+                this.settings.minute1ATRPeriod || 3,
+                this.settings.minute1TF
+            );
         }
 
         return this.settings.atrPeriod || 3;
     }
-    
+
     computeATRMetrics(data, period, rangeMode, useFilter, filterType, devFactor, fixedMult) {
-        if (!data || data.length < period + 1) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
+        if (!data || data.length < period + 1) {
+            return {
+                atr: 0,
+                natr: 0,
+                progress: 0,
+                remaining: 0,
+                remainingPoints: 0,
+                trueRange: 0,
+                rangeRatio: 0,
+                upperBound: 0,
+                lowerBound: 0,
+                isValid: true,
+                isAnomaly: false,
+                anomalyType: null
+            };
+        }
+
         const ranges = [];
+
         for (let i = 0; i < data.length; i++) {
             if (rangeMode === 'True Range' && i > 0) {
                 const prevClose = data[i - 1].close;
-                ranges.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - prevClose), Math.abs(data[i].low - prevClose)));
-            } else { ranges.push(data[i].high - data[i].low); }
+
+                ranges.push(
+                    Math.max(
+                        data[i].high - data[i].low,
+                        Math.abs(data[i].high - prevClose),
+                        Math.abs(data[i].low - prevClose)
+                    )
+                );
+            } else {
+                ranges.push(data[i].high - data[i].low);
+            }
         }
-        if (ranges.length < period) return { atr: 0, natr: 0, progress: 0, remaining: 0, remainingPoints: 0, trueRange: 0, rangeRatio: 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
-        const rma = (src, len) => { const result = new Array(src.length).fill(0); let sum = 0; for (let i = 0; i < len; i++) sum += src[i]; result[len - 1] = sum / len; for (let i = len; i < src.length; i++) result[i] = (src[i] + (len - 1) * result[i - 1]) / len; return result; };
+
+        if (ranges.length < period) {
+            return {
+                atr: 0,
+                natr: 0,
+                progress: 0,
+                remaining: 0,
+                remainingPoints: 0,
+                trueRange: 0,
+                rangeRatio: 0,
+                upperBound: 0,
+                lowerBound: 0,
+                isValid: true,
+                isAnomaly: false,
+                anomalyType: null
+            };
+        }
+
+        const rma = (src, len) => {
+            const result = new Array(src.length).fill(0);
+            let sum = 0;
+
+            for (let i = 0; i < len; i++) sum += src[i];
+            result[len - 1] = sum / len;
+
+            for (let i = len; i < src.length; i++) {
+                result[i] = (src[i] + (len - 1) * result[i - 1]) / len;
+            }
+
+            return result;
+        };
+
         if (!useFilter) {
-            const atrArray = rma(ranges, period); const lastIdx = ranges.length - 1; const atr = atrArray[lastIdx]; const lastCandle = data[lastIdx]; const dist = lastCandle.high - lastCandle.low; const prog = atr > 0 ? (dist / atr) * 100 : 0;
-            return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: prog, remaining: 100 - prog, remainingPoints: atr - dist, trueRange: ranges[lastIdx], rangeRatio: (lastIdx > 0 && atrArray[lastIdx - 1] > 0) ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100 : 0, upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null };
+            const atrArray = rma(ranges, period);
+            const lastIdx = ranges.length - 1;
+            const atr = atrArray[lastIdx];
+            const lastCandle = data[lastIdx];
+            const dist = lastCandle.high - lastCandle.low;
+            const prog = atr > 0 ? (dist / atr) * 100 : 0;
+
+            return {
+                atr,
+                natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
+                progress: prog,
+                remaining: 100 - prog,
+                remainingPoints: atr - dist,
+                trueRange: ranges[lastIdx],
+                rangeRatio:
+                    lastIdx > 0 && atrArray[lastIdx - 1] > 0
+                        ? (ranges[lastIdx] / atrArray[lastIdx - 1]) * 100
+                        : 0,
+                upperBound: 0,
+                lowerBound: 0,
+                isValid: true,
+                isAnomaly: false,
+                anomalyType: null
+            };
         }
-        const rawRMA = rma(ranges, period); const filteredRanges = [...ranges]; const filteredATR = new Array(ranges.length).fill(0);
-        for (let i = 0; i < period; i++) { filteredRanges[i] = ranges[i]; if (i === period - 1) { let sum = 0; for (let j = 0; j < period; j++) sum += ranges[j]; filteredATR[i] = sum / period; } else if (i > 0) { let sum = 0; for (let j = 0; j <= i; j++) sum += ranges[j]; filteredATR[i] = sum / (i + 1); } else filteredATR[i] = ranges[i]; }
-        let upperBound = 0, lowerBound = 0;
+
+        const rawRMA = rma(ranges, period);
+        const filteredRanges = [...ranges];
+        const filteredATR = new Array(ranges.length).fill(0);
+
+        for (let i = 0; i < period; i++) {
+            filteredRanges[i] = ranges[i];
+
+            if (i === period - 1) {
+                let sum = 0;
+                for (let j = 0; j < period; j++) sum += ranges[j];
+                filteredATR[i] = sum / period;
+            } else if (i > 0) {
+                let sum = 0;
+                for (let j = 0; j <= i; j++) sum += ranges[j];
+                filteredATR[i] = sum / (i + 1);
+            } else {
+                filteredATR[i] = ranges[i];
+            }
+        }
+
+        let upperBound = 0;
+        let lowerBound = 0;
+
         for (let i = period; i < ranges.length; i++) {
-            const currentRange = ranges[i]; const prevRawATR = rawRMA[i - 1];
-            if (filterType === 'Adaptive') { const window = ranges.slice(Math.max(0, i - period), i); const mean = window.reduce((a, b) => a + b, 0) / window.length; const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length; const stdDev = Math.sqrt(variance); upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 3.0); lowerBound = Math.max(prevRawATR - stdDev * devFactor, prevRawATR * 0.3); } else { upperBound = prevRawATR * fixedMult; lowerBound = Math.max(prevRawATR / fixedMult, 0); }
-            filteredRanges[i] = (currentRange > upperBound || currentRange < lowerBound) ? prevRawATR : currentRange; filteredATR[i] = (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
+            const currentRange = ranges[i];
+            const prevRawATR = rawRMA[i - 1];
+
+            if (filterType === 'Adaptive') {
+                const window = ranges.slice(Math.max(0, i - period), i);
+                const mean = window.reduce((a, b) => a + b, 0) / window.length;
+                const variance =
+                    window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
+                const stdDev = Math.sqrt(variance);
+
+                upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 3.0);
+                lowerBound = Math.max(prevRawATR - stdDev * devFactor, prevRawATR * 0.3);
+            } else {
+                upperBound = prevRawATR * fixedMult;
+                lowerBound = Math.max(prevRawATR / fixedMult, 0);
+            }
+
+            filteredRanges[i] =
+                currentRange > upperBound || currentRange < lowerBound
+                    ? prevRawATR
+                    : currentRange;
+
+            filteredATR[i] =
+                (filteredRanges[i] + (period - 1) * filteredATR[i - 1]) / period;
         }
-        const lastIdx = ranges.length - 1; const atr = filteredATR[lastIdx]; const lastCandle = data[lastIdx]; const lastRange = ranges[lastIdx]; const prevATR = lastIdx > 0 ? filteredATR[lastIdx - 1] : atr; const isCurrentlyAnomaly = lastRange > upperBound || lastRange < lowerBound; const distFromOpen = lastCandle.high - lastCandle.low; const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
-        return { atr, natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0, progress: progress, remaining: 100 - progress, remainingPoints: atr - distFromOpen, trueRange: lastRange, rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0, upperBound, lowerBound, isValid: !isCurrentlyAnomaly, isAnomaly: isCurrentlyAnomaly, anomalyType: lastRange > upperBound ? 'LARGE' : (lastRange < lowerBound ? 'SMALL' : null) };
+
+        const lastIdx = ranges.length - 1;
+        const atr = filteredATR[lastIdx];
+        const lastCandle = data[lastIdx];
+        const lastRange = ranges[lastIdx];
+        const prevATR = lastIdx > 0 ? filteredATR[lastIdx - 1] : atr;
+
+        const isCurrentlyAnomaly = lastRange > upperBound || lastRange < lowerBound;
+        const distFromOpen = lastCandle.high - lastCandle.low;
+        const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
+
+        return {
+            atr,
+            natr: lastCandle.close > 0 ? (atr / lastCandle.close) * 100 : 0,
+            progress,
+            remaining: 100 - progress,
+            remainingPoints: atr - distFromOpen,
+            trueRange: lastRange,
+            rangeRatio: prevATR > 0 ? (lastRange / prevATR) * 100 : 0,
+            upperBound,
+            lowerBound,
+            isValid: !isCurrentlyAnomaly,
+            isAnomaly: isCurrentlyAnomaly,
+            anomalyType:
+                lastRange > upperBound ? 'LARGE' : lastRange < lowerBound ? 'SMALL' : null
+        };
     }
-    
+
+    _emptyMetrics(extra = {}) {
+        return {
+            atr: 0,
+            natr: 0,
+            progress: 0,
+            remaining: 0,
+            remainingPoints: 0,
+            trueRange: 0,
+            rangeRatio: 0,
+            isValid: true,
+            upperBound: 0,
+            lowerBound: 0,
+            isAnomaly: false,
+            anomalyType: null,
+            ...extra
+        };
+    }
+
+    computeManualHighLowMetricsFromTimes(fullData, selectedValues) {
+        if (!fullData || !fullData.length || !selectedValues || !selectedValues.length) {
+            return this._emptyMetrics({ isValid: false });
+        }
+
+        const selectedSet = new Set(selectedValues.map((v) => Number(v)));
+        const selectedCandles = [];
+        const ranges = [];
+
+        for (const candle of fullData) {
+            const t = this._getTimeValue(candle.time);
+            if (t == null || !selectedSet.has(t)) continue;
+
+            selectedCandles.push(candle);
+            ranges.push(candle.high - candle.low);
+        }
+
+        if (!selectedCandles.length || !ranges.length) {
+            return this._emptyMetrics({ isValid: false });
+        }
+
+        const atr = ranges.reduce((sum, v) => sum + v, 0) / ranges.length;
+        const last = selectedCandles[selectedCandles.length - 1];
+        const lastRange = ranges[ranges.length - 1];
+        const progress = atr > 0 ? (lastRange / atr) * 100 : 0;
+
+        return {
+            atr,
+            natr: last.close > 0 ? (atr / last.close) * 100 : 0,
+            progress,
+            remaining: 100 - progress,
+            remainingPoints: atr - lastRange,
+            trueRange: lastRange,
+            rangeRatio: atr > 0 ? (lastRange / atr) * 100 : 0,
+            upperBound: 0,
+            lowerBound: 0,
+            isValid: true,
+            isAnomaly: false,
+            anomalyType: null,
+            _manual: true,
+            _selectedBars: selectedCandles.length
+        };
+    }
+
     updateMetrics() {
         if (this._updateTimeout) clearTimeout(this._updateTimeout);
-        
+
         try {
             const chartManager = this.manager?.chartManager;
             const data = chartManager?.chartData;
-            
-            if (!data?.length) return;
+
+            if (!data || !data.length) return;
 
             const rawInterval = chartManager.currentInterval || '60';
             const newApiInterval = this._normalizeInterval(rawInterval);
-            
+
             if (this._currentApiInterval !== newApiInterval) {
                 this._currentApiInterval = newApiInterval;
-                this.metrics.atr = 0; 
+                this.metrics.atr = 0;
             }
-            
-            const actualPeriod = this.getActualPeriod(this._currentApiInterval);
-            
-            if (data.length >= actualPeriod + 1) {
-                const newMetrics = this.computeATRMetrics(data, actualPeriod, this.settings.rangeMode, this.settings.useFilter, this.settings.filterType, this.settings.devFactor, this.settings.fixedMult);
-                newMetrics._actualPeriod = actualPeriod;
-                
-                if (newMetrics.atr !== this.metrics.atr || 
+
+            if (this.settings.calcMode === 'manual') {
+                const selectedTimes = this._getManualSelectedTimes(data);
+
+                if (!selectedTimes.length) {
+                    this.metrics = this._emptyMetrics({
+                        _manual: true,
+                        _actualPeriod: 0,
+                        _selectedBars: 0
+                    });
+
+                    this.renderWidget();
+                    return;
+                }
+
+                const newMetrics = this.computeManualHighLowMetricsFromTimes(data, selectedTimes);
+                newMetrics._actualPeriod = newMetrics._selectedBars || selectedTimes.length;
+
+                if (
+                    newMetrics.atr !== this.metrics.atr ||
                     newMetrics.remaining !== this.metrics.remaining ||
-                    this._currentApiInterval !== newApiInterval) {
+                    newMetrics._actualPeriod !== this.metrics._actualPeriod ||
+                    newMetrics._selectedBars !== this.metrics._selectedBars
+                ) {
+                    this.metrics = newMetrics;
+                    this.renderWidget();
+                } else {
+                    this.metrics = newMetrics;
+                }
+
+                return;
+            }
+
+            const actualPeriod = this.getActualPeriod(this._currentApiInterval);
+
+            if (data.length >= actualPeriod + 1) {
+                const newMetrics = this.computeATRMetrics(
+                    data,
+                    actualPeriod,
+                    this.settings.rangeMode,
+                    this.settings.useFilter,
+                    this.settings.filterType,
+                    this.settings.devFactor,
+                    this.settings.fixedMult
+                );
+
+                newMetrics._actualPeriod = actualPeriod;
+
+                if (
+                    newMetrics.atr !== this.metrics.atr ||
+                    newMetrics.remaining !== this.metrics.remaining ||
+                    newMetrics._actualPeriod !== this.metrics._actualPeriod
+                ) {
                     this.metrics = newMetrics;
                     this.renderWidget();
                 } else {
@@ -496,21 +866,29 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 this.metrics._actualPeriod = actualPeriod;
                 this.renderWidget();
             }
-        } catch (e) { 
-            console.error('ATR error:', e); 
+        } catch (e) {
+            console.error('ATR error:', e);
         }
     }
 
     _setupEventHandlers() {
         const chartManager = this.manager?.chartManager;
         if (!chartManager) return;
-        if (chartManager._subscribeToSymbolChange) chartManager._subscribeToSymbolChange(() => setTimeout(() => this.updateMetrics(), 500));
-        if (chartManager.on && typeof chartManager.on === 'function') { chartManager.on('dataUpdate', () => this._onChartDataUpdate()); }
+
+        if (chartManager._subscribeToSymbolChange) {
+            chartManager._subscribeToSymbolChange(() => setTimeout(() => this.updateMetrics(), 500));
+        }
+
+        if (chartManager.on && typeof chartManager.on === 'function') {
+            chartManager.on('dataUpdate', () => this._onChartDataUpdate());
+        }
+
         this._startSmartFallbackTimer();
     }
-    
+
     _onChartDataUpdate() {
         if (this._updateTimeout) clearTimeout(this._updateTimeout);
+
         this._updateTimeout = setTimeout(() => {
             this.updateMetrics();
         }, 100);
@@ -518,74 +896,170 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
 
     _startSmartFallbackTimer() {
         if (this._fallbackTimer) return;
+
         let lastDataLength = 0;
         let lastClose = 0;
+
         this._fallbackTimer = setInterval(() => {
             const cm = this.manager?.chartManager;
-            if (!cm?.chartData?.length) return;
+            if (!cm || !cm.chartData || !cm.chartData.length) return;
+
             const data = cm.chartData;
             const lastCandle = data[data.length - 1];
-            
+
             if (data.length !== lastDataLength || lastCandle.close !== lastClose) {
+                const lengthChanged = data.length !== lastDataLength;
+
                 lastDataLength = data.length;
                 lastClose = lastCandle.close;
+
+                if (!this._documentMouseDownHandler) {
+                    this._setupManualSelection();
+                } else {
+                    this._setupCrosshair();
+                    this._setupChartSync();
+                }
+
                 this.updateMetrics();
+
+                if (lengthChanged) {
+                    this._rebuildManualMarkers();
+                } else {
+                    this._updateDomMarkersPositions();
+                }
             }
         }, 500);
     }
 
     destroy() {
-        if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
-        if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
-        if (this._dragMoveHandler) document.removeEventListener('mousemove', this._dragMoveHandler);
-        if (this._dragUpHandler) document.removeEventListener('mouseup', this._dragUpHandler);
+        if (this._fallbackTimer) {
+            clearInterval(this._fallbackTimer);
+            this._fallbackTimer = null;
+        }
+
+        if (this._updateTimeout) {
+            clearTimeout(this._updateTimeout);
+            this._updateTimeout = null;
+        }
+
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = null;
+        }
+
+        this._stopChartSync();
+
+        if (this._dragMoveHandler) {
+            document.removeEventListener('mousemove', this._dragMoveHandler);
+        }
+
+        if (this._dragUpHandler) {
+            document.removeEventListener('mouseup', this._dragUpHandler);
+        }
+
+        if (this._documentMouseDownHandler) {
+            document.removeEventListener('mousedown', this._documentMouseDownHandler, true);
+            this._documentMouseDownHandler = null;
+        }
+
+        if (this._manualChart && this._crosshairHandler) {
+            if (typeof this._manualChart.unsubscribeCrosshairMove === 'function') {
+                this._manualChart.unsubscribeCrosshairMove(this._crosshairHandler);
+            }
+
+            this._crosshairHandler = null;
+        }
+
+        if (this._manualChart && this._manualClickHandler) {
+            if (typeof this._manualChart.unsubscribeClick === 'function') {
+                this._manualChart.unsubscribeClick(this._manualClickHandler);
+            }
+
+            this._manualClickHandler = null;
+        }
+
+        this._clearDomMarkers();
+        this._manualMarkerData.clear();
+
         const widget = document.getElementById('multiatr-widget');
         if (widget) widget.remove();
-        this._removeAllSeries(); this.manager = null;
+
+        this._removeAllSeries();
+        this.manager = null;
     }
-    
+
     _getPriceDecimals() {
         try {
             const data = this.manager?.chartManager?.chartData;
+
             if (data && data.length > 0) {
                 const last = data[data.length - 1];
                 let maxDecimals = 2;
-                [last.open, last.high, last.low, last.close].forEach(price => {
+
+                [last.open, last.high, last.low, last.close].forEach((price) => {
                     if (price && price > 0) {
                         const str = price.toString();
+
                         if (str.includes('.')) {
                             const decimals = str.split('.')[1].length;
                             if (decimals > maxDecimals) maxDecimals = decimals;
                         }
                     }
                 });
+
                 return maxDecimals;
             }
-        } catch(e) {}
+        } catch (e) {}
+
         return 2;
     }
-    
+
     renderWidget() {
         const wrapper = document.getElementById('multiatr-widget');
         if (!wrapper) return;
-        if (!this.visible) { wrapper.style.display = 'none'; return; }
+
+        if (!this.visible) {
+            wrapper.style.display = 'none';
+            return;
+        }
+
         wrapper.style.display = 'flex';
 
         const m = this.metrics;
-        const displayTF = this._displayInterval(this._currentApiInterval || '1h');
+        const isManual = this.settings.calcMode === 'manual';
+
+        const displayTF = isManual
+            ? 'MAN'
+            : this._displayInterval(this._currentApiInterval || '1h');
+
         const decimals = this._getPriceDecimals();
-        const periodDisplay = m._actualPeriod || this.getActualPeriod(this._currentApiInterval);
+
+        const manualCount =
+            this.settings.manualTimes && this.settings.manualTimes.length
+                ? this.settings.manualTimes.length
+                : this.settings.manualBars || 0;
+
+        const periodDisplay = isManual
+            ? (m._selectedBars ?? manualCount)
+            : (m._actualPeriod || this.getActualPeriod(this._currentApiInterval));
 
         const formatATR = (v) => {
             if (!v || v === 0) return '...';
             if (v < 0.0001) return v.toPrecision(4);
             return v.toFixed(decimals);
         };
-        
-        const remColor = m.remaining < 0 ? '#FF00FF' : m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
+
+        const remColor =
+            m.remaining < 0
+                ? '#FF00FF'
+                : m.remaining < 20
+                ? '#FF4444'
+                : m.remaining < 50
+                ? '#FFA500'
+                : '#FFFFFF';
 
         wrapper.innerHTML = `
-            <span style="color:#AAA">⭐</span>
+            <span style="color:#AAA">${isManual ? '✋' : '⭐'}</span>
             <span style="color:#AAA">${displayTF}(${periodDisplay})</span>
             <span style="color:#444; margin: 0 4px;">|</span>
             <span style="color:#AAA">ATR:</span>
@@ -595,26 +1069,32 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             <span style="color:${remColor}; font-weight:600;">${m.remaining.toFixed(1)}%</span>
             <span id="multiatr-close" style="margin-left: 8px; color: #666; cursor: pointer; font-size: 10px;" title="Удалить">✕</span>
         `;
-        
-        wrapper.querySelector('#multiatr-close').addEventListener('mousedown', e => e.stopPropagation());
-        wrapper.querySelector('#multiatr-close').addEventListener('click', e => {
+
+        wrapper.querySelector('#multiatr-close').addEventListener('mousedown', (e) => e.stopPropagation());
+
+        wrapper.querySelector('#multiatr-close').addEventListener('click', (e) => {
             e.stopPropagation();
+
             if (this.manager) {
                 const index = this.manager.activeIndicators?.indexOf(this);
-                if (index !== undefined && index !== -1) this.manager.removeIndicator(index);
+                if (index !== undefined && index !== -1) {
+                    this.manager.removeIndicator(index);
+                }
             }
         });
     }
-    
+
     getSettingsHTML() {
         return `
             <div style="max-height:400px; overflow-y:auto; padding-right:5px; scrollbar-width: thin; scrollbar-color: #4A4A4A #1E1E1E;">
                 <div style="margin-bottom:12px;">
                     <div style="color:#FFA500; margin-bottom:8px;">📊 Основные настройки</div>
+
                     <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:120px;">Период (дефолт):</label>
                         <input type="number" id="atrPeriod" value="${this.settings.atrPeriod}" min="1" max="50" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:80px;">
                     </div>
+
                     <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:120px;">Режим:</label>
                         <select id="rangeMode" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
@@ -622,10 +1102,12 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                             <option value="True Range" ${this.settings.rangeMode === 'True Range' ? 'selected' : ''}>True Range</option>
                         </select>
                     </div>
+
                     <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:120px;">Фильтр:</label>
                         <input type="checkbox" id="useFilter" ${this.settings.useFilter ? 'checked' : ''} style="accent-color:#4A90E2;">
                     </div>
+
                     <div id="filterSettings" style="margin-left:130px; display: ${this.settings.useFilter ? 'block' : 'none'};">
                         <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
                             <label style="color:#B0B0B0; width:80px;">Тип:</label>
@@ -634,47 +1116,123 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                                 <option value="Fixed" ${this.settings.filterType === 'Fixed' ? 'selected' : ''}>Fixed</option>
                             </select>
                         </div>
+
                         <div id="adaptiveSettings" style="margin-bottom:8px; display: ${this.settings.filterType === 'Adaptive' ? 'flex' : 'none'}; align-items:center; gap:10px;">
                             <label style="color:#B0B0B0; width:80px;">Девиация:</label>
                             <input type="number" id="devFactor" min="0.1" max="2.0" step="0.1" value="${this.settings.devFactor}" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:80px;">
                         </div>
+
                         <div id="fixedSettings" style="margin-bottom:8px; display: ${this.settings.filterType === 'Fixed' ? 'flex' : 'none'}; align-items:center; gap:10px;">
                             <label style="color:#B0B0B0; width:80px;">Множитель:</label>
                             <input type="number" id="fixedMult" min="1.1" max="3.0" step="0.1" value="${this.settings.fixedMult}" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:80px;">
                         </div>
                     </div>
                 </div>
-                
+
+                <div style="margin-bottom:12px;">
+                    <div style="color:#FFA500; margin-bottom:8px;">🖐 Ручной режим</div>
+
+                    <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
+                        <label style="color:#B0B0B0; width:120px;">Расчет:</label>
+                        <select
+                            id="multiatr_calcMode"
+                            onchange="document.getElementById('multiatr_manual_block').style.display=this.value==='manual'?'block':'none'"
+                            style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;"
+                        >
+                            <option value="auto" ${this.settings.calcMode === 'auto' ? 'selected' : ''}>Авто</option>
+                            <option value="manual" ${this.settings.calcMode === 'manual' ? 'selected' : ''}>Ручной</option>
+                        </select>
+                    </div>
+
+                    <div
+                        id="multiatr_manual_block"
+                        style="margin-left:130px; display:${this.settings.calcMode === 'manual' ? 'block' : 'none'};"
+                    >
+                        <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
+                            <label style="color:#B0B0B0; width:80px;">Баров:</label>
+                            <input
+                                type="number"
+                                id="multiatr_manualBars"
+                                value="${this.settings.manualBars}"
+                                min="1"
+                                max="1000"
+                                style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:80px;"
+                            >
+                        </div>
+
+                        <div style="color:#888; font-size:10px; line-height:1.45;">
+                            Ручной режим считает только High-Low без фильтра.<br>
+                            ЛКМ по свече — выбрать свечу.<br>
+                            Клик в пустоту игнорируется.<br>
+                            ПКМ по виджету — очистить выбор.
+                        </div>
+                    </div>
+                </div>
+
                 <div style="margin-bottom:12px;">
                     <div style="color:#FFA500; margin-bottom:8px;">📅 Периоды под ТФ</div>
+
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:70px;">W ATR:</label>
                         <input type="number" id="weekATRPeriod" value="${this.settings.weekATRPeriod}" min="1" max="20" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
                     </div>
+
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:70px;">D ATR:</label>
                         <input type="number" id="dayATRPeriod" value="${this.settings.dayATRPeriod}" min="1" max="20" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
                     </div>
+
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:70px;">H ATR:</label>
-                        <select id="hourTF" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">${['1','2','3','4','6','8','12'].map(v => `<option value="${v}" ${this.settings.hourTF === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
+                        <select id="hourTF" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
+                            ${['1', '2', '3', '4', '6', '8', '12']
+                                .map(
+                                    (v) =>
+                                        `<option value="${v}" ${
+                                            this.settings.hourTF === v ? 'selected' : ''
+                                        }>${v}</option>`
+                                )
+                                .join('')}
+                        </select>
                         <input type="number" id="hourATRPeriod" value="${this.settings.hourATRPeriod}" min="1" max="100" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
                     </div>
+
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:70px;">M ATR:</label>
-                        <select id="minuteTF" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">${['1','2','3','5','10','15','30'].map(v => `<option value="${v}" ${this.settings.minuteTF === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
-                        <input type="number" id="minuteATRPeriod" value="${this.settings.minuteATRPeriod}" min="1" max="24" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;"><span style="color:#888;">ч</span>
+                        <select id="minuteTF" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
+                            ${['1', '2', '3', '5', '10', '15', '30']
+                                .map(
+                                    (v) =>
+                                        `<option value="${v}" ${
+                                            this.settings.minuteTF === v ? 'selected' : ''
+                                        }>${v}</option>`
+                                )
+                                .join('')}
+                        </select>
+                        <input type="number" id="minuteATRPeriod" value="${this.settings.minuteATRPeriod}" min="1" max="24" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
+                        <span style="color:#888;">ч</span>
                     </div>
+
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:70px;">1M ATR:</label>
-                        <select id="minute1TF" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">${['1','2','3','5','10','15','30'].map(v => `<option value="${v}" ${this.settings.minute1TF === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
-                        <input type="number" id="minute1ATRPeriod" value="${this.settings.minute1ATRPeriod}" min="1" max="24" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;"><span style="color:#888;">ч</span>
+                        <select id="minute1TF" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
+                            ${['1', '2', '3', '5', '10', '15', '30']
+                                .map(
+                                    (v) =>
+                                        `<option value="${v}" ${
+                                            this.settings.minute1TF === v ? 'selected' : ''
+                                        }>${v}</option>`
+                                )
+                                .join('')}
+                        </select>
+                        <input type="number" id="minute1ATRPeriod" value="${this.settings.minute1ATRPeriod}" min="1" max="24" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
+                        <span style="color:#888;">ч</span>
                     </div>
                 </div>
             </div>
         `;
     }
-    
+
     applySettingsFromForm() {
         this.settings.atrPeriod = parseInt(document.getElementById('atrPeriod')?.value || 3);
         this.settings.rangeMode = document.getElementById('rangeMode')?.value || 'High-Low';
@@ -682,7 +1240,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this.settings.filterType = document.getElementById('filterType')?.value || 'Adaptive';
         this.settings.devFactor = parseFloat(document.getElementById('devFactor')?.value || 1);
         this.settings.fixedMult = parseFloat(document.getElementById('fixedMult')?.value || 1.5);
-        
+
         this.settings.weekATRPeriod = parseInt(document.getElementById('weekATRPeriod')?.value || 5);
         this.settings.dayATRPeriod = parseInt(document.getElementById('dayATRPeriod')?.value || 5);
         this.settings.hourTF = document.getElementById('hourTF')?.value || '1';
@@ -691,18 +1249,873 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this.settings.minuteATRPeriod = parseInt(document.getElementById('minuteATRPeriod')?.value || 3);
         this.settings.minute1TF = document.getElementById('minute1TF')?.value || '1';
         this.settings.minute1ATRPeriod = parseInt(document.getElementById('minute1ATRPeriod')?.value || 1);
-        
+
+        this.settings.calcMode = document.getElementById('multiatr_calcMode')?.value || 'auto';
+        this.settings.manualBars = Math.max(
+            1,
+            parseInt(document.getElementById('multiatr_manualBars')?.value || 20)
+        );
+
         this._saveSettings();
+        this._rebuildManualMarkers();
         this.updateMetrics();
+
         super.applySettingsFromForm();
     }
-    
-    _createEmptySeries() { this._removeAllSeries(); }
-    
+
+    _createEmptySeries() {
+        this._removeAllSeries();
+    }
+
     updateSeriesData(data) {
         if (data && data.length) {
             const lastTime = data[data.length - 1].time;
-            if (lastTime !== this._lastCandleTime) { this._lastCandleTime = lastTime; this.updateMetrics(); }
+
+            if (lastTime !== this._lastCandleTime) {
+                this._lastCandleTime = lastTime;
+                this.updateMetrics();
+            }
+        }
+    }
+
+    _getChart() {
+        const cm = this.manager?.chartManager;
+
+        return (
+            cm?._chart ||
+            cm?.chart ||
+            cm?.chartWidget?._chart ||
+            cm?._chartWidget?._chart ||
+            null
+        );
+    }
+
+    _getTimeValue(t) {
+        if (typeof t === 'number') return t;
+
+        if (t && typeof t === 'object') {
+            if (t.year !== undefined && t.month !== undefined && t.day !== undefined) {
+                return Date.UTC(t.year, t.month - 1, t.day);
+            }
+
+            if (t.timestamp !== undefined) return t.timestamp;
+        }
+
+        const ts = new Date(t).getTime();
+        return Number.isNaN(ts) ? null : ts;
+    }
+
+    _findCandleByValue(value) {
+        const data = this.manager?.chartManager?.chartData || [];
+        const num = Number(value);
+
+        return data.find((c) => this._getTimeValue(c.time) === num) || null;
+    }
+
+    _getAllSeries() {
+        const chart = this._getChart();
+        const all = [];
+
+        try {
+            if (chart) {
+                const list =
+                    typeof chart.series === 'function'
+                        ? chart.series()
+                        : chart.series;
+
+                if (list) {
+                    all.push(...Array.from(list));
+                }
+            }
+        } catch (e) {}
+
+        const cm = this.manager?.chartManager;
+
+        const directCandidates = [
+            cm?._series,
+            cm?.series,
+            cm?.mainSeries,
+            cm?.candleSeries,
+            cm?._mainSeries,
+            cm?._candleSeries,
+            cm?._candlestickSeries
+        ]
+            .flat()
+            .filter(Boolean);
+
+        all.unshift(...directCandidates);
+
+        return all;
+    }
+
+    _getMainSeries() {
+        const all = this._getAllSeries();
+
+        const getSeriesType = (s) => {
+            if (!s) return null;
+
+            if (typeof s.seriesType === 'function') {
+                return s.seriesType();
+            }
+
+            return s.seriesType || null;
+        };
+
+        return (
+            all.find((s) => {
+                const type = getSeriesType(s);
+                return ['Candlestick', 'Bar', 'Candles'].includes(type);
+            }) || null
+        );
+    }
+
+    _getPriceSeries() {
+        const main = this._getMainSeries();
+
+        if (main && typeof main.priceToCoordinate === 'function') {
+            return main;
+        }
+
+        const all = this._getAllSeries();
+
+        return (
+            all.find((s) => typeof s?.priceToCoordinate === 'function') ||
+            null
+        );
+    }
+
+    _getChartContainer(sourceEvent = null) {
+        if (this._chartContainer && document.body.contains(this._chartContainer)) {
+            return this._chartContainer;
+        }
+
+        if (sourceEvent && sourceEvent.target instanceof HTMLCanvasElement) {
+            const parent = sourceEvent.target.parentElement;
+
+            if (parent instanceof HTMLElement) {
+                this._chartContainer = parent;
+                return parent;
+            }
+        }
+
+        const chart = this._getChart();
+
+        const candidates = [
+            chart?._chartWidget?._element,
+            chart?._chartWidget?._container,
+            chart?._chartWidget?._paneWidgets?.[0]?._paneCell?.parentElement,
+            this.manager?.chartManager?._chartContainer,
+            this.manager?.chartManager?.chartContainer,
+            this.manager?.chartManager?._chartEl,
+            this.manager?.chartManager?.chartEl
+        ];
+
+        for (const c of candidates) {
+            if (c instanceof HTMLElement) {
+                this._chartContainer = c;
+                return c;
+            }
+        }
+
+        if (sourceEvent && sourceEvent.target) {
+            const target = sourceEvent.target;
+
+            if (target.closest) {
+                const el =
+                    target.closest('.tv-lightweight-charts') ||
+                    target.closest('div');
+
+                if (el) {
+                    this._chartContainer = el;
+                    return el;
+                }
+            }
+
+            if (target.parentElement) {
+                this._chartContainer = target.parentElement;
+                return target.parentElement;
+            }
+        }
+
+        return document.querySelector('.tv-lightweight-charts') || document.body;
+    }
+
+    _getManualSelectedTimes(data) {
+        if (!Array.isArray(data) || !data.length) return [];
+
+        if (this.settings.manualTimes && this.settings.manualTimes.length) {
+            const selectedSet = new Set(this.settings.manualTimes.map((v) => Number(v)));
+            const result = [];
+
+            for (const candle of data) {
+                const t = this._getTimeValue(candle.time);
+
+                if (t != null && selectedSet.has(t)) {
+                    result.push(t);
+                }
+            }
+
+            return result;
+        }
+
+        const bars = Math.max(1, parseInt(this.settings.manualBars) || 1);
+
+        return data
+            .slice(-bars)
+            .map((c) => this._getTimeValue(c.time))
+            .filter((v) => v != null);
+    }
+
+    _setupCrosshair() {
+        const chart = this._getChart();
+
+        if (!chart || this._crosshairHandler) return;
+
+        if (typeof chart.subscribeCrosshairMove !== 'function') return;
+
+        this._manualChart = chart;
+
+        this._crosshairHandler = (param) => {
+            if (param && param.time != null) {
+                this._lastHoverTime = this._getTimeValue(param.time);
+            } else {
+                this._lastHoverTime = null;
+            }
+        };
+
+        chart.subscribeCrosshairMove(this._crosshairHandler);
+    }
+
+    _setupManualSelection() {
+        if (this._documentMouseDownHandler) return;
+
+        this._setupCrosshair();
+        this._setupChartSync();
+
+        this._documentMouseDownHandler = (e) => {
+            if (this.settings.calcMode !== 'manual') return;
+            if (e.button !== 0) return;
+
+            const target = e.target;
+
+            if (target && target.closest && target.closest('#multiatr-widget')) {
+                return;
+            }
+
+            const container = this._getChartContainer(e);
+
+            if (container) {
+                this._chartContainer = container;
+                this._setupChartSync();
+            }
+
+            const isChartTarget =
+                target instanceof HTMLCanvasElement ||
+                (target && target.closest && target.closest('.tv-lightweight-charts')) ||
+                (container && container !== document.body && container.contains(target));
+
+            if (!isChartTarget) return;
+
+            const clientX = e.clientX;
+            const clientY = e.clientY;
+
+            if (clientX == null || clientY == null) return;
+
+            const localPoint = this._getChartLocalPoint(clientX, clientY, e);
+            if (!localPoint) return;
+
+            let timeValue = this._lastHoverTime;
+
+            if (timeValue == null) {
+                timeValue = this._getTimeAtLocalX(localPoint.localX, e);
+            }
+
+            if (timeValue == null) return;
+
+            if (!this._isClickOnCandle(localPoint.localX, localPoint.localY, timeValue)) {
+                return;
+            }
+
+            const lp = this._getLogicalPriceAtClient(clientX, clientY, e);
+
+            this._toggleManualTime(timeValue, {
+                clientX,
+                clientY,
+                logical: lp.logical,
+                price: lp.price
+            });
+        };
+
+        document.addEventListener('mousedown', this._documentMouseDownHandler, true);
+    }
+
+    _getChartLocalPoint(clientX, clientY, sourceEvent = null) {
+        try {
+            const container = this._getChartContainer(sourceEvent);
+            if (!container) return null;
+
+            const rect = container.getBoundingClientRect();
+
+            return {
+                localX: clientX - rect.left,
+                localY: clientY - rect.top
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    _getTimeAtLocalX(localX, sourceEvent = null) {
+        try {
+            const chart = this._getChart();
+            if (!chart) return null;
+
+            const timeScale =
+                typeof chart.timeScale === 'function'
+                    ? chart.timeScale()
+                    : null;
+
+            if (!timeScale) return null;
+
+            let rawTime = null;
+
+            if (typeof timeScale.coordinateToTime === 'function') {
+                rawTime = timeScale.coordinateToTime(localX);
+            } else if (typeof timeScale.coordinateToLogical === 'function') {
+                rawTime = timeScale.coordinateToLogical(localX);
+            }
+
+            const clickedTime = this._getTimeValue(rawTime);
+            if (clickedTime == null) return null;
+
+            const data = this.manager?.chartManager?.chartData || [];
+            if (!data.length) return null;
+
+            const exact = data.find((c) => this._getTimeValue(c.time) === clickedTime);
+
+            if (exact) {
+                return clickedTime;
+            }
+
+            let best = null;
+            let bestDist = Infinity;
+
+            if (typeof timeScale.timeToCoordinate === 'function') {
+                for (const candle of data) {
+                    const t = this._getTimeValue(candle.time);
+                    if (t == null) continue;
+
+                    const coord = timeScale.timeToCoordinate(candle.time);
+                    if (coord == null) continue;
+
+                    const dist = Math.abs(coord - localX);
+
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = t;
+                    }
+                }
+            }
+
+            if (best == null) return null;
+
+            let maxDist = 20;
+
+            try {
+                const opts =
+                    typeof timeScale.options === 'function'
+                        ? timeScale.options()
+                        : timeScale.options;
+
+                if (opts && typeof opts.barSpacing === 'number') {
+                    maxDist = opts.barSpacing / 2;
+                }
+            } catch (e) {}
+
+            maxDist = Math.max(5, maxDist);
+
+            if (bestDist <= maxDist) {
+                return best;
+            }
+
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    _isClickOnCandle(localX, localY, timeValue) {
+        const chart = this._getChart();
+        if (!chart) return false;
+
+        const timeScale =
+            typeof chart.timeScale === 'function'
+                ? chart.timeScale()
+                : null;
+
+        const series = this._getPriceSeries();
+        const candle = this._findCandleByValue(timeValue);
+
+        if (!candle) return false;
+
+        let xOk = false;
+
+        if (timeScale && typeof timeScale.timeToCoordinate === 'function') {
+            const candleX = timeScale.timeToCoordinate(candle.time);
+
+            if (candleX == null) return false;
+
+            let maxDist = 20;
+
+            try {
+                const opts =
+                    typeof timeScale.options === 'function'
+                        ? timeScale.options()
+                        : timeScale.options;
+
+                if (opts && typeof opts.barSpacing === 'number') {
+                    maxDist = opts.barSpacing / 2;
+                }
+            } catch (e) {}
+
+            maxDist = Math.max(5, maxDist);
+
+            xOk = Math.abs(localX - candleX) <= maxDist;
+        } else {
+            xOk = true;
+        }
+
+        let yOk = false;
+
+        if (series && typeof series.priceToCoordinate === 'function') {
+            const yHigh = series.priceToCoordinate(candle.high);
+            const yLow = series.priceToCoordinate(candle.low);
+
+            if (yHigh == null || yLow == null) return false;
+
+            const top = Math.min(yHigh, yLow) - 5;
+            const bottom = Math.max(yHigh, yLow) + 5;
+
+            yOk = localY >= top && localY <= bottom;
+        } else {
+            return false;
+        }
+
+        return xOk && yOk;
+    }
+
+    _getLogicalPriceAtClient(clientX, clientY, sourceEvent = null) {
+        try {
+            const chart = this._getChart();
+            const container = this._getChartContainer(sourceEvent);
+
+            if (!chart || !container) {
+                return { logical: null, price: null };
+            }
+
+            const rect = container.getBoundingClientRect();
+
+            const localX = clientX - rect.left;
+            const localY = clientY - rect.top;
+
+            const timeScale = typeof chart.timeScale === 'function'
+                ? chart.timeScale()
+                : null;
+
+            const series = this._getPriceSeries();
+
+            let logical = null;
+            let price = null;
+
+            if (
+                localX != null &&
+                timeScale &&
+                typeof timeScale.coordinateToLogical === 'function'
+            ) {
+                logical = timeScale.coordinateToLogical(localX);
+            }
+
+            if (
+                localY != null &&
+                series &&
+                typeof series.coordinateToPrice === 'function'
+            ) {
+                price = series.coordinateToPrice(localY);
+            }
+
+            return { logical, price };
+        } catch (e) {
+            return { logical: null, price: null };
+        }
+    }
+
+    _toggleManualTime(value, clickInfo = null) {
+        const num = Number(value);
+
+        let times = Array.isArray(this.settings.manualTimes)
+            ? [...this.settings.manualTimes]
+            : [];
+
+        const idx = times.findIndex((t) => Number(t) === num);
+
+        if (idx === -1) {
+            times.push(num);
+
+            if (clickInfo) {
+                const candle = this._findCandleByValue(num);
+
+                const price =
+                    clickInfo.price ??
+                    candle?.high ??
+                    candle?.close ??
+                    null;
+
+                this._manualMarkerData.set(num, {
+                    clientX: clickInfo.clientX ?? null,
+                    clientY: clickInfo.clientY ?? null,
+                    logical: clickInfo.logical ?? null,
+                    price,
+                    lastClientX: clickInfo.clientX ?? null,
+                    lastClientY: clickInfo.clientY ?? null
+                });
+            }
+        } else {
+            times.splice(idx, 1);
+            this._manualMarkerData.delete(num);
+        }
+
+        times.sort((a, b) => Number(a) - Number(b));
+
+        this.settings.manualTimes = times;
+
+        this._saveSettings();
+        this._rebuildManualMarkers();
+        this.updateMetrics();
+    }
+
+    clearManualSelection() {
+        this.settings.manualTimes = [];
+        this._manualMarkerData.clear();
+
+        this._saveSettings();
+        this._rebuildManualMarkers();
+        this.updateMetrics();
+    }
+
+    _clearDomMarkers() {
+        if (!Array.isArray(this._manualDomMarkers)) return;
+
+        for (const m of this._manualDomMarkers) {
+            if (m && m.element && m.element.remove) {
+                m.element.remove();
+            }
+        }
+
+        this._manualDomMarkers = [];
+    }
+
+    _rebuildManualMarkers() {
+        this._clearDomMarkers();
+
+        if (
+            this.settings.calcMode !== 'manual' ||
+            !this.settings.manualTimes ||
+            !this.settings.manualTimes.length
+        ) {
+            return;
+        }
+
+        for (const t of this.settings.manualTimes) {
+            const timeValue = Number(t);
+            const info = this._manualMarkerData.get(timeValue) || null;
+
+            let client = null;
+
+            if (info && info.clientX != null && info.clientY != null) {
+                client = {
+                    x: info.clientX,
+                    y: info.clientY
+                };
+            }
+
+            if (!client && info && info.lastClientX != null && info.lastClientY != null) {
+                client = {
+                    x: info.lastClientX,
+                    y: info.lastClientY
+                };
+            }
+
+            if (!client) {
+                client = this._calcChartClientPosition(
+                    timeValue,
+                    info?.price ?? null,
+                    info?.logical ?? null
+                );
+            }
+
+            if (!client) {
+                client = { x: -9999, y: -9999 };
+            }
+
+            const element = document.createElement('div');
+
+            element.style.cssText = `
+                position: fixed;
+                left: ${client.x}px;
+                top: ${client.y}px;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #FFA500;
+                border: 1px solid rgba(0,0,0,0.85);
+                box-shadow: 0 0 4px rgba(0,0,0,0.75);
+                transform: translate(-50%, -50%);
+                pointer-events: none;
+                z-index: 999999;
+                display: ${client.x < -9000 ? 'none' : 'block'};
+            `;
+
+            document.body.appendChild(element);
+
+            this._manualDomMarkers.push({
+                element,
+                timeValue,
+                fixedX: client.x,
+                fixedY: client.y,
+                logical: info?.logical ?? null,
+                price: info?.price ?? null
+            });
+        }
+    }
+
+    _calcChartClientPosition(timeValue, price = null, logical = null) {
+        try {
+            const chart = this._getChart();
+            const container = this._getChartContainer();
+
+            if (!chart || !container) return null;
+
+            const rect = container.getBoundingClientRect();
+
+            const timeScale = typeof chart.timeScale === 'function'
+                ? chart.timeScale()
+                : null;
+
+            const series = this._getPriceSeries();
+
+            let xLocal = null;
+            let yLocal = null;
+
+            if (
+                logical != null &&
+                timeScale &&
+                typeof timeScale.logicalToCoordinate === 'function'
+            ) {
+                xLocal = timeScale.logicalToCoordinate(logical);
+            }
+
+            if (xLocal == null && timeValue != null) {
+                const candle = this._findCandleByValue(timeValue);
+
+                if (
+                    candle &&
+                    timeScale &&
+                    typeof timeScale.timeToCoordinate === 'function'
+                ) {
+                    xLocal = timeScale.timeToCoordinate(candle.time);
+                }
+            }
+
+            const candle = this._findCandleByValue(timeValue);
+            const targetPrice = price ?? candle?.high ?? candle?.close ?? null;
+
+            if (
+                targetPrice != null &&
+                series &&
+                typeof series.priceToCoordinate === 'function'
+            ) {
+                yLocal = series.priceToCoordinate(targetPrice);
+            }
+
+            if (xLocal == null || yLocal == null) return null;
+
+            return {
+                x: rect.left + xLocal,
+                y: rect.top + yLocal
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    _updateDomMarkersPositions() {
+        if (!this._manualDomMarkers || !this._manualDomMarkers.length) return;
+
+        for (const marker of this._manualDomMarkers) {
+            let client = null;
+
+            if (marker.timeValue != null || marker.logical != null || marker.price != null) {
+                client = this._calcChartClientPosition(
+                    marker.timeValue,
+                    marker.price,
+                    marker.logical
+                );
+            }
+
+            if (!client && marker.fixedX != null && marker.fixedY != null) {
+                client = {
+                    x: marker.fixedX,
+                    y: marker.fixedY
+                };
+            }
+
+            if (client) {
+                if (client.x < -9000 || client.y < -9000) {
+                    marker.element.style.display = 'none';
+                } else {
+                    marker.element.style.display = 'block';
+                    marker.element.style.left = `${client.x}px`;
+                    marker.element.style.top = `${client.y}px`;
+                }
+
+                marker.fixedX = client.x;
+                marker.fixedY = client.y;
+
+                if (marker.timeValue != null) {
+                    const info = this._manualMarkerData.get(marker.timeValue);
+
+                    if (info) {
+                        info.lastClientX = client.x;
+                        info.lastClientY = client.y;
+                    }
+                }
+            }
+        }
+    }
+
+    _startMarkerLoop() {
+        if (this._rafId) return;
+
+        const loop = () => {
+            this._updateDomMarkersPositions();
+            this._rafId = requestAnimationFrame(loop);
+        };
+
+        this._rafId = requestAnimationFrame(loop);
+    }
+
+    _setupChartSync() {
+        const update = () => {
+            this._updateDomMarkersPositions();
+        };
+
+        if (!this._timeScaleHandler) {
+            const chart = this._getChart();
+
+            const timeScale =
+                chart && typeof chart.timeScale === 'function'
+                    ? chart.timeScale()
+                    : null;
+
+            if (timeScale) {
+                if (typeof timeScale.subscribeVisibleLogicalRangeChange === 'function') {
+                    timeScale.subscribeVisibleLogicalRangeChange(update);
+
+                    this._timeScale = timeScale;
+                    this._timeScaleHandler = update;
+                    this._timeScaleUnsubscribe = 'unsubscribeVisibleLogicalRangeChange';
+                } else if (typeof timeScale.subscribeVisibleTimeRangeChange === 'function') {
+                    timeScale.subscribeVisibleTimeRangeChange(update);
+
+                    this._timeScale = timeScale;
+                    this._timeScaleHandler = update;
+                    this._timeScaleUnsubscribe = 'unsubscribeVisibleTimeRangeChange';
+                }
+            }
+        }
+
+        if (!this._priceScaleHandler) {
+            const series = this._getPriceSeries();
+
+            const priceScale =
+                series && typeof series.priceScale === 'function'
+                    ? series.priceScale()
+                    : null;
+
+            if (
+                priceScale &&
+                typeof priceScale.subscribeVisibleLogicalRangeChange === 'function'
+            ) {
+                priceScale.subscribeVisibleLogicalRangeChange(update);
+
+                this._priceScale = priceScale;
+                this._priceScaleHandler = update;
+                this._priceScaleUnsubscribe = 'unsubscribeVisibleLogicalRangeChange';
+            }
+        }
+
+        if (!this._resizeObserver && typeof ResizeObserver !== 'undefined') {
+            const container = this._getChartContainer();
+
+            if (container && container !== document.body) {
+                this._resizeObserver = new ResizeObserver(update);
+                this._resizeContainer = container;
+                this._resizeObserver.observe(container);
+            }
+        }
+
+        if (!this._windowScrollHandler) {
+            this._windowScrollHandler = update;
+
+            window.addEventListener('scroll', update, true);
+            window.addEventListener('resize', update);
+        }
+    }
+
+    _stopChartSync() {
+        if (
+            this._timeScale &&
+            this._timeScaleHandler &&
+            this._timeScaleUnsubscribe &&
+            typeof this._timeScale[this._timeScaleUnsubscribe] === 'function'
+        ) {
+            try {
+                this._timeScale[this._timeScaleUnsubscribe](this._timeScaleHandler);
+            } catch (e) {}
+        }
+
+        this._timeScale = null;
+        this._timeScaleHandler = null;
+        this._timeScaleUnsubscribe = null;
+
+        if (
+            this._priceScale &&
+            this._priceScaleHandler &&
+            this._priceScaleUnsubscribe &&
+            typeof this._priceScale[this._priceScaleUnsubscribe] === 'function'
+        ) {
+            try {
+                this._priceScale[this._priceScaleUnsubscribe](this._priceScaleHandler);
+            } catch (e) {}
+        }
+
+        this._priceScale = null;
+        this._priceScaleHandler = null;
+        this._priceScaleUnsubscribe = null;
+
+        if (this._resizeObserver) {
+            try {
+                this._resizeObserver.disconnect();
+            } catch (e) {}
+
+            this._resizeObserver = null;
+            this._resizeContainer = null;
+        }
+
+        if (this._windowScrollHandler) {
+            window.removeEventListener('scroll', this._windowScrollHandler, true);
+            window.removeEventListener('resize', this._windowScrollHandler);
+            this._windowScrollHandler = null;
         }
     }
 }
