@@ -4594,84 +4594,113 @@ class RulerLineManager {
         }
     }
 
-    async loadFromData(symbolKey, rulerRecords) {
-        if (this._getCurrentSymbolKey() !== symbolKey) return;
+ async loadFromData(symbolKey, rulerRecords) {
+    if (this._getCurrentSymbolKey() !== symbolKey) return;
 
-        try {
-            const series = this._chartManager.currentChartType === 'candle' 
-                ? this._chartManager.candleSeries 
-                : this._chartManager.barSeries;
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
 
-            if (!series) return;
+        if (!series) return;
 
-            const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
-            const defaultVisibility = {};
-            ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
 
-            const existingIds = new Set(
-                this._rulers.filter(item => item.ruler.symbolKey === symbolKey).map(item => item.ruler.id)
-            );
-            
-            const newRecordIds = new Set(rulerRecords.map(r => r.id));
-            
-            const toDetach = this._rulers.filter(item => 
-                item.ruler.symbolKey === symbolKey && !newRecordIds.has(item.ruler.id)
-            );
-            
-            for (const item of toDetach) {
-                try { if (item.series && item.primitive) item.series.detachPrimitive(item.primitive); } catch(e) {}
-            }
-            
-            this._rulers = this._rulers.filter(item => 
-                item.ruler.symbolKey !== symbolKey || newRecordIds.has(item.ruler.id)
-            );
-
-            const newRulers = [];
-            for (const rec of rulerRecords) {
-                try {
-                    const existing = this._rulers.find(item => item.ruler.id === rec.id);
-                    
-                    if (existing) {
-                        existing.ruler.point1 = rec.data.point1;
-                        existing.ruler.point2 = rec.data.point2;
-                        existing.ruler.options = { ...existing.ruler.options, ...rec.data.options };
-                        existing.ruler.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
-                        existing.ruler.anchorTime1 = rec.data.anchorTime1;
-                        existing.ruler.anchorTime2 = rec.data.anchorTime2;
-                        existing.ruler.anchorCandle1 = rec.data.anchorCandle1;
-                        existing.ruler.anchorCandle2 = rec.data.anchorCandle2;
-                        continue;
-                    }
-
-                    const ruler = new RulerLine(rec.data.point1, rec.data.point2, this._chartManager, rec.data.options);
-                    ruler.id = rec.id;
-                    ruler.symbolKey = rec.symbolKey;
-                    ruler.symbol = rec.data.symbol;
-                    ruler.exchange = rec.data.exchange;
-                    ruler.marketType = rec.data.marketType;
-                    ruler.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
-                    ruler.anchorCandle1 = rec.data.anchorCandle1;
-                    ruler.anchorCandle2 = rec.data.anchorCandle2;
-                    ruler.anchorTime1 = rec.data.anchorTime1;
-                    ruler.anchorTime2 = rec.data.anchorTime2;
-
-                    const primitive = new RulerLinePrimitive(ruler, this._chartManager);
-                    series.attachPrimitive(primitive);
-                    newRulers.push({ ruler, primitive, series });
-                } catch (e) { 
-                    console.warn('Failed to load ruler:', rec.id, e); 
-                }
-            }
-
-            this._rulers.push(...newRulers);
-            this._requestRedraw();
-            console.log(`✅ Loaded ${rulerRecords.length} rulers for ${symbolKey}`);
-        } catch (error) {
-            console.error('❌ loadFromData failed:', error);
-            throw error;
+        const existingIds = new Set(
+            this._rulers.filter(item => item.ruler.symbolKey === symbolKey).map(item => item.ruler.id)
+        );
+        
+        const newRecordIds = new Set(rulerRecords.map(r => r.id));
+        
+        const toDetach = this._rulers.filter(item => 
+            item.ruler.symbolKey === symbolKey && !newRecordIds.has(item.ruler.id)
+        );
+        
+        for (const item of toDetach) {
+            try { if (item.series && item.primitive) item.series.detachPrimitive(item.primitive); } catch(e) {}
         }
-    }
+        
+        this._rulers = this._rulers.filter(item => 
+            item.ruler.symbolKey !== symbolKey || newRecordIds.has(item.ruler.id)
+        );
 
+        const newRulers = [];
+        let loadedCount = 0;
+        let skippedCount = 0;
+
+        for (const rec of rulerRecords) {
+            try {
+                // ✅ ЗАЩИТА: нормализуем данные — поддерживаем и вложенный, и плоский формат
+                const data = rec.data || rec; // если rec.data нет — берём сам rec
+                
+                // ✅ Проверяем обязательные поля
+                if (!data.point1 || !data.point2) {
+                    console.warn('⚠️ Ruler пропущен (нет point1/point2):', rec.id);
+                    skippedCount++;
+                    continue;
+                }
+
+                // ✅ Проверяем, что point1/point2 — валидные объекты
+                if (typeof data.point1.time !== 'number' || typeof data.point1.price !== 'number' ||
+                    typeof data.point2.time !== 'number' || typeof data.point2.price !== 'number') {
+                    console.warn('⚠️ Ruler пропущен (невалидные координаты):', rec.id);
+                    skippedCount++;
+                    continue;
+                }
+
+                const existing = this._rulers.find(item => item.ruler.id === rec.id);
+                
+                if (existing) {
+                    existing.ruler.point1 = data.point1;
+                    existing.ruler.point2 = data.point2;
+                    existing.ruler.options = { ...existing.ruler.options, ...(data.options || {}) };
+                    existing.ruler.timeframeVisibility = { ...defaultVisibility, ...(data.timeframeVisibility || {}) };
+                    existing.ruler.anchorTime1 = data.anchorTime1;
+                    existing.ruler.anchorTime2 = data.anchorTime2;
+                    existing.ruler.anchorCandle1 = data.anchorCandle1;
+                    existing.ruler.anchorCandle2 = data.anchorCandle2;
+                    loadedCount++;
+                    continue;
+                }
+
+                const ruler = new RulerLine(data.point1, data.point2, this._chartManager, data.options);
+                ruler.id = rec.id;
+                ruler.symbolKey = rec.symbolKey || symbolKey;
+                ruler.symbol = data.symbol;
+                ruler.exchange = data.exchange;
+                ruler.marketType = data.marketType;
+                ruler.timeframeVisibility = { ...defaultVisibility, ...(data.timeframeVisibility || {}) };
+                ruler.anchorCandle1 = data.anchorCandle1;
+                ruler.anchorCandle2 = data.anchorCandle2;
+                ruler.anchorTime1 = data.anchorTime1;
+                ruler.anchorTime2 = data.anchorTime2;
+
+                const primitive = new RulerLinePrimitive(ruler, this._chartManager);
+                series.attachPrimitive(primitive);
+                newRulers.push({ ruler, primitive, series });
+                loadedCount++;
+            } catch (e) { 
+                console.warn('Failed to load ruler:', rec.id, e); 
+                skippedCount++;
+            }
+        }
+
+        this._rulers.push(...newRulers);
+        this._requestRedraw();
+        
+        // ✅ Корректный лог: показываем реально загруженные vs пропущенные
+        if (skippedCount > 0) {
+            console.log(`⚠️ Loaded ${loadedCount}/${rulerRecords.length} rulers for ${symbolKey} (${skippedCount} skipped)`);
+        } else {
+            console.log(`✅ Loaded ${loadedCount} rulers for ${symbolKey}`);
+        }
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
+    }
+}
     _detachAllPrimitivesForSymbol(symbolKey) {
         const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
         for (const item of itemsForSymbol) {
