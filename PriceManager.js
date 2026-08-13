@@ -6,7 +6,9 @@ class PriceManager {
         this.reconnectTimers = new Map();
         this.pingIntervals = new Map();
         this._pendingUpdates = new Map();
-        this._flushRafId = null;
+        
+        // ✅ ИСПРАВЛЕНО: заменяем RAF на setTimeout
+        this._flushTimeout = null;
         
         this._restPollInterval = null;
         this._lastWsMessage = {};
@@ -30,8 +32,6 @@ class PriceManager {
         if (this._initInProgress) return;
         this._initInProgress = true;
         
-        // ✅ ИСПРАВЛЕНО: Bybit убран из автоматического запуска. 
-        // Он подключится только тогда, когда действительно понадобится.
         const connectSequence = [
             () => this._connectBinanceFutures(),
             () => this._connectBinanceSpot()
@@ -46,12 +46,56 @@ class PriceManager {
         
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
+            
+            // ✅ НОВОЕ: пробуждение при возврате на вкладку
+            this._focusHandler = () => {
+                console.log('🔍 PriceManager: вкладка активна, пробуждаемся');
+                this.wakeUp();
+            };
+            window.addEventListener('focus', this._focusHandler);
+            
+            // ✅ НОВОЕ: пробуждение при возврате из bfcache
+            this._pageshowHandler = (e) => {
+                console.log('🔍 PriceManager: страница показана из кэша:', e.persisted);
+                this.wakeUp();
+            };
+            window.addEventListener('pageshow', this._pageshowHandler);
         }
         
-        console.log('✅ PriceManager v12 запущен (Bybit подключается только по требованию)');
+        console.log('✅ PriceManager v13 запущен (setTimeout вместо RAF, Bybit по требованию)');
     }
 
-    // ✅ НОВЫЙ МЕТОД: Проверяет, нужен ли Bybit, и подключает его только при наличии подписок
+    // ✅ НОВЫЙ МЕТОД: пробуждение при возврате на вкладку
+    wakeUp() {
+        console.log('⚡ PriceManager: принудительное пробуждение');
+        
+        // 1. Отправляем все накопленные цены подписчикам
+        this._flushPendingUpdates();
+        
+        // 2. Форсируем REST polling для алертов
+        this._pollAlertPricesViaRest();
+        
+        // 3. Проверяем соединения
+        this._checkConnections();
+    }
+    
+    // ✅ НОВЫЙ МЕТОД: проверка состояния соединений
+    _checkConnections() {
+        for (const [key, ws] of Object.entries(this.connections)) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.log(`⚠️ PriceManager: ${key} не подключён, переподключаемся`);
+                const parts = key.split(':');
+                if (parts[0] === 'binance') {
+                    if (parts[1] === 'futures') this._connectBinanceFutures();
+                    else if (parts[1] === 'spot') this._connectBinanceSpot();
+                } else if (parts[0] === 'bybit') {
+                    if (parts[1] === 'linear') this._connectBybitLinear();
+                    else if (parts[1] === 'spot') this._connectBybitSpot();
+                }
+            }
+        }
+    }
+
     _ensureBybitConnected() {
         const hasLinear = this._bybitSubscriptions.linear.size > 0;
         const hasSpot = this._bybitSubscriptions.spot.size > 0;
@@ -114,6 +158,7 @@ class PriceManager {
             this._lastWsMessage[key] = Date.now();
             this._connectionAttempts[key] = 0;
             this._connectionState[key] = 'open';
+            console.log(`✅ PriceManager: ${key} подключён`);
         };
         
         ws.onmessage = (event) => {
@@ -178,6 +223,7 @@ class PriceManager {
             this._connectionAttempts[key] = 0; 
             this._startPingBybit(key, ws);
             this._resubscribeBybit(marketKey);
+            console.log(`✅ PriceManager: ${key} подключён`);
         };
         
         ws.onmessage = (event) => {
@@ -240,7 +286,7 @@ class PriceManager {
         const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         const symbols = [...this._bybitSubscriptions[marketKey]];
-        if (symbols.length === 0) return; // ✅ Не отправляем пустые запросы
+        if (symbols.length === 0) return;
         
         for (let i = 0; i < symbols.length; i += 10) {
             const batch = symbols.slice(i, i + 10).map(s => `tickers.${s}`);
@@ -254,7 +300,7 @@ class PriceManager {
         if (this._bybitSubscriptions[marketKey].has(clean)) return;
         
         this._bybitSubscriptions[marketKey].add(clean);
-        this._ensureBybitConnected(); // ✅ ИСПРАВЛЕНО: инициируем подключение при добавлении символа
+        this._ensureBybitConnected();
         
         const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
         if (ws?.readyState === WebSocket.OPEN) {
@@ -262,13 +308,10 @@ class PriceManager {
         }
     }
     
-    // ========== REST (главный источник цен для алертов) ==========
-       // ========== ИСПРАВЛЕННЫЙ REST ПОЛЛИНГ ==========
+    // ========== REST ПОЛЛИНГ ==========
     async _pollAlertPricesViaRest() {
         if (!window.alertLineManager) return;
         
-        // ИСПРАВЛЕНИЕ #1: Фильтруем только по статусу, 
-        // повторяющиеся алерты (triggered=true) НЕ пропускаем
         const activeAlerts = window.alertLineManager._alerts.filter(item => {
             const a = item.alert;
             return a.status === 'active';
@@ -302,7 +345,6 @@ class PriceManager {
         await Promise.allSettled(tasks);
     }
     
-    // ИСПРАВЛЕНИЕ #2: Убран прямой вызов _checkAlerts
     async _fetchBinanceRest(symbols, marketType) {
         try {
             const url = symbols.length === 1 
@@ -318,19 +360,20 @@ class PriceManager {
                 const price = parseFloat(ticker.lastPrice || ticker.price);
                 const change = parseFloat(ticker.priceChangePercent) || 0;
                 if (ticker.symbol && price && !isNaN(price)) {
-                    // _setPrice сам уведомит подписчиков через RAF
                     this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
+                    window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'binance', marketType);
                 }
             }
-        } catch(e) {}
+        } catch(e) {
+            console.warn('⚠️ Ошибка _fetchBinanceRest:', e);
+        }
     }
     
-    // ИСПРАВЛЕНИЕ #2 + #3: Батч-запрос + убран прямой вызов _checkAlerts
     async _fetchBybitRest(symbols, marketType) {
         try {
             const category = marketType === 'futures' ? 'linear' : 'spot';
             
-            // Bybit V5 поддерживает батч через запятую (до 10 символов)
+            // Батч-запрос (до 10 символов)
             const batches = [];
             for (let i = 0; i < symbols.length; i += 10) {
                 batches.push(symbols.slice(i, i + 10));
@@ -351,60 +394,15 @@ class PriceManager {
                         const price = parseFloat(ticker.lastPrice);
                         const change = parseFloat(ticker.price24hPcnt) || 0;
                         if (ticker.symbol && price && !isNaN(price)) {
-                            // _setPrice сам уведомит подписчиков через RAF
                             this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
+                            window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
                         }
                     }
                 }
             }
-        } catch(e) {}
-    }
-    
-    async _fetchBinanceRest(symbols, marketType) {
-        try {
-            const url = symbols.length === 1 
-                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
-                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
-            
-            const response = await this._fetchWithRetry(url);
-            if (!response) return;
-            const data = await response.json();
-            const tickers = Array.isArray(data) ? data : [data];
-            
-            for (const ticker of tickers) {
-                const price = parseFloat(ticker.lastPrice || ticker.price);
-                const change = parseFloat(ticker.priceChangePercent) || 0;
-                if (ticker.symbol && price && !isNaN(price)) {
-                    this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
-                    window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'binance', marketType);
-                }
-            }
-        } catch(e) {}
-    }
-    
-    async _fetchBybitRest(symbols, marketType) {
-        try {
-            const category = marketType === 'futures' ? 'linear' : 'spot';
-            const tasks = symbols.map(sym => 
-                fetch(`https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${sym}`)
-                    .then(r => r.json())
-                    .catch(() => null)
-            );
-            
-            const results = await Promise.all(tasks);
-            
-            for (const data of results) {
-                if (data?.retCode === 0 && data.result?.list?.[0]) {
-                    const ticker = data.result.list[0];
-                    const price = parseFloat(ticker.lastPrice);
-                    const change = parseFloat(ticker.price24hPcnt) || 0;
-                    if (price && !isNaN(price)) {
-                        this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
-                        window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
-                    }
-                }
-            }
-        } catch(e) {}
+        } catch(e) {
+            console.warn('⚠️ Ошибка _fetchBybitRest:', e);
+        }
     }
     
     async _fetchWithRetry(url, maxRetries = 3) {
@@ -429,7 +427,7 @@ class PriceManager {
         return null;
     }
     
-    // ========== УСТАНОВКА ЦЕНЫ ==========
+    // ========== УСТАНОВКА ЦЕНЫ (ИСПРАВЛЕНО: setTimeout вместо RAF) ==========
     _setPrice(symbol, priceData, exchange, marketType) {
         if (!symbol) return;
         
@@ -447,26 +445,35 @@ class PriceManager {
         this.prices.set(key, { price, change, time: Date.now() });
         this._pendingUpdates.set(key, { price, change, symbol, exchange, marketType });
         
-        if (this._flushRafId === null) {
-            this._flushRafId = requestAnimationFrame(() => {
-                this._flushRafId = null;
-                const updates = new Map(this._pendingUpdates);
-                this._pendingUpdates.clear();
-                for (const [k, data] of updates.entries()) {
-                    const payload = { price: data.price, change: data.change };
-                    
-                    if (this.subscribers.has(k)) {
-                        this.subscribers.get(k).forEach(cb => { 
-                            try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
-                        });
-                    }
-                    if (this.subscribers.has(data.symbol)) {
-                        this.subscribers.get(data.symbol).forEach(cb => { 
-                            try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
-                        });
-                    }
-                }
-            });
+        // ✅ ИСПРАВЛЕНО: setTimeout работает в фоновой вкладке, RAF — нет
+        if (this._flushTimeout === null) {
+            this._flushTimeout = setTimeout(() => {
+                this._flushTimeout = null;
+                this._flushPendingUpdates();
+            }, 100); // 100ms батчинг
+        }
+    }
+    
+    // ✅ НОВЫЙ МЕТОД: отправка накопленных обновлений подписчикам
+    _flushPendingUpdates() {
+        if (this._pendingUpdates.size === 0) return;
+        
+        const updates = new Map(this._pendingUpdates);
+        this._pendingUpdates.clear();
+        
+        for (const [k, data] of updates.entries()) {
+            const payload = { price: data.price, change: data.change };
+            
+            if (this.subscribers.has(k)) {
+                this.subscribers.get(k).forEach(cb => { 
+                    try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                });
+            }
+            if (this.subscribers.has(data.symbol)) {
+                this.subscribers.get(data.symbol).forEach(cb => { 
+                    try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                });
+            }
         }
     }
 
@@ -476,7 +483,7 @@ class PriceManager {
         this.subscribers.get(key).push(callback);
         const parts = key.split(':');
         if (parts.length === 3 && parts[1] === 'bybit') {
-            this.subscribeBybitSymbol(parts[0], parts[2]); // Здесь уже вызовется _ensureBybitConnected
+            this.subscribeBybitSymbol(parts[0], parts[2]);
         }
         const cached = this.prices.get(key);
         if (cached) {
@@ -557,21 +564,35 @@ class PriceManager {
     }
     
     close() {
+        // ✅ Очистка REST polling
         if (this._restPollInterval) {
             clearInterval(this._restPollInterval);
             this._restPollInterval = null;
         }
         
-        if (this._flushRafId) {
-            cancelAnimationFrame(this._flushRafId);
-            this._flushRafId = null;
+        // ✅ Очистка flush timeout (вместо RAF)
+        if (this._flushTimeout) {
+            clearTimeout(this._flushTimeout);
+            this._flushTimeout = null;
         }
         this._pendingUpdates.clear();
         
+        // ✅ Очистка обработчиков пробуждения
+        if (this._focusHandler) {
+            window.removeEventListener('focus', this._focusHandler);
+            this._focusHandler = null;
+        }
+        if (this._pageshowHandler) {
+            window.removeEventListener('pageshow', this._pageshowHandler);
+            this._pageshowHandler = null;
+        }
+        
+        // Очистка пингов
         for (const key in this.pingIntervals) {
             this._stopPing(key);
         }
         
+        // Закрытие соединений
         for (const ws of Object.values(this.connections)) { 
             if (ws) {
                 ws.onclose = null; 
@@ -580,10 +601,13 @@ class PriceManager {
             }
         }
         
+        // Очистка таймеров реконнекта
         for (const timer of this.reconnectTimers.values()) {
             clearTimeout(timer);
         }
         this.reconnectTimers.clear();
+        
+        console.log('✅ PriceManager закрыт');
     }
 }
 
