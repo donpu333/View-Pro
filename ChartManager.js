@@ -57,21 +57,6 @@ class ChartManager {
         this._latestCrosshairData = null;
         this._drawingsRafId = null;
         
-        // ============ ФОНОВАЯ ОТРИСОВКА ============
-        this._backgroundRenderInterval = null;
-        this._backgroundRenderTimeout = null;
-        this._isBackgroundRendering = false;
-        this._backgroundUpdateCounter = 0;
-        this._lastBackgroundRenderTime = 0;
-        this._backgroundRenderDelay = 100;
-        this._maxBackgroundRenderDelay = 1000;
-        this._backgroundRenderAdaptiveDelay = this._backgroundRenderDelay;
-        this._lastBackgroundActivity = Date.now();
-        
-        // ============ CATCH-UP ФЛАГИ ============
-        this._isCatchingUp = false;
-        this._lastVisibilityChangeTime = 0;
-        
         // ============ ВРЕМЕННЫЕ ОБЪЕКТЫ ============
         this._candleTimeMap = new Map();
         
@@ -119,33 +104,14 @@ class ChartManager {
 
         // ============ VISIBILITY HANDLER ============
         this._visibilityHandler = () => {
-            this._lastVisibilityChangeTime = Date.now();
-            
             if (!document.hidden) {
-                console.log('📊 Вкладка активна - проверяем свечи');
-                
-                // Сначала проверяем и создаём пропущенные свечи
-                this.forceCheckNewCandles();
-                
                 if (window.wsManager) window.wsManager.ensureConnected?.();
-                
-                // Затем делаем catch-up для точных данных
-                this._catchUpMissedCandles().then(() => {
-                    const price = this.getCurrentPrice();
-                    if (price != null) this._syncPriceLine(price);
-                    this.forceRedraw();
-                    this.scrollToLast();
-                }).catch(e => {
-                    console.warn('⚠️ Ошибка catch-up:', e);
-                });
-                
-                this._stopBackgroundRendering();
+                const price = this.getCurrentPrice();
+                if (price != null) this._syncPriceLine(price);
                 this.scheduleDrawingsUpdate(true);
                 this.requestDrawingsRedraw();
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             } else {
-                console.log('🔒 Вкладка скрыта - запускаем фоновую отрисовку');
-                this._startBackgroundRendering();
                 this._startBackgroundTitleUpdate();
             }
         };
@@ -383,199 +349,6 @@ class ChartManager {
         this._candleTimeMap.set(time, index);
     }
 
-    _startBackgroundRendering() {
-        if (this._isBackgroundRendering) return;
-        
-        this._isBackgroundRendering = true;
-        this._backgroundRenderAdaptiveDelay = this._backgroundRenderDelay;
-        this._lastBackgroundActivity = Date.now();
-        console.log('🔄 Запущена фоновая отрисовка');
-        
-        const backgroundRenderLoop = () => {
-            if (!document.hidden) {
-                this._stopBackgroundRendering();
-                return;
-            }
-            
-            if (!this._isBackgroundRendering) return;
-            
-            const now = Date.now();
-            const timeSinceLastActivity = now - this._lastBackgroundActivity;
-            
-            if (timeSinceLastActivity > 5000) {
-                this._backgroundRenderAdaptiveDelay = Math.min(
-                    this._maxBackgroundRenderDelay,
-                    this._backgroundRenderAdaptiveDelay * 1.5
-                );
-            } else {
-                this._backgroundRenderAdaptiveDelay = this._backgroundRenderDelay;
-            }
-            
-            this._processBackgroundUpdate();
-            this._backgroundUpdateCounter++;
-            
-            this._backgroundRenderTimeout = setTimeout(
-                backgroundRenderLoop, 
-                this._backgroundRenderAdaptiveDelay
-            );
-        };
-        
-        this._backgroundRenderTimeout = setTimeout(
-            backgroundRenderLoop, 
-            this._backgroundRenderAdaptiveDelay
-        );
-    }
-
-    _stopBackgroundRendering() {
-        if (this._isBackgroundRendering) {
-            console.log('⏹️ Остановлена фоновая отрисовка');
-        }
-        
-        this._isBackgroundRendering = false;
-        
-        if (this._backgroundRenderTimeout) {
-            clearTimeout(this._backgroundRenderTimeout);
-            this._backgroundRenderTimeout = null;
-        }
-        
-        if (this._backgroundRenderInterval) {
-            clearInterval(this._backgroundRenderInterval);
-            this._backgroundRenderInterval = null;
-        }
-    }
-
-    _processBackgroundUpdate() {
-        if (!this.chartData || this.chartData.length === 0) return;
-        
-        const now = Date.now();
-        this._lastBackgroundActivity = now;
-        
-        const price = this.getCurrentPrice();
-        if (price !== null && price !== this._lastSyncedPrice) {
-            this._lastSyncedPrice = price;
-            
-            if (this.lastCandle) {
-                this.lastCandle.close = price;
-                if (price > this.lastCandle.high) this.lastCandle.high = price;
-                if (price < this.lastCandle.low) this.lastCandle.low = price;
-                
-                const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (series) {
-                    series.update({
-                        time: this.lastCandle.time,
-                        open: this.lastCandle.open,
-                        high: this.lastCandle.high,
-                        low: this.lastCandle.low,
-                        close: this.lastCandle.close
-                    });
-                }
-                
-                const isBullish = this.lastCandle.close >= this.lastCandle.open;
-                const lineColor = isBullish 
-                    ? (this.bullishColor || CONFIG.colors.bullish) 
-                    : (this.bearishColor || CONFIG.colors.bearish);
-                
-                if (series) {
-                    series.applyOptions({ 
-                        priceLineColor: lineColor,
-                        priceLineSource: price 
-                    });
-                }
-                
-                if (this.volumeSeries && this.lastCandle.volume !== undefined) {
-                    this.volumeSeries.update({
-                        time: this.lastCandle.time,
-                        value: this.lastCandle.volume,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
-                }
-                
-                if (this.timerManager?._primitive) {
-                    const prim = this.timerManager._primitive;
-                    if (prim.setPrice) prim.setPrice(price);
-                    if (prim.setColor) prim.setColor(lineColor);
-                    if (prim.isEnabled && prim.isEnabled()) {
-                        prim.requestRedraw();
-                    }
-                }
-            }
-        }
-        
-        this._updatePageTitle();
-        this._checkForNewCandleInBackground();
-        
-        if (this._backgroundUpdateCounter % 5 === 0) {
-            if (this.indicatorManager) {
-                this.indicatorManager.updateAllIndicators();
-            }
-        }
-    }
-
-    _checkForNewCandleInBackground() {
-        if (!this.chartData?.length || !this.currentInterval) return;
-        
-        const step = this._getIntervalSeconds(this.currentInterval);
-        const nowSec = Math.floor(Date.now() / 1000);
-        
-        let aligned;
-        if (this.currentInterval === '1w') {
-            const now = new Date(nowSec * 1000);
-            const dayOfWeek = now.getUTCDay();
-            const daysToMonday = dayOfWeek === 0 ? 1 : (8 - dayOfWeek) % 7;
-            const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysToMonday));
-            aligned = Math.floor(monday.getTime() / 1000);
-        } else if (this.currentInterval === '1M') {
-            const now = new Date(nowSec * 1000);
-            const firstDayOfNextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-            aligned = Math.floor(firstDayOfNextMonth.getTime() / 1000);
-        } else {
-            aligned = Math.floor(nowSec / step) * step;
-        }
-        
-        const last = this.chartData[this.chartData.length - 1];
-        
-        if (last && aligned > last.time && aligned <= nowSec) {
-            const newCandle = {
-                time: aligned,
-                open: last.close,
-                high: last.close,
-                low: last.close,
-                close: last.close,
-                volume: 0
-            };
-            this._createNewCandle(newCandle);
-        }
-    }
-
-    _syncAllDataImmediately() {
-        if (!this.chartData || this.chartData.length === 0) return;
-        
-        const price = this.getCurrentPrice();
-        if (price !== null) {
-            this.currentRealPrice = price;
-            this._lastSyncedPrice = price;
-            
-            if (this.lastCandle) {
-                this.lastCandle.close = price;
-                if (price > this.lastCandle.high) this.lastCandle.high = price;
-                if (price < this.lastCandle.low) this.lastCandle.low = price;
-                
-                const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (series) {
-                    series.update({
-                        time: this.lastCandle.time,
-                        open: this.lastCandle.open,
-                        high: this.lastCandle.high,
-                        low: this.lastCandle.low,
-                        close: this.lastCandle.close
-                    });
-                }
-            }
-        }
-        
-        this._updatePageTitle();
-    }
-
     _startBackgroundTitleUpdate() {
         if (this._bgTitleInterval) {
             clearInterval(this._bgTitleInterval);
@@ -597,8 +370,6 @@ class ChartManager {
             clearInterval(this._bgTitleInterval);
             this._bgTitleInterval = null;
         }
-
-        this._stopBackgroundRendering();
 
         this._abortAllProcesses();
         
@@ -640,23 +411,19 @@ class ChartManager {
         console.log('✅ ChartManager полностью уничтожен, утечек памяти нет');
     }
 
-    _getIntervalSeconds(interval) {
-        const map = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-            '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
-            '1d': 86400, '1w': 604800, '1M': 2592000
-        };
-        return map[interval] || 3600;
-    }
-
     _startNewCandleChecker() {
         const check = () => {
             if (!this.chartData?.length || !this.currentInterval || this._updatesSuspended) {
-                this._candleCheckerTimeout = setTimeout(check, 250);
+                this._candleCheckerTimeout = setTimeout(check, 1000);
                 return;
             }
             
-            const step = this._getIntervalSeconds(this.currentInterval);
+            const stepMap = {
+                '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+                '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+                '1d': 86400, '1w': 604800, '1M': 2592000
+            };
+            const step = stepMap[this.currentInterval] || 3600;
             const nowSec = Math.floor(Date.now() / 1000);
             
             let aligned;
@@ -677,8 +444,6 @@ class ChartManager {
             const last = this.chartData[this.chartData.length - 1];
             
             if (last && aligned > last.time && aligned <= nowSec) {
-                console.log(`🕐 Создаём новую свечу: ${new Date(aligned * 1000).toISOString()}`);
-                
                 const newCandle = {
                     time: aligned,
                     open: last.close,
@@ -688,185 +453,11 @@ class ChartManager {
                     volume: 0
                 };
                 this._createNewCandle(newCandle);
-            } else if (last && aligned > last.time + step) {
-                console.warn(`⚠️ Пропущено несколько свечей: последняя ${new Date(last.time * 1000).toISOString()}, текущая ${new Date(aligned * 1000).toISOString()}`);
-                this._createMissedCandles(last.time, aligned, step);
             }
             
-            this._candleCheckerTimeout = setTimeout(check, 250);
+            this._candleCheckerTimeout = setTimeout(check, 500);
         };
         check();
-    }
-
-    _createMissedCandles(lastTime, currentAligned, step) {
-        console.log(`📊 Создаём пропущенные свечи с ${new Date(lastTime * 1000).toISOString()} до ${new Date(currentAligned * 1000).toISOString()}`);
-        
-        let time = lastTime + step;
-        const maxCandles = Math.min(100, Math.floor((currentAligned - lastTime) / step));
-        
-        for (let i = 0; i < maxCandles && time <= currentAligned; i++) {
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            if (!lastCandle) break;
-            
-            const newCandle = {
-                time: time,
-                open: lastCandle.close,
-                high: lastCandle.close,
-                low: lastCandle.close,
-                close: lastCandle.close,
-                volume: 0
-            };
-            
-            this._createNewCandle(newCandle);
-            time += step;
-        }
-        
-        console.log(`✅ Создано ${maxCandles} пропущенных свечей`);
-    }
-
-    forceCheckNewCandles() {
-        if (!this.chartData?.length || !this.currentInterval) return;
-        
-        const step = this._getIntervalSeconds(this.currentInterval);
-        const nowSec = Math.floor(Date.now() / 1000);
-        const aligned = this._getAlignedTime(this.currentInterval, nowSec, step);
-        
-        const last = this.chartData[this.chartData.length - 1];
-        
-        if (last && aligned > last.time) {
-            console.log(`🔄 Принудительная проверка: создаём свечу для ${new Date(aligned * 1000).toISOString()}`);
-            
-            if (aligned > last.time + step) {
-                this._createMissedCandles(last.time, aligned, step);
-            } else {
-                const newCandle = {
-                    time: aligned,
-                    open: last.close,
-                    high: last.close,
-                    low: last.close,
-                    close: last.close,
-                    volume: 0
-                };
-                this._createNewCandle(newCandle);
-            }
-        }
-    }
-
-    _getAlignedTime(interval, nowSec, step) {
-        if (interval === '1w') {
-            const now = new Date(nowSec * 1000);
-            const dayOfWeek = now.getUTCDay();
-            const daysToMonday = dayOfWeek === 0 ? 1 : (8 - dayOfWeek) % 7;
-            const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysToMonday));
-            return Math.floor(monday.getTime() / 1000);
-        } else if (interval === '1M') {
-            const now = new Date(nowSec * 1000);
-            const firstDayOfNextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-            return Math.floor(firstDayOfNextMonth.getTime() / 1000);
-        } else {
-            return Math.floor(nowSec / step) * step;
-        }
-    }
-
-    async _catchUpMissedCandles() {
-        if (this._isCatchingUp) {
-            console.log('⏭️ Catch-up уже выполняется, пропускаем');
-            return;
-        }
-        
-        if (this._switchingSymbol || this._updatesSuspended) return;
-        
-        if (!this.chartData || this.chartData.length === 0) return;
-        
-        this._isCatchingUp = true;
-        
-        try {
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            const now = Math.floor(Date.now() / 1000);
-            const intervalSeconds = this._getIntervalSeconds(this.currentInterval);
-            
-            if (now - lastCandle.time <= intervalSeconds) {
-                console.log('✅ Данные актуальны, catch-up не нужен');
-                return;
-            }
-            
-            console.log(`📥 Catch-up: прошло ${Math.floor((now - lastCandle.time) / 60)} мин, догружаем свечи...`);
-            
-            const freshCandles = await this.fetchKlines(
-                this.currentSymbol,
-                this.currentExchange,
-                this.currentMarketType,
-                this.currentInterval,
-                200,
-                null,
-                null
-            );
-            
-            if (!freshCandles || freshCandles.length === 0) {
-                console.warn('⚠️ Catch-up: не удалось загрузить свечи');
-                return;
-            }
-            
-            const newCandles = freshCandles.filter(c => 
-                c.time > lastCandle.time && !this._candleTimeMap.has(c.time)
-            );
-            
-            if (newCandles.length === 0) {
-                console.log('✅ Catch-up: новых свечей нет');
-                return;
-            }
-            
-            console.log(`📊 Catch-up: найдено ${newCandles.length} пропущенных свечей`);
-            
-            this.chartData.push(...newCandles);
-            this._rebuildTimeMap();
-            this.lastCandle = this.chartData[this.chartData.length - 1];
-            this.currentRealPrice = this.lastCandle.close;
-            
-            const activeSeries = this.currentChartType === 'candle' 
-                ? this.candleSeries : this.barSeries;
-            
-            if (activeSeries) {
-                newCandles.forEach(c => {
-                    activeSeries.update({
-                        time: c.time,
-                        open: c.open,
-                        high: c.high,
-                        low: c.low,
-                        close: c.close
-                    });
-                });
-                
-                const isBullish = this.lastCandle.close >= this.lastCandle.open;
-                const lineColor = isBullish 
-                    ? (this.bullishColor || CONFIG.colors.bullish) 
-                    : (this.bearishColor || CONFIG.colors.bearish);
-                activeSeries.applyOptions({ 
-                    priceLineColor: lineColor,
-                    priceLineSource: this.lastCandle.close
-                });
-                this._lastAppliedColor = lineColor;
-            }
-            
-            if (this.volumeSeries) {
-                this._volumeDataDirty = true;
-                this._updateVolumeOptimized();
-            }
-            
-            if (this.indicatorManager) {
-                this.indicatorManager.updateAllIndicators();
-            }
-            
-            this.scheduleDrawingsUpdate(true);
-            this.requestDrawingsRedraw();
-            
-            console.log(`✅ Catch-up завершён: добавлено ${newCandles.length} свечей`);
-            
-        } catch (error) {
-            console.error('❌ Ошибка в _catchUpMissedCandles:', error);
-        } finally {
-            this._isCatchingUp = false;
-        }
     }
 
     _setupPanelsSync() {}
@@ -1200,14 +791,6 @@ class ChartManager {
             if (!this.chartData || this.chartData.length === 0) return;
             
             const currentLastCandle = this.chartData[this.chartData.length - 1];
-            
-            // ✅ ВАЖНО: Проверяем, не пришла ли свеча с более новым временем
-            if (candle.time > currentLastCandle.time) {
-                console.log(`📈 Получена свеча с новым временем: ${new Date(candle.time * 1000).toISOString()}`);
-                this._createNewCandle(candle);
-                return;
-            }
-            
             const isLastCandle = currentLastCandle && candle.time === currentLastCandle.time;
             const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
 
@@ -1312,10 +895,14 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
+    /**
+     * ✅ ОПТИМИЗИРОВАННЫЙ setDataQuick с защитой от гонок через generationId
+     */
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', generationId = null) {
         try {
             if (!data || data.length === 0) return;
 
+            // ✅ Защита от гонок: устаревшие данные игнорируются
             if (generationId !== null && this._activeGeneration !== generationId) {
                 console.log('⏭️ setDataQuick: устаревший generationId', generationId, 
                             '— текущий', this._activeGeneration);
@@ -1546,6 +1133,7 @@ class ChartManager {
                 candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
             }
             
+            // ✅ Проверка отмены после await
             if (this._activeGeneration !== generationId) {
                 console.log('🔄 Символ уже переключился, отменяем старую загрузку');
                 return;
@@ -1559,6 +1147,7 @@ class ChartManager {
                 this.timerManager.destroy();
             }
 
+            // ✅ Передаём generationId в setDataQuick
             this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, generationId);
 
             if (!isFromCache) {
@@ -2049,11 +1638,6 @@ class ChartManager {
                 low: candle.low,
                 close: candle.close
             });
-            
-            series.applyOptions({
-                priceLineSource: candle.close,
-                priceLineColor: this._lastAppliedColor
-            });
         }
         if (this.volumeSeries) {
             this.volumeSeries.update({
@@ -2067,14 +1651,8 @@ class ChartManager {
             if (this.timerManager.forceColorUpdate) this.timerManager.forceColorUpdate();
             this.timerManager.start(this.currentInterval);
         }
-        
-        this._updatePageTitle();
-        this.scheduleUpdatePosition();
         this._priceChanged = true;
         this._volumeDataDirty = true;
-        this.requestDrawingsRedraw();
-        
-        console.log(`✅ Новая свеча создана: время=${new Date(candle.time * 1000).toISOString()}, цена=${candle.close}`);
     }
 
     _buildVolumeData(data) {
@@ -2126,18 +1704,31 @@ class ChartManager {
         }
     }
 
+    /**
+     * ✅ ИСПРАВЛЕННЫЙ fetchKlines с поддержкой externalSignal
+     * @param {string} symbol - Тикер
+     * @param {string} exchange - Биржа
+     * @param {string} marketType - Рынок
+     * @param {string} interval - Таймфрейм
+     * @param {number} limit - Количество свечей
+     * @param {number|null} endTime - Конечное время
+     * @param {AbortSignal|null} externalSignal - ✅ Внешний signal для отмены
+     */
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, externalSignal = null) {
         let signal;
         let usingInternalController = false;
 
         if (externalSignal) {
+            // ✅ Используем внешний signal (от TimeframeManager или switchSymbol)
             signal = externalSignal;
             
+            // Отменяем параллельный внутренний запрос, если есть
             if (this._currentFetchController) {
                 this._currentFetchController.abort();
                 this._currentFetchController = null;
             }
         } else {
+            // Используем внутренний контроллер (для _loadHistoryAsync, refreshCandlesInBackground)
             if (this._currentFetchController) {
                 this._currentFetchController.abort();
             }
@@ -2170,6 +1761,7 @@ class ChartManager {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
 
+            // ✅ Проверяем abort ПЕРЕД тяжёлым парсингом
             if (signal.aborted) {
                 return [];
             }
@@ -2209,6 +1801,7 @@ class ChartManager {
                     .reverse();
             }
             
+            // Финальная проверка abort
             if (signal.aborted) return [];
             
             const seenTimes = new Set();
@@ -2224,11 +1817,13 @@ class ChartManager {
             
         } catch (error) {
             if (error.name === 'AbortError') {
+                // ✅ Пробрасываем AbortError — пусть отменяющий его обработает
                 throw error;
             }
             console.error('❌ Ошибка fetchKlines:', error);
             return [];
         } finally {
+            // ✅ Сбрасываем внутренний контроллер ТОЛЬКО если использовали его
             if (usingInternalController && this._currentFetchController?.signal === signal) {
                 this._currentFetchController = null;
             }
@@ -2313,9 +1908,6 @@ class ChartManager {
             clearInterval(this._bgTitleInterval);
             this._bgTitleInterval = null;
         }
-        
-        this._stopBackgroundRendering();
-        
         if (this.priceManager && this._priceUpdateHandler) {
             this.priceManager.unsubscribe(this.currentSymbol, this._priceUpdateHandler);
             this._priceUpdateHandler = null;
@@ -2336,7 +1928,6 @@ class ChartManager {
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
         this._isTrimming = false;
-        this._isCatchingUp = false;
     }
 
     saveCurrentTimePosition() {
@@ -2626,6 +2217,7 @@ class ChartManager {
             }
             
             const endTime = (oldestCandle.time * 1000) - 1;
+            // ✅ Без externalSignal — используется внутренний контроллер
             const olderCandles = await this.fetchKlines(
                 this.currentSymbol, 
                 this.currentExchange, 
@@ -2686,6 +2278,7 @@ class ChartManager {
             }
             
         } catch (e) {
+            // ✅ Подавляем AbortError при прокрутке истории — это нормально
             if (e.name !== 'AbortError') {
                 console.error('❌ Ошибка загрузки истории:', e);
                 this.hasMoreData = false;
@@ -2698,6 +2291,7 @@ class ChartManager {
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange) return;
+            // ✅ Без externalSignal — фоновое обновление использует внутренний контроллер
             const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, 100);
             if (!freshCandles || freshCandles.length === 0) return;
             if (symbol !== this.currentSymbol) return;
@@ -2725,6 +2319,7 @@ class ChartManager {
     }
 
     scheduleDrawingsUpdate(forceHighPriority = false) {
+        if (document.hidden) return;
         if (this._isVerticalZooming) return;
         
         const now = performance.now();
@@ -2758,6 +2353,8 @@ class ChartManager {
     }
     
     requestDrawingsRedraw() {
+        if (document.hidden) return;
+        
         if (this._isScrolling || this._isScrollingFast) {
             this._pendingDrawingsRedraw = true;
             return;
@@ -2782,4 +2379,4 @@ class ChartManager {
 
 if (typeof window !== 'undefined') {
     window.ChartManager = ChartManager;
-}
+}  
