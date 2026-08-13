@@ -3332,6 +3332,47 @@ setTimeout(function() {
         });
     });
 </script>
+<script>
+(function() {
+    const candleBtn = document.getElementById('candleBtn');
+    const barBtn = document.getElementById('barBtn');
+    
+    if (!candleBtn || !barBtn) return;
 
+    // Функция синхронизации UI с localStorage
+    function syncChartTypeUI() {
+        const savedType = localStorage.getItem('chartType') || 'candle';
+        if (savedType === 'bar') {
+            candleBtn.classList.remove('active');
+            barBtn.classList.add('active');
+        } else {
+            candleBtn.classList.add('active');
+            barBtn.classList.remove('active');
+        }
+    }
+
+    // При клике на свечи
+    candleBtn.addEventListener('click', function() {
+        candleBtn.classList.add('active');
+        barBtn.classList.remove('active');
+    });
+
+    // При клике на бары
+    barBtn.addEventListener('click', function() {
+        barBtn.classList.add('active');
+        candleBtn.classList.remove('active');
+    });
+
+    // 1. При загрузке страницы синхронизируем кнопки с сохраненным значением
+    syncChartTypeUI();
+    
+    // 2. Слушаем изменения localStorage (на случай, если переключение происходит из другого места)
+    window.addEventListener('storage', function(e) {
+        if (e.key === 'chartType') {
+            syncChartTypeUI();
+        }
+    });
+})();
+</script>
 </body>
 </html>
