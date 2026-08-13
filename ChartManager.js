@@ -12,10 +12,6 @@ class ChartManager {
         this._pendingData = null;
         this._batchUpdateActive = false;
         
-        // ✅ НОВОЕ: флаги для фоновой работы
-        this._isCatchingUp = false;
-        this._backgroundPrice = null;
-        
         // ============ МЕНЕДЖЕРЫ ============
         this.indicatorManager = new IndicatorManager(this);
         this.chartContainer = document.getElementById('chart-container');
@@ -109,28 +105,13 @@ class ChartManager {
         // ============ VISIBILITY HANDLER ============
         this._visibilityHandler = () => {
             if (!document.hidden) {
-                // ✅ Вернулись на вкладку
-                
-                // 1. Проверяем WebSocket
                 if (window.wsManager) window.wsManager.ensureConnected?.();
-                
-                // 2. Применяем накопленную фоновую цену
-                if (this._backgroundPrice != null) {
-                    this._syncPriceLine(this._backgroundPrice);
-                    this._backgroundPrice = null;
-                }
-                
-                // 3. Догружаем пропущенные свечи
-                this._catchUpMissedCandles();
-                
-                // 4. Обновляем текущую цену и визуал
                 const price = this.getCurrentPrice();
                 if (price != null) this._syncPriceLine(price);
                 this.scheduleDrawingsUpdate(true);
                 this.requestDrawingsRedraw();
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             } else {
-                // ✅ Ушли с вкладки
                 this._startBackgroundTitleUpdate();
             }
         };
@@ -337,6 +318,15 @@ class ChartManager {
      
         this._setupPanelsSync();
         this._startNewCandleChecker();
+
+        this._pingInterval = setInterval(() => {
+            if (window.wsManager?.wsKline?.readyState === WebSocket.OPEN) {
+                window.wsManager.wsKline.send(JSON.stringify({ type: 'ping' }));
+            }
+            if (window.wsManager?.wsTrade?.readyState === WebSocket.OPEN) {
+                window.wsManager.wsTrade.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 30000);
     }
 
     _safeElement(id) {
@@ -392,6 +382,10 @@ class ChartManager {
             window._sessionHighlighter = null;
         }
         
+        if (this._pingInterval) {
+            clearInterval(this._pingInterval);
+            this._pingInterval = null;
+        }
         if (this._candleCheckerTimeout) clearTimeout(this._candleCheckerTimeout);
         if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
         if (this._drawingsFinalUpdateTimeout) clearTimeout(this._drawingsFinalUpdateTimeout);
@@ -783,47 +777,6 @@ class ChartManager {
         }
     }
 
-    /**
-     * ✅ Обновляет chartData и серию БЕЗ requestAnimationFrame.
-     * Используется в фоновой вкладке, где RAF не работает.
-     */
-    _syncPriceLineBackground(price) {
-        if (!price || isNaN(price) || this._updatesSuspended) return;
-        
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series) return;
-        
-        if (!this.chartData || this.chartData.length === 0) return;
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        
-        lastCandle.close = price;
-        if (price > lastCandle.high) lastCandle.high = price;
-        if (price < lastCandle.low) lastCandle.low = price;
-        
-        const isBullish = lastCandle.close >= lastCandle.open;
-        const lineColor = isBullish 
-            ? (this.bullishColor || CONFIG.colors.bullish) 
-            : (this.bearishColor || CONFIG.colors.bearish);
-        
-        this.currentRealPrice = price;
-        this._lastAppliedColor = lineColor;
-        this.lastCandle = lastCandle;
-        
-        series.update({
-            time: lastCandle.time,
-            open: lastCandle.open,
-            high: lastCandle.high,
-            low: lastCandle.low,
-            close: price
-        });
-        
-        series.applyOptions({ 
-            priceLineSource: price, 
-            priceLineColor: lineColor 
-        });
-    }
-
     updateLastCandle(candle) {
         if (this._switchingSymbol || this._updatesSuspended) return;
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
@@ -942,10 +895,14 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
+    /**
+     * ✅ ОПТИМИЗИРОВАННЫЙ setDataQuick с защитой от гонок через generationId
+     */
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', generationId = null) {
         try {
             if (!data || data.length === 0) return;
 
+            // ✅ Защита от гонок: устаревшие данные игнорируются
             if (generationId !== null && this._activeGeneration !== generationId) {
                 console.log('⏭️ setDataQuick: устаревший generationId', generationId, 
                             '— текущий', this._activeGeneration);
@@ -1176,6 +1133,7 @@ class ChartManager {
                 candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
             }
             
+            // ✅ Проверка отмены после await
             if (this._activeGeneration !== generationId) {
                 console.log('🔄 Символ уже переключился, отменяем старую загрузку');
                 return;
@@ -1189,6 +1147,7 @@ class ChartManager {
                 this.timerManager.destroy();
             }
 
+            // ✅ Передаём generationId в setDataQuick
             this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, generationId);
 
             if (!isFromCache) {
@@ -1548,9 +1507,6 @@ class ChartManager {
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
 
-    /**
-     * ✅ ИСПРАВЛЕННЫЙ: обновляет chartData в фоне через _syncPriceLineBackground
-     */
     _subscribeToPrice() {
         if (!this.priceManager) {
             setTimeout(() => this._subscribeToPrice(), 100);
@@ -1571,17 +1527,9 @@ class ChartManager {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
             
             this.currentRealPrice = price;
+            this._updatePageTitle();
             
-            if (!document.hidden) {
-                // ✅ Вкладка активна — полное обновление с RAF-эффектами
-                this._syncPriceLine(price);
-                this._updatePageTitle();
-            } else {
-                // ✅ Вкладка в фоне — обновляем chartData БЕЗ тяжёлых RAF-эффектов
-                this._backgroundPrice = price;
-                this._syncPriceLineBackground(price);
-                this._updatePageTitle();
-            }
+            if (!document.hidden) this._syncPriceLine(price);
         };
 
         this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
@@ -1756,17 +1704,31 @@ class ChartManager {
         }
     }
 
+    /**
+     * ✅ ИСПРАВЛЕННЫЙ fetchKlines с поддержкой externalSignal
+     * @param {string} symbol - Тикер
+     * @param {string} exchange - Биржа
+     * @param {string} marketType - Рынок
+     * @param {string} interval - Таймфрейм
+     * @param {number} limit - Количество свечей
+     * @param {number|null} endTime - Конечное время
+     * @param {AbortSignal|null} externalSignal - ✅ Внешний signal для отмены
+     */
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, externalSignal = null) {
         let signal;
         let usingInternalController = false;
 
         if (externalSignal) {
+            // ✅ Используем внешний signal (от TimeframeManager или switchSymbol)
             signal = externalSignal;
+            
+            // Отменяем параллельный внутренний запрос, если есть
             if (this._currentFetchController) {
                 this._currentFetchController.abort();
                 this._currentFetchController = null;
             }
         } else {
+            // Используем внутренний контроллер (для _loadHistoryAsync, refreshCandlesInBackground)
             if (this._currentFetchController) {
                 this._currentFetchController.abort();
             }
@@ -1799,7 +1761,10 @@ class ChartManager {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
 
-            if (signal.aborted) return [];
+            // ✅ Проверяем abort ПЕРЕД тяжёлым парсингом
+            if (signal.aborted) {
+                return [];
+            }
 
             let rawCandles;
             if (exchange === 'binance') {
@@ -1836,6 +1801,7 @@ class ChartManager {
                     .reverse();
             }
             
+            // Финальная проверка abort
             if (signal.aborted) return [];
             
             const seenTimes = new Set();
@@ -1851,11 +1817,13 @@ class ChartManager {
             
         } catch (error) {
             if (error.name === 'AbortError') {
+                // ✅ Пробрасываем AbortError — пусть отменяющий его обработает
                 throw error;
             }
             console.error('❌ Ошибка fetchKlines:', error);
             return [];
         } finally {
+            // ✅ Сбрасываем внутренний контроллер ТОЛЬКО если использовали его
             if (usingInternalController && this._currentFetchController?.signal === signal) {
                 this._currentFetchController = null;
             }
@@ -1932,6 +1900,10 @@ class ChartManager {
     }
 
     _abortAllProcesses() {
+        if (this._pingInterval) {
+            clearInterval(this._pingInterval);
+            this._pingInterval = null;
+        }
         if (this._bgTitleInterval) {
             clearInterval(this._bgTitleInterval);
             this._bgTitleInterval = null;
@@ -2245,6 +2217,7 @@ class ChartManager {
             }
             
             const endTime = (oldestCandle.time * 1000) - 1;
+            // ✅ Без externalSignal — используется внутренний контроллер
             const olderCandles = await this.fetchKlines(
                 this.currentSymbol, 
                 this.currentExchange, 
@@ -2305,6 +2278,7 @@ class ChartManager {
             }
             
         } catch (e) {
+            // ✅ Подавляем AbortError при прокрутке истории — это нормально
             if (e.name !== 'AbortError') {
                 console.error('❌ Ошибка загрузки истории:', e);
                 this.hasMoreData = false;
@@ -2317,6 +2291,7 @@ class ChartManager {
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange) return;
+            // ✅ Без externalSignal — фоновое обновление использует внутренний контроллер
             const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, 100);
             if (!freshCandles || freshCandles.length === 0) return;
             if (symbol !== this.currentSymbol) return;
@@ -2340,64 +2315,6 @@ class ChartManager {
             if (error.name !== 'AbortError') {
                 console.warn('⚠️ Ошибка фонового обновления:', error); 
             }
-        }
-    }
-
-    /**
-     * ✅ Догружает свечи, которые пришли пока вкладка была неактивна.
-     */
-    async _catchUpMissedCandles() {
-        if (!this.chartData || this.chartData.length === 0) return;
-        if (this._isCatchingUp) return;
-        if (this._switchingSymbol) return;
-        
-        this._isCatchingUp = true;
-        
-        try {
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            const now = Math.floor(Date.now() / 1000);
-            
-            // Если последняя свеча свежее 60 секунд — ничего не делаем
-            if (now - lastCandle.time < 60) return;
-            
-            console.log('🔄 Догружаем пропущенные свечи...');
-            
-            const freshCandles = await this.fetchKlines(
-                this.currentSymbol,
-                this.currentExchange,
-                this.currentMarketType,
-                this.currentInterval,
-                200
-            );
-            
-            if (!freshCandles || freshCandles.length === 0) return;
-            
-            const lastTime = lastCandle.time;
-            const newCandles = freshCandles.filter(c => c.time > lastTime);
-            
-            if (newCandles.length > 0) {
-                console.log(`📈 Добавляем ${newCandles.length} пропущенных свечей`);
-                
-                this.chartData.push(...newCandles);
-                this._rebuildTimeMap();
-                this._volumeDataDirty = true;
-                this._lastVolumeUpdateIndex = -1;
-                
-                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (activeSeries) {
-                    activeSeries.setData(this.chartData);
-                }
-                this._updateVolumeOptimized();
-                
-                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                this.scrollToLast();
-            }
-        } catch (error) {
-            if (error.name !== 'AbortError') {
-                console.warn('⚠️ Ошибка догрузки свечей:', error);
-            }
-        } finally {
-            this._isCatchingUp = false;
         }
     }
 
