@@ -103,18 +103,16 @@ class ChartManager {
         this._pendingDrawingsRedraw = false;
 
         // ============ VISIBILITY HANDLER ============
-        this._visibilityHandler = () => {
-            if (!document.hidden) {
-                if (window.wsManager) window.wsManager.ensureConnected?.();
-                const price = this.getCurrentPrice();
-                if (price != null) this._syncPriceLine(price);
-                this.scheduleDrawingsUpdate(true);
-                this.requestDrawingsRedraw();
-                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            } else {
-                this._startBackgroundTitleUpdate();
-            }
-        };
+      this._visibilityHandler = () => {
+    if (document.hidden) {
+        // Ничего не делаем — WebSocket продолжает работать
+    } else {
+        if (this._bgTitleInterval) {
+            clearInterval(this._bgTitleInterval);
+            this._bgTitleInterval = null;
+        }
+    }
+};
         document.addEventListener('visibilitychange', this._visibilityHandler);
        
         // ============ ХЕНДЛЕРЫ ============
@@ -1507,34 +1505,50 @@ class ChartManager {
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
 
-    _subscribeToPrice() {
-        if (!this.priceManager) {
-            setTimeout(() => this._subscribeToPrice(), 100);
-            return;
-        }
-
-        if (this._priceSubscriptionKey && this._priceUpdateHandler) {
-            this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
-            this._priceUpdateHandler = null;
-            this._priceSubscriptionKey = null;
-        }
-
-        const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
-        this._priceSubscriptionKey = key;
-
-        this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
-            if (this._switchingSymbol || this._updatesSuspended || this._isApplyingData) return;
-            if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
-            
-            this.currentRealPrice = price;
-            this._updatePageTitle();
-            
-            if (!document.hidden) this._syncPriceLine(price);
-        };
-
-        this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
-        this._startBackgroundTitleUpdate();
+ _subscribeToPrice() {
+    if (!this.priceManager) {
+        setTimeout(() => this._subscribeToPrice(), 100);
+        return;
     }
+
+    if (this._priceSubscriptionKey && this._priceUpdateHandler) {
+        this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
+        this._priceUpdateHandler = null;
+        this._priceSubscriptionKey = null;
+    }
+
+    const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
+    this._priceSubscriptionKey = key;
+
+    this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
+        if (this._switchingSymbol || this._updatesSuspended || this._isApplyingData) return;
+        if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
+        
+        this.currentRealPrice = price;
+        
+        if (this.lastCandle) {
+            this.lastCandle.close = price;
+            if (price > this.lastCandle.high) this.lastCandle.high = price;
+            if (price < this.lastCandle.low) this.lastCandle.low = price;
+            
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (series) {
+                series.update({
+                    time: this.lastCandle.time,
+                    open: this.lastCandle.open,
+                    high: this.lastCandle.high,
+                    low: this.lastCandle.low,
+                    close: price
+                });
+            }
+        }
+        
+        this._updatePageTitle();
+        this._syncPriceLine(price);
+    };
+
+    this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+}
 
     setSymbol(symbol) {
         if (this.currentSymbol === symbol) return;
