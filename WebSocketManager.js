@@ -195,13 +195,9 @@ class WebSocketManager {
                             if (k) {
                                 self._lastKlineTime = Math.floor(k.t / 1000);
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.t / 1000), 
-                                    open: parseFloat(k.o),
-                                    high: parseFloat(k.h), 
-                                    low: parseFloat(k.l),
-                                    close: parseFloat(k.c), 
-                                    volume: parseFloat(k.v),
-                                    quoteVolume: parseFloat(k.q)   // ✅ восстановлено
+                                    time: Math.floor(k.t / 1000), open: parseFloat(k.o),
+                                    high: parseFloat(k.h), low: parseFloat(k.l),
+                                    close: parseFloat(k.c), volume: parseFloat(k.v)
                                 });
                             }
                         } else if (raw.stream.includes('@trade')) {
@@ -226,13 +222,9 @@ class WebSocketManager {
                                 const k = raw.data[0];
                                 self._lastKlineTime = Math.floor(k.start / 1000);
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.start / 1000), 
-                                    open: parseFloat(k.open),
-                                    high: parseFloat(k.high), 
-                                    low: parseFloat(k.low),
-                                    close: parseFloat(k.close), 
-                                    volume: parseFloat(k.volume),
-                                    quoteVolume: parseFloat(k.quoteVolume || k.turnover || 0)   // ✅ восстановлено
+                                    time: Math.floor(k.start / 1000), open: parseFloat(k.open),
+                                    high: parseFloat(k.high), low: parseFloat(k.low),
+                                    close: parseFloat(k.close), volume: parseFloat(k.volume)
                                 });
                             }
                         } else if (raw.topic.startsWith('publicTrade.')) {
@@ -383,4 +375,4 @@ class WebSocketManager {
     }
 }
 
-if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;
+if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;           
