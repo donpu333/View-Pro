@@ -412,7 +412,7 @@ _backgroundChartTick() {
         console.warn('⚠️ backgroundChartTick error:', e);
     }
 }
-  _updateModelOnly(price) {
+_updateModelOnly(price) {
     if (!price || isNaN(price) || this._updatesSuspended) return;
     
     if (!this.chartData || this.chartData.length === 0) return;
@@ -421,23 +421,15 @@ _backgroundChartTick() {
     
     // Обновляем только данные в памяти
     lastCandle.close = price;
-    if (price > lastCandle.high) lastCandle.high = price;
-    if (price < lastCandle.low) lastCandle.low = price;
-    
-    // Обновляем quoteVolume (если есть)
-    if (this.priceManager?.getVolume) {
-        const volume = this.priceManager.getVolume(this.currentSymbol);
-        if (volume != null) {
-            lastCandle.quoteVolume = volume;
-            lastCandle.volume = volume;
-        }
-    }
+    if (price > lastCandle.high) lastCandle.high = price; // ← ВАЖНО
+    if (price < lastCandle.low) lastCandle.low = price;    // ← ВАЖНО
     
     this.currentRealPrice = price;
     this._lastSyncedPrice = price;
     this.lastCandle = lastCandle;
     
-    this._volumeDataDirty = true; // ← ОБЪЁМЫ ИЗМЕНИЛИСЬ
+    this._volumeDataDirty = true;
+    this._needFullRedraw = true;
 }
 
    _forceFullRedraw() {
@@ -1682,36 +1674,53 @@ _backgroundChartTick() {
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
 
-    _subscribeToPrice() {
-        if (!this.priceManager) {
-            setTimeout(() => this._subscribeToPrice(), 100);
-            return;
-        }
-
-        if (this._priceSubscriptionKey && this._priceUpdateHandler) {
-            this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
-            this._priceUpdateHandler = null;
-            this._priceSubscriptionKey = null;
-        }
-
-        const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
-        this._priceSubscriptionKey = key;
-
-        this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
-            if (this._switchingSymbol || this._updatesSuspended) return;
-            if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
-
-            this.currentRealPrice = price;
-            this._updatePageTitle();
-
-            if (price !== this._lastSyncedPrice) {
-                this._syncPriceLine(price);
-            }
-        };
-
-        this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
-        this._startBackgroundTitleUpdate();
+ _subscribeToPrice() {
+    if (!this.priceManager) {
+        setTimeout(() => this._subscribeToPrice(), 100);
+        return;
     }
+
+    if (this._priceSubscriptionKey && this._priceUpdateHandler) {
+        this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
+        this._priceUpdateHandler = null;
+        this._priceSubscriptionKey = null;
+    }
+
+    const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
+    this._priceSubscriptionKey = key;
+
+    this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
+        if (this._switchingSymbol || this._updatesSuspended) return;
+        if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
+
+        this.currentRealPrice = price;
+        
+        // ✅ ОБНОВЛЯЕМ HIGH/LOW КАЖДЫЙ ТИК
+        if (this.chartData && this.chartData.length > 0) {
+            const lastCandle = this.chartData[this.chartData.length - 1];
+            if (lastCandle) {
+                lastCandle.close = price;
+                if (price > lastCandle.high) lastCandle.high = price;
+                if (price < lastCandle.low) lastCandle.low = price;
+                this.lastCandle = lastCandle;
+            }
+        }
+        
+        this._updatePageTitle();
+
+        if (!document.hidden && price !== this._lastSyncedPrice) {
+            this._syncPriceLine(price);
+        } else if (document.hidden) {
+            // В фоне тоже обновляем high/low
+            this._updateModelOnly(price);
+        }
+        
+        this._lastSyncedPrice = price;
+    };
+
+    this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+    this._startBackgroundTitleUpdate();
+}
 
     setSymbol(symbol) {
         if (this.currentSymbol === symbol) return;
