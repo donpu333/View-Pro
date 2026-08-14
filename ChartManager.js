@@ -953,15 +953,15 @@ __updateModelOnly(price) {
 
         if (isLastCandle) {
             // ✅ ПОЛНОЕ ОБНОВЛЕНИЕ ВСЕХ ДАННЫХ
-            // open НЕ перезаписываем — он фиксируется при создании свечи
-            currentLastCandle.high = candle.high;      // high из kline
-            currentLastCandle.low = candle.low;        // low из kline
-            currentLastCandle.close = candle.close;    // close из kline
+            // open НЕ перезаписываем
+            currentLastCandle.high = candle.high;
+            currentLastCandle.low = candle.low;
+            currentLastCandle.close = candle.close;
             currentLastCandle.volume = candle.volume || currentLastCandle.volume;
             currentLastCandle.quoteVolume = candle.quoteVolume || currentLastCandle.quoteVolume;
             this.lastCandle = currentLastCandle;
             
-            // Обновляем серию с ПОЛНЫМИ данными
+            // ✅ ВСЕГДА обновляем серию, даже в фоне
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (activeSeries) {
                 activeSeries.update({
@@ -971,18 +971,9 @@ __updateModelOnly(price) {
                     low: currentLastCandle.low,
                     close: currentLastCandle.close
                 });
-                
-                // Обновляем цвет линии
-                const isBullish = currentLastCandle.close >= currentLastCandle.open;
-                const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-                
-                if (lineColor !== this._lastAppliedColor) {
-                    this._lastAppliedColor = lineColor;
-                    activeSeries.applyOptions({ priceLineColor: lineColor });
-                }
             }
             
-            // ✅ Обновляем объём с quoteVolume
+            // ✅ ВСЕГДА обновляем объём, даже в фоне
             if (this.volumeSeries) {
                 const isBullish = currentLastCandle.close >= currentLastCandle.open;
                 this.volumeSeries.update({
@@ -993,7 +984,6 @@ __updateModelOnly(price) {
             }
             
         } else if (isNewCandle) {
-            // ✅ Новая свеча — берём ВСЕ данные из kline
             this.chartData.push(candle);
             this._addToTimeMap(candle.time, this.chartData.length - 1);
             this.lastCandle = candle;
@@ -1011,31 +1001,11 @@ __updateModelOnly(price) {
                     color: isBullish ? this.bullishColor : this.bearishColor
                 });
             }
-            
-        } else {
-            // Историческая свеча (обычно при загрузке)
-            const existingIndex = this._candleTimeMap.get(candle.time);
-            if (existingIndex !== undefined) {
-                const existing = this.chartData[existingIndex];
-                existing.open = candle.open;
-                existing.high = candle.high;
-                existing.low = candle.low;
-                existing.close = candle.close;
-                existing.volume = candle.volume || existing.volume;
-                existing.quoteVolume = candle.quoteVolume || existing.quoteVolume;
-            }
-            return;
         }
         
         this.currentRealPrice = this.lastCandle.close;
         this._lastSyncedPrice = this.lastCandle.close;
         this._volumeDataDirty = true;
-        
-        if (!document.hidden) {
-            this._updatePageTitle();
-            this.scheduleUpdatePosition();
-            this.requestDrawingsRedraw();
-        }
         
     } catch (e) {
         console.error('❌ Ошибка в updateLastCandle:', e);
