@@ -6,7 +6,7 @@ class WebSocketManager {
         this.retryCount = 0;
         this.isConnected = false;
         
-        // Отслеживание свежести данных
+        // ✅ Отслеживание свежести данных
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
         this._statusCheckTimeout = null;
@@ -175,6 +175,7 @@ class WebSocketManager {
                 if (msg.type === 'status') {
                     self.isConnected = msg.connected;
                     if (!msg.connected && !document.hidden) {
+                        // Worker говорит, что не подключён — переподключаемся
                         self.connect(self.currentSymbol, self.currentInterval, 
                                     self.currentExchange, self.currentMarketType);
                     }
@@ -193,25 +194,16 @@ class WebSocketManager {
                             const k = raw.data.k;
                             if (k) {
                                 self._lastKlineTime = Math.floor(k.t / 1000);
-                                
-                                // ✅ KLINE — ОСНОВНОЙ ИСТОЧНИК, обновляет ВСЁ
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.t / 1000), 
-                                    open: parseFloat(k.o),
-                                    high: parseFloat(k.h), 
-                                    low: parseFloat(k.l),
-                                    close: parseFloat(k.c), 
-                                    volume: parseFloat(k.v),
-                                    quoteVolume: parseFloat(k.q)
+                                    time: Math.floor(k.t / 1000), open: parseFloat(k.o),
+                                    high: parseFloat(k.h), low: parseFloat(k.l),
+                                    close: parseFloat(k.c), volume: parseFloat(k.v)
                                 });
                             }
                         } else if (raw.stream.includes('@trade')) {
                             const price = parseFloat(raw.data.p);
-                            if (!isNaN(price)) {
-                                // ✅ TRADE — только для цены линии, НЕ трогаем свечи
-                                if (self.chartManager._syncPriceLine) {
-                                    self.chartManager._syncPriceLine(price);
-                                }
+                            if (!isNaN(price) && self.chartManager._syncPriceLine) {
+                                self.chartManager._syncPriceLine(price);
                             }
                         }
                     }
@@ -229,26 +221,17 @@ class WebSocketManager {
                             if (raw.data && raw.data.length) {
                                 const k = raw.data[0];
                                 self._lastKlineTime = Math.floor(k.start / 1000);
-                                
-                                // ✅ KLINE — ОСНОВНОЙ ИСТОЧНИК, обновляет ВСЁ
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.start / 1000), 
-                                    open: parseFloat(k.open),
-                                    high: parseFloat(k.high), 
-                                    low: parseFloat(k.low),
-                                    close: parseFloat(k.close), 
-                                    volume: parseFloat(k.volume),
-                                    quoteVolume: parseFloat(k.quoteVolume || k.turnover || 0)
+                                    time: Math.floor(k.start / 1000), open: parseFloat(k.open),
+                                    high: parseFloat(k.high), low: parseFloat(k.low),
+                                    close: parseFloat(k.close), volume: parseFloat(k.volume)
                                 });
                             }
                         } else if (raw.topic.startsWith('publicTrade.')) {
                             if (raw.data && raw.data.length) {
                                 const price = parseFloat(raw.data[0].p);
-                                if (!isNaN(price)) {
-                                    // ✅ TRADE — только для цены линии, НЕ трогаем свечи
-                                    if (self.chartManager._syncPriceLine) {
-                                        self.chartManager._syncPriceLine(price);
-                                    }
+                                if (!isNaN(price) && self.chartManager._syncPriceLine) {
+                                    self.chartManager._syncPriceLine(price);
                                 }
                             }
                         }
@@ -345,8 +328,10 @@ class WebSocketManager {
             return;
         }
         
+        // ✅ Запрашиваем реальный статус у worker'а
         this.worker.postMessage({ type: 'status' });
         
+        // Если worker не ответил за 2 секунды — переподключаемся
         if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
         this._statusCheckTimeout = setTimeout(() => {
             if (Date.now() - this._lastMessageTime > 5000) {
@@ -357,22 +342,27 @@ class WebSocketManager {
         }, 2000);
     }
 
+    // ✅ Вызывается при возврате на вкладку
     _onTabVisible() {
         const now = Date.now();
         
+        // 1. Проверяем, жив ли worker и соединение
         this.ensureConnected();
         
+        // 2. Если нет сообщений больше 5 секунд — переподключаемся принудительно
         if (this._lastMessageTime && (now - this._lastMessageTime > 5000)) {
             console.log('🔄 Нет данных > 5 сек, переподключаемся');
             this.connect(this.currentSymbol, this.currentInterval, 
                         this.currentExchange, this.currentMarketType);
         }
         
+        // 3. Догружаем пропущенные свечи через REST
         if (this.chartManager._catchUpMissedCandles) {
             this.chartManager._catchUpMissedCandles();
         }
     }
 
+    // ✅ Очистка при уничтожении
     destroy() {
         document.removeEventListener('visibilitychange', this._visibilityHandler);
         if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
@@ -385,4 +375,4 @@ class WebSocketManager {
     }
 }
 
-if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;
+if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;           
