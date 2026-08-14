@@ -194,7 +194,7 @@ class WebSocketManager {
                             if (k) {
                                 self._lastKlineTime = Math.floor(k.t / 1000);
                                 
-                                // ✅ ВСЕГДА вызываем updateLastCandle с полными данными
+                                // ✅ KLINE — ОСНОВНОЙ ИСТОЧНИК, обновляет ВСЁ
                                 self.chartManager.updateLastCandle({
                                     time: Math.floor(k.t / 1000), 
                                     open: parseFloat(k.o),
@@ -208,36 +208,9 @@ class WebSocketManager {
                         } else if (raw.stream.includes('@trade')) {
                             const price = parseFloat(raw.data.p);
                             if (!isNaN(price)) {
-                                // ✅ Обновляем close, high, low из trade
-                                const chartData = self.chartManager.chartData;
-                                if (chartData && chartData.length > 0) {
-                                    const lastCandle = chartData[chartData.length - 1];
-                                    if (lastCandle) {
-                                        lastCandle.close = price;
-                                        if (price > lastCandle.high) lastCandle.high = price;
-                                        if (price < lastCandle.low) lastCandle.low = price;
-                                        self.chartManager.lastCandle = lastCandle;
-                                        
-                                        // Обновляем серию
-                                        const series = self.chartManager.currentChartType === 'candle' 
-                                            ? self.chartManager.candleSeries 
-                                            : self.chartManager.barSeries;
-                                            
-                                        if (series) {
-                                            series.update({
-                                                time: lastCandle.time,
-                                                open: lastCandle.open,
-                                                high: lastCandle.high,
-                                                low: lastCandle.low,
-                                                close: lastCandle.close
-                                            });
-                                        }
-                                        
-                                        // Обновляем цену линии
-                                        if (self.chartManager._syncPriceLine) {
-                                            self.chartManager._syncPriceLine(price);
-                                        }
-                                    }
+                                // ✅ TRADE — только для цены линии, НЕ трогаем свечи
+                                if (self.chartManager._syncPriceLine) {
+                                    self.chartManager._syncPriceLine(price);
                                 }
                             }
                         }
@@ -257,7 +230,7 @@ class WebSocketManager {
                                 const k = raw.data[0];
                                 self._lastKlineTime = Math.floor(k.start / 1000);
                                 
-                                // ✅ ВСЕГДА вызываем updateLastCandle с полными данными
+                                // ✅ KLINE — ОСНОВНОЙ ИСТОЧНИК, обновляет ВСЁ
                                 self.chartManager.updateLastCandle({
                                     time: Math.floor(k.start / 1000), 
                                     open: parseFloat(k.open),
@@ -272,36 +245,9 @@ class WebSocketManager {
                             if (raw.data && raw.data.length) {
                                 const price = parseFloat(raw.data[0].p);
                                 if (!isNaN(price)) {
-                                    // ✅ Обновляем close, high, low из trade
-                                    const chartData = self.chartManager.chartData;
-                                    if (chartData && chartData.length > 0) {
-                                        const lastCandle = chartData[chartData.length - 1];
-                                        if (lastCandle) {
-                                            lastCandle.close = price;
-                                            if (price > lastCandle.high) lastCandle.high = price;
-                                            if (price < lastCandle.low) lastCandle.low = price;
-                                            self.chartManager.lastCandle = lastCandle;
-                                            
-                                            // Обновляем серию
-                                            const series = self.chartManager.currentChartType === 'candle' 
-                                                ? self.chartManager.candleSeries 
-                                                : self.chartManager.barSeries;
-                                                
-                                            if (series) {
-                                                series.update({
-                                                    time: lastCandle.time,
-                                                    open: lastCandle.open,
-                                                    high: lastCandle.high,
-                                                    low: lastCandle.low,
-                                                    close: lastCandle.close
-                                                });
-                                            }
-                                            
-                                            // Обновляем цену линии
-                                            if (self.chartManager._syncPriceLine) {
-                                                self.chartManager._syncPriceLine(price);
-                                            }
-                                        }
+                                    // ✅ TRADE — только для цены линии, НЕ трогаем свечи
+                                    if (self.chartManager._syncPriceLine) {
+                                        self.chartManager._syncPriceLine(price);
                                     }
                                 }
                             }
