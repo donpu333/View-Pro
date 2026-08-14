@@ -175,7 +175,6 @@ class WebSocketManager {
                 if (msg.type === 'status') {
                     self.isConnected = msg.connected;
                     if (!msg.connected && !document.hidden) {
-                        // Worker говорит, что не подключён — переподключаемся
                         self.connect(self.currentSymbol, self.currentInterval, 
                                     self.currentExchange, self.currentMarketType);
                     }
@@ -186,6 +185,7 @@ class WebSocketManager {
                     const raw = JSON.parse(msg.data);
                     if (raw.op === 'pong') return;
                     
+                    // ==================== BINANCE ====================
                     if (self.currentExchange === 'binance' && raw.stream) {
                         const msgSymbol = (raw.data && raw.data.s) ? raw.data.s.toUpperCase() : null;
                         if (!msgSymbol || msgSymbol !== self.currentSymbol.toUpperCase()) return;
@@ -194,10 +194,19 @@ class WebSocketManager {
                             const k = raw.data.k;
                             if (k) {
                                 self._lastKlineTime = Math.floor(k.t / 1000);
+                                
+                                // ✅ ИСПРАВЛЕНИЕ 1: Передаём quoteVolume для корректного отображения объёмов
+                                // ✅ ИСПРАВЛЕНИЕ 2: Обновляем свечу (флаг k.x указывает закрыта ли свеча)
+                                // Обновляем всегда - updateLastCandle корректно обработает и открытые, и закрытые свечи
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.t / 1000), open: parseFloat(k.o),
-                                    high: parseFloat(k.h), low: parseFloat(k.l),
-                                    close: parseFloat(k.c), volume: parseFloat(k.v)
+                                    time: Math.floor(k.t / 1000),
+                                    open: parseFloat(k.o),
+                                    high: parseFloat(k.h),
+                                    low: parseFloat(k.l),
+                                    close: parseFloat(k.c),
+                                    volume: parseFloat(k.v),
+                                    quoteVolume: parseFloat(k.q || 0),
+                                    isClosed: k.x === true  // ✅ Передаём флаг закрытия
                                 });
                             }
                         } else if (raw.stream.includes('@trade')) {
@@ -207,6 +216,7 @@ class WebSocketManager {
                             }
                         }
                     }
+                    // ==================== BYBIT ====================
                     else if (self.currentExchange === 'bybit' && raw.topic) {
                         const parts = raw.topic.split('.');
                         let msgSymbol = null;
@@ -221,10 +231,17 @@ class WebSocketManager {
                             if (raw.data && raw.data.length) {
                                 const k = raw.data[0];
                                 self._lastKlineTime = Math.floor(k.start / 1000);
+                                
+                                // ✅ ИСПРАВЛЕНИЕ: Передаём quoteVolume (turnover в Bybit) и флаг закрытия (confirm)
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.start / 1000), open: parseFloat(k.open),
-                                    high: parseFloat(k.high), low: parseFloat(k.low),
-                                    close: parseFloat(k.close), volume: parseFloat(k.volume)
+                                    time: Math.floor(k.start / 1000),
+                                    open: parseFloat(k.open),
+                                    high: parseFloat(k.high),
+                                    low: parseFloat(k.low),
+                                    close: parseFloat(k.close),
+                                    volume: parseFloat(k.volume),
+                                    quoteVolume: parseFloat(k.turnover || 0),
+                                    isClosed: k.confirm === true  // ✅ Передаём флаг закрытия
                                 });
                             }
                         } else if (raw.topic.startsWith('publicTrade.')) {
@@ -236,7 +253,9 @@ class WebSocketManager {
                             }
                         }
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
+                }
             }
             else if (msg.type === 'close') {
                 self.isConnected = false;
@@ -328,10 +347,8 @@ class WebSocketManager {
             return;
         }
         
-        // ✅ Запрашиваем реальный статус у worker'а
         this.worker.postMessage({ type: 'status' });
         
-        // Если worker не ответил за 2 секунды — переподключаемся
         if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
         this._statusCheckTimeout = setTimeout(() => {
             if (Date.now() - this._lastMessageTime > 5000) {
@@ -342,27 +359,23 @@ class WebSocketManager {
         }, 2000);
     }
 
-    // ✅ Вызывается при возврате на вкладку
     _onTabVisible() {
         const now = Date.now();
         
-        // 1. Проверяем, жив ли worker и соединение
         this.ensureConnected();
         
-        // 2. Если нет сообщений больше 5 секунд — переподключаемся принудительно
         if (this._lastMessageTime && (now - this._lastMessageTime > 5000)) {
             console.log('🔄 Нет данных > 5 сек, переподключаемся');
             this.connect(this.currentSymbol, this.currentInterval, 
                         this.currentExchange, this.currentMarketType);
         }
         
-        // 3. Догружаем пропущенные свечи через REST
+        // ✅ Догружаем пропущенные свечи через REST
         if (this.chartManager._catchUpMissedCandles) {
             this.chartManager._catchUpMissedCandles();
         }
     }
 
-    // ✅ Очистка при уничтожении
     destroy() {
         document.removeEventListener('visibilitychange', this._visibilityHandler);
         if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
@@ -375,4 +388,4 @@ class WebSocketManager {
     }
 }
 
-if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;           
+if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;
