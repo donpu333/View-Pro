@@ -6,7 +6,7 @@ class WebSocketManager {
         this.retryCount = 0;
         this.isConnected = false;
         
-        // ✅ Отслеживание свежести данных
+        // Отслеживание свежести данных
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
         this._statusCheckTimeout = null;
@@ -175,7 +175,6 @@ class WebSocketManager {
                 if (msg.type === 'status') {
                     self.isConnected = msg.connected;
                     if (!msg.connected && !document.hidden) {
-                        // Worker говорит, что не подключён — переподключаемся
                         self.connect(self.currentSymbol, self.currentInterval, 
                                     self.currentExchange, self.currentMarketType);
                     }
@@ -194,10 +193,15 @@ class WebSocketManager {
                             const k = raw.data.k;
                             if (k) {
                                 self._lastKlineTime = Math.floor(k.t / 1000);
+                                // ✅ ИСПРАВЛЕНО: Передаём ВСЕ данные включая quoteVolume
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.t / 1000), open: parseFloat(k.o),
-                                    high: parseFloat(k.h), low: parseFloat(k.l),
-                                    close: parseFloat(k.c), volume: parseFloat(k.v)
+                                    time: Math.floor(k.t / 1000), 
+                                    open: parseFloat(k.o),
+                                    high: parseFloat(k.h), 
+                                    low: parseFloat(k.l),
+                                    close: parseFloat(k.c), 
+                                    volume: parseFloat(k.v),
+                                    quoteVolume: parseFloat(k.q)
                                 });
                             }
                         } else if (raw.stream.includes('@trade')) {
@@ -221,10 +225,15 @@ class WebSocketManager {
                             if (raw.data && raw.data.length) {
                                 const k = raw.data[0];
                                 self._lastKlineTime = Math.floor(k.start / 1000);
+                                // ✅ ИСПРАВЛЕНО: Передаём ВСЕ данные включая quoteVolume
                                 self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.start / 1000), open: parseFloat(k.open),
-                                    high: parseFloat(k.high), low: parseFloat(k.low),
-                                    close: parseFloat(k.close), volume: parseFloat(k.volume)
+                                    time: Math.floor(k.start / 1000), 
+                                    open: parseFloat(k.open),
+                                    high: parseFloat(k.high), 
+                                    low: parseFloat(k.low),
+                                    close: parseFloat(k.close), 
+                                    volume: parseFloat(k.volume),
+                                    quoteVolume: parseFloat(k.quoteVolume || k.turnover || 0)
                                 });
                             }
                         } else if (raw.topic.startsWith('publicTrade.')) {
@@ -328,10 +337,8 @@ class WebSocketManager {
             return;
         }
         
-        // ✅ Запрашиваем реальный статус у worker'а
         this.worker.postMessage({ type: 'status' });
         
-        // Если worker не ответил за 2 секунды — переподключаемся
         if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
         this._statusCheckTimeout = setTimeout(() => {
             if (Date.now() - this._lastMessageTime > 5000) {
@@ -342,27 +349,22 @@ class WebSocketManager {
         }, 2000);
     }
 
-    // ✅ Вызывается при возврате на вкладку
     _onTabVisible() {
         const now = Date.now();
         
-        // 1. Проверяем, жив ли worker и соединение
         this.ensureConnected();
         
-        // 2. Если нет сообщений больше 5 секунд — переподключаемся принудительно
         if (this._lastMessageTime && (now - this._lastMessageTime > 5000)) {
             console.log('🔄 Нет данных > 5 сек, переподключаемся');
             this.connect(this.currentSymbol, this.currentInterval, 
                         this.currentExchange, this.currentMarketType);
         }
         
-        // 3. Догружаем пропущенные свечи через REST
         if (this.chartManager._catchUpMissedCandles) {
             this.chartManager._catchUpMissedCandles();
         }
     }
 
-    // ✅ Очистка при уничтожении
     destroy() {
         document.removeEventListener('visibilitychange', this._visibilityHandler);
         if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
