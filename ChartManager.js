@@ -394,79 +394,89 @@ class ChartManager {
         }
     }
 
-    _backgroundChartTick() {
-        try {
-            const price = this.getCurrentPrice();
+_backgroundChartTick() {
+    try {
+        const price = this.getCurrentPrice();
 
-            // Обновляем ТОЛЬКО модель данных, НЕ series
-            if (price != null && price !== this._lastSyncedPrice) {
-                this._updateModelOnly(price);
-                this._needFullRedraw = true;
-            }
+        // Обновляем ТОЛЬКО модель данных, НЕ series
+        if (price != null && price !== this._lastSyncedPrice) {
+            this._updateModelOnly(price);
+            this._needFullRedraw = true;
+            this._volumeDataDirty = true; // ← ПОМЕЧАЕМ ОБЪЁМЫ КАК ГРЯЗНЫЕ
+        }
 
-            // Обновляем заголовок
-            this._updatePageTitle();
-            
-        } catch (e) {
-            console.warn('⚠️ backgroundChartTick error:', e);
+        // Обновляем заголовок
+        this._updatePageTitle();
+        
+    } catch (e) {
+        console.warn('⚠️ backgroundChartTick error:', e);
+    }
+}
+  _updateModelOnly(price) {
+    if (!price || isNaN(price) || this._updatesSuspended) return;
+    
+    if (!this.chartData || this.chartData.length === 0) return;
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    // Обновляем только данные в памяти
+    lastCandle.close = price;
+    if (price > lastCandle.high) lastCandle.high = price;
+    if (price < lastCandle.low) lastCandle.low = price;
+    
+    // Обновляем quoteVolume (если есть)
+    if (this.priceManager?.getVolume) {
+        const volume = this.priceManager.getVolume(this.currentSymbol);
+        if (volume != null) {
+            lastCandle.quoteVolume = volume;
+            lastCandle.volume = volume;
         }
     }
+    
+    this.currentRealPrice = price;
+    this._lastSyncedPrice = price;
+    this.lastCandle = lastCandle;
+    
+    this._volumeDataDirty = true; // ← ОБЪЁМЫ ИЗМЕНИЛИСЬ
+}
 
-    _updateModelOnly(price) {
-        if (!price || isNaN(price) || this._updatesSuspended) return;
+   _forceFullRedraw() {
+    if (!this.chart || !this.chartData.length) return;
+    
+    const activeSeries = this.currentChartType === 'candle' 
+        ? this.candleSeries 
+        : this.barSeries;
+    
+    if (activeSeries) {
+        // Полностью перезагружаем данные свечей
+        activeSeries.setData(this.chartData);
         
-        if (!this.chartData || this.chartData.length === 0) return;
+        // Обновляем цвет линии
         const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        
-        // Обновляем только данные в памяти
-        lastCandle.close = price;
-        if (price > lastCandle.high) lastCandle.high = price;
-        if (price < lastCandle.low) lastCandle.low = price;
-        
-        this.currentRealPrice = price;
-        this._lastSyncedPrice = price;
-        this.lastCandle = lastCandle;
-        
-        // НЕ трогаем series!
-        // НЕ трогаем volumeSeries!
-        // НЕ вызываем requestAnimationFrame!
-    }
-
-    _forceFullRedraw() {
-        if (!this.chart || !this.chartData.length) return;
-        
-        const activeSeries = this.currentChartType === 'candle' 
-            ? this.candleSeries 
-            : this.barSeries;
-        
-        if (activeSeries) {
-            // Полностью перезагружаем данные
-            activeSeries.setData(this.chartData);
-            
-            // Обновляем цвет линии
-            const lastCandle = this.chartData[this.chartData.length - 1];
-            if (lastCandle) {
-                const isBullish = lastCandle.close >= lastCandle.open;
-                const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-                activeSeries.applyOptions({ 
-                    priceLineColor: lineColor,
-                    priceLineSource: lastCandle.close
-                });
-                this._lastAppliedColor = lineColor;
-            }
+        if (lastCandle) {
+            const isBullish = lastCandle.close >= lastCandle.open;
+            const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+            activeSeries.applyOptions({ 
+                priceLineColor: lineColor,
+                priceLineSource: lastCandle.close
+            });
+            this._lastAppliedColor = lineColor;
         }
-        
-        if (this.volumeSeries) {
-            this._volumeDataDirty = true;
-            this._updateVolumeOptimized();
-        }
-        
-        // Восстанавливаем масштаб
-        this.scrollToLast();
-        
-        this._needFullRedraw = false;
     }
+    
+    // ✅ ВОТ ЭТО ДОБАВЬ — полное обновление объёмов
+    if (this.volumeSeries) {
+        const volumeData = this._buildVolumeData(this.chartData);
+        this.volumeSeries.setData(volumeData);
+        this._volumeDataDirty = false;
+        this._lastVolumeUpdateIndex = this.chartData.length - 1;
+    }
+    
+    // Восстанавливаем масштаб
+    this.scrollToLast();
+    
+    this._needFullRedraw = false;
+}
 
     _startBackgroundTitleUpdate() {
         if (this._bgTitleInterval) {
