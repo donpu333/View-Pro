@@ -1,16 +1,17 @@
 class WebSocketManager {
     constructor(chartManager) {
         this.chartManager = chartManager;
-        this.worker = null;
+        this.wsKline = null;
+        this.wsTrade = null;
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
+        this.isConnecting = false;
         
-        // ✅ Отслеживание свежести данных
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
-        this._statusCheckTimeout = null;
         this._connectDebounceTimer = null;
+        this._statusCheckInterval = null;
         
         this.currentSymbol = 'BTCUSDT';
         this.currentInterval = '1h';
@@ -26,259 +27,21 @@ class WebSocketManager {
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
         
-        this._initWorker();
+        setTimeout(() => this._autoConnect(), 1000);
     }
 
-    _initWorker() {
-        const workerCode = [
-            "var ws = null;",
-            "var pingInterval = null;",
-            "var currentUrl = null;",
-            "var reconnectAttempts = 0;",
-            "var maxReconnectDelay = 10000;",
-            "",
-            "function scheduleReconnect(d) {",
-            "    setTimeout(function() {",
-            "        if (currentUrl) createSocket(currentUrl);",
-            "    }, d);",
-            "}",
-            "",
-            "function createSocket(url) {",
-            "    if (ws) {",
-            "        var oldWs = ws;",
-            "        ws = null;",
-            "        oldWs.onopen = null;",
-            "        oldWs.onclose = null;",
-            "        oldWs.onerror = null;",
-            "        oldWs.onmessage = null;",
-            "        if (oldWs.readyState === WebSocket.OPEN) {",
-            "            try { oldWs.close(1000, 'Switching'); } catch(e) {}",
-            "        }",
-            "    }",
-            "",
-            "    try {",
-            "        ws = new WebSocket(url);",
-            "    } catch(e) {",
-            "        ws = null;",
-            "        self.postMessage({ type: 'error', error: 'Failed: ' + e.message });",
-            "        scheduleReconnect(3000);",
-            "        return;",
-            "    }",
-            "",
-            "    ws.onopen = function() {",
-            "        reconnectAttempts = 0;",
-            "        self.postMessage({ type: 'open' });",
-            "",
-            "        if (url.indexOf('bybit') !== -1) {",
-            "            clearInterval(pingInterval);",
-            "            pingInterval = setInterval(function() {",
-            "                if (ws && ws.readyState === WebSocket.OPEN) {",
-            "                    try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}",
-            "                }",
-            "            }, 20000);",
-            "        }",
-            "    };",
-            "",
-            "    ws.onmessage = function(e) {",
-            "        if (ws === null) return;",
-            "        self.postMessage({ type: 'message', data: e.data });",
-            "    };",
-            "",
-            "    ws.onclose = function(e) {",
-            "        clearInterval(pingInterval);",
-            "        if (ws === null) return;",
-            "        var target = ws;",
-            "        ws = null;",
-            "",
-            "        if (e.code === 1000 || e.code === 1008) {",
-            "            self.postMessage({ type: 'close', code: e.code, reason: e.reason || 'Normal' });",
-            "            return;",
-            "        }",
-            "",
-            "        reconnectAttempts++;",
-            "        var d = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);",
-            "        scheduleReconnect(d);",
-            "    };",
-            "",
-            "    ws.onerror = function(e) {",
-            "        if (ws === null) return;",
-            "    };",
-            "}",
-            "",
-            "self.onmessage = function(e) {",
-            "    var m = e.data;",
-            "",
-            "    if (m.type === 'connect') {",
-            "        currentUrl = m.url;",
-            "        reconnectAttempts = 0;",
-            "        createSocket(currentUrl);",
-            "    } else if (m.type === 'send') {",
-            "        if (ws && ws.readyState === WebSocket.OPEN) {",
-            "            try { ws.send(m.data); } catch(e) {}",
-            "        }",
-            "    } else if (m.type === 'close') {",
-            "        currentUrl = null;",
-            "        clearInterval(pingInterval);",
-            "        if (ws) {",
-            "            ws.onopen = null;",
-            "            ws.onclose = null;",
-            "            ws.onerror = null;",
-            "            ws.onmessage = null;",
-            "            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {",
-            "                try { ws.close(1000, 'User disconnect'); } catch(e) {}",
-            "            }",
-            "            ws = null;",
-            "        }",
-            "    } else if (m.type === 'ping') {",
-            "        if (ws && ws.readyState === WebSocket.OPEN) {",
-            "            self.postMessage({ type: 'pong' });",
-            "        } else {",
-            "            self.postMessage({ type: 'status', connected: false });",
-            "        }",
-            "    } else if (m.type === 'status') {",
-            "        self.postMessage({",
-            "            type: 'status',",
-            "            connected: ws !== null && ws.readyState === WebSocket.OPEN,",
-            "            url: currentUrl",
-            "        });",
-            "    }",
-            "};"
-        ].join('\n');
-
-        const blob = new Blob([workerCode], { type: 'application/javascript' });
-        const workerUrl = URL.createObjectURL(blob);
-        this.worker = new Worker(workerUrl);
-        URL.revokeObjectURL(workerUrl);
-        
-        const self = this;
-        
-        this.worker.onmessage = function(event) {
-            const msg = event.data;
-            self._lastMessageTime = Date.now();
-            
-            if (msg.type === 'open') {
-                self.isConnected = true;
-                if (self.currentExchange === 'bybit') {
-                    const bi = self.getExchangeInterval(self.currentInterval, self.currentExchange);
-                    const bs = self.formatSymbol(self.currentSymbol, self.currentExchange);
-                    self.worker.postMessage({
-                        type: 'send',
-                        data: JSON.stringify({ op: 'subscribe', args: ['kline.' + bi + '.' + bs, 'publicTrade.' + bs] })
-                    });
-                }
-            }
-            else if (msg.type === 'pong' || msg.type === 'status') {
-                if (self._statusCheckTimeout) {
-                    clearTimeout(self._statusCheckTimeout);
-                    self._statusCheckTimeout = null;
-                }
-                if (msg.type === 'status') {
-                    self.isConnected = msg.connected;
-                    if (!msg.connected && !document.hidden) {
-                        self.connect(self.currentSymbol, self.currentInterval, 
-                                    self.currentExchange, self.currentMarketType);
-                    }
-                }
-            }
-            else if (msg.type === 'message') {
-                try {
-                    const raw = JSON.parse(msg.data);
-                    if (raw.op === 'pong') return;
-                    
-                    // ==================== BINANCE ====================
-                    if (self.currentExchange === 'binance' && raw.stream) {
-                        const msgSymbol = (raw.data && raw.data.s) ? raw.data.s.toUpperCase() : null;
-                        if (!msgSymbol || msgSymbol !== self.currentSymbol.toUpperCase()) return;
-                        
-                        if (raw.stream.includes('@kline')) {
-                            const k = raw.data.k;
-                            if (k) {
-                                self._lastKlineTime = Math.floor(k.t / 1000);
-                                
-                                // ✅ ИСПРАВЛЕНИЕ 1: Передаём quoteVolume для корректного отображения объёмов
-                                // ✅ ИСПРАВЛЕНИЕ 2: Обновляем свечу (флаг k.x указывает закрыта ли свеча)
-                                // Обновляем всегда - updateLastCandle корректно обработает и открытые, и закрытые свечи
-                                self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.t / 1000),
-                                    open: parseFloat(k.o),
-                                    high: parseFloat(k.h),
-                                    low: parseFloat(k.l),
-                                    close: parseFloat(k.c),
-                                    volume: parseFloat(k.v),
-                                    quoteVolume: parseFloat(k.q || 0),
-                                    isClosed: k.x === true  // ✅ Передаём флаг закрытия
-                                });
-                            }
-                        } else if (raw.stream.includes('@trade')) {
-                            const price = parseFloat(raw.data.p);
-                            if (!isNaN(price) && self.chartManager._syncPriceLine) {
-                                self.chartManager._syncPriceLine(price);
-                            }
-                        }
-                    }
-                    // ==================== BYBIT ====================
-                    else if (self.currentExchange === 'bybit' && raw.topic) {
-                        const parts = raw.topic.split('.');
-                        let msgSymbol = null;
-                        if (raw.topic.startsWith('kline.') && parts.length >= 3) {
-                            msgSymbol = parts[2].toUpperCase();
-                        } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
-                            msgSymbol = parts[1].toUpperCase();
-                        }
-                        if (!msgSymbol || msgSymbol !== self.currentSymbol.toUpperCase()) return;
-                        
-                        if (raw.topic.startsWith('kline.')) {
-                            if (raw.data && raw.data.length) {
-                                const k = raw.data[0];
-                                self._lastKlineTime = Math.floor(k.start / 1000);
-                                
-                                // ✅ ИСПРАВЛЕНИЕ: Передаём quoteVolume (turnover в Bybit) и флаг закрытия (confirm)
-                                self.chartManager.updateLastCandle({
-                                    time: Math.floor(k.start / 1000),
-                                    open: parseFloat(k.open),
-                                    high: parseFloat(k.high),
-                                    low: parseFloat(k.low),
-                                    close: parseFloat(k.close),
-                                    volume: parseFloat(k.volume),
-                                    quoteVolume: parseFloat(k.turnover || 0),
-                                    isClosed: k.confirm === true  // ✅ Передаём флаг закрытия
-                                });
-                            }
-                        } else if (raw.topic.startsWith('publicTrade.')) {
-                            if (raw.data && raw.data.length) {
-                                const price = parseFloat(raw.data[0].p);
-                                if (!isNaN(price) && self.chartManager._syncPriceLine) {
-                                    self.chartManager._syncPriceLine(price);
-                                }
-                            }
-                        }
-                    }
-                } catch(e) {
-                    console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
-                }
-            }
-            else if (msg.type === 'close') {
-                self.isConnected = false;
-                if (msg.code === 1000) return;
-                if (msg.code === 1008) {
-                    if (self.currentExchange === 'binance' && self.currentMarketType === 'futures' && self.binanceSpotOnlyTokens.includes(self.currentSymbol.toUpperCase())) {
-                        self.currentMarketType = 'spot';
-                        self.connect(self.currentSymbol, self.currentInterval, self.currentExchange, 'spot');
-                    }
-                    return;
-                }
-                self.retryCount++;
-                const delay = Math.min(5000 * Math.pow(1.5, self.retryCount - 1), 60000);
-                self.reconnectTimer = setTimeout(function() {
-                    self.connect(self.currentSymbol, self.currentInterval, self.currentExchange, self.currentMarketType);
-                }, delay);
-            }
-        };
+    _autoConnect() {
+        console.log('🚀 WebSocketManager: автоподключение...');
+        this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
 
     getExchangeInterval(interval, exchange) {
         if (exchange === 'bybit') {
-            const map = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720', '1d': 'D', '1w': 'W', '1M': 'M' };
+            const map = { 
+                '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', 
+                '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720', 
+                '1d': 'D', '1w': 'W', '1M': 'M' 
+            };
             return map[interval] || interval;
         }
         return interval;
@@ -294,7 +57,10 @@ class WebSocketManager {
         marketType = marketType || this.currentMarketType;
         interval = (interval || this.currentInterval).trim().toLowerCase();
         
-        if (exchange === 'binance' && marketType === 'futures' && this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
+        // Проверка на spot-only токены для фьючерсов
+        if (exchange === 'binance' && marketType === 'futures' && 
+            this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
+            console.log('⚠️ Токен', symbol, 'доступен только на spot, переключаемся');
             marketType = 'spot';
         }
         
@@ -308,84 +74,327 @@ class WebSocketManager {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
-
         if (this._connectDebounceTimer) {
             clearTimeout(this._connectDebounceTimer);
         }
         
-        const fs = this.formatSymbol(symbol, exchange);
-        let wsUrl;
-        if (exchange === 'binance') {
-            wsUrl = (marketType === 'spot' ? 'wss://data-stream.binance.com/stream' : 'wss://fstream.binance.com/stream') +
-                    '?streams=' + fs + '@kline_' + interval + '/' + fs + '@trade';
-        } else {
-            wsUrl = 'wss://stream.bybit.com/v5/public/' + (marketType === 'spot' ? 'spot' : 'linear');
-        }
-        
-        if (!this.worker) this._initWorker();
-        
         this._connectDebounceTimer = setTimeout(() => {
-            this.worker.postMessage({ type: 'connect', url: wsUrl });
+            this._doConnect();
         }, 100);
     }
 
+  _doConnect() {
+    this._closeSocket();
+    
+    const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
+    
+    if (this.currentExchange === 'binance') {
+        // ✅ ИСПРАВЛЕНО: оба потока через market/ws
+        const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
+        const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;  // ← ИСПРАВЛЕНО!
+        
+        console.log('🔌 KLINE:', klineUrl);
+        console.log('🔌 TRADE:', tradeUrl);
+        
+        this.wsKline = this._createWebSocket(klineUrl, 'kline');
+        this.wsTrade = this._createWebSocket(tradeUrl, 'trade');
+    } else if (this.currentExchange === 'bybit') {
+        const wsUrl = 'wss://stream.bybit.com/v5/public/' + (this.currentMarketType === 'spot' ? 'spot' : 'linear');
+        this.wsKline = this._createWebSocket(wsUrl, 'bybit');
+        this.wsTrade = this.wsKline;
+    }
+    
+    this.isConnecting = true;
+}
+
+    _createWebSocket(url, type) {
+        let ws;
+        try {
+            ws = new WebSocket(url);
+        } catch (e) {
+            console.error(`❌ Ошибка создания ${type} WebSocket:`, e);
+            this._scheduleReconnect(3000);
+            return null;
+        }
+        
+        ws.onopen = () => {
+            console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
+            
+            if (type === 'bybit') {
+                const bi = this.getExchangeInterval(this.currentInterval, this.currentExchange);
+                const bs = this.formatSymbol(this.currentSymbol, this.currentExchange);
+                const subscribeMsg = {
+                    op: 'subscribe',
+                    args: ['kline.' + bi + '.' + bs, 'publicTrade.' + bs]
+                };
+                console.log('📡 Bybit подписка:', subscribeMsg);
+                ws.send(JSON.stringify(subscribeMsg));
+                
+                // Пинг для Bybit
+                clearInterval(ws._pingInterval);
+                ws._pingInterval = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}
+                    }
+                }, 20000);
+            }
+            
+            // Проверяем готовность обоих соединений
+            const klineOk = this.wsKline && this.wsKline.readyState === WebSocket.OPEN;
+            const tradeOk = this.wsTrade && this.wsTrade.readyState === WebSocket.OPEN;
+            
+            if (klineOk && tradeOk && !this.isConnected) {
+                this.isConnected = true;
+                this.isConnecting = false;
+                this.retryCount = 0;
+                console.log('✅ Оба WebSocket подключены');
+                
+                if (this.chartManager && this.chartManager.onWebSocketConnected) {
+                    this.chartManager.onWebSocketConnected();
+                }
+            }
+        };
+        
+        ws.onmessage = (event) => {
+            this._lastMessageTime = Date.now();
+            this._handleMessage(event.data, type);
+        };
+        
+        ws.onclose = (event) => {
+            console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
+            this.isConnected = false;
+            this.isConnecting = false;
+            
+            // Нормальное закрытие — не переподключаемся
+            if (event.code === 1000) {
+                console.log('   Нормальное закрытие');
+                return;
+            }
+            
+            // Policy violation — возможно токен только на spot
+            if (event.code === 1008) {
+                if (this.currentExchange === 'binance' && 
+                    this.currentMarketType === 'futures' && 
+                    this.binanceSpotOnlyTokens.includes(this.currentSymbol.toUpperCase())) {
+                    console.log('🔄 Policy violation — переключаемся на spot для', this.currentSymbol);
+                    this.currentMarketType = 'spot';
+                    this._scheduleReconnect(500);
+                }
+                return;
+            }
+            
+            this._scheduleReconnect();
+        };
+        
+        ws.onerror = (error) => {
+            console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
+        };
+        
+        return ws;
+    }
+
+    _handleMessage(rawData, type) {
+        try {
+            const raw = JSON.parse(rawData);
+            
+            // Игнорируем pong и subscribe от Bybit
+            if (raw.op === 'pong' || raw.op === 'subscribe') return;
+            
+            // ==================== BINANCE ====================
+            if (this.currentExchange === 'binance') {
+                
+                // KLINE (новый формат 2026)
+                if (raw.e === 'kline' && raw.k) {
+                    const k = raw.k;
+                    const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
+                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) {
+                        return;
+                    }
+                    
+                    this._lastKlineTime = Math.floor(k.t / 1000);
+                    
+                    const candle = {
+                        time: Math.floor(k.t / 1000),
+                        open: parseFloat(k.o),
+                        high: parseFloat(k.h),
+                        low: parseFloat(k.l),
+                        close: parseFloat(k.c),
+                        volume: parseFloat(k.v),
+                        quoteVolume: parseFloat(k.q || 0),
+                        isClosed: k.x === true
+                    };
+                    
+                    this.chartManager.updateLastCandle(candle);
+                }
+                
+                // AGGTRADE (замена @trade)
+                if (raw.e === 'aggTrade') {
+                    const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
+                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) {
+                        return;
+                    }
+                    
+                    const price = parseFloat(raw.p);
+                    if (!isNaN(price) && price > 0) {
+                        this.chartManager._syncPriceLine(price);
+                    }
+                }
+            }
+            // ==================== BYBIT ====================
+            else if (this.currentExchange === 'bybit' && raw.topic) {
+                const parts = raw.topic.split('.');
+                let msgSymbol = null;
+                
+                if (raw.topic.startsWith('kline.') && parts.length >= 3) {
+                    msgSymbol = parts[2].toUpperCase();
+                } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
+                    msgSymbol = parts[1].toUpperCase();
+                }
+                
+                if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) {
+                    return;
+                }
+                
+                if (raw.topic.startsWith('kline.')) {
+                    if (raw.data && raw.data.length) {
+                        const k = raw.data[0];
+                        this._lastKlineTime = Math.floor(k.start / 1000);
+                        
+                        const candle = {
+                            time: Math.floor(k.start / 1000),
+                            open: parseFloat(k.open),
+                            high: parseFloat(k.high),
+                            low: parseFloat(k.low),
+                            close: parseFloat(k.close),
+                            volume: parseFloat(k.volume),
+                            quoteVolume: parseFloat(k.turnover || 0),
+                            isClosed: k.confirm === true
+                        };
+                        
+                        this.chartManager.updateLastCandle(candle);
+                    }
+                } else if (raw.topic.startsWith('publicTrade.')) {
+                    if (raw.data && raw.data.length) {
+                        const price = parseFloat(raw.data[0].p);
+                        if (!isNaN(price) && price > 0) {
+                            this.chartManager._syncPriceLine(price);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
+        }
+    }
+
+    _scheduleReconnect(delay = null) {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+        }
+        
+        if (delay === null) {
+            this.retryCount++;
+            delay = Math.min(5000 * Math.pow(1.5, this.retryCount - 1), 60000);
+        }
+        
+        console.log(`🔄 Переподключение через ${delay}ms (попытка ${this.retryCount})`);
+        
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this._doConnect();
+        }, delay);
+    }
+
+    _closeSocket() {
+        const closeWs = (ws) => {
+            if (!ws) return;
+            
+            // Очищаем пинг-интервал (для Bybit)
+            if (ws._pingInterval) {
+                clearInterval(ws._pingInterval);
+                ws._pingInterval = null;
+            }
+            
+            ws.onopen = null;
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.onmessage = null;
+            
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                try { ws.close(1000, 'User disconnect'); } catch (e) {}
+            }
+        };
+        
+        closeWs(this.wsKline);
+        closeWs(this.wsTrade);
+        
+        this.wsKline = null;
+        this.wsTrade = null;
+        this.isConnected = false;
+    }
+
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
+        console.log('🔄 Обновление символа и таймфрейма:', { symbol, interval, exchange, marketType });
         this.connect(symbol, interval, exchange, marketType);
     }
 
     closeAll() {
-        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-        if (this._connectDebounceTimer) { clearTimeout(this._connectDebounceTimer); this._connectDebounceTimer = null; }
-        if (this.worker) this.worker.postMessage({ type: 'close' });
+        console.log('🔌 Закрытие WebSocket...');
+        if (this.reconnectTimer) { 
+            clearTimeout(this.reconnectTimer); 
+            this.reconnectTimer = null; 
+        }
+        if (this._connectDebounceTimer) { 
+            clearTimeout(this._connectDebounceTimer); 
+            this._connectDebounceTimer = null; 
+        }
+        this._closeSocket();
     }
     
     ensureConnected() {
-        if (!this.worker) {
-            this._initWorker();
-            this.connect(this.currentSymbol, this.currentInterval, 
-                        this.currentExchange, this.currentMarketType);
-            return;
+        const klineOk = this.wsKline && (this.wsKline.readyState === WebSocket.OPEN || this.wsKline.readyState === WebSocket.CONNECTING);
+        const tradeOk = this.wsTrade && (this.wsTrade.readyState === WebSocket.OPEN || this.wsTrade.readyState === WebSocket.CONNECTING);
+        
+        if (!klineOk || !tradeOk) {
+            console.log('⚠️ WebSocket не полностью подключён, переподключаемся...');
+            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
         }
-        
-        this.worker.postMessage({ type: 'status' });
-        
-        if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
-        this._statusCheckTimeout = setTimeout(() => {
-            if (Date.now() - this._lastMessageTime > 5000) {
-                console.log('⚠️ Worker не отвечает, переподключаемся');
-                this.connect(this.currentSymbol, this.currentInterval, 
-                            this.currentExchange, this.currentMarketType);
-            }
-        }, 2000);
+    }
+
+    forceReconnect() {
+        console.log('🔄 Принудительное переподключение WebSocket...');
+        this.closeAll();
+        setTimeout(() => {
+            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
+        }, 300);
     }
 
     _onTabVisible() {
+        console.log('👁️ Вкладка активна, проверяем WebSocket...');
+        
         const now = Date.now();
-        
-        this.ensureConnected();
-        
         if (this._lastMessageTime && (now - this._lastMessageTime > 5000)) {
             console.log('🔄 Нет данных > 5 сек, переподключаемся');
-            this.connect(this.currentSymbol, this.currentInterval, 
-                        this.currentExchange, this.currentMarketType);
-        }
-        
-        // ✅ Догружаем пропущенные свечи через REST
-        if (this.chartManager._catchUpMissedCandles) {
-            this.chartManager._catchUpMissedCandles();
+            this.forceReconnect();
+        } else {
+            this.ensureConnected();
         }
     }
 
     destroy() {
+        console.log('🗑️ Уничтожение WebSocketManager...');
         document.removeEventListener('visibilitychange', this._visibilityHandler);
-        if (this._statusCheckTimeout) clearTimeout(this._statusCheckTimeout);
-        if (this._connectDebounceTimer) clearTimeout(this._connectDebounceTimer);
-        this.closeAll();
-        if (this.worker) {
-            this.worker.terminate();
-            this.worker = null;
+        
+        if (this._statusCheckInterval) {
+            clearInterval(this._statusCheckInterval);
+            this._statusCheckInterval = null;
         }
+        
+        this.closeAll();
+        console.log('✅ WebSocketManager уничтожен');
     }
 }
 
-if (typeof window !== 'undefined') window.WebSocketManager = WebSocketManager;
+if (typeof window !== 'undefined') {
+    window.WebSocketManager = WebSocketManager;
+}
