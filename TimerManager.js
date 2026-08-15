@@ -2,6 +2,9 @@ class TimerRenderer {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this.enabled = true;
+        this._cachedCoord = null;
+        this._cachedPrice = null;
+        this._cachedBitmapY = null;
     }
 
     draw(target) {
@@ -18,8 +21,25 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
 
-            // Получаем цену
-            let price = chartManager.currentRealPrice;
+            // Получаем цену — приоритет: серия > lastCandle > currentRealPrice
+            let price = null;
+            const activeSeries = chartManager.currentChartType === 'candle' 
+                ? chartManager.candleSeries 
+                : chartManager.barSeries;
+            
+            // 1. Пытаемся взять цену из серии (самый свежий источник)
+            if (activeSeries) {
+                try {
+                    // lightweight-charts API — читаем последнюю точку
+                    const coord = activeSeries.priceToCoordinate(chartManager.currentRealPrice);
+                    if (coord != null && !isNaN(coord)) {
+                        price = chartManager.currentRealPrice;
+                        this._cachedCoord = coord;
+                    }
+                } catch(e) {}
+            }
+            
+            // 2. Fallback: последняя свеча
             if (price == null || isNaN(price) || price <= 0) {
                 const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
                 if (lastCandle && lastCandle.close != null) {
@@ -29,13 +49,9 @@ class TimerRenderer {
             
             if (price == null || isNaN(price) || price <= 0) return;
 
-            // Получаем координату через серию
-            let yCoord = null;
-            const activeSeries = chartManager.currentChartType === 'candle' 
-                ? chartManager.candleSeries 
-                : chartManager.barSeries;
-            
-            if (activeSeries) {
+            // Получаем координату Y
+            let yCoord = this._cachedCoord;
+            if (yCoord == null && activeSeries) {
                 try {
                     yCoord = activeSeries.priceToCoordinate(price);
                 } catch(e) {}
@@ -43,14 +59,10 @@ class TimerRenderer {
             
             if (yCoord == null || isNaN(yCoord)) return;
 
-            // ✅ ИСПРАВЛЕНО: Привязка к целому пикселю для 100% синхронности с ценовой линией
-            const pixelY = Math.round(yCoord); 
-            const bitmapY = pixelY * vpr;
-            
+            const bitmapY = yCoord * vpr;
             const bitmapWidth = scope.mediaSize.width * hpr;
             const bitmapHeight = scope.mediaSize.height * vpr;
 
-            // Округляем только fontSize для чёткости текста
             const fontSize = Math.round(11 * vpr);
             ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
             const textWidth = ctx.measureText(timerText).width;
@@ -60,23 +72,15 @@ class TimerRenderer {
 
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
             
-            // Центрируем прямоугольник ровно по линии цены
+            // Используем дробную координату для плавности
             let rectY = bitmapY - rectHeight / 2;
             
             // Ограничиваем границы
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // Определяем цвет
-            const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-            let bgColor;
-            
-            if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
-                bgColor = lastCandle.close >= lastCandle.open 
-                    ? (chartManager.bullishColor || '#26a69a')
-                    : (chartManager.bearishColor || '#ef5350');
-            } else {
-                bgColor = chartManager._lastAppliedColor || '#26a69a';
-            }
+            // Цвет берем из последней примененной палитры ChartManager
+            const bgColor = chartManager._lastAppliedColor 
+                || (chartManager.bullishColor || '#26a69a');
 
             ctx.save();
             ctx.fillStyle = bgColor + 'DD';
@@ -152,8 +156,7 @@ class TimerPrimitive {
     
     updateAllViews() {}
 
-    // ✅ ИСПРАВЛЕНО: Убрана тяжелая операция ts.applyOptions({})
-    // Теперь мы просто просим библиотеку включить примитив в ближайший кадр отрисовки
+    // Простой requestUpdate без лишних перерисовок
     requestRedraw() {
         if (this._requestUpdate) {
             this._requestUpdate();
@@ -176,7 +179,6 @@ class TimerPrimitive {
     }
 
     setColor(color) {
-        // Цвет определяется динамически в draw(), просто перерисовываем
         if (this.isEnabled()) {
             this.requestRedraw();
         }
@@ -191,7 +193,6 @@ class TimerPrimitive {
         }
     }
 
-    // Алиас для обратной совместимости
     updatePrice(price) {
         this.setPrice(price);
     }
@@ -223,13 +224,10 @@ class TimerManager {
         this._colorChangeHandler = null;
         this._initialized = false;
         
-        // ✅ ИСПРАВЛЕНО: Самописный RAF-цикл полностью удален. 
-        // Синхронизация теперь происходит за счет внутреннего рендера LightweightCharts.
-
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 300);
     }
-    
+
     _init() {
         if (this._disabled || !this._chartManager?.chart) return;
 
@@ -325,9 +323,41 @@ class TimerManager {
             if (!this._primitive?.isEnabled()) return;
             
             if (this._chartManager) {
+                // 1. Обновляем цену в ChartManager
                 this._chartManager.currentRealPrice = price;
+                
+                // 2. ✅ ОБНОВЛЯЕМ ПОСЛЕДНЮЮ СВЕЧУ В СЕРИИ
+                // Это ключевой момент — линия цены привязана к серии
+                const lastCandle = this._chartManager.chartData[this._chartManager.chartData.length - 1];
+                if (lastCandle) {
+                    const activeSeries = this._chartManager.currentChartType === 'candle'
+                        ? this._chartManager.candleSeries
+                        : this._chartManager.barSeries;
+                    if (activeSeries) {
+                        try {
+                            activeSeries.update({
+                                time: lastCandle.time,
+                                open: lastCandle.open,
+                                high: Math.max(lastCandle.high, price),
+                                low: Math.min(lastCandle.low, price),
+                                close: price
+                            });
+                            
+                            // Синхронизируем массив данных
+                            lastCandle.close = price;
+                            lastCandle.high = Math.max(lastCandle.high, price);
+                            lastCandle.low = Math.min(lastCandle.low, price);
+                        } catch(e) {
+                            console.warn('TimerManager: Failed to update series', e);
+                        }
+                    }
+                    
+                    // 3. Синхронизируем цвет
+                    this._chartManager._syncLineAndTimerColor();
+                }
             }
             
+            // 4. Обновляем примитив таймера
             this._primitive.setPrice(price);
         };
         
