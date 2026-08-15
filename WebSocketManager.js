@@ -6,7 +6,7 @@ class WebSocketManager {
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
-        this.isConnecting = false;
+        this.isConnecting = false;  // ✅ НОВОЕ: флаг активного подключения
         
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
@@ -57,10 +57,8 @@ class WebSocketManager {
         marketType = marketType || this.currentMarketType;
         interval = (interval || this.currentInterval).trim().toLowerCase();
         
-        // Проверка на spot-only токены для фьючерсов
         if (exchange === 'binance' && marketType === 'futures' && 
             this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
-            console.log('⚠️ Токен', symbol, 'доступен только на spot, переключаемся');
             marketType = 'spot';
         }
         
@@ -83,29 +81,34 @@ class WebSocketManager {
         }, 100);
     }
 
-  _doConnect() {
-    this._closeSocket();
-    
-    const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
-    
-    if (this.currentExchange === 'binance') {
-        // ✅ ИСПРАВЛЕНО: оба потока через market/ws
-        const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
-        const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;  // ← ИСПРАВЛЕНО!
+    _doConnect() {
+        // ✅ ЗАЩИТА: не запускаем параллельные подключения
+        if (this.isConnecting) {
+            console.log('⏳ Подключение уже идёт, пропускаем');
+            return;
+        }
         
-        console.log('🔌 KLINE:', klineUrl);
-        console.log('🔌 TRADE:', tradeUrl);
+        this._closeSocket();
+        this.isConnecting = true;  // ✅ Устанавливаем флаг
         
-        this.wsKline = this._createWebSocket(klineUrl, 'kline');
-        this.wsTrade = this._createWebSocket(tradeUrl, 'trade');
-    } else if (this.currentExchange === 'bybit') {
-        const wsUrl = 'wss://stream.bybit.com/v5/public/' + (this.currentMarketType === 'spot' ? 'spot' : 'linear');
-        this.wsKline = this._createWebSocket(wsUrl, 'bybit');
-        this.wsTrade = this.wsKline;
+        const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
+        
+        if (this.currentExchange === 'binance') {
+            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
+            const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;
+            
+            console.log('🔌 KLINE:', klineUrl);
+            console.log('🔌 TRADE:', tradeUrl);
+            
+            this.wsKline = this._createWebSocket(klineUrl, 'kline');
+            this.wsTrade = this._createWebSocket(tradeUrl, 'trade');
+        } else if (this.currentExchange === 'bybit') {
+            const wsUrl = 'wss://stream.bybit.com/v5/public/' + (this.currentMarketType === 'spot' ? 'spot' : 'linear');
+            console.log('🔌 Bybit:', wsUrl);
+            this.wsKline = this._createWebSocket(wsUrl, 'bybit');
+            this.wsTrade = this.wsKline;
+        }
     }
-    
-    this.isConnecting = true;
-}
 
     _createWebSocket(url, type) {
         let ws;
@@ -117,20 +120,20 @@ class WebSocketManager {
             return null;
         }
         
+        // ✅ Сохраняем тип для логирования
+        ws._type = type;
+        
         ws.onopen = () => {
             console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
             
             if (type === 'bybit') {
                 const bi = this.getExchangeInterval(this.currentInterval, this.currentExchange);
                 const bs = this.formatSymbol(this.currentSymbol, this.currentExchange);
-                const subscribeMsg = {
+                ws.send(JSON.stringify({
                     op: 'subscribe',
                     args: ['kline.' + bi + '.' + bs, 'publicTrade.' + bs]
-                };
-                console.log('📡 Bybit подписка:', subscribeMsg);
-                ws.send(JSON.stringify(subscribeMsg));
+                }));
                 
-                // Пинг для Bybit
                 clearInterval(ws._pingInterval);
                 ws._pingInterval = setInterval(() => {
                     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -139,13 +142,12 @@ class WebSocketManager {
                 }, 20000);
             }
             
-            // Проверяем готовность обоих соединений
             const klineOk = this.wsKline && this.wsKline.readyState === WebSocket.OPEN;
             const tradeOk = this.wsTrade && this.wsTrade.readyState === WebSocket.OPEN;
             
             if (klineOk && tradeOk && !this.isConnected) {
                 this.isConnected = true;
-                this.isConnecting = false;
+                this.isConnecting = false;  // ✅ Сбрасываем флаг
                 this.retryCount = 0;
                 console.log('✅ Оба WebSocket подключены');
                 
@@ -163,20 +165,17 @@ class WebSocketManager {
         ws.onclose = (event) => {
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
             this.isConnected = false;
-            this.isConnecting = false;
+            this.isConnecting = false;  // ✅ Сбрасываем флаг
             
-            // Нормальное закрытие — не переподключаемся
-            if (event.code === 1000) {
-                console.log('   Нормальное закрытие');
+            // 1005 и 1006 — нормальное закрытие при быстром переподключении
+            if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
                 return;
             }
             
-            // Policy violation — возможно токен только на spot
             if (event.code === 1008) {
                 if (this.currentExchange === 'binance' && 
                     this.currentMarketType === 'futures' && 
                     this.binanceSpotOnlyTokens.includes(this.currentSymbol.toUpperCase())) {
-                    console.log('🔄 Policy violation — переключаемся на spot для', this.currentSymbol);
                     this.currentMarketType = 'spot';
                     this._scheduleReconnect(500);
                 }
@@ -187,7 +186,10 @@ class WebSocketManager {
         };
         
         ws.onerror = (error) => {
-            console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
+            // ✅ Не логируем ошибки для закрытых сокетов (это нормально)
+            if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+                console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
+            }
         };
         
         return ws;
@@ -197,23 +199,17 @@ class WebSocketManager {
         try {
             const raw = JSON.parse(rawData);
             
-            // Игнорируем pong и subscribe от Bybit
             if (raw.op === 'pong' || raw.op === 'subscribe') return;
             
-            // ==================== BINANCE ====================
             if (this.currentExchange === 'binance') {
-                
-                // KLINE (новый формат 2026)
                 if (raw.e === 'kline' && raw.k) {
                     const k = raw.k;
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) {
-                        return;
-                    }
+                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
                     
                     this._lastKlineTime = Math.floor(k.t / 1000);
                     
-                    const candle = {
+                    this.chartManager.updateLastCandle({
                         time: Math.floor(k.t / 1000),
                         open: parseFloat(k.o),
                         high: parseFloat(k.h),
@@ -222,17 +218,12 @@ class WebSocketManager {
                         volume: parseFloat(k.v),
                         quoteVolume: parseFloat(k.q || 0),
                         isClosed: k.x === true
-                    };
-                    
-                    this.chartManager.updateLastCandle(candle);
+                    });
                 }
                 
-                // AGGTRADE (замена @trade)
                 if (raw.e === 'aggTrade') {
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) {
-                        return;
-                    }
+                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
                     
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
@@ -240,7 +231,6 @@ class WebSocketManager {
                     }
                 }
             }
-            // ==================== BYBIT ====================
             else if (this.currentExchange === 'bybit' && raw.topic) {
                 const parts = raw.topic.split('.');
                 let msgSymbol = null;
@@ -251,46 +241,34 @@ class WebSocketManager {
                     msgSymbol = parts[1].toUpperCase();
                 }
                 
-                if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) {
-                    return;
-                }
+                if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
                 
-                if (raw.topic.startsWith('kline.')) {
-                    if (raw.data && raw.data.length) {
-                        const k = raw.data[0];
-                        this._lastKlineTime = Math.floor(k.start / 1000);
-                        
-                        const candle = {
-                            time: Math.floor(k.start / 1000),
-                            open: parseFloat(k.open),
-                            high: parseFloat(k.high),
-                            low: parseFloat(k.low),
-                            close: parseFloat(k.close),
-                            volume: parseFloat(k.volume),
-                            quoteVolume: parseFloat(k.turnover || 0),
-                            isClosed: k.confirm === true
-                        };
-                        
-                        this.chartManager.updateLastCandle(candle);
-                    }
-                } else if (raw.topic.startsWith('publicTrade.')) {
-                    if (raw.data && raw.data.length) {
-                        const price = parseFloat(raw.data[0].p);
-                        if (!isNaN(price) && price > 0) {
-                            this.chartManager._syncPriceLine(price);
-                        }
+                if (raw.topic.startsWith('kline.') && raw.data?.length) {
+                    const k = raw.data[0];
+                    this.chartManager.updateLastCandle({
+                        time: Math.floor(k.start / 1000),
+                        open: parseFloat(k.open),
+                        high: parseFloat(k.high),
+                        low: parseFloat(k.low),
+                        close: parseFloat(k.close),
+                        volume: parseFloat(k.volume),
+                        quoteVolume: parseFloat(k.turnover || 0),
+                        isClosed: k.confirm === true
+                    });
+                } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
+                    const price = parseFloat(raw.data[0].p);
+                    if (!isNaN(price) && price > 0) {
+                        this.chartManager._syncPriceLine(price);
                     }
                 }
             }
         } catch (e) {
-            console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
+            console.error('❌ Ошибка парсинга:', e);
         }
     }
 
     _scheduleReconnect(delay = null) {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-        }
+        if (this.reconnectTimer) return;
         
         if (delay === null) {
             this.retryCount++;
@@ -305,23 +283,35 @@ class WebSocketManager {
         }, delay);
     }
 
+    // ✅ ИСПРАВЛЕННЫЙ метод закрытия сокетов
     _closeSocket() {
         const closeWs = (ws) => {
             if (!ws) return;
             
-            // Очищаем пинг-интервал (для Bybit)
+            // 1. Очищаем пинг-интервал
             if (ws._pingInterval) {
                 clearInterval(ws._pingInterval);
                 ws._pingInterval = null;
             }
             
+            // 2. ✅ ВАЖНО: сначала убираем обработчики, чтобы не было лишних onclose
             ws.onopen = null;
             ws.onclose = null;
             ws.onerror = null;
             ws.onmessage = null;
             
-            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-                try { ws.close(1000, 'User disconnect'); } catch (e) {}
+            // 3. ✅ Безопасное закрытие в зависимости от readyState
+            try {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.close(1000, 'User disconnect');
+                } else if (ws.readyState === WebSocket.CONNECTING) {
+                    // ✅ Для CONNECTING просто abort — это вызовет onclose с кодом 1006
+                    // Но так как мы убрали onclose выше, ошибки не будет
+                    ws.close();
+                }
+                // CLOSING и CLOSED — ничего не делаем
+            } catch (e) {
+                // Игнорируем ошибки закрытия
             }
         };
         
@@ -331,10 +321,11 @@ class WebSocketManager {
         this.wsKline = null;
         this.wsTrade = null;
         this.isConnected = false;
+        this.isConnecting = false;  // ✅ Сбрасываем флаг
     }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
-        console.log('🔄 Обновление символа и таймфрейма:', { symbol, interval, exchange, marketType });
+        console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
         this.connect(symbol, interval, exchange, marketType);
     }
 
@@ -352,17 +343,21 @@ class WebSocketManager {
     }
     
     ensureConnected() {
-        const klineOk = this.wsKline && (this.wsKline.readyState === WebSocket.OPEN || this.wsKline.readyState === WebSocket.CONNECTING);
-        const tradeOk = this.wsTrade && (this.wsTrade.readyState === WebSocket.OPEN || this.wsTrade.readyState === WebSocket.CONNECTING);
+        // ✅ Проверяем состояние более аккуратно
+        const klineState = this.wsKline?.readyState;
+        const tradeState = this.wsTrade?.readyState;
+        
+        const klineOk = klineState === WebSocket.OPEN || klineState === WebSocket.CONNECTING;
+        const tradeOk = tradeState === WebSocket.OPEN || tradeState === WebSocket.CONNECTING;
         
         if (!klineOk || !tradeOk) {
-            console.log('⚠️ WebSocket не полностью подключён, переподключаемся...');
+            console.log('⚠️ WebSocket не подключён, переподключаемся...');
             this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
         }
     }
 
     forceReconnect() {
-        console.log('🔄 Принудительное переподключение WebSocket...');
+        console.log('🔄 Принудительное переподключение...');
         this.closeAll();
         setTimeout(() => {
             this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
@@ -370,11 +365,9 @@ class WebSocketManager {
     }
 
     _onTabVisible() {
-        console.log('👁️ Вкладка активна, проверяем WebSocket...');
-        
         const now = Date.now();
-        if (this._lastMessageTime && (now - this._lastMessageTime > 5000)) {
-            console.log('🔄 Нет данных > 5 сек, переподключаемся');
+        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {  // ✅ 10 сек вместо 5
+            console.log('🔄 Нет данных > 10 сек, переподключаемся');
             this.forceReconnect();
         } else {
             this.ensureConnected();
