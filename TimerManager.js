@@ -1,7 +1,13 @@
+// ============================================================
+// 1. TimerRenderer — ИСПРАВЛЕН
+// ============================================================
 class TimerRenderer {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this.enabled = true;
+        this._lastDrawnText = '';
+        this._lastDrawnPrice = null;
+        this._lastDrawnColor = null;
     }
 
     draw(target) {
@@ -29,7 +35,7 @@ class TimerRenderer {
             
             if (price == null || isNaN(price) || price <= 0) return;
 
-            // ✅ Получаем координату ТОЛЬКО через серию (chart.priceScale() не существует)
+            // ✅ Получаем координату через серию
             let yCoord = null;
             const activeSeries = chartManager.currentChartType === 'candle' 
                 ? chartManager.candleSeries 
@@ -49,17 +55,23 @@ class TimerRenderer {
 
             const fontSize = Math.round(11 * vpr);
             ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-            const textWidth = ctx.measureText(timerText).width;
             
-            const rectWidth = Math.ceil(textWidth + 8 * hpr);
-            const rectHeight = Math.ceil(fontSize + 6 * vpr);
+            // ✅ Формируем текст с ценой
+            const precision = activeSeries?.options()?.priceFormat?.precision || 2;
+            const priceStr = price.toFixed(precision);
+            const fullText = `${timerText} | ${priceStr}`;
+            
+            const textWidth = ctx.measureText(fullText).width;
+            
+            const rectWidth = Math.ceil(textWidth + 12 * hpr);
+            const rectHeight = Math.ceil(fontSize + 8 * vpr);
 
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
             
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // ✅ Упрощённое определение цвета по последней свече
+            // ✅ Определяем цвет по последней свече
             const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
             let bgColor;
             
@@ -70,6 +82,20 @@ class TimerRenderer {
             } else {
                 bgColor = chartManager._lastAppliedColor || '#26a69a';
             }
+
+            // ✅ Сохраняем последние значения для сравнения
+            const textChanged = this._lastDrawnText !== fullText;
+            const priceChanged = this._lastDrawnPrice !== price;
+            const colorChanged = this._lastDrawnColor !== bgColor;
+            
+            // ✅ Если ничего не изменилось — выходим (экономия ресурсов)
+            if (!textChanged && !priceChanged && !colorChanged) {
+                return;
+            }
+            
+            this._lastDrawnText = fullText;
+            this._lastDrawnPrice = price;
+            this._lastDrawnColor = bgColor;
 
             ctx.save();
             ctx.fillStyle = bgColor + 'DD';
@@ -82,7 +108,7 @@ class TimerRenderer {
             ctx.fillStyle = '#fff';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
+            ctx.fillText(fullText, rectX + rectWidth / 2, rectY + rectHeight / 2);
             ctx.restore();
         });
     }
@@ -99,6 +125,9 @@ class TimerRenderer {
     }
 }
 
+// ============================================================
+// 2. TimerPaneView — БЕЗ ИЗМЕНЕНИЙ
+// ============================================================
 class TimerPaneView {
     constructor(timerManager) {
         this._timerManager = timerManager;
@@ -110,6 +139,9 @@ class TimerPaneView {
     }
 }
 
+// ============================================================
+// 3. TimerPrimitive — ИСПРАВЛЕН (принудительная перерисовка)
+// ============================================================
 class TimerPrimitive {
     constructor(timerManager, chartManager) {
         this._timerManager = timerManager;
@@ -120,6 +152,7 @@ class TimerPrimitive {
         this._requestUpdate = null;
         this._dataReady = false;
         this._lastPrice = null;
+        this._redrawCounter = 0;
     }
 
     paneViews() { 
@@ -144,19 +177,40 @@ class TimerPrimitive {
     
     updateAllViews() {}
 
-    // ✅ ПРИНУДИТЕЛЬНЫЙ redraw через timeScale.applyOptions({})
-    // lightweight-charts кэширует обычные requestUpdate(), это обходит кэш
+    // ✅ ПРИНУДИТЕЛЬНАЯ ПЕРЕРИСОВКА
     requestRedraw() {
+        this._redrawCounter++;
+        
+        // 1. Стандартный запрос обновления
         if (this._requestUpdate) {
             this._requestUpdate();
         }
         
+        // 2. Принудительная перерисовка через timeScale
         if (this._chart) {
             try {
                 const ts = this._chart.timeScale();
                 if (ts) {
-                    ts.applyOptions({});
+                    // ✅ Меняем barSpacing, чтобы вызвать перерисовку
+                    const current = ts.options().barSpacing || 12;
+                    ts.applyOptions({ barSpacing: current + 0.01 });
+                    // Возвращаем обратно
+                    setTimeout(() => {
+                        try { ts.applyOptions({ barSpacing: current }); } catch(e) {}
+                    }, 0);
                 }
+            } catch(e) {}
+        }
+        
+        // 3. Дополнительный триггер через resize
+        if (this._chart && this._redrawCounter % 5 === 0) {
+            try {
+                const w = this._chart._width || 800;
+                const h = this._chart._height || 400;
+                this._chart.resize(w + 1, h);
+                setTimeout(() => {
+                    try { this._chart.resize(w, h); } catch(e) {}
+                }, 0);
             } catch(e) {}
         }
     }
@@ -177,7 +231,6 @@ class TimerPrimitive {
     }
 
     setColor(color) {
-        // Цвет определяется динамически в draw(), просто перерисовываем
         if (this.isEnabled()) {
             this.requestRedraw();
         }
@@ -192,7 +245,6 @@ class TimerPrimitive {
         }
     }
 
-    // Алиас для обратной совместимости
     updatePrice(price) {
         this.setPrice(price);
     }
@@ -209,6 +261,9 @@ class TimerPrimitive {
     }
 }
 
+// ============================================================
+// 4. TimerManager — ИСПРАВЛЕН (добавлено обновление из свечи)
+// ============================================================
 class TimerManager {
     constructor(chartManager) {
         this._chartManager = chartManager;
@@ -224,14 +279,12 @@ class TimerManager {
         this._colorChangeHandler = null;
         this._initialized = false;
         
-        // ✅ НОВОЕ: RAF-loop для постоянной перерисовки
         this._rafId = null;
 
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 300);
     }
 
-    // ✅ RAF-loop: принудительная перерисовка каждые ~100мс
     _startRenderLoop() {
         if (this._rafId) return;
         
@@ -241,6 +294,7 @@ class TimerManager {
                 return;
             }
             
+            // ✅ Принудительная перерисовка каждый кадр
             this._primitive.requestRedraw();
             this._rafId = requestAnimationFrame(loop);
         };
@@ -330,7 +384,6 @@ class TimerManager {
             this._tick();
             this._interval = setInterval(() => this._tick(), 250);
             
-            // ✅ Запускаем RAF-loop для постоянной синхронизации с ценой
             this._startRenderLoop();
         }
     }
@@ -357,7 +410,6 @@ class TimerManager {
                 this._chartManager.currentRealPrice = price;
             }
             
-            // ✅ Используем setPrice (он же updatePrice)
             this._primitive.setPrice(price);
         };
         
@@ -431,6 +483,18 @@ class TimerManager {
             this._timerElement.textContent = '';
             this.stop();
             return;
+        }
+
+        // ✅ ОБНОВЛЯЕМ ЦЕНУ ИЗ СВЕЧИ, ЕСЛИ realPrice НЕ ОБНОВЛЯЕТСЯ
+        const lastCandle = this._chartManager.chartData[this._chartManager.chartData.length - 1];
+        if (lastCandle && lastCandle.close != null) {
+            const currentPrice = this._chartManager.currentRealPrice;
+            if (currentPrice == null || isNaN(currentPrice) || currentPrice <= 0) {
+                this._chartManager.currentRealPrice = lastCandle.close;
+                if (this._primitive) {
+                    this._primitive.setPrice(lastCandle.close);
+                }
+            }
         }
 
         const dur = TF_DURATIONS[this._currentTf];
