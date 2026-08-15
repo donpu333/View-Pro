@@ -1073,8 +1073,9 @@ class ChartManager {
         }
         this.scheduleUpdatePosition();
     }
-_syncPriceLine(price) {
-    if (!price || isNaN(price) || price <= 0 || this._updatesSuspended) return;
+
+  _syncPriceLine(price) {
+    if (!price || isNaN(price) || this._updatesSuspended) return;
     
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
     if (!series || !this.chartData || this.chartData.length === 0) return;
@@ -1091,23 +1092,14 @@ _syncPriceLine(price) {
     const nowSec = Math.floor(Date.now() / 1000);
     const currentCandleStart = Math.floor(nowSec / step) * step;
     
-    // ✅ Блок 1: Свеча уже закрыта (прошлая минута)
+    // ✅ ОСТАВЛЯЕМ: защита от обновления закрытой свечи
     if (lastCandle.time < currentCandleStart) {
         this.currentRealPrice = price;
         series.applyOptions({ priceLineSource: price });
-        
-        // ✅ Принудительная перерисовка примитивов (таймер)
-        series.applyOptions({});
-        
-        if (this.timerManager?._primitive) {
-            this.timerManager._primitive.setPrice(price);
-        }
-        
         this._updatePageTitle();
         return;
     }
     
-    // ✅ Блок 2: Новая свеча ещё не создана (ждём kline)
     if (lastCandle.time !== currentCandleStart) {
         this.currentRealPrice = price;
         
@@ -1118,21 +1110,14 @@ _syncPriceLine(price) {
         this._lastAppliedColor = lineColor;
         
         series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-        
-        // ✅ Принудительная перерисовка примитивов (таймер)
-        series.applyOptions({});
-        
-        if (this.timerManager?._primitive) {
-            this.timerManager._primitive.setPrice(price);
-            this.timerManager._primitive.setColor(lineColor);
-        }
+        if (this.timerManager?._primitive?.setPrice) this.timerManager._primitive.setPrice(price);
+        if (this.timerManager?._primitive?.setColor) this.timerManager._primitive.setColor(lineColor);
         
         this._updatePageTitle();
         this.scheduleUpdatePosition();
         return;
     }
     
-    // ✅ Блок 3: Обновляем текущую (открытую) свечу
     lastCandle.close = price;
     
     const isBullish = price >= lastCandle.open;
@@ -1154,19 +1139,21 @@ _syncPriceLine(price) {
     
     series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
     
-    // ✅ Принудительная перерисовка примитивов (таймер)
-    series.applyOptions({});
+    // ❌ УБРАЛ: лишние вызовы timerManager._primitive
     
-    if (this.timerManager?._primitive) {
-        this.timerManager._primitive.setPrice(price);
-        this.timerManager._primitive.setColor(lineColor);
+    if (this.timerManager) {
+        const prim = this.timerManager._primitive;
+        if (prim) {
+            if (prim.setPrice) prim.setPrice(price);
+            if (prim.setColor) prim.setColor(lineColor);
+            if (prim.isEnabled) prim.requestRedraw();
+        }
     }
     
     this._updatePageTitle();
     if (!document.hidden) this.scheduleUpdatePosition();
     this.requestDrawingsRedraw();
-}
-   updateLastCandle(candle, eventTime = null) {
+}updateLastCandle(candle, eventTime = null) {
     if (this._switchingSymbol || this._updatesSuspended) return;
     if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
     
@@ -1191,7 +1178,6 @@ _syncPriceLine(price) {
         const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
 
         if (isLastCandle) {
-            // ✅ ПОЛНОСТЬЮ ДОВЕРЯЕМ KLINE: прямое присваивание OHLCV
             currentLastCandle.open = candle.open;
             currentLastCandle.close = candle.close;
             currentLastCandle.high = candle.high;
@@ -1247,9 +1233,7 @@ _syncPriceLine(price) {
                 this._lastAppliedColor = lineColor;
                 activeSeries.applyOptions({ priceLineColor: lineColor });
             }
-            
-            // ✅ Принудительная перерисовка примитивов (таймер)
-            activeSeries.applyOptions({});
+            // ❌ УБРАЛ: activeSeries.applyOptions({})
         }
         
         this._updatePageTitle();
@@ -1276,6 +1260,7 @@ _syncPriceLine(price) {
         console.error('❌ Ошибка в updateLastCandle:', e);
     }
 }
+
     async waitForChartReady() {
         await new Promise(resolve => {
             const check = () => {
