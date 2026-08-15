@@ -1074,89 +1074,92 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    _syncPriceLine(price) {
-        // ✅ Защита от нулевых, отрицательных и NaN цен
-        if (!price || isNaN(price) || price <= 0 || this._updatesSuspended) return;
-        
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series || !this.chartData || this.chartData.length === 0) return;
-        
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        
-        const stepMap = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-            '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
-            '1d': 86400, '1w': 604800, '1M': 2592000
-        };
-        const step = stepMap[this.currentInterval] || 3600;
-        const nowSec = Math.floor(Date.now() / 1000);
-        const currentCandleStart = Math.floor(nowSec / step) * step;
-        
-        // ✅ КЛЮЧЕВОЕ: Если свеча уже закрыта (прошлая минута),
-        // НЕ обновляем её данные из trade — только ценовую линию
-        if (lastCandle.time < currentCandleStart) {
-            this.currentRealPrice = price;
-            series.applyOptions({ priceLineSource: price });
-            this._updatePageTitle();
-            return;
-        }
-        
-        if (lastCandle.time !== currentCandleStart) {
-            // Новая свеча ещё не создана — ждём kline
-            this.currentRealPrice = price;
-            
-            const isBullish = price >= lastCandle.close;
-            const lineColor = isBullish 
-                ? (this.bullishColor || CONFIG.colors.bullish) 
-                : (this.bearishColor || CONFIG.colors.bearish);
-            this._lastAppliedColor = lineColor;
-            
-            series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-            if (this.timerManager?._primitive?.setPrice) this.timerManager._primitive.setPrice(price);
-            if (this.timerManager?._primitive?.setColor) this.timerManager._primitive.setColor(lineColor);
-            
-            this._updatePageTitle();
-            this.scheduleUpdatePosition();
-            return;
-        }
-        
-        // ✅ Обновляем ТОЛЬКО текущую (открытую) свечу
-        lastCandle.close = price;
-        
-        const isBullish = price >= lastCandle.open;
-        const lineColor = isBullish 
-            ? (this.bullishColor || CONFIG.colors.bullish) 
-            : (this.bearishColor || CONFIG.colors.bearish);
-        
+   _syncPriceLine(price) {
+    if (!price || isNaN(price) || price <= 0 || this._updatesSuspended) return;
+    
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series || !this.chartData || this.chartData.length === 0) return;
+    
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    const stepMap = {
+        '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+        '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+        '1d': 86400, '1w': 604800, '1M': 2592000
+    };
+    const step = stepMap[this.currentInterval] || 3600;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const currentCandleStart = Math.floor(nowSec / step) * step;
+    
+    // ✅ ИСПРАВЛЕНО: Даже для закрытой свечи обновляем таймер
+    if (lastCandle.time < currentCandleStart) {
         this.currentRealPrice = price;
-        this._lastAppliedColor = lineColor;
-        this.lastCandle = lastCandle;
+        series.applyOptions({ priceLineSource: price });
         
-        series.update({
-            time: lastCandle.time,
-            open: lastCandle.open,
-            high: lastCandle.high, 
-            low: lastCandle.low,   
-            close: price
-        });
-        
-        series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
-        
-        if (this.timerManager) {
-            const prim = this.timerManager._primitive;
-            if (prim) {
-                if (prim.setPrice) prim.setPrice(price);
-                if (prim.setColor) prim.setColor(lineColor);
-                if (prim.isEnabled) prim.requestRedraw();
-            }
+        // ✅ ДОБАВЛЕНО: Уведомляем таймер
+        if (this.timerManager?._primitive) {
+            this.timerManager._primitive.setPrice(price);
         }
         
         this._updatePageTitle();
-        if (!document.hidden) this.scheduleUpdatePosition();
-        this.requestDrawingsRedraw();
+        return;
     }
-
+    
+    if (lastCandle.time !== currentCandleStart) {
+        this.currentRealPrice = price;
+        
+        const isBullish = price >= lastCandle.close;
+        const lineColor = isBullish 
+            ? (this.bullishColor || CONFIG.colors.bullish) 
+            : (this.bearishColor || CONFIG.colors.bearish);
+        this._lastAppliedColor = lineColor;
+        
+        series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
+        
+        // ✅ ИСПРАВЛЕНО: Вызываем методы примитива
+        if (this.timerManager?._primitive) {
+            this.timerManager._primitive.setPrice(price);
+            this.timerManager._primitive.setColor(lineColor);
+        }
+        
+        this._updatePageTitle();
+        this.scheduleUpdatePosition();
+        return;
+    }
+    
+    // Обновляем текущую свечу
+    lastCandle.close = price;
+    
+    const isBullish = price >= lastCandle.open;
+    const lineColor = isBullish 
+        ? (this.bullishColor || CONFIG.colors.bullish) 
+        : (this.bearishColor || CONFIG.colors.bearish);
+    
+    this.currentRealPrice = price;
+    this._lastAppliedColor = lineColor;
+    this.lastCandle = lastCandle;
+    
+    series.update({
+        time: lastCandle.time,
+        open: lastCandle.open,
+        high: lastCandle.high, 
+        low: lastCandle.low,   
+        close: price
+    });
+    
+    series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
+    
+    // ✅ ИСПРАВЛЕНО: Упрощённый вызов методов примитива
+    if (this.timerManager?._primitive) {
+        this.timerManager._primitive.setPrice(price);
+        this.timerManager._primitive.setColor(lineColor);
+    }
+    
+    this._updatePageTitle();
+    if (!document.hidden) this.scheduleUpdatePosition();
+    this.requestDrawingsRedraw();
+}
     updateLastCandle(candle, eventTime = null) {
         if (this._switchingSymbol || this._updatesSuspended) return;
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
