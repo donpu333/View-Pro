@@ -1153,7 +1153,9 @@ class ChartManager {
     this._updatePageTitle();
     if (!document.hidden) this.scheduleUpdatePosition();
     this.requestDrawingsRedraw();
-}updateLastCandle(candle, eventTime = null) {
+}
+
+updateLastCandle(candle, eventTime = null) {
     if (this._switchingSymbol || this._updatesSuspended) return;
     if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
     
@@ -2227,31 +2229,41 @@ class ChartManager {
         }
     }
 
-    _syncLineAndTimerColor() {
-        if (!this.chartData || this.chartData.length === 0) return;
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        let price = this.currentRealPrice;
-        if (!price || isNaN(price)) price = lastCandle.close;
-        
-        const isBullish = price >= lastCandle.open;
-        const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
-        
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (series && price) series.applyOptions({ priceLineColor: lineColor, priceLineSource: price });
-        
-        if (this.timerManager) {
-            const prim = this.timerManager._primitive;
-            if (prim) {
-                if (prim.setColor) prim.setColor(lineColor);
-                if (prim.setPrice && price) prim.setPrice(price);
-                if (prim.isEnabled) prim.requestRedraw();
-            }
-            if (this.timerManager.forceColorUpdate) this.timerManager.forceColorUpdate();
-        }
-        this._lastAppliedColor = lineColor;
+   _syncLineAndTimerColor() {
+    if (!this.chartData || this.chartData.length === 0) return;
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+    
+    // ✅ Используем цену из серии (lastCandle.close уже обновлён в _priceHandler)
+    // Это гарантирует синхронизацию с данными графика
+    const price = lastCandle.close;
+    if (!price || isNaN(price)) return;
+    
+    const isBullish = price >= lastCandle.open;
+    const lineColor = isBullish ? (this.bullishColor || CONFIG.colors.bullish) : (this.bearishColor || CONFIG.colors.bearish);
+    
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    
+    // ✅ ИСПРАВЛЕНО: priceLineSource должен быть 'lastBar', а не числом
+    if (series) {
+        series.applyOptions({ 
+            priceLineColor: lineColor,
+            priceLineSource: 'lastBar'  // ← Было: priceLineSource: price
+        });
     }
-
+    
+    // Обновляем таймер
+    if (this.timerManager) {
+        const prim = this.timerManager._primitive;
+        if (prim && prim.isEnabled()) {
+            if (prim.setColor) prim.setColor(lineColor);
+            if (prim.setPrice) prim.setPrice(price);
+            // requestRedraw() вызывается внутри setPrice(), не нужно дублировать
+        }
+    }
+    
+    this._lastAppliedColor = lineColor;
+}
     _abortAllProcesses() {
         if (this._bgTitleInterval) {
             clearInterval(this._bgTitleInterval);
