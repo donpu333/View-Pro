@@ -1073,8 +1073,7 @@ class ChartManager {
         }
         this.scheduleUpdatePosition();
     }
-
-   _syncPriceLine(price) {
+_syncPriceLine(price) {
     if (!price || isNaN(price) || price <= 0 || this._updatesSuspended) return;
     
     const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -1092,12 +1091,14 @@ class ChartManager {
     const nowSec = Math.floor(Date.now() / 1000);
     const currentCandleStart = Math.floor(nowSec / step) * step;
     
-    // ✅ ИСПРАВЛЕНО: Даже для закрытой свечи обновляем таймер
+    // ✅ Блок 1: Свеча уже закрыта (прошлая минута)
     if (lastCandle.time < currentCandleStart) {
         this.currentRealPrice = price;
         series.applyOptions({ priceLineSource: price });
         
-        // ✅ ДОБАВЛЕНО: Уведомляем таймер
+        // ✅ Принудительная перерисовка примитивов (таймер)
+        series.applyOptions({});
+        
         if (this.timerManager?._primitive) {
             this.timerManager._primitive.setPrice(price);
         }
@@ -1106,6 +1107,7 @@ class ChartManager {
         return;
     }
     
+    // ✅ Блок 2: Новая свеча ещё не создана (ждём kline)
     if (lastCandle.time !== currentCandleStart) {
         this.currentRealPrice = price;
         
@@ -1117,7 +1119,9 @@ class ChartManager {
         
         series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
         
-        // ✅ ИСПРАВЛЕНО: Вызываем методы примитива
+        // ✅ Принудительная перерисовка примитивов (таймер)
+        series.applyOptions({});
+        
         if (this.timerManager?._primitive) {
             this.timerManager._primitive.setPrice(price);
             this.timerManager._primitive.setColor(lineColor);
@@ -1128,7 +1132,7 @@ class ChartManager {
         return;
     }
     
-    // Обновляем текущую свечу
+    // ✅ Блок 3: Обновляем текущую (открытую) свечу
     lastCandle.close = price;
     
     const isBullish = price >= lastCandle.open;
@@ -1150,7 +1154,9 @@ class ChartManager {
     
     series.applyOptions({ priceLineSource: price, priceLineColor: lineColor });
     
-    // ✅ ИСПРАВЛЕНО: Упрощённый вызов методов примитива
+    // ✅ Принудительная перерисовка примитивов (таймер)
+    series.applyOptions({});
+    
     if (this.timerManager?._primitive) {
         this.timerManager._primitive.setPrice(price);
         this.timerManager._primitive.setColor(lineColor);
@@ -1160,114 +1166,116 @@ class ChartManager {
     if (!document.hidden) this.scheduleUpdatePosition();
     this.requestDrawingsRedraw();
 }
-    updateLastCandle(candle, eventTime = null) {
-        if (this._switchingSymbol || this._updatesSuspended) return;
-        if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
-        
-        if (eventTime !== null && eventTime !== undefined) {
-            if (this._lastKlineEventTime && eventTime <= this._lastKlineEventTime) {
-                return;
-            }
-            this._lastKlineEventTime = eventTime;
+   updateLastCandle(candle, eventTime = null) {
+    if (this._switchingSymbol || this._updatesSuspended) return;
+    if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
+    
+    if (eventTime !== null && eventTime !== undefined) {
+        if (this._lastKlineEventTime && eventTime <= this._lastKlineEventTime) {
+            return;
         }
-        
-        try {
-            if (!this._isValidCandle(candle)) {
-                const sanitized = this._sanitizeCandle(candle);
-                if (!sanitized) return;
-                candle = sanitized;
-            }
-            
-            if (!this.chartData || this.chartData.length === 0) return;
-            
-            const currentLastCandle = this.chartData[this.chartData.length - 1];
-            const isLastCandle = currentLastCandle && candle.time === currentLastCandle.time;
-            const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
-
-            if (isLastCandle) {
-                // ✅ ПОЛНОСТЬЮ ДОВЕРЯЕМ KLINE: прямое присваивание OHLCV
-                currentLastCandle.open = candle.open;
-                currentLastCandle.close = candle.close;
-                currentLastCandle.high = candle.high;
-                currentLastCandle.low = candle.low;
-                currentLastCandle.volume = candle.volume;
-                currentLastCandle.quoteVolume = candle.quoteVolume;
-                currentLastCandle._isPlaceholder = false;
-                
-                this.lastCandle = currentLastCandle;
-                
-                if (this.volumeSeries) {
-                    const isBullish = currentLastCandle.close >= currentLastCandle.open;
-                    this.volumeSeries.update({
-                        time: currentLastCandle.time,
-                        value: currentLastCandle.quoteVolume || currentLastCandle.volume || 0,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
-                }
-            } else if (isNewCandle) {
-                this.chartData.push(candle);
-                this._addToTimeMap(candle.time, this.chartData.length - 1);
-                this.lastCandle = candle;
-                
-                if (this.volumeSeries) {
-                    const isBullish = candle.close >= candle.open;
-                    this.volumeSeries.update({
-                        time: candle.time,
-                        value: candle.quoteVolume || candle.volume || 0,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
-                    this._lastVolumeUpdateIndex = this.chartData.length - 1;
-                }
-            } else {
-                return;
-            }
-            
-            if (!this.lastCandle) return;
-            
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (activeSeries) {
-                activeSeries.update({
-                    time: this.lastCandle.time,
-                    open: this.lastCandle.open,
-                    high: this.lastCandle.high,
-                    low: this.lastCandle.low,
-                    close: this.lastCandle.close
-                });
-                
-                const isBullish = this.lastCandle.close >= this.lastCandle.open;
-                const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
-                
-                if (lineColor !== this._lastAppliedColor) {
-                    this._lastAppliedColor = lineColor;
-                    activeSeries.applyOptions({ priceLineColor: lineColor });
-                }
-            }
-            
-            this._updatePageTitle();
-            
-            if (this.timerManager?._primitive) {
-                if (this.timerManager._primitive.setPrice) {
-                    const priceForTimer = this.currentRealPrice ?? this.lastCandle.close;
-                    this.timerManager._primitive.setPrice(priceForTimer);
-                }
-                if (this.timerManager._primitive.setColor) {
-                    this.timerManager._primitive.setColor(this._lastAppliedColor);
-                }
-                if (this.timerManager._primitive.isEnabled()) {
-                    this.timerManager._primitive.requestRedraw();
-                }
-            }
-            
-            if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
-            
-            this._priceChanged = true;
-            this._volumeDataDirty = true;
-            
-        } catch (e) {
-            console.error('❌ Ошибка в updateLastCandle:', e);
-        }
+        this._lastKlineEventTime = eventTime;
     }
+    
+    try {
+        if (!this._isValidCandle(candle)) {
+            const sanitized = this._sanitizeCandle(candle);
+            if (!sanitized) return;
+            candle = sanitized;
+        }
+        
+        if (!this.chartData || this.chartData.length === 0) return;
+        
+        const currentLastCandle = this.chartData[this.chartData.length - 1];
+        const isLastCandle = currentLastCandle && candle.time === currentLastCandle.time;
+        const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
 
+        if (isLastCandle) {
+            // ✅ ПОЛНОСТЬЮ ДОВЕРЯЕМ KLINE: прямое присваивание OHLCV
+            currentLastCandle.open = candle.open;
+            currentLastCandle.close = candle.close;
+            currentLastCandle.high = candle.high;
+            currentLastCandle.low = candle.low;
+            currentLastCandle.volume = candle.volume;
+            currentLastCandle.quoteVolume = candle.quoteVolume;
+            currentLastCandle._isPlaceholder = false;
+            
+            this.lastCandle = currentLastCandle;
+            
+            if (this.volumeSeries) {
+                const isBullish = currentLastCandle.close >= currentLastCandle.open;
+                this.volumeSeries.update({
+                    time: currentLastCandle.time,
+                    value: currentLastCandle.quoteVolume || currentLastCandle.volume || 0,
+                    color: isBullish ? this.bullishColor : this.bearishColor
+                });
+            }
+        } else if (isNewCandle) {
+            this.chartData.push(candle);
+            this._addToTimeMap(candle.time, this.chartData.length - 1);
+            this.lastCandle = candle;
+            
+            if (this.volumeSeries) {
+                const isBullish = candle.close >= candle.open;
+                this.volumeSeries.update({
+                    time: candle.time,
+                    value: candle.quoteVolume || candle.volume || 0,
+                    color: isBullish ? this.bullishColor : this.bearishColor
+                });
+                this._lastVolumeUpdateIndex = this.chartData.length - 1;
+            }
+        } else {
+            return;
+        }
+        
+        if (!this.lastCandle) return;
+        
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries) {
+            activeSeries.update({
+                time: this.lastCandle.time,
+                open: this.lastCandle.open,
+                high: this.lastCandle.high,
+                low: this.lastCandle.low,
+                close: this.lastCandle.close
+            });
+            
+            const isBullish = this.lastCandle.close >= this.lastCandle.open;
+            const lineColor = isBullish ? CONFIG.colors.bullish : CONFIG.colors.bearish;
+            
+            if (lineColor !== this._lastAppliedColor) {
+                this._lastAppliedColor = lineColor;
+                activeSeries.applyOptions({ priceLineColor: lineColor });
+            }
+            
+            // ✅ Принудительная перерисовка примитивов (таймер)
+            activeSeries.applyOptions({});
+        }
+        
+        this._updatePageTitle();
+        
+        if (this.timerManager?._primitive) {
+            if (this.timerManager._primitive.setPrice) {
+                const priceForTimer = this.currentRealPrice ?? this.lastCandle.close;
+                this.timerManager._primitive.setPrice(priceForTimer);
+            }
+            if (this.timerManager._primitive.setColor) {
+                this.timerManager._primitive.setColor(this._lastAppliedColor);
+            }
+            if (this.timerManager._primitive.isEnabled()) {
+                this.timerManager._primitive.requestRedraw();
+            }
+        }
+        
+        if (this.scheduleUpdatePosition) this.scheduleUpdatePosition();
+        
+        this._priceChanged = true;
+        this._volumeDataDirty = true;
+        
+    } catch (e) {
+        console.error('❌ Ошибка в updateLastCandle:', e);
+    }
+}
     async waitForChartReady() {
         await new Promise(resolve => {
             const check = () => {
