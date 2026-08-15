@@ -18,18 +18,18 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
 
-            // ✅ Получаем цену
+            // ✅ Получаем цену: сначала realPrice, потом close свечи
             let price = chartManager.currentRealPrice;
             if (price == null || isNaN(price) || price <= 0) {
                 const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                if (lastCandle?.close != null) {
+                if (lastCandle && lastCandle.close != null) {
                     price = lastCandle.close;
                 }
             }
             
             if (price == null || isNaN(price) || price <= 0) return;
 
-            // ✅ ИСПРАВЛЕНО: Получаем координату через серию (не через chart.priceScale)
+            // ✅ Получаем координату ТОЛЬКО через серию (chart.priceScale() не существует)
             let yCoord = null;
             const activeSeries = chartManager.currentChartType === 'candle' 
                 ? chartManager.candleSeries 
@@ -59,7 +59,7 @@ class TimerRenderer {
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // ✅ УПРОЩЕНО: Всегда определяем цвет по последней свече
+            // ✅ Упрощённое определение цвета по последней свече
             const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
             let bgColor;
             
@@ -144,9 +144,20 @@ class TimerPrimitive {
     
     updateAllViews() {}
 
+    // ✅ ПРИНУДИТЕЛЬНЫЙ redraw через timeScale.applyOptions({})
+    // lightweight-charts кэширует обычные requestUpdate(), это обходит кэш
     requestRedraw() {
         if (this._requestUpdate) {
             this._requestUpdate();
+        }
+        
+        if (this._chart) {
+            try {
+                const ts = this._chart.timeScale();
+                if (ts) {
+                    ts.applyOptions({});
+                }
+            } catch(e) {}
         }
     }
 
@@ -164,14 +175,26 @@ class TimerPrimitive {
     isEnabled() { 
         return this._paneView?._renderer?.enabled ?? false; 
     }
+
+    setColor(color) {
+        // Цвет определяется динамически в draw(), просто перерисовываем
+        if (this.isEnabled()) {
+            this.requestRedraw();
+        }
+    }
     
-    updatePrice(price) {
-        if (price != null && !isNaN(price) && price !== this._lastPrice) {
+    setPrice(price) {
+        if (price != null && !isNaN(price) && price > 0) {
             this._lastPrice = price;
             if (this.isEnabled()) {
                 this.requestRedraw();
             }
         }
+    }
+
+    // Алиас для обратной совместимости
+    updatePrice(price) {
+        this.setPrice(price);
     }
 
     setDataReady(ready) { 
@@ -200,9 +223,36 @@ class TimerManager {
         this._subscribedSymbolKey = null;
         this._colorChangeHandler = null;
         this._initialized = false;
+        
+        // ✅ НОВОЕ: RAF-loop для постоянной перерисовки
+        this._rafId = null;
 
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 300);
+    }
+
+    // ✅ RAF-loop: принудительная перерисовка каждые ~100мс
+    _startRenderLoop() {
+        if (this._rafId) return;
+        
+        const loop = () => {
+            if (this._disabled || !this._primitive?.isEnabled()) {
+                this._rafId = null;
+                return;
+            }
+            
+            this._primitive.requestRedraw();
+            this._rafId = requestAnimationFrame(loop);
+        };
+        
+        this._rafId = requestAnimationFrame(loop);
+    }
+    
+    _stopRenderLoop() {
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = null;
+        }
     }
 
     _init() {
@@ -226,8 +276,6 @@ class TimerManager {
                             this._primitive.setDataReady(true);
                             this._updateTimerState();
                         }
-                        // ✅ ПРИНУДИТЕЛЬНАЯ перерисовка при изменении данных
-                        this._primitive._lastPrice = null;
                         if (this._primitive.isEnabled()) {
                             this._primitive.requestRedraw();
                         }
@@ -269,6 +317,7 @@ class TimerManager {
         if (['1d','1w','1M'].includes(this._currentTf)) {
             this._timerElement.textContent = '';
             this._primitive.setEnabled(false);
+            this._stopRenderLoop();
             this.stop();
         } else {
             this._primitive.setEnabled(true);
@@ -280,6 +329,9 @@ class TimerManager {
             }
             this._tick();
             this._interval = setInterval(() => this._tick(), 250);
+            
+            // ✅ Запускаем RAF-loop для постоянной синхронизации с ценой
+            this._startRenderLoop();
         }
     }
     
@@ -305,7 +357,8 @@ class TimerManager {
                 this._chartManager.currentRealPrice = price;
             }
             
-            this._primitive.updatePrice(price);
+            // ✅ Используем setPrice (он же updatePrice)
+            this._primitive.setPrice(price);
         };
         
         try {
@@ -390,9 +443,7 @@ class TimerManager {
         
         if (textChanged) {
             this._timerElement.textContent = txt;
-            // ✅ ПРИНУДИТЕЛЬНАЯ перерисовка при изменении текста
             if (this._primitive?.isEnabled()) {
-                this._primitive._lastPrice = null;
                 this._primitive.requestRedraw();
             }
         }
@@ -401,14 +452,12 @@ class TimerManager {
             this._primitive.isDataReady() && 
             !['1d','1w','1M'].includes(this._currentTf)) {
             this._primitive.setEnabled(true);
-            this._primitive._lastPrice = null;
             this._primitive.requestRedraw();
         }
     }
 
     forceColorUpdate() {
         if (this._primitive && this._primitive.isEnabled()) {
-            this._primitive._lastPrice = null;
             this._primitive.requestRedraw();
         }
     }
@@ -418,12 +467,14 @@ class TimerManager {
             clearInterval(this._interval); 
             this._interval = null; 
         }
+        this._stopRenderLoop();
     }
 
     reattach() {
         if (this._disabled) return;
         
         this._detachPrimitive();
+        this._stopRenderLoop();
         
         this._primitive = new TimerPrimitive(this, this._chartManager);
         const series = this._chartManager.currentChartType === 'candle'
@@ -440,8 +491,6 @@ class TimerManager {
                             this._primitive.setDataReady(true);
                             this._updateTimerState();
                         }
-                        // ✅ ПРИНУДИТЕЛЬНАЯ перерисовка
-                        this._primitive._lastPrice = null;
                         if (this._primitive.isEnabled()) {
                             this._primitive.requestRedraw();
                         }
@@ -461,6 +510,7 @@ class TimerManager {
     }
 
     destroy() {
+        this._stopRenderLoop();
         this.stop();
         this._unsubscribeFromPrice();
         
