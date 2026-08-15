@@ -4,88 +4,96 @@ class TimerRenderer {
         this.enabled = true;
     }
 
-    draw(target) {
-        if (!this.enabled) return;
-        
-        const chartManager = this._timerManager._chartManager;
-        if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
-        
-        const timerText = this._timerManager._timerElement?.textContent || '';
-        if (!timerText) return;
+ draw(target) {
+    if (!this.enabled) return;
+    
+    const chartManager = this._timerManager._chartManager;
+    if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
+    
+    const timerText = this._timerManager._timerElement?.textContent || '';
+    if (!timerText) return;
 
-        target.useBitmapCoordinateSpace(scope => {
-            const ctx = scope.context;
-            const hpr = scope.horizontalPixelRatio;
-            const vpr = scope.verticalPixelRatio;
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const hpr = scope.horizontalPixelRatio;
+        const vpr = scope.verticalPixelRatio;
 
-            // ✅ Получаем цену: сначала realPrice, потом close свечи
-            let price = chartManager.currentRealPrice;
-            if (price == null || isNaN(price) || price <= 0) {
-                const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                if (lastCandle && lastCandle.close != null) {
-                    price = lastCandle.close;
-                }
-            }
-            
-            if (price == null || isNaN(price) || price <= 0) return;
-
-            // ✅ Получаем координату ТОЛЬКО через серию (chart.priceScale() не существует)
-            let yCoord = null;
-            const activeSeries = chartManager.currentChartType === 'candle' 
-                ? chartManager.candleSeries 
-                : chartManager.barSeries;
-            
-            if (activeSeries) {
-                try {
-                    yCoord = activeSeries.priceToCoordinate(price);
-                } catch(e) {}
-            }
-            
-            if (yCoord == null || isNaN(yCoord)) return;
-
-            const bitmapY = yCoord * vpr;
-            const bitmapWidth = scope.mediaSize.width * hpr;
-            const bitmapHeight = scope.mediaSize.height * vpr;
-
-            const fontSize = Math.round(11 * vpr);
-            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-            const textWidth = ctx.measureText(timerText).width;
-            
-            const rectWidth = Math.ceil(textWidth + 8 * hpr);
-            const rectHeight = Math.ceil(fontSize + 6 * vpr);
-
-            const rectX = bitmapWidth - rectWidth - 4 * hpr;
-            
-            let rectY = Math.round(bitmapY - rectHeight / 2);
-            rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
-
-            // ✅ Упрощённое определение цвета по последней свече
+        // Получаем цену
+        let price = chartManager.currentRealPrice;
+        if (price == null || isNaN(price) || price <= 0) {
             const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-            let bgColor;
-            
-            if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
-                bgColor = lastCandle.close >= lastCandle.open 
-                    ? (chartManager.bullishColor || '#26a69a')
-                    : (chartManager.bearishColor || '#ef5350');
-            } else {
-                bgColor = chartManager._lastAppliedColor || '#26a69a';
+            if (lastCandle && lastCandle.close != null) {
+                price = lastCandle.close;
             }
+        }
+        
+        if (price == null || isNaN(price) || price <= 0) return;
 
-            ctx.save();
-            ctx.fillStyle = bgColor + 'DD';
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
-            ctx.shadowBlur = 3 * hpr;
-            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
-            ctx.fill();
-            
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = '#fff';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
-            ctx.restore();
-        });
-    }
+        // Получаем координату через серию
+        let yCoord = null;
+        const activeSeries = chartManager.currentChartType === 'candle' 
+            ? chartManager.candleSeries 
+            : chartManager.barSeries;
+        
+        if (activeSeries) {
+            try {
+                yCoord = activeSeries.priceToCoordinate(price);
+            } catch(e) {}
+        }
+        
+        if (yCoord == null || isNaN(yCoord)) return;
+
+        // ✅ ИСПРАВЛЕНО: НЕ округляем bitmapY — используем дробные значения
+        const bitmapY = yCoord * vpr;
+        const bitmapWidth = scope.mediaSize.width * hpr;
+        const bitmapHeight = scope.mediaSize.height * vpr;
+
+        // Округляем только fontSize для чёткости текста
+        const fontSize = Math.round(11 * vpr);
+        ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+        const textWidth = ctx.measureText(timerText).width;
+        
+        const rectWidth = Math.ceil(textWidth + 8 * hpr);
+        const rectHeight = Math.ceil(fontSize + 6 * vpr);
+
+        const rectX = bitmapWidth - rectWidth - 4 * hpr;
+        
+        // ✅ ИСПРАВЛЕНО: НЕ используем Math.round для rectY
+        // Используем дробную координату для плавного движения
+        let rectY = bitmapY - rectHeight / 2;
+        
+        // Ограничиваем границы (но без Math.round!)
+        rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
+
+        // Определяем цвет
+        const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
+        let bgColor;
+        
+        if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
+            bgColor = lastCandle.close >= lastCandle.open 
+                ? (chartManager.bullishColor || '#26a69a')
+                : (chartManager.bearishColor || '#ef5350');
+        } else {
+            bgColor = chartManager._lastAppliedColor || '#26a69a';
+        }
+
+        ctx.save();
+        ctx.fillStyle = bgColor + 'DD';
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 3 * hpr;
+        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
+        ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // ✅ ИСПРАВЛЕНО: используем дробные координаты для текста тоже
+        ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
+        ctx.restore();
+    });
+}
 
     _roundRect(ctx, x, y, w, h, r) {
         r = Math.min(r, w / 2, h / 2);
