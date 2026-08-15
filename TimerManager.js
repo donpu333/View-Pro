@@ -2,23 +2,6 @@ class TimerRenderer {
     constructor(timerManager) {
         this._timerManager = timerManager;
         this.enabled = true;
-        this._cachedColor = null;
-        this._colorDirty = true;
-    }
-
-    setColor(color) {
-        if (color && this._cachedColor !== color) {
-            this._cachedColor = color;
-            this._colorDirty = false;
-            if (this._timerManager?._primitive?.requestRedraw) {
-                this._timerManager._primitive.requestRedraw();
-            }
-        }
-    }
-    
-    invalidateColor() {
-        this._colorDirty = true;
-        this._cachedColor = null;
     }
 
     draw(target) {
@@ -35,42 +18,27 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
 
-            const chartManager = this._timerManager._chartManager;
+            // ✅ Получаем цену
             let price = chartManager.currentRealPrice;
-            
-            // Если real-time цена недоступна (например, при смене ТФ), используем последнюю свечу
             if (price == null || isNaN(price) || price <= 0) {
                 const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                if (lastCandle && lastCandle.close != null) {
+                if (lastCandle?.close != null) {
                     price = lastCandle.close;
                 }
             }
             
             if (price == null || isNaN(price) || price <= 0) return;
 
-            // Получаем координату через метод графика, а не серии
+            // ✅ ИСПРАВЛЕНО: Получаем координату через серию (не через chart.priceScale)
             let yCoord = null;
+            const activeSeries = chartManager.currentChartType === 'candle' 
+                ? chartManager.candleSeries 
+                : chartManager.barSeries;
             
-            // Пробуем получить координату через API графика (самый точный способ)
-            if (this._timerManager._primitive?._chart) {
+            if (activeSeries) {
                 try {
-                    const chart = this._timerManager._primitive._chart;
-                    const coordinate = chart.priceScale().priceToCoordinate(price);
-                    if (coordinate != null && !isNaN(coordinate)) {
-                        yCoord = coordinate;
-                    }
-                } catch(e) {}
-            }
-            
-            // Fallback: через серию
-            if (yCoord == null) {
-                const activeSeries = chartManager.currentChartType === 'candle' 
-                    ? chartManager.candleSeries 
-                    : chartManager.barSeries;
-                
-                if (activeSeries) {
                     yCoord = activeSeries.priceToCoordinate(price);
-                }
+                } catch(e) {}
             }
             
             if (yCoord == null || isNaN(yCoord)) return;
@@ -91,59 +59,16 @@ class TimerRenderer {
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // 🔥 ПУЛЕНЕПРОБИВАЕМАЯ ПРОВЕРКА ЦВЕТА:
-            // Всегда сравниваем кэш с актуальными настройками перед отрисовкой
-            if (!this._colorDirty && this._cachedColor) {
-                const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
-                    // Определяем ожидаемый цвет на основе направления свечи
-                    const isBullish = lastCandle.close >= lastCandle.open;
-                    const expectedColor = isBullish 
-                        ? (chartManager.bullishColor || '#26a69a')
-                        : (chartManager.bearishColor || '#ef5350');
-                    
-                    // Также проверяем _lastAppliedColor, который мог быть установлен напрямую
-                    const appliedColor = chartManager._lastAppliedColor;
-                    
-                    // Если кэшированный цвет не совпадает ни с ожидаемым, ни с применённым — инвалидируем
-                    if (this._cachedColor !== expectedColor && 
-                        (!appliedColor || this._cachedColor !== appliedColor)) {
-                        this._colorDirty = true;
-                        this._cachedColor = null;
-                    }
-                }
-            }
-
-            // Определяем цвет фона
+            // ✅ УПРОЩЕНО: Всегда определяем цвет по последней свече
+            const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
             let bgColor;
-            if (this._colorDirty || !this._cachedColor) {
-                // Пробуем получить цвет через специальный метод
-                if (typeof chartManager.getCurrentPriceColor === 'function') {
-                    bgColor = chartManager.getCurrentPriceColor();
-                } else {
-                    // Fallback: определяем по последней свече
-                    const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                    if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
-                        bgColor = lastCandle.close >= lastCandle.open 
-                            ? (chartManager.bullishColor || '#26a69a')
-                            : (chartManager.bearishColor || '#ef5350');
-                    } else {
-                        // Самый последний fallback
-                        bgColor = chartManager._lastAppliedColor || '#26a69a';
-                    }
-                }
-                // Кэшируем только если получили валидный цвет
-                if (bgColor) {
-                    this._cachedColor = bgColor;
-                    this._colorDirty = false;
-                }
+            
+            if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
+                bgColor = lastCandle.close >= lastCandle.open 
+                    ? (chartManager.bullishColor || '#26a69a')
+                    : (chartManager.bearishColor || '#ef5350');
             } else {
-                bgColor = this._cachedColor;
-            }
-
-            // Финальная проверка: если цвет всё ещё не определён, используем дефолтный
-            if (!bgColor) {
-                bgColor = '#26a69a';
+                bgColor = chartManager._lastAppliedColor || '#26a69a';
             }
 
             ctx.save();
@@ -195,7 +120,6 @@ class TimerPrimitive {
         this._requestUpdate = null;
         this._dataReady = false;
         this._lastPrice = null;
-        this._lastYCoord = null;
     }
 
     paneViews() { 
@@ -206,15 +130,7 @@ class TimerPrimitive {
         this._chart = chart;
         this._series = series;
         this._requestUpdate = requestUpdate;
-        
-        // При переключении ТФ ВСЕГДА сбрасываем кэш координат
         this._lastPrice = null;
-        this._lastYCoord = null;
-        
-        // Инвалидируем цвет при новой привязке
-        if (this._paneView?._renderer) {
-            this._paneView._renderer.invalidateColor();
-        }
         
         if (this._chartManager?.chartData?.length > 0) {
             this._dataReady = true;
@@ -224,7 +140,6 @@ class TimerPrimitive {
     detached() { 
         this._dataReady = false;
         this._lastPrice = null;
-        this._lastYCoord = null;
     }
     
     updateAllViews() {}
@@ -240,9 +155,7 @@ class TimerPrimitive {
             const wasEnabled = this._paneView._renderer.enabled;
             this._paneView._renderer.enabled = enabled;
             if (enabled && !wasEnabled) {
-                // При включении сбрасываем кэш для принудительного пересчёта позиции
                 this._lastPrice = null;
-                this._lastYCoord = null;
                 this.requestRedraw();
             }
         }
@@ -250,12 +163,6 @@ class TimerPrimitive {
 
     isEnabled() { 
         return this._paneView?._renderer?.enabled ?? false; 
-    }
-
-    setColor(color) { 
-        if (this._paneView?._renderer) {
-            this._paneView._renderer.setColor(color);
-        }
     }
     
     updatePrice(price) {
@@ -270,20 +177,12 @@ class TimerPrimitive {
     setDataReady(ready) { 
         this._dataReady = ready; 
         if (ready) {
-            // При установке готовности данных сбрасываем кэш
             this._lastPrice = null;
-            this._lastYCoord = null;
         }
     }
     
     isDataReady() { 
         return this._dataReady; 
-    }
-    
-    invalidateColor() {
-        if (this._paneView?._renderer) {
-            this._paneView._renderer.invalidateColor();
-        }
     }
 }
 
@@ -327,9 +226,8 @@ class TimerManager {
                             this._primitive.setDataReady(true);
                             this._updateTimerState();
                         }
-                        // При изменении данных тоже сбрасываем кэш позиции
+                        // ✅ ПРИНУДИТЕЛЬНАЯ перерисовка при изменении данных
                         this._primitive._lastPrice = null;
-                        this._primitive._lastYCoord = null;
                         if (this._primitive.isEnabled()) {
                             this._primitive.requestRedraw();
                         }
@@ -376,12 +274,11 @@ class TimerManager {
             this._primitive.setEnabled(true);
             this._primitive.requestRedraw();
             
-            // Всегда перезапускаем интервал при включении таймера
             if (this._interval) {
                 clearInterval(this._interval);
                 this._interval = null;
             }
-            this._tick(); // Немедленный первый тик
+            this._tick();
             this._interval = setInterval(() => this._tick(), 250);
         }
     }
@@ -404,7 +301,6 @@ class TimerManager {
             if (document.hidden) return;
             if (!this._primitive?.isEnabled()) return;
             
-            // Обновляем цену в chartManager для синхронизации
             if (this._chartManager) {
                 this._chartManager.currentRealPrice = price;
             }
@@ -429,11 +325,8 @@ class TimerManager {
         
         if (typeof this._chartManager.onColorChange === 'function') {
             this._colorChangeHandler = () => {
-                if (this._primitive) {
-                    this._primitive.invalidateColor();
-                    if (this._primitive.isEnabled()) {
-                        this._primitive.requestRedraw();
-                    }
+                if (this._primitive && this._primitive.isEnabled()) {
+                    this._primitive.requestRedraw();
                 }
             };
             this._chartManager.onColorChange(this._colorChangeHandler);
@@ -468,12 +361,10 @@ class TimerManager {
             this._timerElement = { textContent: '' };
         }
 
-        // При смене ТФ полностью пересоздаём примитив и перезапускаем интервал
         if (tfChanged && this._initialized) {
-            this.stop(); // Останавливаем старый интервал
-            this.reattach(); // Пересоздаём примитив (который запустит новый интервал через _updateTimerState)
+            this.stop();
+            this.reattach();
         } else if (!tfChanged) {
-            // Если ТФ не изменился, просто перезапускаем интервал
             this.stop();
             this._updateTimerState();
         }
@@ -499,9 +390,9 @@ class TimerManager {
         
         if (textChanged) {
             this._timerElement.textContent = txt;
-            // При изменении текста принудительно перерисовываем
+            // ✅ ПРИНУДИТЕЛЬНАЯ перерисовка при изменении текста
             if (this._primitive?.isEnabled()) {
-                this._primitive._lastPrice = null; // Сбрасываем кэш для точного позиционирования
+                this._primitive._lastPrice = null;
                 this._primitive.requestRedraw();
             }
         }
@@ -516,12 +407,9 @@ class TimerManager {
     }
 
     forceColorUpdate() {
-        if (this._primitive) {
-            this._primitive.invalidateColor();
-            if (this._primitive.isEnabled()) {
-                this._primitive._lastPrice = null;
-                this._primitive.requestRedraw();
-            }
+        if (this._primitive && this._primitive.isEnabled()) {
+            this._primitive._lastPrice = null;
+            this._primitive.requestRedraw();
         }
     }
 
@@ -537,7 +425,6 @@ class TimerManager {
         
         this._detachPrimitive();
         
-        // Создаём новый примитив с чистым состоянием
         this._primitive = new TimerPrimitive(this, this._chartManager);
         const series = this._chartManager.currentChartType === 'candle'
             ? this._chartManager.candleSeries 
@@ -553,9 +440,8 @@ class TimerManager {
                             this._primitive.setDataReady(true);
                             this._updateTimerState();
                         }
-                        // Сбрасываем кэш при изменении данных
+                        // ✅ ПРИНУДИТЕЛЬНАЯ перерисовка
                         this._primitive._lastPrice = null;
-                        this._primitive._lastYCoord = null;
                         if (this._primitive.isEnabled()) {
                             this._primitive.requestRedraw();
                         }
@@ -564,9 +450,6 @@ class TimerManager {
                 
                 if (this._chartManager.chartData?.length > 0) {
                     this._primitive.setDataReady(true);
-                    
-                    // reattach теперь всегда вызывает _updateTimerState,
-                    // который запускает интервал заново
                     this._updateTimerState();
                 }
             } catch(e) {
@@ -593,4 +476,4 @@ class TimerManager {
 
 if (typeof window !== 'undefined') {
     window.TimerManager = TimerManager;
-} 
+}
