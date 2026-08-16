@@ -1116,75 +1116,76 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    _syncPriceLine(price) {
-        if (!price || isNaN(price) || this._updatesSuspended) return;
-        
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series || !this.chartData || this.chartData.length === 0) return;
-        
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        
-        const nowSec = Math.floor(Date.now() / 1000);
-        const currentCandleStart = this._alignTimeToInterval(nowSec);
-        
+ _syncPriceLine(price) {
+    if (!price || isNaN(price) || this._updatesSuspended) return;
+
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series || !this.chartData || this.chartData.length === 0) return;
+
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const currentCandleStart = this._alignTimeToInterval(nowSec);
+
+    if (lastCandle.time < currentCandleStart) {
         const lineColor = this._getLineColor();
-        
-        if (lastCandle.time < currentCandleStart) {
-            this.currentRealPrice = price;
-            series.applyOptions({ 
-                priceLineColor: lineColor,
-                priceLineSource: lastCandle.close
-            });
-            this._lastAppliedColor = lineColor;
-            this._updatePageTitle();
-            if (this.timerManager) this.timerManager.updatePrice(price);
-            return;
-        }
-        
-        if (lastCandle.time !== currentCandleStart) {
-            this.currentRealPrice = price;
-            this._lastAppliedColor = lineColor;
-            
-            series.applyOptions({ 
-                priceLineSource: price,
-                priceLineColor: lineColor 
-            });
-            
-            this._updatePageTitle();
-            this.scheduleUpdatePosition();
-            if (this.timerManager) this.timerManager.updatePrice(price);
-            return;
-        }
-        
-        lastCandle.close = price;
-        lastCandle.high = Math.max(lastCandle.high, price);
-        lastCandle.low = Math.min(lastCandle.low, price);
-        
         this.currentRealPrice = price;
-        this.lastCandle = lastCandle;
-        
-        series.update({
-            time: lastCandle.time,
-            open: lastCandle.open,
-            high: lastCandle.high,
-            low: lastCandle.low,
-            close: price
+        series.applyOptions({
+            priceLineColor: lineColor,
+            priceLineSource: lastCandle.close
         });
-        
         this._lastAppliedColor = lineColor;
-        
-        series.applyOptions({ 
-            priceLineSource: price, 
-            priceLineColor: lineColor 
-        });
-        
         this._updatePageTitle();
-        if (!document.hidden) this.scheduleUpdatePosition();
-        this.requestDrawingsRedraw();
-        
         if (this.timerManager) this.timerManager.updatePrice(price);
+        return;
     }
+
+    if (lastCandle.time !== currentCandleStart) {
+        const lineColor = this._getLineColor();
+        this.currentRealPrice = price;
+        series.applyOptions({
+            priceLineSource: price,
+            priceLineColor: lineColor
+        });
+        this._lastAppliedColor = lineColor;
+        this._updatePageTitle();
+        this.scheduleUpdatePosition();
+        if (this.timerManager) this.timerManager.updatePrice(price);
+        return;
+    }
+
+    lastCandle.close = price;
+    lastCandle.high = Math.max(lastCandle.high, price);
+    lastCandle.low = Math.min(lastCandle.low, price);
+
+    this.currentRealPrice = price;
+    this.lastCandle = lastCandle;
+
+    // Вот здесь — уже после изменения close
+    const lineColor = this._getLineColor();
+
+    series.update({
+        time: lastCandle.time,
+        open: lastCandle.open,
+        high: lastCandle.high,
+        low: lastCandle.low,
+        close: price
+    });
+
+    this._lastAppliedColor = lineColor;
+
+    series.applyOptions({
+        priceLineSource: price,
+        priceLineColor: lineColor
+    });
+
+    this._updatePageTitle();
+    if (!document.hidden) this.scheduleUpdatePosition();
+    this.requestDrawingsRedraw();
+
+    if (this.timerManager) this.timerManager.updatePrice(price);
+}
 
     _alignTimeToInterval(nowSec) {
         const stepMap = {
