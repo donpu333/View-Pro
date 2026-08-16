@@ -3,9 +3,9 @@ class TimerManager {
         this._chartManager = chartManager;
         this._interval = null;
         this._currentTf = CONFIG.defaultInterval || '1h';
-        this._labelElement = null;      // Единая плашка
-        this._priceRow = null;          // Строка с ценой
-        this._timerRow = null;          // Строка с таймером
+        this._labelElement = null;
+        this._priceRow = null;
+        this._timerRow = null;
         this._disabled = false;
         this._initialized = false;
         this._currentPrice = null;
@@ -17,6 +17,7 @@ class TimerManager {
         this._lastScaleCanvas = null;
         this._isVisible = false;
         this._showTimerRow = true;
+        this._retryTimeout = null;
 
         if (chartManager.timerManager) {
             chartManager.timerManager.destroy();
@@ -31,7 +32,6 @@ class TimerManager {
 
         document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
 
-        // ✅ ЕДИНАЯ ПЛАШКА: контейнер с двумя строками
         this._labelElement = document.createElement('div');
         this._labelElement.id = 'price-timer-label';
         
@@ -61,24 +61,24 @@ class TimerManager {
             line-height: 1.2;
         `;
 
-        // ✅ СТРОКА 1: ЦЕНА
+        // ✅ ЦЕНА — ЧЁРНЫЙ ТЕКСТ
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
             font-weight: bold;
             font-size: 11px;
-            color: #ffffff;
+            color: #000000;
             padding: 2px 6px 1px 6px;
             white-space: nowrap;
             overflow: hidden;
         `;
         this._priceRow.textContent = '';
 
-        // ✅ СТРОКА 2: ТАЙМЕР
+        // ✅ ТАЙМЕР — ЧЁРНЫЙ ТЕКСТ
         this._timerRow = document.createElement('div');
         this._timerRow.style.cssText = `
             font-weight: bold;
             font-size: 10px;
-            color: rgba(255, 255, 255, 0.95);
+            color: #000000;
             padding: 0 6px 2px 6px;
             white-space: nowrap;
             overflow: hidden;
@@ -100,7 +100,10 @@ class TimerManager {
         this._updateTimerState();
         this._startTracking();
         
+        // ✅ Множественные попытки показа (график может ещё не быть готов)
         setTimeout(() => this._forceUpdate(), 150);
+        setTimeout(() => this._forceUpdate(), 400);
+        setTimeout(() => this._forceUpdate(), 800);
     }
 
     _attachScaleObserver() {
@@ -180,7 +183,7 @@ class TimerManager {
         }
         
         const track = () => {
-            if (this._labelElement) {
+            if (this._labelElement && !this._disabled) {
                 const price = this._currentPrice || 
                              this._chartManager.currentRealPrice || 
                              this._chartManager.lastCandle?.close;
@@ -210,7 +213,6 @@ class TimerManager {
     _updateTimerState() {
         if (!this._labelElement) return;
         
-        // ✅ На длинных ТФ скрываем строку таймера, плашка становится ниже
         if (['1d','1w','1M'].includes(this._currentTf)) {
             this._showTimerRow = false;
             this._timerRow.style.display = 'none';
@@ -228,7 +230,6 @@ class TimerManager {
         if (this._disabled || !this._labelElement) return;
         this._currentPrice = price;
         
-        // Обновляем текст цены
         if (price != null && !isNaN(price)) {
             this._updatePriceText(price);
         }
@@ -286,12 +287,12 @@ class TimerManager {
         try {
             yCoord = activeSeries.priceToCoordinate(price);
         } catch (e) {
-            this._hideLabel();
+            this._scheduleRetry();
             return;
         }
         
         if (yCoord == null || isNaN(yCoord)) {
-            this._hideLabel();
+            this._scheduleRetry();
             return;
         }
 
@@ -305,15 +306,17 @@ class TimerManager {
             this._labelElement.style.width = scaleWidth + 'px';
         }
         
-        if (yCoord < -labelHeight || yCoord > containerHeight + labelHeight) {
+        // ✅ УВЕЛИЧЕННЫЙ БУФЕР: скрываем только если плашка УЖЕ далеко за границами
+        // (раньше скрывалась при малейшем выходе, теперь — только при 2x высоте)
+        const hideBuffer = labelHeight * 2;
+        if (yCoord < -hideBuffer || yCoord > containerHeight + hideBuffer) {
             this._hideLabel();
             return;
         }
 
         this._showLabel();
 
-        // ✅ ПОЗИЦИОНИРОВАНИЕ: строка ЦЕНЫ центрируется по линии цены
-        // Высота строки цены ≈ 17px (11px font + 2px padding top + 1px padding bottom + line-height)
+        // Позиционирование: строка ЦЕНЫ центрируется по линии цены
         const priceRowHeight = this._priceRow.offsetHeight || 17;
         const priceRowCenter = priceRowHeight / 2;
         
@@ -329,6 +332,20 @@ class TimerManager {
             this._lastTop = finalTop;
             this._labelElement.style.top = finalTop + 'px';
         }
+    }
+
+    // ✅ НОВЫЙ МЕТОД: повторная попытка если координата не получена
+    _scheduleRetry() {
+        if (this._retryTimeout) return;
+        this._retryTimeout = setTimeout(() => {
+            this._retryTimeout = null;
+            const price = this._currentPrice || 
+                         this._chartManager?.currentRealPrice || 
+                         this._chartManager?.lastCandle?.close;
+            if (price != null && !isNaN(price) && price > 0) {
+                this._updatePosition(price);
+            }
+        }, 100);
     }
 
     updatePosition(price) {
@@ -353,6 +370,10 @@ class TimerManager {
         this._attachScaleObserver();
         
         this._forceUpdate();
+        
+        // ✅ Дополнительные попытки показа после старта
+        setTimeout(() => this._forceUpdate(), 200);
+        setTimeout(() => this._forceUpdate(), 500);
     }
 
     _tick() {
@@ -409,6 +430,10 @@ class TimerManager {
 
     destroy() {
         this.stop();
+        if (this._retryTimeout) {
+            clearTimeout(this._retryTimeout);
+            this._retryTimeout = null;
+        }
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
