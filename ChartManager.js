@@ -964,92 +964,102 @@ class ChartManager {
         } catch (e) {}
     }
 
-setChartType(type) {
-    if (!this.chart) return;
-    this.currentChartType = type;
-    localStorage.setItem('chartType', type);
-    
-    // ✅ Переключаем только видимость, НЕ трогаем данные
-    // Обе серии уже содержат данные из setDataQuick
-    if (type === 'candle') {
-        if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
-        if (this.barSeries) this.barSeries.applyOptions({ visible: false });
-    } else if (type === 'bar') {
-        if (this.barSeries) this.barSeries.applyOptions({ visible: true });
-        if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
-    }
-    
-    if (this.volumeSeries && this.chartData.length > 0) {
-        this._volumeDataCache = null;
-        this._volumeDataDirty = true;
-        this._lastVolumeUpdateIndex = -1; 
-        this._updateVolumeOptimized();
-    }
-    
-    if (this.barSeries) {
-        this.barSeries.applyOptions({ 
-            upColor: CONFIG.colors.bullish, 
-            downColor: CONFIG.colors.bearish 
-        });
-    }
-    
-    if (this.indicatorManager?.activeIndicators) {
-        this.indicatorManager.activeIndicators.forEach(indicator => {
-            try { indicator.createSeries(); } catch (e) {}
-        });
-    }
-    
-    setTimeout(() => {
-        if (window.rayManager) window.rayManager.syncWithNewTimeframe();
-        if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
-        if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
-        if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
-        if (window.textManager) window.textManager.syncWithNewTimeframe();
-    }, 50);
-    
-    const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-    if (activeSeries) {
-        const lineColor = this._getLineColor();
-        activeSeries.applyOptions({
-            priceLineVisible: true, 
-            lastValueVisible: false,
-            priceLineColor: lineColor,
-            priceLineSource: 'lastBar',
-            priceLineWidth: 1,
-            priceLineStyle: LightweightCharts.LineStyle.Dashed
-        });
-        this._lastAppliedColor = lineColor;
-    }
-
-    if (this.timerManager) {
-        const price = this.currentRealPrice ?? this.lastCandle?.close;
-        if (price != null) {
-            this.timerManager.updatePrice(price);
+    setChartType(type) {
+        if (!this.chart) return;
+        this.currentChartType = type;
+        localStorage.setItem('chartType', type);
+        
+        // 🎯 КРИТИЧЕСКИ ВАЖНО: Синхронизируем данные перед показом!
+        // updateLastCandle обновляет ТОЛЬКО активную серию, поэтому неактивная устаревает.
+        // Мы делаем setData() только при переключении, это не бьет по производительности.
+        if (type === 'candle') {
+            if (this.candleSeries) {
+                this.candleSeries.setData(this.chartData); 
+                this.candleSeries.applyOptions({ visible: true });
+            }
+            if (this.barSeries) this.barSeries.applyOptions({ visible: false });
+        } else if (type === 'bar') {
+            if (this.barSeries) {
+                this.barSeries.setData(this.chartData); 
+                this.barSeries.applyOptions({ visible: true });
+            }
+            if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
         }
         
-        requestAnimationFrame(() => {
-            if (this.timerManager) this.timerManager._forceUpdate();
-        });
-        requestAnimationFrame(() => {
+        // 🎯 СИНХРОНИЗАЦИЯ ОБЪЕМОВ (Твоя доработка)
+        if (this.volumeSeries && this.chartData.length > 0) {
+            this._volumeDataCache = null;
+            this._volumeDataDirty = true;
+            this._lastVolumeUpdateIndex = -1; 
+            this._updateVolumeOptimized();
+        }
+        
+        if (this.barSeries) {
+            this.barSeries.applyOptions({ 
+                upColor: CONFIG.colors.bullish, 
+                downColor: CONFIG.colors.bearish 
+            });
+        }
+        
+        if (this.timerManager?.reattach) this.timerManager.reattach();
+        if (this.indicatorManager?.activeIndicators) {
+            this.indicatorManager.activeIndicators.forEach(indicator => {
+                try { indicator.createSeries(); } catch (e) {}
+            });
+        }
+        
+        setTimeout(() => {
+            if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+            if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+            if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+            if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+            if (window.textManager) window.textManager.syncWithNewTimeframe();
+        }, 50);
+        
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries) {
+            const lineColor = this._getLineColor();
+            activeSeries.applyOptions({
+                priceLineVisible: true, 
+                lastValueVisible: false,
+                priceLineColor: lineColor,
+                priceLineSource: 'lastBar',
+                priceLineWidth: 1,
+                priceLineStyle: LightweightCharts.LineStyle.Dashed
+            });
+            this._lastAppliedColor = lineColor;
+        }
+
+        // ✅ ТВОИ МНОЖЕСТВЕННЫЕ ПОПЫТКИ ДЛЯ ТАЙМЕРА (Отличное решение!)
+        if (this.timerManager) {
+            const price = this.currentRealPrice ?? this.lastCandle?.close;
+            if (price != null) {
+                this.timerManager.updatePrice(price);
+            }
+            
             requestAnimationFrame(() => {
                 if (this.timerManager) this.timerManager._forceUpdate();
             });
-        });
-        setTimeout(() => {
-            if (this.timerManager) this.timerManager._forceUpdate();
-        }, 150);
-        setTimeout(() => {
-            if (this.timerManager) this.timerManager._forceUpdate();
-        }, 400);
-    }
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    if (this.timerManager) this.timerManager._forceUpdate();
+                });
+            });
+            setTimeout(() => {
+                if (this.timerManager) this.timerManager._forceUpdate();
+            }, 150);
+            setTimeout(() => {
+                if (this.timerManager) this.timerManager._forceUpdate();
+            }, 400);
+        }
 
-    if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
-        window._dailySeparator.reattach();
+        if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
+            window._dailySeparator.reattach();
+        }
+        if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
+            window._sessionHighlighter.reattach();
+        }
     }
-    if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
-        window._sessionHighlighter.reattach();
-    }
-}
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended) return;
         this._updateScheduled = true;
