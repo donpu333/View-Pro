@@ -217,7 +217,7 @@ class TimeframeManager {
         }
     }
 
-    // ==================== ПЕРЕКЛЮЧЕНИЕ (ФИНАЛЬНОЕ) ====================
+    // ==================== ПЕРЕКЛЮЧЕНИЕ (ИСПРАВЛЕНО) ====================
     async switchToTimeframe(tf) {
         // 1. Валидация
         if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
@@ -228,16 +228,22 @@ class TimeframeManager {
             console.log('🛑 Предыдущее переключение таймфрейма отменено');
         }
 
-        // 3. Создаём новый AbortController
+        // 3. ✅ Также прерываем текущий запрос в ChartManager
+        // (чтобы старый fetch не перезаписал новые данные)
+        if (this.chartManager._currentFetchController) {
+            this.chartManager._currentFetchController.abort();
+        }
+
+        // 4. Создаём новый AbortController
         this._abortController = new AbortController();
         const { signal } = this._abortController;
 
         console.log('🔄 Переключение на таймфрейм:', tf);
 
-        // 4. Сохраняем позицию ДО переключения
+        // 5. Сохраняем позицию ДО переключения
         this.saveCurrentPosition();
 
-        // 5. UI обновляем СРАЗУ
+        // 6. UI обновляем СРАЗУ
         document.querySelectorAll('.timeframe-item').forEach(i => {
             i.classList.toggle('active', i.dataset.tf === tf);
         });
@@ -247,7 +253,9 @@ class TimeframeManager {
         const previousInterval = this.currentInterval;
 
         try {
-            // 6. ✅ Передаём signal как 7-й параметр — РЕАЛЬНАЯ отмена HTTP-запроса
+            // 7. ✅ ИСПРАВЛЕНО: НЕ передаём signal в fetchKlines
+            // ChartManager сам создаёт AbortController внутри (requestType='user')
+            // Прерывание сделано выше через chartManager._currentFetchController.abort()
             const candles = await this.chartManager.fetchKlines(
                 this.chartManager.currentSymbol,
                 this.chartManager.currentExchange,
@@ -255,16 +263,16 @@ class TimeframeManager {
                 tf,
                 1000,
                 null,
-                signal  // ← теперь работает!
+                'user'
             );
 
-            // 7. Проверка отмены после await
+            // 8. Проверка отмены после await
             if (signal.aborted) {
                 console.log('🛑 Переключение отменено после fetch');
                 return;
             }
 
-            // 8. Пустые данные — откатываемся
+            // 9. Пустые данные — откатываемся
             if (!candles || candles.length === 0) {
                 console.warn('⚠️ Пустые данные для', tf, '— откат на', previousInterval);
                 this._rollbackTimeframe(previousInterval);
@@ -273,7 +281,7 @@ class TimeframeManager {
 
             if (signal.aborted) return;
 
-            // 9. Применяем новые данные
+            // 10. Применяем новые данные
             this.currentInterval = tf;
             localStorage.setItem('lastTimeframe', tf);
             this.chartManager.setCurrentInterval(tf);
@@ -294,6 +302,23 @@ class TimeframeManager {
             }
 
             this.timerManager.start(tf);
+            
+            // ✅ ИСПРАВЛЕНО: явно обновляем позицию таймера
+            // setDataQuick() сбрасывает данные, таймер нужно синхронизировать
+            requestAnimationFrame(() => {
+                if (this.timerManager) {
+                    const price = this.chartManager.currentRealPrice 
+                        ?? this.chartManager.lastCandle?.close;
+                    if (price != null) {
+                        this.timerManager.updatePosition(price);
+                    }
+                    // Обновить ширину ценовой шкалы под новую цену
+                    if (this.chartManager._applyPriceScaleWidth) {
+                        this.chartManager._applyPriceScaleWidth();
+                    }
+                }
+            });
+            
             this.chartManager.autoScale();
             this.restorePosition();
 
