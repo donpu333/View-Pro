@@ -18,6 +18,7 @@ class TimerManager {
         this._isVisible = false;
         this._showTimerRow = true;
         this._retryTimeout = null;
+        this._retryCount = 0;
         this._initRetryCount = 0;
 
         if (chartManager.timerManager) {
@@ -230,6 +231,12 @@ class TimerManager {
                              
                 if (price != null && !isNaN(price) && price > 0) {
                     this._updatePosition(price);
+                    
+                    // ✅ Страховка: если плашка должна быть видима но случайно скрыта
+                    if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
+                        this._labelElement.style.visibility = 'visible';
+                        this._labelElement.style.opacity = '1';
+                    }
                 } else if (!this._isVisible) {
                     const lastClose = this._chartManager.lastCandle?.close;
                     if (lastClose != null && !isNaN(lastClose)) {
@@ -379,16 +386,24 @@ class TimerManager {
     }
 
     _scheduleRetry() {
-        if (this._retryTimeout) return;
-        this._retryTimeout = setTimeout(() => {
-            this._retryTimeout = null;
-            const price = this._currentPrice || 
-                         this._chartManager?.currentRealPrice || 
-                         this._chartManager?.lastCandle?.close;
-            if (price != null && !isNaN(price) && price > 0) {
-                this._updatePosition(price);
-            }
-        }, 100);
+        if (this._retryTimeout) {
+            clearTimeout(this._retryTimeout);
+        }
+        
+        if (this._retryCount < 5) {
+            this._retryCount++;
+            const delay = 100 * this._retryCount;
+            
+            this._retryTimeout = setTimeout(() => {
+                this._retryTimeout = null;
+                const price = this._currentPrice || 
+                             this._chartManager?.currentRealPrice || 
+                             this._chartManager?.lastCandle?.close;
+                if (price != null && !isNaN(price) && price > 0) {
+                    this._updatePosition(price);
+                }
+            }, delay);
+        }
     }
 
     updatePosition(price) {
@@ -447,6 +462,12 @@ class TimerManager {
     _forceUpdate() {
         if (!this._labelElement) return;
         
+        this._retryCount = 0;
+        if (this._retryTimeout) {
+            clearTimeout(this._retryTimeout);
+            this._retryTimeout = null;
+        }
+        
         const scaleWidth = this._getPriceScaleWidth();
         if (scaleWidth > 30) {
             this._lastWidth = scaleWidth;
@@ -495,6 +516,7 @@ class TimerManager {
         this._timerRow = null;
         this._initialized = false;
         this._isVisible = false;
+        this._retryCount = 0;
         this._initRetryCount = 0;
     }
 }
