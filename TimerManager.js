@@ -14,7 +14,6 @@ class TimerManager {
         this._lastColor = null;
         this._lastWidth = null;
         this._scaleObserver = null;
-        this._labelObserver = null;  // ✅ FIX: добавлен observer для защиты
         this._lastScaleCanvas = null;
         this._isVisible = false;
         this._showTimerRow = true;
@@ -50,14 +49,13 @@ class TimerManager {
         const initWidth = 90;
         this._lastWidth = initWidth;
 
-        // ✅ FIX: z-index повышен до 9999, убран двойной пробел в font-size
         this._labelElement.style.cssText = `
             position: absolute;
             right: 0px;
             left: auto;
             width: ${initWidth}px;
             pointer-events: none;
-            z-index: 9999;
+            z-index: 999;
             font-family: 'Inter', Arial, sans-serif;
             visibility: hidden;
             opacity: 0;
@@ -75,7 +73,7 @@ class TimerManager {
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
             font-weight: bold;
-            font-size: 11px;
+            font-size:  11px;
             color: #000000;
             padding: 2px 6px 1px 6px;
             white-space: nowrap;
@@ -97,6 +95,10 @@ class TimerManager {
         this._labelElement.appendChild(this._priceRow);
         this._labelElement.appendChild(this._timerRow);
 
+        const initTextColor = this._getContrastTextColor(initColor);
+        this._priceRow.style.color = initTextColor;
+        this._timerRow.style.color = initTextColor;
+
         const container = this._chartManager.chartContainer;
         if (getComputedStyle(container).position === 'static') {
             container.style.position = 'relative';
@@ -105,9 +107,6 @@ class TimerManager {
         container.appendChild(this._labelElement);
         this._initialized = true;
 
-        // ✅ FIX: защита от внешнего скрытия плашки
-        this._protectLabel();
-        
         this._attachScaleObserver();
         this._updateTimerState();
         this._startTracking();
@@ -117,33 +116,6 @@ class TimerManager {
         setTimeout(() => this._forceUpdate(), 800);
         setTimeout(() => this._forceUpdate(), 1500);
         setTimeout(() => this._forceUpdate(), 2500);
-    }
-
-    // ✅ FIX: НОВЫЙ МЕТОД — защита плашки от внешнего скрытия
-    _protectLabel() {
-        if (!this._labelElement) return;
-        if (this._labelObserver) {
-            this._labelObserver.disconnect();
-        }
-        
-        this._labelObserver = new MutationObserver((mutations) => {
-            mutations.forEach(mutation => {
-                if (mutation.attributeName === 'style') {
-                    // Если кто-то скрыл плашку в обход нашего кода — восстанавливаем
-                    if (this._isVisible && 
-                        this._labelElement.style.visibility === 'hidden') {
-                        console.warn('⚠️ Плашка была скрыта внешне, восстанавливаю');
-                        this._labelElement.style.visibility = 'visible';
-                        this._labelElement.style.opacity = '1';
-                    }
-                }
-            });
-        });
-        
-        this._labelObserver.observe(this._labelElement, { 
-            attributes: true, 
-            attributeFilter: ['style', 'class'] 
-        });
     }
 
     _attachScaleObserver() {
@@ -202,6 +174,34 @@ class TimerManager {
         return cm?.bullishColor || CONFIG.colors.bullish || '#26a69a';
     }
 
+    _getContrastTextColor(bgColor) {
+        if (!bgColor) return '#000000';
+        
+        let r, g, b;
+        
+        if (bgColor.startsWith('#')) {
+            let hex = bgColor.slice(1);
+            if (hex.length === 3) {
+                hex = hex.split('').map(c => c + c).join('');
+            }
+            r = parseInt(hex.slice(0, 2), 16);
+            g = parseInt(hex.slice(2, 4), 16);
+            b = parseInt(hex.slice(4, 6), 16);
+        } else if (bgColor.startsWith('rgb')) {
+            const match = bgColor.match(/\d+/g);
+            if (match && match.length >= 3) {
+                r = parseInt(match[0]);
+                g = parseInt(match[1]);
+                b = parseInt(match[2]);
+            }
+        }
+        
+        if (isNaN(r) || isNaN(g) || isNaN(b)) return '#000000';
+        
+        const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        return luminance > 0.55 ? '#000000' : '#ffffff';
+    }
+
     _getPriceScaleWidth() {
         const cm = this._chartManager;
         if (!cm?.chartContainer) return this._lastWidth || 90;
@@ -216,7 +216,6 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
-    // ✅ FIX: Добавлена страховка — если _isVisible=true но DOM скрыт, показываем
     _startTracking() {
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
@@ -239,12 +238,6 @@ class TimerManager {
                 }
                 
                 this._updateColor();
-                
-                // ✅ ФИКС: Каждый кадр проверяем что DOM соответствует _isVisible
-                if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
-                    this._labelElement.style.visibility = 'visible';
-                    this._labelElement.style.opacity = '1';
-                }
             }
             this._rafId = requestAnimationFrame(track);
         };
@@ -253,12 +246,16 @@ class TimerManager {
     }
 
     _updateColor() {
-        if (!this._labelElement) return;
+        if (!this._labelElement || !this._priceRow || !this._timerRow) return;
         const targetColor = this._getCurrentColor();
         
         if (targetColor !== this._lastColor) {
             this._lastColor = targetColor;
             this._labelElement.style.backgroundColor = targetColor;
+            
+            const textColor = this._getContrastTextColor(targetColor);
+            this._priceRow.style.color = textColor;
+            this._timerRow.style.color = textColor;
         }
     }
 
@@ -298,30 +295,22 @@ class TimerManager {
         }
     }
 
-    // ✅ FIX: Всегда ставим visible, не только при _isVisible === false
     _showLabel() {
         if (!this._labelElement) return;
-        
-        if (this._labelElement.style.visibility !== 'visible') {
+        if (!this._isVisible) {
+            this._isVisible = true;
             this._labelElement.style.visibility = 'visible';
-        }
-        if (this._labelElement.style.opacity !== '1') {
             this._labelElement.style.opacity = '1';
         }
-        this._isVisible = true;
     }
 
-    // ✅ FIX: Всегда ставим hidden, симметрично _showLabel
     _hideLabel() {
         if (!this._labelElement) return;
-        
-        if (this._labelElement.style.visibility !== 'hidden') {
+        if (this._isVisible) {
+            this._isVisible = false;
             this._labelElement.style.visibility = 'hidden';
-        }
-        if (this._labelElement.style.opacity !== '0') {
             this._labelElement.style.opacity = '0';
         }
-        this._isVisible = false;
     }
 
     _updatePosition(price) {
@@ -483,7 +472,6 @@ class TimerManager {
         this._init();
     }
 
-    // ✅ FIX: Добавлена очистка _labelObserver
     destroy() {
         this.stop();
         if (this._retryTimeout) {
@@ -497,10 +485,6 @@ class TimerManager {
         if (this._scaleObserver) {
             this._scaleObserver.disconnect();
             this._scaleObserver = null;
-        }
-        if (this._labelObserver) {
-            this._labelObserver.disconnect();
-            this._labelObserver = null;
         }
         this._lastScaleCanvas = null;
         if (this._labelElement && this._labelElement.parentNode) {
