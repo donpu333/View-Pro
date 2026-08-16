@@ -743,12 +743,12 @@ class ChartManager {
             if (last && aligned > last.time) {
                 const timeSinceNewCandle = nowSec - aligned;
                 
-                if (timeSinceNewCandle < 2) {
+                if (timeSinceNewCandle < 5) {
                     this._candleCheckerTimeout = setTimeout(check, 250);
                     return;
                 }
                 
-                console.warn('⚠️ Kline задерживается > 2 сек, создаём временную свечу');
+                console.warn('⚠️ Kline задерживается > 5 сек, создаём временную свечу');
                 const newCandle = {
                     time: aligned,
                     open: last.close,
@@ -970,11 +970,17 @@ class ChartManager {
         localStorage.setItem('chartType', type);
         
         if (type === 'candle') {
-            if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
+            if (this.candleSeries) {
+                this.candleSeries.setData(this.chartData);
+                this.candleSeries.applyOptions({ visible: true });
+            }
             if (this.barSeries) this.barSeries.applyOptions({ visible: false });
         } else if (type === 'bar') {
+            if (this.barSeries) {
+                this.barSeries.setData(this.chartData);
+                this.barSeries.applyOptions({ visible: true });
+            }
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
-            if (this.barSeries) this.barSeries.applyOptions({ visible: true });
         }
         
         if (this.barSeries) {
