@@ -14,6 +14,7 @@ class TimerManager {
         this._lastColor = null;
         this._lastWidth = null;
         this._scaleObserver = null;
+        this._labelObserver = null;  // ✅ FIX: добавлен observer для защиты
         this._lastScaleCanvas = null;
         this._isVisible = false;
         this._showTimerRow = true;
@@ -29,7 +30,6 @@ class TimerManager {
     }
 
     _init() {
-        // ✅ FIX: Если chart не готов — повторяем до 15 раз по 200мс
         if (this._disabled || !this._chartManager?.chart) {
             if (this._initRetryCount < 15) {
                 this._initRetryCount++;
@@ -50,13 +50,14 @@ class TimerManager {
         const initWidth = 90;
         this._lastWidth = initWidth;
 
+        // ✅ FIX: z-index повышен до 9999, убран двойной пробел в font-size
         this._labelElement.style.cssText = `
             position: absolute;
             right: 0px;
             left: auto;
             width: ${initWidth}px;
             pointer-events: none;
-            z-index: 999;
+            z-index: 9999;
             font-family: 'Inter', Arial, sans-serif;
             visibility: hidden;
             opacity: 0;
@@ -74,7 +75,7 @@ class TimerManager {
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
             font-weight: bold;
-            font-size:  11px;
+            font-size: 11px;
             color: #000000;
             padding: 2px 6px 1px 6px;
             white-space: nowrap;
@@ -104,16 +105,45 @@ class TimerManager {
         container.appendChild(this._labelElement);
         this._initialized = true;
 
+        // ✅ FIX: защита от внешнего скрытия плашки
+        this._protectLabel();
+        
         this._attachScaleObserver();
         this._updateTimerState();
         this._startTracking();
         
-        // ✅ Множественные попытки показа (решает проблему первого запуска)
         setTimeout(() => this._forceUpdate(), 150);
         setTimeout(() => this._forceUpdate(), 400);
         setTimeout(() => this._forceUpdate(), 800);
         setTimeout(() => this._forceUpdate(), 1500);
         setTimeout(() => this._forceUpdate(), 2500);
+    }
+
+    // ✅ FIX: НОВЫЙ МЕТОД — защита плашки от внешнего скрытия
+    _protectLabel() {
+        if (!this._labelElement) return;
+        if (this._labelObserver) {
+            this._labelObserver.disconnect();
+        }
+        
+        this._labelObserver = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                if (mutation.attributeName === 'style') {
+                    // Если кто-то скрыл плашку в обход нашего кода — восстанавливаем
+                    if (this._isVisible && 
+                        this._labelElement.style.visibility === 'hidden') {
+                        console.warn('⚠️ Плашка была скрыта внешне, восстанавливаю');
+                        this._labelElement.style.visibility = 'visible';
+                        this._labelElement.style.opacity = '1';
+                    }
+                }
+            });
+        });
+        
+        this._labelObserver.observe(this._labelElement, { 
+            attributes: true, 
+            attributeFilter: ['style', 'class'] 
+        });
     }
 
     _attachScaleObserver() {
@@ -186,6 +216,7 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
+    // ✅ FIX: Добавлена страховка — если _isVisible=true но DOM скрыт, показываем
     _startTracking() {
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
@@ -201,7 +232,6 @@ class TimerManager {
                 if (price != null && !isNaN(price) && price > 0) {
                     this._updatePosition(price);
                 } else if (!this._isVisible) {
-                    // ✅ FIX: Если цена ещё не пришла, пробуем показать плашку с последней известной ценой
                     const lastClose = this._chartManager.lastCandle?.close;
                     if (lastClose != null && !isNaN(lastClose)) {
                         this._updatePosition(lastClose);
@@ -209,6 +239,12 @@ class TimerManager {
                 }
                 
                 this._updateColor();
+                
+                // ✅ ФИКС: Каждый кадр проверяем что DOM соответствует _isVisible
+                if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
+                    this._labelElement.style.visibility = 'visible';
+                    this._labelElement.style.opacity = '1';
+                }
             }
             this._rafId = requestAnimationFrame(track);
         };
@@ -262,22 +298,30 @@ class TimerManager {
         }
     }
 
+    // ✅ FIX: Всегда ставим visible, не только при _isVisible === false
     _showLabel() {
         if (!this._labelElement) return;
-        if (!this._isVisible) {
-            this._isVisible = true;
+        
+        if (this._labelElement.style.visibility !== 'visible') {
             this._labelElement.style.visibility = 'visible';
+        }
+        if (this._labelElement.style.opacity !== '1') {
             this._labelElement.style.opacity = '1';
         }
+        this._isVisible = true;
     }
 
+    // ✅ FIX: Всегда ставим hidden, симметрично _showLabel
     _hideLabel() {
         if (!this._labelElement) return;
-        if (this._isVisible) {
-            this._isVisible = false;
+        
+        if (this._labelElement.style.visibility !== 'hidden') {
             this._labelElement.style.visibility = 'hidden';
+        }
+        if (this._labelElement.style.opacity !== '0') {
             this._labelElement.style.opacity = '0';
         }
+        this._isVisible = false;
     }
 
     _updatePosition(price) {
@@ -315,14 +359,12 @@ class TimerManager {
         const containerHeight = cm.chartContainer.clientHeight;
         const labelHeight = this._labelElement.offsetHeight || 20;
         
-        // Синхронизация ширины
         const scaleWidth = this._getPriceScaleWidth();
         if (Math.abs(this._lastWidth - scaleWidth) > 2) {
             this._lastWidth = scaleWidth;
             this._labelElement.style.width = scaleWidth + 'px';
         }
         
-        // ✅ Увеличенный буфер: скрываем только если плашка далеко за границами
         const hideBuffer = labelHeight * 2;
         if (yCoord < -hideBuffer || yCoord > containerHeight + hideBuffer) {
             this._hideLabel();
@@ -331,13 +373,11 @@ class TimerManager {
 
         this._showLabel();
 
-        // Позиционирование: строка ЦЕНЫ центрируется по линии цены
         const priceRowHeight = this._priceRow.offsetHeight || 17;
         const priceRowCenter = priceRowHeight / 2;
         
         let top = yCoord - priceRowCenter;
         
-        // Защита от выхода за границы
         const maxTop = containerHeight - labelHeight - 3;
         if (top > maxTop) top = maxTop;
         if (top < 3) top = 3;
@@ -349,7 +389,6 @@ class TimerManager {
         }
     }
 
-    // ✅ FIX: Повторная попытка если координата не получена
     _scheduleRetry() {
         if (this._retryTimeout) return;
         this._retryTimeout = setTimeout(() => {
@@ -374,7 +413,6 @@ class TimerManager {
         
         if (!this._initialized) {
             this._init();
-            // ✅ FIX: НЕ делаем return — продолжаем и вызываем _forceUpdate
         }
         
         if (!this._labelElement) return;
@@ -388,7 +426,6 @@ class TimerManager {
         
         this._forceUpdate();
         
-        // ✅ Дополнительные попытки для стабильности
         setTimeout(() => this._forceUpdate(), 200);
         setTimeout(() => this._forceUpdate(), 500);
         setTimeout(() => this._forceUpdate(), 1000);
@@ -446,6 +483,7 @@ class TimerManager {
         this._init();
     }
 
+    // ✅ FIX: Добавлена очистка _labelObserver
     destroy() {
         this.stop();
         if (this._retryTimeout) {
@@ -459,6 +497,10 @@ class TimerManager {
         if (this._scaleObserver) {
             this._scaleObserver.disconnect();
             this._scaleObserver = null;
+        }
+        if (this._labelObserver) {
+            this._labelObserver.disconnect();
+            this._labelObserver = null;
         }
         this._lastScaleCanvas = null;
         if (this._labelElement && this._labelElement.parentNode) {
