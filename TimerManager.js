@@ -74,7 +74,7 @@ class TimerManager {
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
             font-weight: bold;
-            font-size: 11px;
+            font-size:  11px;
             color: #000000;
             padding: 2px 6px 1px 6px;
             white-space: nowrap;
@@ -85,7 +85,7 @@ class TimerManager {
         this._timerRow = document.createElement('div');
         this._timerRow.style.cssText = `
             font-weight: bold;
-            font-size: 10px;
+            font-size: 11px;
             color: #000000;
             padding: 0 6px 2px 6px;
             white-space: nowrap;
