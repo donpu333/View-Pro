@@ -384,27 +384,25 @@ class TimerManager {
             this._labelElement.style.top = finalTop + 'px';
         }
     }
-
-    _scheduleRetry() {
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-        }
-        
-        if (this._retryCount < 5) {
-            this._retryCount++;
-            const delay = 100 * this._retryCount;
-            
-            this._retryTimeout = setTimeout(() => {
-                this._retryTimeout = null;
-                const price = this._currentPrice || 
-                             this._chartManager?.currentRealPrice || 
-                             this._chartManager?.lastCandle?.close;
-                if (price != null && !isNaN(price) && price > 0) {
-                    this._updatePosition(price);
-                }
-            }, delay);
-        }
+_scheduleRetry() {
+    if (this._retryTimeout) {
+        clearTimeout(this._retryTimeout);
     }
+    
+    if (this._retryCount < 15) {
+        this._retryCount++;
+        
+        this._retryTimeout = setTimeout(() => {
+            this._retryTimeout = null;
+            const price = this._currentPrice || 
+                         this._chartManager?.currentRealPrice || 
+                         this._chartManager?.lastCandle?.close;
+            if (price != null && !isNaN(price) && price > 0) {
+                this._updatePosition(price);
+            }
+        }, 50);  // ← фиксированная задержка 50мс
+    }
+}
 
     updatePosition(price) {
         this.updatePrice(price);
