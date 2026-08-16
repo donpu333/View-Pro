@@ -964,88 +964,100 @@ class ChartManager {
         } catch (e) {}
     }
 
-    setChartType(type) {
-        if (!this.chart) return;
-        this.currentChartType = type;
-        localStorage.setItem('chartType', type);
-        
-        if (type === 'candle') {
-            if (this.candleSeries) {
-                this.candleSeries.setData(this.chartData);
-                this.candleSeries.applyOptions({ visible: true });
-            }
-            if (this.barSeries) this.barSeries.applyOptions({ visible: false });
-        } else if (type === 'bar') {
-            if (this.barSeries) {
-                this.barSeries.setData(this.chartData);
-                this.barSeries.applyOptions({ visible: true });
-            }
-            if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
+  setChartType(type) {
+    if (!this.chart) return;
+    this.currentChartType = type;
+    localStorage.setItem('chartType', type);
+    
+    if (type === 'candle') {
+        if (this.candleSeries) {
+            this.candleSeries.setData(this.chartData);
+            this.candleSeries.applyOptions({ visible: true });
         }
-        
+        if (this.barSeries) this.barSeries.applyOptions({ visible: false });
+    } else if (type === 'bar') {
         if (this.barSeries) {
-            this.barSeries.applyOptions({ 
-                upColor: CONFIG.colors.bullish, 
-                downColor: CONFIG.colors.bearish 
-            });
+            this.barSeries.setData(this.chartData);
+            this.barSeries.applyOptions({ visible: true });
         }
-        
-        if (this.timerManager?.reattach) this.timerManager.reattach();
-        if (this.indicatorManager?.activeIndicators) {
-            this.indicatorManager.activeIndicators.forEach(indicator => {
-                try { indicator.createSeries(); } catch (e) {}
-            });
-        }
-        
-        setTimeout(() => {
-            if (window.rayManager) window.rayManager.syncWithNewTimeframe();
-            if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
-            if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
-            if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
-            if (window.textManager) window.textManager.syncWithNewTimeframe();
-        }, 50);
-        
-        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (activeSeries) {
-            const lineColor = this._getLineColor();
-            activeSeries.applyOptions({
-                priceLineVisible: true, 
-                lastValueVisible: false,
-                priceLineColor: lineColor, 
-                priceLineWidth: 1,
-                priceLineStyle: LightweightCharts.LineStyle.Dashed
-            });
-            this._lastAppliedColor = lineColor;
-        }
-
-       if (this.timerManager) {
-    const price = this.currentRealPrice ?? this.lastCandle?.close;
-    if (price != null) {
-        this.timerManager.updatePosition(price);
+        if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
     }
     
-    // ✅ ДОБАВЛЕНО: множественные попытки после переключения типа графика
-    requestAnimationFrame(() => {
-        if (this.timerManager) this.timerManager._forceUpdate();
-    });
-    setTimeout(() => {
-        if (this.timerManager) this.timerManager._forceUpdate();
-    }, 200);
-    setTimeout(() => {
-        if (this.timerManager) this.timerManager._forceUpdate();
-    }, 500);
-    setTimeout(() => {
-        if (this.timerManager) this.timerManager._forceUpdate();
-    }, 1000);
-}
-
-        if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
-            window._dailySeparator.reattach();
-        }
-        if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
-            window._sessionHighlighter.reattach();
-        }
+    if (this.volumeSeries && this.chartData.length > 0) {
+        this._volumeDataCache = null;
+        this._volumeDataDirty = true;
+        this._lastVolumeUpdateIndex = -1; 
+        this._updateVolumeOptimized();
     }
+    
+    if (this.barSeries) {
+        this.barSeries.applyOptions({ 
+            upColor: CONFIG.colors.bullish, 
+            downColor: CONFIG.colors.bearish 
+        });
+    }
+    
+    // ✅ УДАЛЕНО: timerManager.reattach() — он создавал конкуренцию
+    
+    if (this.indicatorManager?.activeIndicators) {
+        this.indicatorManager.activeIndicators.forEach(indicator => {
+            try { indicator.createSeries(); } catch (e) {}
+        });
+    }
+    
+    setTimeout(() => {
+        if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+        if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+        if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+        if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+        if (window.textManager) window.textManager.syncWithNewTimeframe();
+    }, 50);
+    
+    const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (activeSeries) {
+        const lineColor = this._getLineColor();
+        activeSeries.applyOptions({
+            priceLineVisible: true, 
+            lastValueVisible: false,
+            priceLineColor: lineColor,
+            priceLineSource: 'lastBar',    // ✅ ДОБАВЛЕНО: линия всегда на close
+            priceLineWidth: 1,
+            priceLineStyle: LightweightCharts.LineStyle.Dashed
+        });
+        this._lastAppliedColor = lineColor;
+    }
+
+    // ✅ ОДНА ВОЛНА обновлений (без reattach!)
+    if (this.timerManager) {
+        const price = this.currentRealPrice ?? this.lastCandle?.close;
+        if (price != null) {
+            this.timerManager.updatePrice(price);
+        }
+        
+        // Немного ждём пока серия отрендерится после setData
+        requestAnimationFrame(() => {
+            if (this.timerManager) this.timerManager._forceUpdate();
+        });
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (this.timerManager) this.timerManager._forceUpdate();
+            });
+        });
+        setTimeout(() => {
+            if (this.timerManager) this.timerManager._forceUpdate();
+        }, 150);
+        setTimeout(() => {
+            if (this.timerManager) this.timerManager._forceUpdate();
+        }, 400);
+    }
+
+    if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
+        window._dailySeparator.reattach();
+    }
+    if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
+        window._sessionHighlighter.reattach();
+    }
+}
 
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended) return;
