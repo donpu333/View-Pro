@@ -18,6 +18,9 @@ class AppCoordinator {
     }
     
     async init() {
+        // ✅ Ждём пока все классы загрузятся
+        await this._waitForClasses();
+        
         this.chartManager = new ChartManager(document.getElementById('chart-container'));
         window.chartManagerInstance = this.chartManager;
         window.chartManager = this.chartManager;
@@ -26,8 +29,20 @@ class AppCoordinator {
 
         this.wsManager = new window.WebSocketManager(this.chartManager);
         window.wsManager = this.wsManager;
-        this.timerManager = new TimerManager(this.chartManager);
-        this.tfManager = new TimeframeManager(this.chartManager, this.wsManager, this.timerManager);
+        
+        // ✅ Безопасное создание TimerManager
+        if (typeof TimerManager !== 'undefined') {
+            this.timerManager = new TimerManager(this.chartManager);
+        } else {
+            console.error('❌ TimerManager не загружен!');
+        }
+        
+        // ✅ Безопасное создание TimeframeManager
+        if (typeof TimeframeManager !== 'undefined' && this.timerManager) {
+            this.tfManager = new TimeframeManager(this.chartManager, this.wsManager, this.timerManager);
+        } else {
+            console.error('❌ TimeframeManager не загружен или TimerManager отсутствует!');
+        }
 
         if (window.TickerPanel) {
             this.tickerPanel = new window.TickerPanel(this);
@@ -48,6 +63,26 @@ class AppCoordinator {
                 this.tickerPanel.init().catch(e => console.warn('TickerPanel error:', e));
             }
         }, 300);
+    }
+
+    // ✅ НОВЫЙ МЕТОД: ожидание загрузки всех классов
+    _waitForClasses() {
+        return new Promise(resolve => {
+            const check = () => {
+                if (typeof ChartManager !== 'undefined'
+                    && typeof TimerManager !== 'undefined'
+                    && typeof TimeframeManager !== 'undefined'
+                    && typeof WebSocketManager !== 'undefined'
+                    && typeof PriceManager !== 'undefined') {
+                    resolve();
+                } else {
+                    setTimeout(check, 50);
+                }
+            };
+            check();
+            // Таймаут 5 секунд на случай зависания
+            setTimeout(resolve, 5000);
+        });
     }
 
     _waitForChart() {
@@ -119,54 +154,63 @@ class AppCoordinator {
         });
     }
 
-    // ═══════════════════════════════════════════
-    // ИНИЦИАЛИЗАЦИЯ ИНСТРУМЕНТОВ РИСОВАНИЯ
-    // ═══════════════════════════════════════════
-    
     async initDrawingTools() {
+        // ✅ Проверка существования классов рисования
+        if (typeof HorizontalRayManager === 'undefined') {
+            console.error('❌ HorizontalRayManager не загружен!');
+            return;
+        }
+        
         const rayManager = new HorizontalRayManager(this.chartManager);
         window.rayManager = rayManager;
         
-        const trendLineManager = new TrendLineManager(this.chartManager);
-        window.trendLineManager = trendLineManager;
+        if (typeof TrendLineManager !== 'undefined') {
+            const trendLineManager = new TrendLineManager(this.chartManager);
+            window.trendLineManager = trendLineManager;
+        }
         
-        const rulerLineManager = new RulerLineManager(this.chartManager);
-        window.rulerLineManager = rulerLineManager;
+        if (typeof RulerLineManager !== 'undefined') {
+            const rulerLineManager = new RulerLineManager(this.chartManager);
+            window.rulerLineManager = rulerLineManager;
+        }
         
-        const alertLineManager = new AlertLineManager(this.chartManager);
-        window.alertLineManager = alertLineManager;
+        if (typeof AlertLineManager !== 'undefined') {
+            const alertLineManager = new AlertLineManager(this.chartManager);
+            window.alertLineManager = alertLineManager;
+        }
         
-        const textManager = new TextManager(this.chartManager);
-        window.textManager = textManager;
+        if (typeof TextManager !== 'undefined') {
+            const textManager = new TextManager(this.chartManager);
+            window.textManager = textManager;
+        }
         
-        // ✅ ТОРГОВЫЙ УРОВЕНЬ
-        const tradeLevelManager = new TradeLevelManager(this.chartManager);
-        window.tradeLevelManager = tradeLevelManager;
+        if (typeof TradeLevelManager !== 'undefined') {
+            const tradeLevelManager = new TradeLevelManager(this.chartManager);
+            window.tradeLevelManager = tradeLevelManager;
+        }
         
-        await rayManager.loadRays();
-        await trendLineManager.loadTrendLines();
-        await rulerLineManager.loadRulers();
-        await alertLineManager.loadAlerts();
-        await textManager.loadTexts();
-        await tradeLevelManager.loadTrades();
+        if (window.rayManager) await window.rayManager.loadRays();
+        if (window.trendLineManager) await window.trendLineManager.loadTrendLines();
+        if (window.rulerLineManager) await window.rulerLineManager.loadRulers();
+        if (window.alertLineManager) await window.alertLineManager.loadAlerts();
+        if (window.textManager) await window.textManager.loadTexts();
+        if (window.tradeLevelManager) await window.tradeLevelManager.loadTrades();
         
         setTimeout(() => {
-            rayManager.syncWithNewTimeframe();
-            trendLineManager.syncWithNewTimeframe();
-            rulerLineManager.syncWithNewTimeframe();
-            alertLineManager.syncWithNewTimeframe();
-            textManager.syncWithNewTimeframe();
-            tradeLevelManager.syncWithNewTimeframe();
+            if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+            if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+            if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+            if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+            if (window.textManager) window.textManager.syncWithNewTimeframe();
+            if (window.tradeLevelManager) window.tradeLevelManager.syncWithNewTimeframe();
         }, 200);
         
         this.setupToolButtons();
     }
 
-    // ═══════════════════════════════════════════
-    // НАСТРОЙКА КНОПОК ИНСТРУМЕНТОВ
-    // ═══════════════════════════════════════════
-    
     setupToolButtons() {
+        // ... остальной код без изменений (все проверки на существование уже есть)
+        
         // =============================================
         // 1. ГОРИЗОНТАЛЬНЫЙ ЛУЧ (O)
         // =============================================
@@ -337,10 +381,6 @@ class AppCoordinator {
         }
     }
 
-    // ═══════════════════════════════════════════
-    // ЗАГРУЗКА СИМВОЛА
-    // ═══════════════════════════════════════════
-    
     async loadSymbol(symbol, exchange, marketType, externalSignal = null) {
         console.log(`📊 Загрузка символа: ${symbol} (${exchange} ${marketType})`);
         
@@ -390,10 +430,6 @@ class AppCoordinator {
         }
     }
 
-    // ═══════════════════════════════════════════
-    // СИНХРОНИЗАЦИЯ ВСЕХ РИСОВАЛОК
-    // ═══════════════════════════════════════════
-    
     async syncAllDrawings() {
         await this.chartManager.waitForChartReady?.();
         
@@ -406,17 +442,11 @@ class AppCoordinator {
     }
 }
 
-// ═══════════════════════════════════════════
-// ЭКСПОРТ
-// ═══════════════════════════════════════════
-
 if (typeof window !== 'undefined') {
     window.AppCoordinator = AppCoordinator;
 }
 
-// ═══════════════════════════════════════════
-// ГЛОБАЛЬНЫЙ ОБРАБОТЧИК КОНТЕКСТНОГО МЕНЮ
-// ═══════════════════════════════════════════
+// Глобальные обработчики (без изменений)
 (function() {
     const container = document.getElementById('chart-container');
     if (!container) return;
@@ -466,9 +496,6 @@ if (typeof window !== 'undefined') {
     }, true);
 })();
 
-// ═══════════════════════════════════════════
-// ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДВОЙНОГО КЛИКА
-// ═══════════════════════════════════════════
 (function setupGlobalDblClick() {
     const container = document.getElementById('chart-container');
     if (!container) return;
