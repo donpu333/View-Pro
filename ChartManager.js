@@ -235,7 +235,7 @@ class ChartManager {
         [this.candleSeries, this.barSeries].forEach(series => {
             series.applyOptions({
                 priceLineVisible: true, 
-                lastValueVisible: true,
+                lastValueVisible: false, 
                 priceLineColor: '#00bcd4', 
                 priceLineWidth: 1,
                 priceLineStyle: LightweightCharts.LineStyle.Dashed
