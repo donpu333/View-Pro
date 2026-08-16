@@ -1018,12 +1018,26 @@ class ChartManager {
             this._lastAppliedColor = lineColor;
         }
 
-        if (this.timerManager) {
-            const price = this.currentRealPrice ?? this.lastCandle?.close;
-            if (price != null) {
-                this.timerManager.updatePosition(price);
-            }
-        }
+       if (this.timerManager) {
+    const price = this.currentRealPrice ?? this.lastCandle?.close;
+    if (price != null) {
+        this.timerManager.updatePosition(price);
+    }
+    
+    // ✅ ДОБАВЛЕНО: множественные попытки после переключения типа графика
+    requestAnimationFrame(() => {
+        if (this.timerManager) this.timerManager._forceUpdate();
+    });
+    setTimeout(() => {
+        if (this.timerManager) this.timerManager._forceUpdate();
+    }, 200);
+    setTimeout(() => {
+        if (this.timerManager) this.timerManager._forceUpdate();
+    }, 500);
+    setTimeout(() => {
+        if (this.timerManager) this.timerManager._forceUpdate();
+    }, 1000);
+}
 
         if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
             window._dailySeparator.reattach();
