@@ -18,6 +18,7 @@ class TimerManager {
         this._isVisible = false;
         this._showTimerRow = true;
         this._retryTimeout = null;
+        this._initRetryCount = 0;
 
         if (chartManager.timerManager) {
             chartManager.timerManager.destroy();
@@ -28,7 +29,16 @@ class TimerManager {
     }
 
     _init() {
-        if (this._disabled || !this._chartManager?.chart) return;
+        // ✅ FIX: Если chart не готов — повторяем до 15 раз по 200мс
+        if (this._disabled || !this._chartManager?.chart) {
+            if (this._initRetryCount < 15) {
+                this._initRetryCount++;
+                setTimeout(() => this._init(), 200);
+            }
+            return;
+        }
+        
+        this._initRetryCount = 0;
 
         document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
 
@@ -61,11 +71,10 @@ class TimerManager {
             line-height: 1.2;
         `;
 
-        // ✅ ЦЕНА — ЧЁРНЫЙ ТЕКСТ
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
             font-weight: bold;
-            font-size: 12px;
+            font-size: 11,3px;
             color: #000000;
             padding: 2px 6px 1px 6px;
             white-space: nowrap;
@@ -73,11 +82,10 @@ class TimerManager {
         `;
         this._priceRow.textContent = '';
 
-        // ✅ ТАЙМЕР — ЧЁРНЫЙ ТЕКСТ
         this._timerRow = document.createElement('div');
         this._timerRow.style.cssText = `
             font-weight: bold;
-            font-size: 12px;
+            font-size: 10,3px;
             color: #000000;
             padding: 0 6px 2px 6px;
             white-space: nowrap;
@@ -100,10 +108,12 @@ class TimerManager {
         this._updateTimerState();
         this._startTracking();
         
-        // ✅ Множественные попытки показа (график может ещё не быть готов)
+        // ✅ Множественные попытки показа (решает проблему первого запуска)
         setTimeout(() => this._forceUpdate(), 150);
         setTimeout(() => this._forceUpdate(), 400);
         setTimeout(() => this._forceUpdate(), 800);
+        setTimeout(() => this._forceUpdate(), 1500);
+        setTimeout(() => this._forceUpdate(), 2500);
     }
 
     _attachScaleObserver() {
@@ -190,6 +200,12 @@ class TimerManager {
                              
                 if (price != null && !isNaN(price) && price > 0) {
                     this._updatePosition(price);
+                } else if (!this._isVisible) {
+                    // ✅ FIX: Если цена ещё не пришла, пробуем показать плашку с последней известной ценой
+                    const lastClose = this._chartManager.lastCandle?.close;
+                    if (lastClose != null && !isNaN(lastClose)) {
+                        this._updatePosition(lastClose);
+                    }
                 }
                 
                 this._updateColor();
@@ -215,11 +231,11 @@ class TimerManager {
         
         if (['1d','1w','1M'].includes(this._currentTf)) {
             this._showTimerRow = false;
-            this._timerRow.style.display = 'none';
+            if (this._timerRow) this._timerRow.style.display = 'none';
             this.stop();
         } else {
             this._showTimerRow = true;
-            this._timerRow.style.display = 'block';
+            if (this._timerRow) this._timerRow.style.display = 'block';
             this._tick();
             if (this._interval) clearInterval(this._interval);
             this._interval = setInterval(() => this._tick(), 250);
@@ -273,13 +289,13 @@ class TimerManager {
         
         const cm = this._chartManager;
         if (!cm || !cm.chartContainer || !cm.chartData?.length) {
-            this._hideLabel();
+            this._scheduleRetry();
             return;
         }
         
         const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
         if (!activeSeries) {
-            this._hideLabel();
+            this._scheduleRetry();
             return;
         }
 
@@ -306,8 +322,7 @@ class TimerManager {
             this._labelElement.style.width = scaleWidth + 'px';
         }
         
-        // ✅ УВЕЛИЧЕННЫЙ БУФЕР: скрываем только если плашка УЖЕ далеко за границами
-        // (раньше скрывалась при малейшем выходе, теперь — только при 2x высоте)
+        // ✅ Увеличенный буфер: скрываем только если плашка далеко за границами
         const hideBuffer = labelHeight * 2;
         if (yCoord < -hideBuffer || yCoord > containerHeight + hideBuffer) {
             this._hideLabel();
@@ -334,7 +349,7 @@ class TimerManager {
         }
     }
 
-    // ✅ НОВЫЙ МЕТОД: повторная попытка если координата не получена
+    // ✅ FIX: Повторная попытка если координата не получена
     _scheduleRetry() {
         if (this._retryTimeout) return;
         this._retryTimeout = setTimeout(() => {
@@ -356,10 +371,12 @@ class TimerManager {
     start(interval) {
         if (this._disabled) return;
         this._currentTf = interval;
+        
         if (!this._initialized) {
             this._init();
-            return;
+            // ✅ FIX: НЕ делаем return — продолжаем и вызываем _forceUpdate
         }
+        
         if (!this._labelElement) return;
         this.stop();
         this._updateTimerState();
@@ -371,16 +388,17 @@ class TimerManager {
         
         this._forceUpdate();
         
-        // ✅ Дополнительные попытки показа после старта
+        // ✅ Дополнительные попытки для стабильности
         setTimeout(() => this._forceUpdate(), 200);
         setTimeout(() => this._forceUpdate(), 500);
+        setTimeout(() => this._forceUpdate(), 1000);
     }
 
     _tick() {
         if (this._disabled || !this._timerRow) return;
         if (!this._chartManager?.chartData?.length) return;
         if (['1d','1w','1M'].includes(this._currentTf)) {
-            this._timerRow.style.display = 'none';
+            if (this._timerRow) this._timerRow.style.display = 'none';
             this.stop();
             return;
         }
@@ -451,6 +469,7 @@ class TimerManager {
         this._timerRow = null;
         this._initialized = false;
         this._isVisible = false;
+        this._initRetryCount = 0;
     }
 }
 
