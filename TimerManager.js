@@ -30,94 +30,104 @@ class TimerManager {
     }
 
     _init() {
-        if (this._disabled || !this._chartManager?.chart) {
-            if (this._initRetryCount < 15) {
-                this._initRetryCount++;
-                setTimeout(() => this._init(), 200);
-            }
-            return;
+    if (this._disabled || !this._chartManager?.chart) {
+        if (this._initRetryCount < 15) {
+            this._initRetryCount++;
+            setTimeout(() => this._init(), 200);
         }
-        
-        this._initRetryCount = 0;
-
-        document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
-
-        this._labelElement = document.createElement('div');
-        this._labelElement.id = 'price-timer-label';
-        
-        const initColor = this._getCurrentColor();
-        this._lastColor = initColor;
-        const initWidth = 90;
-        this._lastWidth = initWidth;
-
-        this._labelElement.style.cssText = `
-            position: absolute;
-            right: 0px;
-            left: auto;
-            width: ${initWidth}px;
-            pointer-events: none;
-            z-index: 999;
-            font-family: 'Inter', Arial, sans-serif;
-            visibility: hidden;
-            opacity: 0;
-            background-color: ${initColor};
-            border-radius: 3px;
-            text-align: center;
-            box-sizing: border-box;
-            will-change: top, opacity, width;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            line-height: 1.2;
-        `;
-
-        this._priceRow = document.createElement('div');
-        this._priceRow.style.cssText = `
-            font-weight: bold;
-            font-size: 11px;
-            color: #000000;
-            padding: 2px 6px 1px 6px;
-            white-space: nowrap;
-            overflow: hidden;
-        `;
-        this._priceRow.textContent = '';
-
-        this._timerRow = document.createElement('div');
-        this._timerRow.style.cssText = `
-            font-weight: bold;
-            font-size: 11px;
-            color: #000000;
-            padding: 0 6px 2px 6px;
-            white-space: nowrap;
-            overflow: hidden;
-        `;
-        this._timerRow.textContent = '';
-
-        this._labelElement.appendChild(this._priceRow);
-        this._labelElement.appendChild(this._timerRow);
-
-        const initTextColor = this._getContrastTextColor(initColor);
-        this._priceRow.style.color = initTextColor;
-        this._timerRow.style.color = initTextColor;
-
-        const container = this._chartManager.chartContainer;
-        if (getComputedStyle(container).position === 'static') {
-            container.style.position = 'relative';
-        }
-
-        container.appendChild(this._labelElement);
-        this._initialized = true;
-
-        this._attachScaleObserver();
-        this._updateTimerState();
-        this._startTracking();
-        
-        setTimeout(() => this._forceUpdate(), 150);
-        setTimeout(() => this._forceUpdate(), 400);
-        setTimeout(() => this._forceUpdate(), 800);
-        setTimeout(() => this._forceUpdate(), 1500);
-        setTimeout(() => this._forceUpdate(), 2500);
+        return;
     }
+    
+    this._initRetryCount = 0;
+
+    document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
+
+    this._labelElement = document.createElement('div');
+    this._labelElement.id = 'price-timer-label';
+    
+    const initColor = this._getCurrentColor();
+    this._lastColor = initColor;
+    const initWidth = 90;  // начальная ширина, будет заменена реальной из шкалы
+    this._lastWidth = initWidth;
+
+    this._labelElement.style.cssText = `
+        position: absolute;
+        right: 0px;
+        left: auto;
+        width: ${initWidth}px;
+        pointer-events: none;
+        z-index: 999;
+        font-family: 'Inter', Arial, sans-serif;
+        visibility: hidden;
+        opacity: 0;
+        background-color: ${initColor};
+        border-radius: 3px;
+        text-align: center;
+        box-sizing: border-box;
+        will-change: top, opacity, width;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+    `;
+
+    // ✅ Строка цены
+    this._priceRow = document.createElement('div');
+    this._priceRow.style.cssText = `
+        font-weight: bold;
+        font-size: 11px;
+        color: #000000;
+        padding: 2px 6px 1px 6px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;      // ✅ Обрезаем с многоточием
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+    `;
+    this._priceRow.textContent = '';
+
+    // ✅ Строка таймера
+    this._timerRow = document.createElement('div');
+    this._timerRow.style.cssText = `
+        font-weight: bold;
+        font-size: 11px;
+        color: #000000;
+        padding: 0 6px 2px 6px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;      // ✅ Обрезаем с многоточием
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+    `;
+    this._timerRow.textContent = '';
+
+    this._labelElement.appendChild(this._priceRow);
+    this._labelElement.appendChild(this._timerRow);
+
+    const initTextColor = this._getContrastTextColor(initColor);
+    this._priceRow.style.color = initTextColor;
+    this._timerRow.style.color = initTextColor;
+
+    const container = this._chartManager.chartContainer;
+    if (getComputedStyle(container).position === 'static') {
+        container.style.position = 'relative';
+    }
+
+    container.appendChild(this._labelElement);
+    this._initialized = true;
+
+    this._attachScaleObserver();
+    this._updateTimerState();
+    this._startTracking();
+    
+    setTimeout(() => this._forceUpdate(), 150);
+    setTimeout(() => this._forceUpdate(), 400);
+    setTimeout(() => this._forceUpdate(), 800);
+    setTimeout(() => this._forceUpdate(), 1500);
+    setTimeout(() => this._forceUpdate(), 2500);
+}
 
     _attachScaleObserver() {
         const cm = this._chartManager;
