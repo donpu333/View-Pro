@@ -298,7 +298,10 @@ class ChartManager {
                 this.volumeSeries = null;
             }
         }
-
+// ✅ Создаём TimerManager сразу, чтобы плашка появилась без задержки
+if (!this.timerManager) {
+    this.timerManager = new TimerManager(this);
+}
         const isCandle = this.currentChartType === 'candle';
         this.candleSeries.applyOptions({ visible: isCandle });
         this.barSeries.applyOptions({ visible: !isCandle });
@@ -1473,7 +1476,7 @@ updateLastCandle(candle, eventTime = null) {
         await new Promise(r => setTimeout(r, 50));
     }
 
-  setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
+ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
     try {
         if (!data || data.length === 0) return;
 
@@ -1575,7 +1578,6 @@ updateLastCandle(candle, eventTime = null) {
         }, 0);
 
         // ✅ ПРАВИЛЬНЫЙ ПОРЯДОК: сначала scrollToLast/autoScale, ПОТОМ таймер
-        // Иначе priceToCoordinate может вернуть null пока график не отрендерился
         if (currentScale && !isNewSymbol) {
             this._restoreScale(currentScale);
         } else {
@@ -1591,6 +1593,22 @@ updateLastCandle(candle, eventTime = null) {
             this.timerManager.start(this.currentInterval);
             this.timerManager.updatePrice(this.lastCandle.close);
             this.timerManager._forceUpdate();
+            
+            // ✅ Дополнительная гарантия обновления после полной отрисовки
+            requestAnimationFrame(() => {
+                if (this.timerManager) {
+                    this.timerManager._forceUpdate();
+                }
+            });
+            
+            // ✅ Вторая проверка для медленных устройств
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    if (this.timerManager) {
+                        this.timerManager._forceUpdate();
+                    }
+                });
+            });
         }
 
         if (typeof getPrecisionFromExchange === 'function') {
