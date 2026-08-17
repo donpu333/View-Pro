@@ -1710,7 +1710,7 @@ updateLastCandle(candle, eventTime = null) {
         }
     }
 
- async switchSymbol(symbol, exchange, marketType) {
+async switchSymbol(symbol, exchange, marketType) {
     if (this._switchingSymbol) return;
     this._switchingSymbol = true;
     
@@ -1731,6 +1731,10 @@ updateLastCandle(candle, eventTime = null) {
         this.currentSymbol = symbol;
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
+
+        // ✅ ВАЖНО: Пересоздаём подписку на цену для НОВОГО символа
+        // Это должно быть ПОСЛЕ установки currentSymbol, но ДО загрузки данных
+        this._subscribeToPrice();
 
         if (window.wsManager?.updateSymbolAndTimeframe) {
             window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
@@ -1765,7 +1769,16 @@ updateLastCandle(candle, eventTime = null) {
         // ✅ Мгновенно перезапускаем таймер с новыми данными
         if (this.timerManager) {
             this.timerManager.start(this.currentInterval);
+            this.timerManager.updatePrice(this.lastCandle?.close || candles[candles.length - 1]?.close);
             this.timerManager.refresh();
+            
+            // ✅ Дополнительное обновление после отрисовки
+            requestAnimationFrame(() => {
+                if (this.timerManager && this.lastCandle) {
+                    this.timerManager.updatePrice(this.lastCandle.close);
+                    this.timerManager._forceUpdate();
+                }
+            });
         }
 
         if (!isFromCache) {
@@ -2127,40 +2140,48 @@ updateLastCandle(candle, eventTime = null) {
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
 
-    _subscribeToPrice() {
-        if (!this.priceManager) {
-            setTimeout(() => this._subscribeToPrice(), 100);
-            return;
-        }
-
-        if (this._priceSubscriptionKey && this._priceUpdateHandler) {
-            this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
-            this._priceUpdateHandler = null;
-            this._priceSubscriptionKey = null;
-        }
-
-        const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
-        this._priceSubscriptionKey = key;
-
-        this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
-            if (this._switchingSymbol || this._updatesSuspended) return;
-            if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
-            
-            this.currentRealPrice = price;
-            this._updatePageTitle();
-            
-            if (!document.hidden) {
-                this._syncPriceLine(price);
-                if (this.timerManager) {
-                    this.timerManager.updatePrice(price);
-                }
-            }
-        };
-
-        this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
-        this._startBackgroundTitleUpdate();
+ _subscribeToPrice() {
+    if (!this.priceManager) {
+        console.warn('⚠️ PriceManager ещё не готов, повтор через 100мс');
+        setTimeout(() => this._subscribeToPrice(), 100);
+        return;
     }
 
+    // ✅ Отписываемся от старой подписки
+    if (this._priceSubscriptionKey && this._priceUpdateHandler) {
+        console.log(`🔌 Отписка от цены: ${this._priceSubscriptionKey}`);
+        this.priceManager.unsubscribe(this._priceSubscriptionKey, this._priceUpdateHandler);
+        this._priceUpdateHandler = null;
+        this._priceSubscriptionKey = null;
+    }
+
+    // ✅ Создаём ключ для ТЕКУЩЕГО символа
+    const key = `${this.currentSymbol}:${this.currentExchange}:${this.currentMarketType}`;
+    this._priceSubscriptionKey = key;
+
+    // ✅ Создаём новый обработчик
+    this._priceUpdateHandler = (price, symbol, exchange, marketType) => {
+        if (this._switchingSymbol || this._updatesSuspended) return;
+        if (symbol !== this.currentSymbol || exchange !== this.currentExchange || marketType !== this.currentMarketType) return;
+        
+        this.currentRealPrice = price;
+        this._updatePageTitle();
+        
+        if (!document.hidden) {
+            this._syncPriceLine(price);
+            if (this.timerManager) {
+                this.timerManager.updatePrice(price);
+            }
+        }
+    };
+
+    // ✅ Подписываемся с НОВЫМ ключом
+    this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
+    this._startBackgroundTitleUpdate();
+    
+    // ✅ ЛОГ ДЛЯ ОТЛАДКИ
+    console.log(`✅ Подписка на цену: ${key}`);
+}
     setSymbol(symbol) {
         if (this.currentSymbol === symbol) return;
         const oldSymbol = this.currentSymbol;
