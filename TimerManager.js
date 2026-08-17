@@ -74,7 +74,7 @@ class TimerManager {
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
             font-weight: bold;
-            font-size:  11px;
+            font-size: 11px;
             color: #000000;
             padding: 2px 6px 1px 6px;
             white-space: nowrap;
@@ -232,7 +232,6 @@ class TimerManager {
                 if (price != null && !isNaN(price) && price > 0) {
                     this._updatePosition(price);
                     
-                    // ✅ Страховка: если плашка должна быть видима но случайно скрыта
                     if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
                         this._labelElement.style.visibility = 'visible';
                         this._labelElement.style.opacity = '1';
@@ -385,14 +384,14 @@ class TimerManager {
         }
     }
 
+    // ✅ ИСПРАВЛЕНО: 15 попыток с фиксированной задержкой 50мс
     _scheduleRetry() {
         if (this._retryTimeout) {
             clearTimeout(this._retryTimeout);
         }
         
-        if (this._retryCount < 5) {
+        if (this._retryCount < 15) {
             this._retryCount++;
-            const delay = 100 * this._retryCount;
             
             this._retryTimeout = setTimeout(() => {
                 this._retryTimeout = null;
@@ -402,7 +401,7 @@ class TimerManager {
                 if (price != null && !isNaN(price) && price > 0) {
                     this._updatePosition(price);
                 }
-            }, delay);
+            }, 50);
         }
     }
 
@@ -411,28 +410,35 @@ class TimerManager {
         this._updatePosition(price);
     }
 
-    start(interval) {
-        if (this._disabled) return;
-        this._currentTf = interval;
-        
-        if (!this._initialized) {
-            this._init();
-        }
-        
-        if (!this._labelElement) return;
-        this.stop();
-        this._updateTimerState();
-        
-        this._lastWidth = null;
-        this._lastTop = null;
-        this._lastColor = null;
-        this._attachScaleObserver();
-        
+   start(interval) {
+    if (this._disabled) return;
+    this._currentTf = interval;
+    
+    if (!this._initialized) {
+        this._init();
+    }
+    
+    if (!this._labelElement) return;
+    this.stop();
+    this._updateTimerState();
+    
+    this._lastWidth = null;
+    this._lastTop = null;
+    this._lastColor = null;
+    this._attachScaleObserver();
+    
+    // ✅ Мгновенное обновление
+    this._forceUpdate();
+    
+    // ✅ Только один дополнительный вызов через RAF для гарантии
+    // (было: setTimeout 200/500/1000 — создавало конкуренцию)
+    requestAnimationFrame(() => {
+        if (this._labelElement) this._forceUpdate();
+    });
+}
+    // ✅ ДОБАВЛЕНО: метод refresh для вызова из ChartManager.refreshCandlesAfterTabHidden
+    refresh() {
         this._forceUpdate();
-        
-        setTimeout(() => this._forceUpdate(), 200);
-        setTimeout(() => this._forceUpdate(), 500);
-        setTimeout(() => this._forceUpdate(), 1000);
     }
 
     _tick() {
