@@ -26,10 +26,10 @@ class TimerManager {
         }
         chartManager.timerManager = this;
         
-        setTimeout(() => this._init(), 100);
+        this._init();
     }
 
-    _init() {
+  _init() {
     if (this._disabled || !this._chartManager?.chart) {
         if (this._initRetryCount < 15) {
             this._initRetryCount++;
@@ -80,7 +80,7 @@ class TimerManager {
         padding: 2px 6px 1px 6px;
         white-space: nowrap;
         overflow: hidden;
-        text-overflow: ellipsis;      // ✅ Обрезаем с многоточием
+        text-overflow: ellipsis;
         width: 100%;
         min-width: 0;
         box-sizing: border-box;
@@ -96,7 +96,7 @@ class TimerManager {
         padding: 0 6px 2px 6px;
         white-space: nowrap;
         overflow: hidden;
-        text-overflow: ellipsis;      // ✅ Обрезаем с многоточием
+        text-overflow: ellipsis;
         width: 100%;
         min-width: 0;
         box-sizing: border-box;
@@ -122,56 +122,52 @@ class TimerManager {
     this._updateTimerState();
     this._startTracking();
     
-    setTimeout(() => this._forceUpdate(), 150);
-    setTimeout(() => this._forceUpdate(), 400);
-    setTimeout(() => this._forceUpdate(), 800);
-    setTimeout(() => this._forceUpdate(), 1500);
-    setTimeout(() => this._forceUpdate(), 2500);
+    // ✅ Вместо множества setTimeout — один немедленный вызов
+    this._forceUpdate();
 }
+   _attachScaleObserver() {
+    const cm = this._chartManager;
+    if (!cm?.chartContainer) return;
 
-    _attachScaleObserver() {
-        const cm = this._chartManager;
-        if (!cm?.chartContainer) return;
-
-        const canvases = cm.chartContainer.querySelectorAll('canvas');
-        if (canvases.length < 2) {
-            setTimeout(() => this._attachScaleObserver(), 300);
-            return;
-        }
-        
-        const scaleCanvas = canvases[canvases.length - 1];
-        if (this._lastScaleCanvas === scaleCanvas) return;
-        
-        this._lastScaleCanvas = scaleCanvas;
-        
-        if (this._scaleObserver) {
-            this._scaleObserver.disconnect();
-            this._scaleObserver = null;
-        }
-
-        this._scaleObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const newWidth = Math.round(entry.contentRect.width);
-                if (newWidth > 30 && newWidth !== this._lastWidth) {
-                    this._lastWidth = newWidth;
-                    if (this._labelElement) {
-                        this._labelElement.style.width = newWidth + 'px';
-                    }
-                }
-            }
-        });
-        
-        this._scaleObserver.observe(scaleCanvas);
-        
-        const rect = scaleCanvas.getBoundingClientRect();
-        if (rect.width > 30) {
-            this._lastWidth = Math.round(rect.width);
-            if (this._labelElement) {
-                this._labelElement.style.width = this._lastWidth + 'px';
-            }
-        }
+    const canvases = cm.chartContainer.querySelectorAll('canvas');
+    if (canvases.length < 2) {
+        // ✅ Используем requestAnimationFrame вместо setTimeout для мгновенной проверки
+        requestAnimationFrame(() => this._attachScaleObserver());
+        return;
+    }
+    
+    const scaleCanvas = canvases[canvases.length - 1];
+    if (this._lastScaleCanvas === scaleCanvas) return;
+    
+    this._lastScaleCanvas = scaleCanvas;
+    
+    if (this._scaleObserver) {
+        this._scaleObserver.disconnect();
+        this._scaleObserver = null;
     }
 
+    this._scaleObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+            const newWidth = Math.round(entry.contentRect.width);
+            if (newWidth > 30 && newWidth !== this._lastWidth) {
+                this._lastWidth = newWidth;
+                if (this._labelElement) {
+                    this._labelElement.style.width = newWidth + 'px';
+                }
+            }
+        }
+    });
+    
+    this._scaleObserver.observe(scaleCanvas);
+    
+    const rect = scaleCanvas.getBoundingClientRect();
+    if (rect.width > 30) {
+        this._lastWidth = Math.round(rect.width);
+        if (this._labelElement) {
+            this._labelElement.style.width = this._lastWidth + 'px';
+        }
+    }
+}
     _getCurrentColor() {
         const cm = this._chartManager;
         if (cm?._lastAppliedColor) return cm._lastAppliedColor;
