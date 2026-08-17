@@ -204,7 +204,7 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.1 }, 
                 autoScale: false,
                 entireTextOnly: true,
-                minimumWidth: 90
+                minimumWidth: 60
             },
             localization: {
                 timeFormatter: (time) => {
