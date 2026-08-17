@@ -2496,25 +2496,46 @@ async switchSymbol(symbol, exchange, marketType) {
 }
 
     _updatePageTitle() {
-        const symbol = this.currentSymbol || '';
-        let price = this.currentRealPrice;
-        if (!price && this.lastCandle) price = this.lastCandle.close;
-        if (!price && this.chartData?.length > 0) price = this.chartData[this.chartData.length - 1].close;
+    const symbol = this.currentSymbol || '';
+    let price = this.currentRealPrice;
+    
+    // ✅ Исправлено: используем проверку на null/NaN/0, а не только на falsy
+    if (!price || isNaN(price) || price <= 0) {
+        price = this.lastCandle?.close;
+    }
+    if (!price || isNaN(price) || price <= 0) {
+        price = this.chartData?.[this.chartData.length - 1]?.close;
+    }
+    
+    if (!symbol) {
+        document.title = 'График';
+        return;
+    }
+    
+    // ✅ ВСЕГДА показываем цену, если она есть (fallback гарантирует)
+    if (price != null && !isNaN(price) && price > 0) {
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const precision = series?.options()?.priceFormat?.precision || 2;
+        const lastCandle = this.chartData?.[this.chartData.length - 1];
+        const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+        const arrow = isBullish ? '▲' : '▼';
         
-        if (!symbol) { document.title = 'График'; return; }
+        const newTitle = `${arrow} ${symbol} ${price.toFixed(precision)}`;
         
-        if (price != null && !isNaN(price) && price > 0) {
-            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            const precision = series?.options()?.priceFormat?.precision || 2;
-            const lastCandle = this.chartData?.[this.chartData.length - 1];
-            const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-            const arrow = isBullish ? '▲' : '▼';
-            document.title = `${arrow} ${symbol} ${price.toFixed(precision)}`;
-        } else {
-            document.title = `${symbol}`;
+        // ✅ Кэшируем заголовок, чтобы не обновлять без необходимости
+        if (this._lastTitle !== newTitle) {
+            this._lastTitle = newTitle;
+            document.title = newTitle;
+        }
+    } else {
+        // ✅ Цена недоступна вообще — показываем символ с прочерком
+        const fallbackTitle = `${symbol} —`;
+        if (this._lastTitle !== fallbackTitle) {
+            this._lastTitle = fallbackTitle;
+            document.title = fallbackTitle;
         }
     }
-
+}
     updateColorsForSettings(bullishColor, bearishColor) {
         CONFIG.colors.bullish = bullishColor;
         CONFIG.colors.bearish = bearishColor;
