@@ -227,44 +227,32 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
-    _startTracking() {
-        if (this._rafId) {
-            cancelAnimationFrame(this._rafId);
+ _startTracking() {
+    if (this._rafId) {
+        cancelAnimationFrame(this._rafId);
+        this._rafId = null;
+    }
+    
+    const track = () => {
+        if (!this._labelElement || this._disabled) {
             this._rafId = null;
+            return;
         }
         
-        const track = () => {
-            // ✅ Защита: если label отсутствует или таймер отключён, останавливаем цикл
-            if (!this._labelElement || this._disabled) {
-                this._rafId = null;
-                return;
-            }
-            
-            const price = this._currentPrice || 
-                         this._chartManager.currentRealPrice || 
-                         this._chartManager.lastCandle?.close;
-                         
-            if (price != null && !isNaN(price) && price > 0) {
-                this._updatePosition(price);
-                
-                if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
-                    this._labelElement.style.visibility = 'visible';
-                    this._labelElement.style.opacity = '1';
-                }
-            } else if (!this._isVisible) {
-                const lastClose = this._chartManager.lastCandle?.close;
-                if (lastClose != null && !isNaN(lastClose)) {
-                    this._updatePosition(lastClose);
-                }
-            }
-            
-            this._updateColor();
-            this._rafId = requestAnimationFrame(track);
-        };
+        const price = this._currentPrice || 
+                     this._chartManager.currentRealPrice || 
+                     this._chartManager.lastCandle?.close;
+                     
+        if (price != null && !isNaN(price) && price > 0) {
+            this._updatePosition(price);
+        }
         
-        track();
-    }
-
+        this._updateColor();
+        this._rafId = requestAnimationFrame(track);
+    };
+    
+    track();
+}
     _updateColor() {
         if (!this._labelElement || !this._priceRow || !this._timerRow) return;
         const targetColor = this._getCurrentColor();
@@ -333,70 +321,64 @@ class TimerManager {
         }
     }
 
-    _updatePosition(price) {
-        if (!this._labelElement) return;
-        if (price == null || isNaN(price) || price <= 0) {
-            this._hideLabel();
-            return;
-        }
-        
-        const cm = this._chartManager;
-        if (!cm || !cm.chartContainer || !cm.chartData?.length) {
-            this._scheduleRetry();
-            return;
-        }
-        
-        const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-        if (!activeSeries) {
-            this._scheduleRetry();
-            return;
-        }
-
-        let yCoord;
-        try {
-            yCoord = activeSeries.priceToCoordinate(price);
-        } catch (e) {
-            this._scheduleRetry();
-            return;
-        }
-        
-        if (yCoord == null || isNaN(yCoord)) {
-            this._scheduleRetry();
-            return;
-        }
-
-        const containerHeight = cm.chartContainer.clientHeight;
-        const labelHeight = this._labelElement.offsetHeight || 20;
-        
-        const scaleWidth = this._getPriceScaleWidth();
-        if (Math.abs(this._lastWidth - scaleWidth) > 2) {
-            this._lastWidth = scaleWidth;
-            this._labelElement.style.width = scaleWidth + 'px';
-        }
-        
-        const hideBuffer = labelHeight * 2;
-        if (yCoord < -hideBuffer || yCoord > containerHeight + hideBuffer) {
-            this._hideLabel();
-            return;
-        }
-
-        this._showLabel();
-
-        const priceRowHeight = this._priceRow.offsetHeight || 17;
-        const priceRowCenter = priceRowHeight / 2;
-        
-        let top = yCoord - priceRowCenter;
-        
-        const maxTop = containerHeight - labelHeight - 3;
-        if (top > maxTop) top = maxTop;
-        if (top < 3) top = 3;
-        
-        const finalTop = Math.round(top);
-        if (finalTop !== this._lastTop) {
-            this._lastTop = finalTop;
-            this._labelElement.style.top = finalTop + 'px';
-        }
+  _updatePosition(price) {
+    if (!this._labelElement) return;
+    if (price == null || isNaN(price) || price <= 0) {
+        this._hideLabel();
+        return;
     }
+    
+    const cm = this._chartManager;
+    if (!cm || !cm.chartContainer || !cm.chartData?.length) {
+        return;
+    }
+    
+    const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+    if (!activeSeries) return;
+
+    let yCoord;
+    try {
+        yCoord = activeSeries.priceToCoordinate(price);
+    } catch (e) {
+        return;
+    }
+    
+    if (yCoord == null || isNaN(yCoord)) {
+        return;
+    }
+
+    const containerHeight = cm.chartContainer.clientHeight;
+    const labelHeight = this._labelElement.offsetHeight || 20;
+    
+    const scaleWidth = this._getPriceScaleWidth();
+    if (Math.abs(this._lastWidth - scaleWidth) > 2) {
+        this._lastWidth = scaleWidth;
+        this._labelElement.style.width = scaleWidth + 'px';
+    }
+    
+    const hideBuffer = labelHeight * 2;
+    if (yCoord < -hideBuffer || yCoord > containerHeight + hideBuffer) {
+        this._hideLabel();
+        return;
+    }
+
+    this._showLabel();
+
+    const priceRowHeight = this._priceRow.offsetHeight || 17;
+    const priceRowCenter = priceRowHeight / 2;
+    
+    let top = yCoord - priceRowCenter;
+    
+    const maxTop = containerHeight - labelHeight - 3;
+    if (top > maxTop) top = maxTop;
+    if (top < 3) top = 3;
+    
+    const finalTop = Math.round(top);
+    if (finalTop !== this._lastTop) {
+        this._lastTop = finalTop;
+        this._labelElement.style.top = finalTop + 'px';
+    }
+}
 
     _scheduleRetry() {
         if (this._retryTimeout) {
