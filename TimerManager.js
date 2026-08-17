@@ -224,27 +224,31 @@ class TimerManager {
         }
         
         const track = () => {
-            if (this._labelElement && !this._disabled) {
-                const price = this._currentPrice || 
-                             this._chartManager.currentRealPrice || 
-                             this._chartManager.lastCandle?.close;
-                             
-                if (price != null && !isNaN(price) && price > 0) {
-                    this._updatePosition(price);
-                    
-                    if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
-                        this._labelElement.style.visibility = 'visible';
-                        this._labelElement.style.opacity = '1';
-                    }
-                } else if (!this._isVisible) {
-                    const lastClose = this._chartManager.lastCandle?.close;
-                    if (lastClose != null && !isNaN(lastClose)) {
-                        this._updatePosition(lastClose);
-                    }
-                }
-                
-                this._updateColor();
+            // ✅ Защита: если label отсутствует или таймер отключён, останавливаем цикл
+            if (!this._labelElement || this._disabled) {
+                this._rafId = null;
+                return;
             }
+            
+            const price = this._currentPrice || 
+                         this._chartManager.currentRealPrice || 
+                         this._chartManager.lastCandle?.close;
+                         
+            if (price != null && !isNaN(price) && price > 0) {
+                this._updatePosition(price);
+                
+                if (this._isVisible && this._labelElement.style.visibility !== 'visible') {
+                    this._labelElement.style.visibility = 'visible';
+                    this._labelElement.style.opacity = '1';
+                }
+            } else if (!this._isVisible) {
+                const lastClose = this._chartManager.lastCandle?.close;
+                if (lastClose != null && !isNaN(lastClose)) {
+                    this._updatePosition(lastClose);
+                }
+            }
+            
+            this._updateColor();
             this._rafId = requestAnimationFrame(track);
         };
         
@@ -384,7 +388,6 @@ class TimerManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕНО: 15 попыток с фиксированной задержкой 50мс
     _scheduleRetry() {
         if (this._retryTimeout) {
             clearTimeout(this._retryTimeout);
@@ -410,33 +413,27 @@ class TimerManager {
         this._updatePosition(price);
     }
 
-   start(interval) {
-    if (this._disabled) return;
-    this._currentTf = interval;
-    
-    if (!this._initialized) {
-        this._init();
+    start(interval) {
+        if (this._disabled) return;
+        this._currentTf = interval;
+        
+        if (!this._initialized) {
+            this._init();
+        }
+        
+        if (!this._labelElement) return;
+        this.stop();
+        this._updateTimerState();
+        
+        this._lastWidth = null;
+        this._lastTop = null;
+        this._lastColor = null;
+        this._attachScaleObserver();
+        
+        // ✅ Мгновенное обновление (без лишних RAF)
+        this._forceUpdate();
     }
-    
-    if (!this._labelElement) return;
-    this.stop();
-    this._updateTimerState();
-    
-    this._lastWidth = null;
-    this._lastTop = null;
-    this._lastColor = null;
-    this._attachScaleObserver();
-    
-    // ✅ Мгновенное обновление
-    this._forceUpdate();
-    
-    // ✅ Только один дополнительный вызов через RAF для гарантии
-    // (было: setTimeout 200/500/1000 — создавало конкуренцию)
-    requestAnimationFrame(() => {
-        if (this._labelElement) this._forceUpdate();
-    });
-}
-    // ✅ ДОБАВЛЕНО: метод refresh для вызова из ChartManager.refreshCandlesAfterTabHidden
+
     refresh() {
         this._forceUpdate();
     }
@@ -462,6 +459,27 @@ class TimerManager {
         if (this._interval) {
             clearInterval(this._interval);
             this._interval = null;
+        }
+    }
+
+    // ✅ Новый метод: мягкий сброс состояния без удаления DOM
+    reset() {
+        this.stop();
+        this._currentPrice = null;
+        this._lastTop = null;
+        this._lastColor = null;
+        this._lastWidth = null;
+        this._retryCount = 0;
+        if (this._retryTimeout) {
+            clearTimeout(this._retryTimeout);
+            this._retryTimeout = null;
+        }
+        if (this._labelElement) {
+            this._labelElement.style.visibility = 'hidden';
+            this._labelElement.style.opacity = '0';
+            this._isVisible = false;
+            if (this._priceRow) this._priceRow.textContent = '';
+            if (this._timerRow) this._timerRow.textContent = '';
         }
     }
 
