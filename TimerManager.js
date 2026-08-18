@@ -318,7 +318,7 @@ class TimerManager {
         }
     }
 
-       _updatePosition(price) {
+         _updatePosition(price) {
         if (!this._labelElement) return;
         
         if (price == null || isNaN(price) || price <= 0) {
@@ -330,6 +330,7 @@ class TimerManager {
             return;
         }
 
+        // Игнорируем кадры, пока график масштабируется или обрезает данные
         if (cm._autoScalePending || cm._isTrimming) {
             return;
         }
@@ -344,11 +345,11 @@ class TimerManager {
             return;
         }
         
+        // ✅ ЕСЛИ КООРДИНАТА ЕЩЕ НЕ ГОТОВА (null или NaN), ПРОСТО ЖДЕМ СЛЕДУЮЩЕГО КАДРА.
+        // Мы не скрываем и не показываем плашку насильно, чтобы избежать визуального "рывка".
+        // Плашка уже скрыта методом reset(), она появится только когда yCoord станет валидным.
         if (yCoord == null || isNaN(yCoord)) {
-            if (!this._isVisible) {
-                this._showLabel();
-            }
-            return;
+            return; 
         }
 
         const containerHeight = cm.chartContainer.clientHeight;
@@ -365,12 +366,6 @@ class TimerManager {
         
         let top = yCoord - priceRowCenter;
         
-        // ✅ ФИКС ОТ "ПРИЛЕТА СВЕРХУ" (добавьте этот блок):
-        if (this._lastTop === null && (yCoord < 20 || yCoord > containerHeight - 20)) {
-            this._hideLabel();
-            return;
-        }
-        
         const maxTop = containerHeight - labelHeight - 3;
         if (top > maxTop) top = maxTop;
         if (top < 3) top = 3;
@@ -381,6 +376,7 @@ class TimerManager {
             this._labelElement.style.top = finalTop + 'px';
         }
         
+        // Показываем плашку только тогда, когда координата точно верная
         this._showLabel();
     }
 
@@ -389,10 +385,7 @@ class TimerManager {
         this._updatePosition(price);
     }
 
-    updatePosition(price) {
-        this.updatePrice(price);
-        this._updatePosition(price);
-    }
+  
 
     start(interval) {
         if (this._disabled) return;
@@ -441,12 +434,13 @@ class TimerManager {
         }
     }
 
-    reset() {
+     reset() {
         this.stop();
         this._currentPrice = null;
         this._lastTop = null;
         this._lastColor = null;
         this._lastWidth = null;
+        
         if (this._labelElement) {
             this._labelElement.style.visibility = 'hidden';
             this._labelElement.style.opacity = '0';
