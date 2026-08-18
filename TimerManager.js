@@ -17,14 +17,7 @@ class TimerManager {
         this._lastScaleCanvas = null;
         this._isVisible = false;
         this._showTimerRow = true;
-        this._retryTimeout = null;
-        this._retryCount = 0;
         this._initRetryCount = 0;
-
-        // ✅ НОВОЕ: Кэшированные размеры для предотвращения Layout Thrashing
-        this._labelHeight = 20;
-        this._priceRowHeight = 17;
-        this._containerHeight = 0;
 
         if (chartManager.timerManager) {
             chartManager.timerManager.destroy();
@@ -121,22 +114,11 @@ class TimerManager {
         container.appendChild(this._labelElement);
         this._initialized = true;
 
-        // ✅ Инициализируем кэш размеров после добавления в DOM
-        this._updateCachedSizes();
-
         this._attachScaleObserver();
         this._updateTimerState();
         this._startTracking();
         
         this._forceUpdate();
-    }
-
-    // ✅ НОВЫЙ МЕТОД: Кэширование размеров (убираем из RAF)
-    _updateCachedSizes() {
-        if (!this._chartManager?.chartContainer || !this._labelElement || !this._priceRow) return;
-        this._containerHeight = this._chartManager.chartContainer.clientHeight;
-        this._labelHeight = this._labelElement.offsetHeight || 20;
-        this._priceRowHeight = this._priceRow.offsetHeight || 17;
     }
 
     _attachScaleObserver() {
@@ -248,6 +230,17 @@ class TimerManager {
                 this._rafId = null;
                 return;
             }
+
+            // ✅ FIX: пока вкладка скрыта, не гоняем расчёты позиции/цвета впустую —
+            // layout контейнера может быть некорректным (0 или устаревшая высота),
+            // а бесполезная работа каждый кадр на скрытой вкладке лишь тратит CPU
+            // и приводит к тому, что после возврата на вкладку первая позиция
+            // считается по "протухшим" размерам, а уже следующий кадр её поправляет
+            // (тот самый видимый скачок → нормализация).
+            if (document.hidden) {
+                this._rafId = requestAnimationFrame(track);
+                return;
+            }
             
             const price = this._currentPrice || 
                          this._chartManager.currentRealPrice || 
@@ -311,8 +304,6 @@ class TimerManager {
         const text = Number(price).toFixed(precision);
         if (this._priceRow.textContent !== text) {
             this._priceRow.textContent = text;
-            // ✅ Обновляем кэш высот, так как текст изменился
-            requestAnimationFrame(() => this._updateCachedSizes());
         }
     }
 
@@ -345,6 +336,17 @@ class TimerManager {
         if (!cm || !cm.chartContainer || !cm.chartData?.length) {
             return;
         }
+
+        // ✅ FIX: пока правая ценовая шкала графика находится в переходном
+        // autoScale-состоянии (сразу после открытия тикера) или пока идёт
+        // обрезка данных вне видимой области (_isTrimming, при активном
+        // скролле/зуме), priceToCoordinate() отдаёт нестабильные значения —
+        // геометрия ещё не зафиксирована. Пропускаем кадр вместо записи
+        // неверной координаты: именно эта запись и была причиной "скачка,
+        // который потом нормализуется" при открытии тикера и при скролле.
+        if (cm._autoScalePending || cm._isTrimming) {
+            return;
+        }
         
         const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
         if (!activeSeries) return;
@@ -356,27 +358,30 @@ class TimerManager {
             return;
         }
         
-        // ❌ БАГ ИСПРАВЛЕН: При зуме (скролле) priceToCoordinate может вернуть null.
-        // Раньше мы делали return, и плашка оставалась на старой позиции, из-за чего "прыгала".
-        // Теперь скрываем плашку, если координата недоступна.
         if (yCoord == null || isNaN(yCoord)) {
-            this._hideLabel();
+            // График ещё не отрисовал координату, но плашка должна быть видимой.
+            // Показываем её с последней известной позицией.
+            if (!this._isVisible) {
+                this._showLabel();
+            }
             return;
         }
 
+        const containerHeight = cm.chartContainer.clientHeight;
+        const labelHeight = this._labelElement.offsetHeight || 20;
+        
         const scaleWidth = this._getPriceScaleWidth();
         if (Math.abs(this._lastWidth - scaleWidth) > 2) {
             this._lastWidth = scaleWidth;
             this._labelElement.style.width = scaleWidth + 'px';
         }
         
-        // ✅ ИСПРАВЛЕНО: Используем кэшированные размеры вместо offsetHeight/clientHeight
-        // Это убирает Layout Thrashing и тормоза при скролле
-        const priceRowCenter = (this._priceRowHeight || 17) / 2;
+        const priceRowHeight = this._priceRow.offsetHeight || 17;
+        const priceRowCenter = priceRowHeight / 2;
         
         let top = yCoord - priceRowCenter;
         
-        const maxTop = (this._containerHeight || cm.chartContainer.clientHeight) - (this._labelHeight || 20) - 3;
+        const maxTop = containerHeight - labelHeight - 3;
         if (top > maxTop) top = maxTop;
         if (top < 3) top = 3;
         
@@ -387,26 +392,6 @@ class TimerManager {
         }
         
         this._showLabel();
-    }
-
-    _scheduleRetry() {
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-        }
-        
-        if (this._retryCount < 15) {
-            this._retryCount++;
-            
-            this._retryTimeout = setTimeout(() => {
-                this._retryTimeout = null;
-                const price = this._currentPrice || 
-                             this._chartManager?.currentRealPrice || 
-                             this._chartManager?.lastCandle?.close;
-                if (price != null && !isNaN(price) && price > 0) {
-                    this._updatePosition(price);
-                }
-            }, 50);
-        }
     }
 
     updatePosition(price) {
@@ -431,12 +416,10 @@ class TimerManager {
         this._lastColor = null;
         this._attachScaleObserver();
         
-        this._updateCachedSizes();
         this._forceUpdate();
     }
 
     refresh() {
-        this._updateCachedSizes();
         this._forceUpdate();
     }
 
@@ -464,17 +447,13 @@ class TimerManager {
         }
     }
 
+    // ✅ Мягкий сброс состояния без удаления DOM
     reset() {
         this.stop();
         this._currentPrice = null;
         this._lastTop = null;
         this._lastColor = null;
         this._lastWidth = null;
-        this._retryCount = 0;
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-            this._retryTimeout = null;
-        }
         if (this._labelElement) {
             this._labelElement.style.visibility = 'hidden';
             this._labelElement.style.opacity = '0';
@@ -486,12 +465,6 @@ class TimerManager {
 
     _forceUpdate() {
         if (!this._labelElement) return;
-        
-        this._retryCount = 0;
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-            this._retryTimeout = null;
-        }
         
         const scaleWidth = this._getPriceScaleWidth();
         if (scaleWidth > 30) {
@@ -523,10 +496,6 @@ class TimerManager {
 
     destroy() {
         this.stop();
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-            this._retryTimeout = null;
-        }
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
@@ -544,7 +513,6 @@ class TimerManager {
         this._timerRow = null;
         this._initialized = false;
         this._isVisible = false;
-        this._retryCount = 0;
         this._initRetryCount = 0;
     }
 }
