@@ -1040,27 +1040,29 @@ class ChartManager {
         } catch (e) {}
     }
 
-    setChartType(type) {
+     setChartType(type) {
         if (!this.chart) return;
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
         
-        // ✅ УЛУЧШЕНИЕ: Синхронизируем неактивную серию перед переключением видимости
-        if (type === 'candle') {
-            if (this.barSeries && this.chartData.length > 0) {
-                this.barSeries.setData(this.chartData);
-            }
-            if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
-            if (this.barSeries) this.barSeries.applyOptions({ visible: false });
-        } else if (type === 'bar') {
-            if (this.candleSeries && this.chartData.length > 0) {
-                this.candleSeries.setData(this.chartData);
-            }
-            if (this.barSeries) this.barSeries.applyOptions({ visible: true });
-            if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
+        // ✅ 1. Синхронизируем данные в ОБЕИХ сериях ДО переключения видимости.
+        // Это предотвращает "пустой экран" или дерганье при смене типа.
+        if (this.chartData && this.chartData.length > 0) {
+            if (this.candleSeries) this.candleSeries.setData(this.chartData);
+            if (this.barSeries) this.barSeries.setData(this.chartData);
         }
         
-        if (this.volumeSeries && this.chartData.length > 0) {
+        // ✅ 2. Переключаем видимость
+        if (type === 'candle') {
+            this.candleSeries.applyOptions({ visible: true });
+            this.barSeries.applyOptions({ visible: false });
+        } else if (type === 'bar') {
+            this.barSeries.applyOptions({ visible: true });
+            this.candleSeries.applyOptions({ visible: false });
+        }
+        
+        // ✅ 3. Обновляем объемы СТРОГО ОДИН РАЗ после переключения главных серий
+        if (this.volumeSeries && this.chartData && this.chartData.length > 0) {
             this._volumeDataCache = null;
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1; 
@@ -1102,26 +1104,13 @@ class ChartManager {
             this._lastAppliedColor = lineColor;
         }
 
+        // ✅ 4. Обновляем таймер ОДИН раз, без спама requestAnimationFrame
         if (this.timerManager) {
             const price = this.currentRealPrice ?? this.lastCandle?.close;
             if (price != null) {
                 this.timerManager.updatePrice(price);
+                this.timerManager._forceUpdate();
             }
-            
-            requestAnimationFrame(() => {
-                if (this.timerManager) this.timerManager._forceUpdate();
-            });
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    if (this.timerManager) this.timerManager._forceUpdate();
-                });
-            });
-            setTimeout(() => {
-                if (this.timerManager) this.timerManager._forceUpdate();
-            }, 150);
-            setTimeout(() => {
-                if (this.timerManager) this.timerManager._forceUpdate();
-            }, 400);
         }
 
         if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
@@ -1700,14 +1689,16 @@ class ChartManager {
         }
     }
 
-     async switchSymbol(symbol, exchange, marketType) {
+       async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol) return;
-        
-        // ✅ 1. Сразу ставим флаг, чтобы TimerManager перестал обновлять плашку
         this._switchingSymbol = true;
         
-        // ✅ 2. МГНОВЕННО обнуляем источники цены ДО любой очистки.
-        // Это гарантирует, что requestAnimationFrame в TimerManager не подхватит старые данные.
+        // ✅ 1. МГНОВЕННО скрываем и сбрасываем таймер ДО любой другой работы
+        if (this.timerManager) {
+            this.timerManager.reset(); 
+        }
+
+        // ✅ 2. Обнуляем источники данных, чтобы циклы не читали старое
         this.currentRealPrice = null;
         this.lastCandle = null;
         
@@ -1759,17 +1750,12 @@ class ChartManager {
 
             this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
             
+            // ✅ 3. ЧИСТОЕ ОБНОВЛЕНИЕ ТАЙМЕРА (ровно один раз, без спама)
             if (this.timerManager) {
                 this.timerManager.start(this.currentInterval);
-                this.timerManager.updatePrice(this.lastCandle?.close || candles[candles.length - 1]?.close);
-                this.timerManager.refresh();
-                
-                requestAnimationFrame(() => {
-                    if (this.timerManager && this.lastCandle) {
-                        this.timerManager.updatePrice(this.lastCandle.close);
-                        this.timerManager._forceUpdate();
-                    }
-                });
+                const price = this.lastCandle?.close || candles[candles.length - 1]?.close;
+                this.timerManager.updatePrice(price);
+                this.timerManager._forceUpdate(); 
             }
 
             if (!isFromCache) {
