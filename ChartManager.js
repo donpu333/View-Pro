@@ -74,6 +74,7 @@ class ChartManager {
         this._lastDrawingsCall = 0;
         this._drawingsFinalUpdateTimeout = null;
         this._scrollStopTimeout = null;
+        this._zoomEndTimeout = null;      // ✅ Таймер окончания зума
         this._lastScrollTime = 0;
         this._panelsSyncRafId = null;
         this._lastVisibleRange = null;
@@ -966,74 +967,98 @@ _forceRedrawAll() {
     
     this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
 }
-    setupEventListeners() {
-        let resizeTimeout;
-        window.addEventListener('resize', () => {
-            clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(() => {
-                if (this.chart) {
-                    const width = this.chartContainer.clientWidth;
-                    const height = this.chartContainer.clientHeight;
-                    this.chart.applyOptions({ width, height });
-                    if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                    if (this._updateMainChartHeight) this._updateMainChartHeight();
-                    setTimeout(() => this.scrollToLast(), 50);
-                }
-                if (this.timerManager) {
-                    const price = this.currentRealPrice ?? this.lastCandle?.close;
-                    if (price != null) {
-                        this.timerManager.updatePosition(price);
-                    }
-                }
-                this.scheduleDrawingsUpdate(true);
-            }, 100);
-        });
-
-        this.chartContainer.addEventListener('mouseleave', () => {
-            if (this.overlay) this.overlay.classList.remove('visible');
-            this._latestCrosshairData = null;
-            if (this._crosshairRafId) { 
-                cancelAnimationFrame(this._crosshairRafId); 
-                this._crosshairRafId = null; 
+  setupEventListeners() {
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            if (this.chart) {
+                const width = this.chartContainer.clientWidth;
+                const height = this.chartContainer.clientHeight;
+                this.chart.applyOptions({ width, height });
+                if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                if (this._updateMainChartHeight) this._updateMainChartHeight();
+                setTimeout(() => this.scrollToLast(), 50);
             }
-            try { this.chart.clearCrosshairPosition(); } catch(e) {}
-            
-            this._fixStuckAxisDrag();
-        });
-
-        this._globalMouseUpHandler = (e) => {
-            if (!this.chartContainer) return;
-            
-            const canvas = this.chartContainer.querySelector('canvas');
-            if (!canvas) return;
-            
-            if (e.target === canvas) return;
-            
-            const rect = this.chartContainer.getBoundingClientRect();
-            const isOverChart = (
-                e.clientX >= rect.left && e.clientX <= rect.right &&
-                e.clientY >= rect.top && e.clientY <= rect.bottom
-            );
-            
-            if (isOverChart) {
-                this._fixStuckAxisDrag();
+            if (this.timerManager) {
+                const price = this.currentRealPrice ?? this.lastCandle?.close;
+                if (price != null) {
+                    this.timerManager.updatePosition(price);
+                }
             }
-        };
-        window.addEventListener('mouseup', this._globalMouseUpHandler, true);
+            this.scheduleDrawingsUpdate(true);
+        }, 100);
+    });
 
-        window.addEventListener('blur', () => {
+    this.chartContainer.addEventListener('mouseleave', () => {
+        if (this.overlay) this.overlay.classList.remove('visible');
+        this._latestCrosshairData = null;
+        if (this._crosshairRafId) { 
+            cancelAnimationFrame(this._crosshairRafId); 
+            this._crosshairRafId = null; 
+        }
+        try { this.chart.clearCrosshairPosition(); } catch(e) {}
+        
+        this._fixStuckAxisDrag();
+    });
+
+    // ✅ НОВЫЕ СЛУШАТЕЛИ: обновление плашки после окончания зума
+    this.chartContainer.addEventListener('wheel', (e) => {
+        clearTimeout(this._zoomEndTimeout);
+        this._zoomEndTimeout = setTimeout(() => {
+            if (this.timerManager) {
+                const price = this.getCurrentPrice() ?? this.lastCandle?.close;
+                if (price != null) {
+                    this.timerManager.updatePosition(price);
+                }
+            }
+        }, 150);
+    }, { passive: true });
+
+    this.chartContainer.addEventListener('touchmove', (e) => {
+        clearTimeout(this._zoomEndTimeout);
+        this._zoomEndTimeout = setTimeout(() => {
+            if (this.timerManager) {
+                const price = this.getCurrentPrice() ?? this.lastCandle?.close;
+                if (price != null) {
+                    this.timerManager.updatePosition(price);
+                }
+            }
+        }, 150);
+    }, { passive: true });
+
+    this._globalMouseUpHandler = (e) => {
+        if (!this.chartContainer) return;
+        
+        const canvas = this.chartContainer.querySelector('canvas');
+        if (!canvas) return;
+        
+        if (e.target === canvas) return;
+        
+        const rect = this.chartContainer.getBoundingClientRect();
+        const isOverChart = (
+            e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top && e.clientY <= rect.bottom
+        );
+        
+        if (isOverChart) {
             this._fixStuckAxisDrag();
-            
-            if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
-            if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
-            if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
-            if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
-            if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
-            
-            try { this.chart?.clearCrosshairPosition(); } catch(e) {}
-        });
-    }
+        }
+    };
+    window.addEventListener('mouseup', this._globalMouseUpHandler, true);
 
+    window.addEventListener('blur', () => {
+        this._fixStuckAxisDrag();
+        
+        if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
+        if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
+        if (window.rulerLineManager?.cancelDrag) window.rulerLineManager.cancelDrag();
+        if (window.alertLineManager?.cancelDrag) window.alertLineManager.cancelDrag();
+        if (window.textManager?.cancelDrag) window.textManager.cancelDrag();
+        
+        try { this.chart?.clearCrosshairPosition(); } catch(e) {}
+    });
+}
     _fixStuckAxisDrag() {
         if (!this.chart || !this.chartContainer) return;
         try {
