@@ -218,6 +218,7 @@ class TimeframeManager {
     }
 
     // ==================== ПЕРЕКЛЮЧЕНИЕ (ИСПРАВЛЕНО) ====================
+        // ==================== ПЕРЕКЛЮЧЕНИЕ (ОПТИМИЗИРОВАНО) ====================
     async switchToTimeframe(tf) {
         // 1. Валидация
         if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
@@ -228,22 +229,20 @@ class TimeframeManager {
             console.log('🛑 Предыдущее переключение таймфрейма отменено');
         }
 
-        // 3. ✅ Также прерываем текущий запрос в ChartManager
-        // (чтобы старый fetch не перезаписал новые данные)
+        // 3. Прерываем текущий запрос в ChartManager
         if (this.chartManager._currentFetchController) {
             this.chartManager._currentFetchController.abort();
         }
 
-        // 4. Создаём новый AbortController
         this._abortController = new AbortController();
         const { signal } = this._abortController;
 
         console.log('🔄 Переключение на таймфрейм:', tf);
 
-        // 5. Сохраняем позицию ДО переключения
+        // 4. Сохраняем позицию ДО переключения
         this.saveCurrentPosition();
 
-        // 6. UI обновляем СРАЗУ
+        // 5. UI обновляем СРАЗУ
         document.querySelectorAll('.timeframe-item').forEach(i => {
             i.classList.toggle('active', i.dataset.tf === tf);
         });
@@ -251,28 +250,34 @@ class TimeframeManager {
         this._updateCurrentTfBadge(tf);
 
         const previousInterval = this.currentInterval;
+        const cm = this.chartManager;
 
         try {
-            // 7. ✅ ИСПРАВЛЕНО: НЕ передаём signal в fetchKlines
-            // ChartManager сам создаёт AbortController внутри (requestType='user')
-            // Прерывание сделано выше через chartManager._currentFetchController.abort()
-            const candles = await this.chartManager.fetchKlines(
-                this.chartManager.currentSymbol,
-                this.chartManager.currentExchange,
-                this.chartManager.currentMarketType,
-                tf,
-                1000,
-                null,
-                'user'
+            // ✅ ГЛАВНЫЙ ФИКС: ПЫТАЕМСЯ ВЗЯТЬ ДАННЫЕ ИЗ КЭША (ЭТО ЗАНИМАЕТ 1-2 МИЛЛИСЕКУНДЫ)
+            let candles = await cm.loadCandlesFromCache(
+                cm.currentSymbol,
+                cm.currentExchange,
+                cm.currentMarketType,
+                tf
             );
+            let isFromCache = !!candles;
 
-            // 8. Проверка отмены после await
-            if (signal.aborted) {
-                console.log('🛑 Переключение отменено после fetch');
-                return;
+            // Если кэша нет, тянем с биржи (с запросом на сервер)
+            if (!isFromCache) {
+                candles = await cm.fetchKlines(
+                    cm.currentSymbol,
+                    cm.currentExchange,
+                    cm.currentMarketType,
+                    tf,
+                    1000,
+                    null,
+                    'user'
+                );
             }
 
-            // 9. Пустые данные — откатываемся
+            if (signal.aborted) return;
+
+            // Если данные пустые — откатываемся
             if (!candles || candles.length === 0) {
                 console.warn('⚠️ Пустые данные для', tf, '— откат на', previousInterval);
                 this._rollbackTimeframe(previousInterval);
@@ -281,47 +286,45 @@ class TimeframeManager {
 
             if (signal.aborted) return;
 
-            // 10. Применяем новые данные
+            // 6. Применяем новые данные (график рисуется мгновенно, если из кэша)
             this.currentInterval = tf;
             localStorage.setItem('lastTimeframe', tf);
-            this.chartManager.setCurrentInterval(tf);
+            cm.setCurrentInterval(tf);
 
-            this.chartManager.setDataQuick(
+            cm.setDataQuick(
                 candles, tf,
-                this.chartManager.currentSymbol,
-                this.chartManager.currentExchange,
-                this.chartManager.currentMarketType
+                cm.currentSymbol,
+                cm.currentExchange,
+                cm.currentMarketType
             );
 
+            // 7. Обновляем WebSocket и Таймер
             if (this.wsManager?.updateSymbolAndTimeframe) {
                 this.wsManager.updateSymbolAndTimeframe(
-                    this.chartManager.currentSymbol, tf,
-                    this.chartManager.currentExchange,
-                    this.chartManager.currentMarketType
+                    cm.currentSymbol, tf,
+                    cm.currentExchange,
+                    cm.currentMarketType
                 );
             }
 
             this.timerManager.start(tf);
             
-            // ✅ ИСПРАВЛЕНО: явно обновляем позицию таймера
-            // setDataQuick() сбрасывает данные, таймер нужно синхронизировать
             requestAnimationFrame(() => {
                 if (this.timerManager) {
-                    const price = this.chartManager.currentRealPrice 
-                        ?? this.chartManager.lastCandle?.close;
+                    const price = cm.currentRealPrice ?? cm.lastCandle?.close;
                     if (price != null) {
                         this.timerManager.updatePosition(price);
                     }
-                    // Обновить ширину ценовой шкалы под новую цену
-                    if (this.chartManager._applyPriceScaleWidth) {
-                        this.chartManager._applyPriceScaleWidth();
+                    if (cm._applyPriceScaleWidth) {
+                        cm._applyPriceScaleWidth();
                     }
                 }
             });
             
-            this.chartManager.autoScale();
+            cm.autoScale();
             this.restorePosition();
 
+            // 8. Синхронизация рисовалок
             requestAnimationFrame(() => {
                 window.rayManager?.syncWithNewTimeframe();
                 window.trendLineManager?.syncWithNewTimeframe();
@@ -330,7 +333,20 @@ class TimeframeManager {
                 window.textManager?.syncWithNewTimeframe();
             });
 
-            console.log('✅ Таймфрейм переключен:', tf);
+            console.log(`✅ Таймфрейм ${tf} загружен (Из кэша: ${isFromCache})`);
+
+            // ✅ ФОНОВОЕ ОБНОВЛЕНИЕ
+            // Если мы взяли данные из кэша, мы должны обновить их с биржи (тихо, без блокировки)
+            if (isFromCache) {
+                cm.refreshCandlesInBackground(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType, tf
+                ).catch(() => {});
+            } else {
+                // Если скачали с биржи впервые — сохраняем в кэш на будущее
+                cm.saveCandlesToCache(
+                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType, tf, candles
+                ).catch(() => {});
+            }
 
         } catch (error) {
             if (error.name === 'AbortError' || signal?.aborted) {
@@ -347,7 +363,6 @@ class TimeframeManager {
             this.loadStarredTimeframes();
         }
     }
-
     // ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
     _rollbackTimeframe(previousInterval) {
         this.currentInterval = previousInterval;
