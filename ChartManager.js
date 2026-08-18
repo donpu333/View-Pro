@@ -442,7 +442,7 @@ class ChartManager {
         }, 30000);
     }
 
-    async _syncRecentCandles() {
+      async _syncRecentCandles() {
         try {
             const fresh = await this.fetchKlines(
                 this.currentSymbol, 
@@ -501,6 +501,8 @@ class ChartManager {
                             low: cur.low,
                             close: cur.close
                         };
+                        
+                        // ✅ УЛУЧШЕНИЕ: Обновляем ОБЕ серии при синхронизации
                         if (this.candleSeries) this.candleSeries.update(updateData);
                         if (this.barSeries) this.barSeries.update(updateData);
                         
@@ -533,6 +535,8 @@ class ChartManager {
                         low: candle.low,
                         close: candle.close
                     };
+                    
+                    // ✅ УЛУЧШЕНИЕ: Обновляем ОБЕ серии при добавлении пропущенных
                     if (this.candleSeries) this.candleSeries.update(updateData);
                     if (this.barSeries) this.barSeries.update(updateData);
                     
@@ -1041,6 +1045,7 @@ class ChartManager {
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
         
+        // ✅ УЛУЧШЕНИЕ: Синхронизируем неактивную серию перед переключением видимости
         if (type === 'candle') {
             if (this.barSeries && this.chartData.length > 0) {
                 this.barSeries.setData(this.chartData);
@@ -1312,7 +1317,7 @@ class ChartManager {
         }
     }
 
-    updateLastCandle(candle, eventTime = null) {
+     updateLastCandle(candle, eventTime = null) {
         if (this._switchingSymbol || this._updatesSuspended) return;
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
         
@@ -1339,6 +1344,14 @@ class ChartManager {
             const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
             const existingIndex = this._candleTimeMap.get(candle.time);
 
+            const updateData = {
+                time: candle.time,
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close
+            };
+
             if (isLastCandle) {
                 currentLastCandle.open = candle.open;
                 currentLastCandle.close = candle.close;
@@ -1351,6 +1364,10 @@ class ChartManager {
                 }
                 currentLastCandle._isPlaceholder = false;
                 this.lastCandle = currentLastCandle;
+                
+                // ✅ УЛУЧШЕНИЕ: Обновляем ОБЕ серии
+                if (this.candleSeries) this.candleSeries.update(updateData);
+                if (this.barSeries) this.barSeries.update(updateData);
                 
                 if (this.volumeSeries) {
                     const isBullish = currentLastCandle.close >= currentLastCandle.open;
@@ -1372,15 +1389,17 @@ class ChartManager {
                 }
                 existingCandle._isPlaceholder = false;
                 
-                const updateData = {
+                const existingUpdateData = {
                     time: existingCandle.time,
                     open: existingCandle.open,
                     high: existingCandle.high,
                     low: existingCandle.low,
                     close: existingCandle.close
                 };
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                
+                // ✅ УЛУЧШЕНИЕ: Обновляем ОБЕ серии
+                if (this.candleSeries) this.candleSeries.update(existingUpdateData);
+                if (this.barSeries) this.barSeries.update(existingUpdateData);
                 
                 if (this.volumeSeries) {
                     const isBullish = existingCandle.close >= existingCandle.open;
@@ -1391,11 +1410,15 @@ class ChartManager {
                     });
                 }
                 this._volumeDataDirty = true;
-                return;
+                return; // Возвращаемся здесь, так как ниже общий блок не нужен
             } else if (isNewCandle) {
                 this.chartData.push(candle);
                 this._addToTimeMap(candle.time, this.chartData.length - 1);
                 this.lastCandle = candle;
+                
+                // ✅ УЛУЧШЕНИЕ: Обновляем ОБЕ серии
+                if (this.candleSeries) this.candleSeries.update(updateData);
+                if (this.barSeries) this.barSeries.update(updateData);
                 
                 if (this.volumeSeries) {
                     const isBullish = candle.close >= candle.open;
@@ -1411,16 +1434,6 @@ class ChartManager {
             }
             
             if (!this.lastCandle) return;
-            
-            const updateData = {
-                time: this.lastCandle.time,
-                open: this.lastCandle.open,
-                high: this.lastCandle.high,
-                low: this.lastCandle.low,
-                close: this.lastCandle.close
-            };
-            if (this.candleSeries) this.candleSeries.update(updateData);
-            if (this.barSeries) this.barSeries.update(updateData);
             
             const lineColor = this._getLineColor();
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -2242,7 +2255,7 @@ class ChartManager {
         return clean;
     }
 
-    _createNewCandle(candle) {
+       _createNewCandle(candle) {
         if (!candle || !candle.time) return;
         if (this._candleTimeMap.has(candle.time)) return;
         
@@ -2267,6 +2280,8 @@ class ChartManager {
             low: candle.low,
             close: candle.close
         };
+        
+        // ✅ УЛУЧШЕНИЕ: Обновляем ОБЕ серии
         if (this.candleSeries) this.candleSeries.update(updateData);
         if (this.barSeries) this.barSeries.update(updateData);
         
@@ -2294,7 +2309,6 @@ class ChartManager {
         this._priceChanged = true;
         this._volumeDataDirty = true;
     }
-
     _buildVolumeData(data) {
         const bullishColor = this.bullishColor || CONFIG.colors.bullish || '#26a69a';
         const bearishColor = this.bearishColor || CONFIG.colors.bearish || '#ef5350';
