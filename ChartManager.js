@@ -465,9 +465,7 @@ class ChartManager {
         }, 30000);
     }
 
-    async _syncRecentCandles() {
-        if (!this._isChartValid()) return;
-        
+     async _syncRecentCandles() {
         try {
             const fresh = await this.fetchKlines(
                 this.currentSymbol, 
@@ -480,7 +478,7 @@ class ChartManager {
             );
             if (!fresh || fresh.length === 0) return;
             
-            if (this._updatesSuspended || this._switchingSymbol || !this._isChartValid()) return;
+            if (this._updatesSuspended || this._switchingSymbol) return;
             
             const currentData = this.chartData;
             if (!currentData || currentData.length === 0) return;
@@ -488,72 +486,67 @@ class ChartManager {
             const freshMap = new Map(fresh.map(c => [c.time, c]));
             let changed = false;
             
+            // 1. Обновляем последние 3 свечи
             for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 3); i--) {
                 const cur = currentData[i];
                 const freshCandle = freshMap.get(cur.time);
                 if (freshCandle) {
-                    const oldOpen = cur.open;
-                    const oldHigh = cur.high;
-                    const oldLow = cur.low;
-                    const oldClose = cur.close;
-                    const oldVolume = cur.volume;
-                    const oldQuoteVolume = cur.quoteVolume;
-                    
                     cur.open = freshCandle.open;
                     cur.close = freshCandle.close;
                     cur.high = freshCandle.high;
                     cur.low = freshCandle.low;
                     cur.volume = freshCandle.volume;
-                    cur.quoteVolume = freshCandle.quoteVolume;
-                    if (!cur.quoteVolume && cur.volume) {
-                        cur.quoteVolume = cur.volume;
-                    }
+                    cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
                     
-                    if (
-                        oldOpen !== cur.open ||
-                        oldHigh !== cur.high ||
-                        oldLow !== cur.low ||
-                        oldClose !== cur.close ||
-                        oldVolume !== cur.volume ||
-                        oldQuoteVolume !== cur.quoteVolume
-                    ) {
-                        changed = true;
-                        
-                        const updateData = {
-                            time: cur.time,
-                            open: cur.open,
-                            high: cur.high,
-                            low: cur.low,
-                            close: cur.close
-                        };
-                        
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
-                        
-                        if (this.volumeSeries) {
-                            const isBullish = cur.close >= cur.open;
-                            this.volumeSeries.update({
-                                time: cur.time,
-                                value: cur.quoteVolume || cur.volume || 0,
-                                color: isBullish ? this.bullishColor : this.bearishColor
-                            });
-                        }
+                    // ✅ КРИТИЧЕСКИЙ ФИКС: Принудительно делаем время числом
+                    const safeTime = Number(cur.time);
+                    if (isNaN(safeTime) || safeTime <= 0) {
+                        console.warn('⚠️ Пропуск обновления свечи: некорректное время', cur.time);
+                        continue;
                     }
+
+                    const updateData = {
+                        time: safeTime, // Используем проверенное число
+                        open: cur.open,
+                        high: cur.high,
+                        low: cur.low,
+                        close: cur.close
+                    };
+                    
+                    if (this.candleSeries) this.candleSeries.update(updateData);
+                    if (this.barSeries) this.barSeries.update(updateData);
+                    
+                    if (this.volumeSeries) {
+                        const isBullish = cur.close >= cur.open;
+                        this.volumeSeries.update({
+                            time: safeTime,
+                            value: cur.quoteVolume || cur.volume || 0,
+                            color: isBullish ? this.bullishColor : this.bearishColor
+                        });
+                    }
+                    changed = true;
                     freshMap.delete(cur.time);
                 }
             }
             
+            // 2. Добавляем пропущенные свечи
             if (freshMap.size > 0) {
                 const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
                 for (const candle of missing) {
-                    if (!candle.quoteVolume && candle.volume) {
-                        candle.quoteVolume = candle.volume;
+                    candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
+                    
+                    // ✅ КРИТИЧЕСКИЙ ФИКС: Принудительно делаем время числом
+                    const safeTime = Number(candle.time);
+                    if (isNaN(safeTime) || safeTime <= 0) {
+                        console.warn('⚠️ Пропуск добавления свечи: некорректное время', candle.time);
+                        continue;
                     }
+
                     currentData.push(candle);
-                    this._addToTimeMap(candle.time, currentData.length - 1);
+                    this._addToTimeMap(safeTime, currentData.length - 1);
                     
                     const updateData = {
-                        time: candle.time,
+                        time: safeTime, // Используем проверенное число
                         open: candle.open,
                         high: candle.high,
                         low: candle.low,
@@ -566,7 +559,7 @@ class ChartManager {
                     if (this.volumeSeries) {
                         const isBullish = candle.close >= candle.open;
                         this.volumeSeries.update({
-                            time: candle.time,
+                            time: safeTime,
                             value: candle.quoteVolume || candle.volume || 0,
                             color: isBullish ? this.bullishColor : this.bearishColor
                         });
@@ -579,12 +572,8 @@ class ChartManager {
             if (changed) {
                 this._volumeDataDirty = true;
                 this._syncLineColor();
-                if (this.indicatorManager) {
-                    this.indicatorManager.updateAllIndicators();
-                }
-                if (this.timerManager) {
-                    this.timerManager.updatePrice(this.lastCandle.close);
-                }
+                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                if (this.timerManager) this.timerManager.updatePrice(this.lastCandle.close);
             }
         } catch (e) {
             console.warn('⚠️ Ошибка периодической синхронизации:', e);
