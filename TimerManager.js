@@ -21,6 +21,11 @@ class TimerManager {
         this._retryCount = 0;
         this._initRetryCount = 0;
 
+        // ✅ НОВОЕ: Кэшированные размеры для предотвращения Layout Thrashing
+        this._labelHeight = 20;
+        this._priceRowHeight = 17;
+        this._containerHeight = 0;
+
         if (chartManager.timerManager) {
             chartManager.timerManager.destroy();
         }
@@ -29,145 +34,154 @@ class TimerManager {
         this._init();
     }
 
-  _init() {
-    if (this._disabled || !this._chartManager?.chart) {
-        if (this._initRetryCount < 15) {
-            this._initRetryCount++;
-            setTimeout(() => this._init(), 200);
+    _init() {
+        if (this._disabled || !this._chartManager?.chart) {
+            if (this._initRetryCount < 15) {
+                this._initRetryCount++;
+                setTimeout(() => this._init(), 200);
+            }
+            return;
         }
-        return;
-    }
-    
-    this._initRetryCount = 0;
+        
+        this._initRetryCount = 0;
 
-    document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
+        document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
 
-    this._labelElement = document.createElement('div');
-    this._labelElement.id = 'price-timer-label';
-    
-    const initColor = this._getCurrentColor();
-    this._lastColor = initColor;
-    const initWidth = 90;  // начальная ширина, будет заменена реальной из шкалы
-    this._lastWidth = initWidth;
+        this._labelElement = document.createElement('div');
+        this._labelElement.id = 'price-timer-label';
+        
+        const initColor = this._getCurrentColor();
+        this._lastColor = initColor;
+        const initWidth = 90;
+        this._lastWidth = initWidth;
 
-    this._labelElement.style.cssText = `
-        position: absolute;
-        right: 0px;
-        left: auto;
-        width: ${initWidth}px;
-        pointer-events: none;
-        z-index: 999;
-        font-family: 'Inter', Arial, sans-serif;
-        visibility: hidden;
-        opacity: 0;
-        background-color: ${initColor};
-        border-radius: 3px;
-        text-align: center;
-        box-sizing: border-box;
-        will-change: top, opacity, width;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        line-height: 1.2;
-    `;
+        this._labelElement.style.cssText = `
+            position: absolute;
+            right: 0px;
+            left: auto;
+            width: ${initWidth}px;
+            pointer-events: none;
+            z-index: 999;
+            font-family: 'Inter', Arial, sans-serif;
+            visibility: hidden;
+            opacity: 0;
+            background-color: ${initColor};
+            border-radius: 3px;
+            text-align: center;
+            box-sizing: border-box;
+            will-change: top, opacity, width;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+        `;
 
-    // ✅ Строка цены
-    this._priceRow = document.createElement('div');
-    this._priceRow.style.cssText = `
-        font-weight: bold;
-        font-size: 11px;
-        color: #000000;
-        padding: 2px 6px 1px 6px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        width: 100%;
-        min-width: 0;
-        box-sizing: border-box;
-    `;
-    this._priceRow.textContent = '';
+        this._priceRow = document.createElement('div');
+        this._priceRow.style.cssText = `
+            font-weight: bold;
+            font-size: 11px;
+            color: #000000;
+            padding: 2px 6px 1px 6px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        `;
+        this._priceRow.textContent = '';
 
-    // ✅ Строка таймера
-    this._timerRow = document.createElement('div');
-    this._timerRow.style.cssText = `
-        font-weight: bold;
-        font-size: 11px;
-        color: #000000;
-        padding: 0 6px 2px 6px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        width: 100%;
-        min-width: 0;
-        box-sizing: border-box;
-    `;
-    this._timerRow.textContent = '';
+        this._timerRow = document.createElement('div');
+        this._timerRow.style.cssText = `
+            font-weight: bold;
+            font-size: 11px;
+            color: #000000;
+            padding: 0 6px 2px 6px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        `;
+        this._timerRow.textContent = '';
 
-    this._labelElement.appendChild(this._priceRow);
-    this._labelElement.appendChild(this._timerRow);
+        this._labelElement.appendChild(this._priceRow);
+        this._labelElement.appendChild(this._timerRow);
 
-    const initTextColor = this._getContrastTextColor(initColor);
-    this._priceRow.style.color = initTextColor;
-    this._timerRow.style.color = initTextColor;
+        const initTextColor = this._getContrastTextColor(initColor);
+        this._priceRow.style.color = initTextColor;
+        this._timerRow.style.color = initTextColor;
 
-    const container = this._chartManager.chartContainer;
-    if (getComputedStyle(container).position === 'static') {
-        container.style.position = 'relative';
-    }
+        const container = this._chartManager.chartContainer;
+        if (getComputedStyle(container).position === 'static') {
+            container.style.position = 'relative';
+        }
 
-    container.appendChild(this._labelElement);
-    this._initialized = true;
+        container.appendChild(this._labelElement);
+        this._initialized = true;
 
-    this._attachScaleObserver();
-    this._updateTimerState();
-    this._startTracking();
-    
-    // ✅ Вместо множества setTimeout — один немедленный вызов
-    this._forceUpdate();
-}
-   _attachScaleObserver() {
-    const cm = this._chartManager;
-    if (!cm?.chartContainer) return;
+        // ✅ Инициализируем кэш размеров после добавления в DOM
+        this._updateCachedSizes();
 
-    const canvases = cm.chartContainer.querySelectorAll('canvas');
-    if (canvases.length < 2) {
-        // ✅ Используем requestAnimationFrame вместо setTimeout для мгновенной проверки
-        requestAnimationFrame(() => this._attachScaleObserver());
-        return;
-    }
-    
-    const scaleCanvas = canvases[canvases.length - 1];
-    if (this._lastScaleCanvas === scaleCanvas) return;
-    
-    this._lastScaleCanvas = scaleCanvas;
-    
-    if (this._scaleObserver) {
-        this._scaleObserver.disconnect();
-        this._scaleObserver = null;
+        this._attachScaleObserver();
+        this._updateTimerState();
+        this._startTracking();
+        
+        this._forceUpdate();
     }
 
-    this._scaleObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-            const newWidth = Math.round(entry.contentRect.width);
-            if (newWidth > 30 && newWidth !== this._lastWidth) {
-                this._lastWidth = newWidth;
-                if (this._labelElement) {
-                    this._labelElement.style.width = newWidth + 'px';
+    // ✅ НОВЫЙ МЕТОД: Кэширование размеров (убираем из RAF)
+    _updateCachedSizes() {
+        if (!this._chartManager?.chartContainer || !this._labelElement || !this._priceRow) return;
+        this._containerHeight = this._chartManager.chartContainer.clientHeight;
+        this._labelHeight = this._labelElement.offsetHeight || 20;
+        this._priceRowHeight = this._priceRow.offsetHeight || 17;
+    }
+
+    _attachScaleObserver() {
+        const cm = this._chartManager;
+        if (!cm?.chartContainer) return;
+
+        const canvases = cm.chartContainer.querySelectorAll('canvas');
+        if (canvases.length < 2) {
+            requestAnimationFrame(() => this._attachScaleObserver());
+            return;
+        }
+        
+        const scaleCanvas = canvases[canvases.length - 1];
+        if (this._lastScaleCanvas === scaleCanvas) return;
+        
+        this._lastScaleCanvas = scaleCanvas;
+        
+        if (this._scaleObserver) {
+            this._scaleObserver.disconnect();
+            this._scaleObserver = null;
+        }
+
+        this._scaleObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const newWidth = Math.round(entry.contentRect.width);
+                if (newWidth > 30 && newWidth !== this._lastWidth) {
+                    this._lastWidth = newWidth;
+                    if (this._labelElement) {
+                        this._labelElement.style.width = newWidth + 'px';
+                    }
                 }
             }
-        }
-    });
-    
-    this._scaleObserver.observe(scaleCanvas);
-    
-    const rect = scaleCanvas.getBoundingClientRect();
-    if (rect.width > 30) {
-        this._lastWidth = Math.round(rect.width);
-        if (this._labelElement) {
-            this._labelElement.style.width = this._lastWidth + 'px';
+        });
+        
+        this._scaleObserver.observe(scaleCanvas);
+        
+        const rect = scaleCanvas.getBoundingClientRect();
+        if (rect.width > 30) {
+            this._lastWidth = Math.round(rect.width);
+            if (this._labelElement) {
+                this._labelElement.style.width = this._lastWidth + 'px';
+            }
         }
     }
-}
+
     _getCurrentColor() {
         const cm = this._chartManager;
         if (cm?._lastAppliedColor) return cm._lastAppliedColor;
@@ -223,32 +237,33 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
- _startTracking() {
-    if (this._rafId) {
-        cancelAnimationFrame(this._rafId);
-        this._rafId = null;
-    }
-    
-    const track = () => {
-        if (!this._labelElement || this._disabled) {
+    _startTracking() {
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
             this._rafId = null;
-            return;
         }
         
-        const price = this._currentPrice || 
-                     this._chartManager.currentRealPrice || 
-                     this._chartManager.lastCandle?.close;
-                     
-        if (price != null && !isNaN(price) && price > 0) {
-            this._updatePosition(price);
-        }
+        const track = () => {
+            if (!this._labelElement || this._disabled) {
+                this._rafId = null;
+                return;
+            }
+            
+            const price = this._currentPrice || 
+                         this._chartManager.currentRealPrice || 
+                         this._chartManager.lastCandle?.close;
+                         
+            if (price != null && !isNaN(price) && price > 0) {
+                this._updatePosition(price);
+            }
+            
+            this._updateColor();
+            this._rafId = requestAnimationFrame(track);
+        };
         
-        this._updateColor();
-        this._rafId = requestAnimationFrame(track);
-    };
-    
-    track();
-}
+        track();
+    }
+
     _updateColor() {
         if (!this._labelElement || !this._priceRow || !this._timerRow) return;
         const targetColor = this._getCurrentColor();
@@ -296,6 +311,8 @@ class TimerManager {
         const text = Number(price).toFixed(precision);
         if (this._priceRow.textContent !== text) {
             this._priceRow.textContent = text;
+            // ✅ Обновляем кэш высот, так как текст изменился
+            requestAnimationFrame(() => this._updateCachedSizes());
         }
     }
 
@@ -317,67 +334,61 @@ class TimerManager {
         }
     }
 
-  _updatePosition(price) {
-    if (!this._labelElement) return;
-    
-    // ✅ Если цена временно недоступна, НЕ скрываем плашку,
-    // а просто пропускаем кадр (она останется на прежнем месте)
-    if (price == null || isNaN(price) || price <= 0) {
-        return;
-    }
-    
-    const cm = this._chartManager;
-    if (!cm || !cm.chartContainer || !cm.chartData?.length) {
-        return;
-    }
-    
-    const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-    if (!activeSeries) return;
+    _updatePosition(price) {
+        if (!this._labelElement) return;
+        
+        if (price == null || isNaN(price) || price <= 0) {
+            return;
+        }
+        
+        const cm = this._chartManager;
+        if (!cm || !cm.chartContainer || !cm.chartData?.length) {
+            return;
+        }
+        
+        const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+        if (!activeSeries) return;
 
-    let yCoord;
-    try {
-        yCoord = activeSeries.priceToCoordinate(price);
-    } catch (e) {
-        return;
-    }
-    
-  if (yCoord == null || isNaN(yCoord)) {
-    // График ещё не отрисовал координату, но плашка должна быть видимой.
-    // Показываем её с последней известной позицией (или в центре, если позиции нет).
-    if (!this._isVisible) {
+        let yCoord;
+        try {
+            yCoord = activeSeries.priceToCoordinate(price);
+        } catch (e) {
+            return;
+        }
+        
+        // ❌ БАГ ИСПРАВЛЕН: При зуме (скролле) priceToCoordinate может вернуть null.
+        // Раньше мы делали return, и плашка оставалась на старой позиции, из-за чего "прыгала".
+        // Теперь скрываем плашку, если координата недоступна.
+        if (yCoord == null || isNaN(yCoord)) {
+            this._hideLabel();
+            return;
+        }
+
+        const scaleWidth = this._getPriceScaleWidth();
+        if (Math.abs(this._lastWidth - scaleWidth) > 2) {
+            this._lastWidth = scaleWidth;
+            this._labelElement.style.width = scaleWidth + 'px';
+        }
+        
+        // ✅ ИСПРАВЛЕНО: Используем кэшированные размеры вместо offsetHeight/clientHeight
+        // Это убирает Layout Thrashing и тормоза при скролле
+        const priceRowCenter = (this._priceRowHeight || 17) / 2;
+        
+        let top = yCoord - priceRowCenter;
+        
+        const maxTop = (this._containerHeight || cm.chartContainer.clientHeight) - (this._labelHeight || 20) - 3;
+        if (top > maxTop) top = maxTop;
+        if (top < 3) top = 3;
+        
+        const finalTop = Math.round(top);
+        if (finalTop !== this._lastTop) {
+            this._lastTop = finalTop;
+            this._labelElement.style.top = finalTop + 'px';
+        }
+        
         this._showLabel();
     }
-    return;
-}
 
-    const containerHeight = cm.chartContainer.clientHeight;
-    const labelHeight = this._labelElement.offsetHeight || 20;
-    
-    const scaleWidth = this._getPriceScaleWidth();
-    if (Math.abs(this._lastWidth - scaleWidth) > 2) {
-        this._lastWidth = scaleWidth;
-        this._labelElement.style.width = scaleWidth + 'px';
-    }
-    
-    // ✅ ВМЕСТО СКРЫТИЯ — ограничиваем позицию, чтобы плашка всегда была видна
-    const priceRowHeight = this._priceRow.offsetHeight || 17;
-    const priceRowCenter = priceRowHeight / 2;
-    
-    let top = yCoord - priceRowCenter;
-    
-    const maxTop = containerHeight - labelHeight - 3;
-    if (top > maxTop) top = maxTop;
-    if (top < 3) top = 3;
-    
-    const finalTop = Math.round(top);
-    if (finalTop !== this._lastTop) {
-        this._lastTop = finalTop;
-        this._labelElement.style.top = finalTop + 'px';
-    }
-    
-    // ✅ Явно показываем плашку (на случай, если она была скрыта ранее)
-    this._showLabel();
-}
     _scheduleRetry() {
         if (this._retryTimeout) {
             clearTimeout(this._retryTimeout);
@@ -420,11 +431,12 @@ class TimerManager {
         this._lastColor = null;
         this._attachScaleObserver();
         
-        // ✅ Мгновенное обновление (без лишних RAF)
+        this._updateCachedSizes();
         this._forceUpdate();
     }
 
     refresh() {
+        this._updateCachedSizes();
         this._forceUpdate();
     }
 
@@ -452,58 +464,59 @@ class TimerManager {
         }
     }
 
-    // ✅ Новый метод: мягкий сброс состояния без удаления DOM
- reset() {
-    this.stop();
-    this._currentPrice = null;
-    this._lastTop = null;
-    this._lastColor = null;
-    this._lastWidth = null;
-    this._retryCount = 0;
-    if (this._retryTimeout) {
-        clearTimeout(this._retryTimeout);
-        this._retryTimeout = null;
+    reset() {
+        this.stop();
+        this._currentPrice = null;
+        this._lastTop = null;
+        this._lastColor = null;
+        this._lastWidth = null;
+        this._retryCount = 0;
+        if (this._retryTimeout) {
+            clearTimeout(this._retryTimeout);
+            this._retryTimeout = null;
+        }
+        if (this._labelElement) {
+            this._labelElement.style.visibility = 'hidden';
+            this._labelElement.style.opacity = '0';
+            this._isVisible = false;
+            if (this._priceRow) this._priceRow.textContent = '';
+            if (this._timerRow) this._timerRow.textContent = '';
+        }
     }
-    if (this._labelElement) {
-        // ✅ Очищаем тексты, но НЕ скрываем плашку
-        if (this._priceRow) this._priceRow.textContent = '';
-        if (this._timerRow) this._timerRow.textContent = '';
-        // Показываем плашку (на случай, если была скрыта)
-        this._showLabel();
-    }
-}
 
- _forceUpdate() {
-    if (!this._labelElement) return;
-    
-    this._retryCount = 0;
-    if (this._retryTimeout) {
-        clearTimeout(this._retryTimeout);
-        this._retryTimeout = null;
+    _forceUpdate() {
+        if (!this._labelElement) return;
+        
+        this._retryCount = 0;
+        if (this._retryTimeout) {
+            clearTimeout(this._retryTimeout);
+            this._retryTimeout = null;
+        }
+        
+        const scaleWidth = this._getPriceScaleWidth();
+        if (scaleWidth > 30) {
+            this._lastWidth = scaleWidth;
+            this._labelElement.style.width = scaleWidth + 'px';
+        }
+        
+        this._lastTop = null;
+        this._lastColor = null;
+        
+        const price = this._currentPrice || 
+                     this._chartManager?.currentRealPrice || 
+                     this._chartManager?.lastCandle?.close;
+        
+        if (price != null && !isNaN(price) && price > 0) {
+            this._updatePriceText(price);
+            this._updatePosition(price);
+            if (!this._isVisible) {
+                this._showLabel();
+            }
+        }
+        
+        this._updateColor();
     }
-    
-    const scaleWidth = this._getPriceScaleWidth();
-    if (scaleWidth > 30) {
-        this._lastWidth = scaleWidth;
-        this._labelElement.style.width = scaleWidth + 'px';
-    }
-    
-    this._lastTop = null;
-    this._lastColor = null;
-    
-    const price = this._currentPrice || 
-                 this._chartManager?.currentRealPrice || 
-                 this._chartManager?.lastCandle?.close;
-    
-    if (price != null && !isNaN(price) && price > 0) {
-        this._updatePriceText(price);
-        this._updatePosition(price);
-    }
-    
-    // ✅ Показываем плашку всегда, даже если цена временно недоступна
-    this._showLabel();
-    this._updateColor();
-}
+
     reattach() {
         this._init();
     }
