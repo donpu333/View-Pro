@@ -37,7 +37,6 @@ class TimerManager {
         }
         
         this._initRetryCount = 0;
-
         document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
 
         this._labelElement = document.createElement('div');
@@ -117,7 +116,6 @@ class TimerManager {
         this._attachScaleObserver();
         this._updateTimerState();
         this._startTracking();
-        
         this._forceUpdate();
     }
 
@@ -181,7 +179,6 @@ class TimerManager {
         if (!bgColor) return '#000000';
         
         let r, g, b;
-        
         if (bgColor.startsWith('#')) {
             let hex = bgColor.slice(1);
             if (hex.length === 3) {
@@ -215,7 +212,6 @@ class TimerManager {
             const rect = lastCanvas.getBoundingClientRect();
             if (rect.width > 30) return Math.round(rect.width);
         }
-        
         return this._lastWidth || 90;
     }
 
@@ -231,12 +227,9 @@ class TimerManager {
                 return;
             }
 
-            // ✅ FIX: пока вкладка скрыта, не гоняем расчёты позиции/цвета впустую —
-            // layout контейнера может быть некорректным (0 или устаревшая высота),
-            // а бесполезная работа каждый кадр на скрытой вкладке лишь тратит CPU
-            // и приводит к тому, что после возврата на вкладку первая позиция
-            // считается по "протухшим" размерам, а уже следующий кадр её поправляет
-            // (тот самый видимый скачок → нормализация).
+            // ✅ КРИТИЧЕСКИ ВАЖНО: Не выполняем расчеты на скрытой вкладке.
+            // Это предотвращает чтение некорректных размеров DOM (0 или устаревших) 
+            // и исключает визуальный "скачок" плашки при возврате на вкладку.
             if (document.hidden) {
                 this._rafId = requestAnimationFrame(track);
                 return;
@@ -337,13 +330,9 @@ class TimerManager {
             return;
         }
 
-        // ✅ FIX: пока правая ценовая шкала графика находится в переходном
-        // autoScale-состоянии (сразу после открытия тикера) или пока идёт
-        // обрезка данных вне видимой области (_isTrimming, при активном
-        // скролле/зуме), priceToCoordinate() отдаёт нестабильные значения —
-        // геометрия ещё не зафиксирована. Пропускаем кадр вместо записи
-        // неверной координаты: именно эта запись и была причиной "скачка,
-        // который потом нормализуется" при открытии тикера и при скролле.
+        // ✅ КРИТИЧЕСКИ ВАЖНО: Игнорируем кадры, пока график масштабируется 
+        // или обрезает данные. В эти моменты priceToCoordinate() возвращает 
+        // нестабильные значения, что вызывает "скачок" плашки.
         if (cm._autoScalePending || cm._isTrimming) {
             return;
         }
@@ -359,8 +348,6 @@ class TimerManager {
         }
         
         if (yCoord == null || isNaN(yCoord)) {
-            // График ещё не отрисовал координату, но плашка должна быть видимой.
-            // Показываем её с последней известной позицией.
             if (!this._isVisible) {
                 this._showLabel();
             }
@@ -415,7 +402,6 @@ class TimerManager {
         this._lastTop = null;
         this._lastColor = null;
         this._attachScaleObserver();
-        
         this._forceUpdate();
     }
 
@@ -447,7 +433,6 @@ class TimerManager {
         }
     }
 
-    // ✅ Мягкий сброс состояния без удаления DOM
     reset() {
         this.stop();
         this._currentPrice = null;
