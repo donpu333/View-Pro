@@ -1,537 +1,686 @@
-class TimerRenderer {
-    constructor(timerManager) {
-        this._timerManager = timerManager;
-        this.enabled = true;
+class PriceManager {
+    constructor() {
+        this.prices = new Map();
+        this.subscribers = new Map();
+        this.connections = {};
+        this.reconnectTimers = new Map();
+        this.pingIntervals = new Map();
+        this._pendingUpdates = new Map();
+        
+        // ✅ ИСПРАВЛЕНО: заменяем RAF на setTimeout
+        this._flushTimeout = null;
+        
+        this._restPollInterval = null;
+        this._lastWsMessage = {};
+        this._connectionAttempts = {};
+        this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
+        this._connectionState = {};
+        this._initInProgress = false;
+        this._connectionCheckInterval = null;  // ✅ НОВОЕ: интервал проверки соединений
+        
+        this.config = {
+            reconnectDelay: 15000,
+            maxReconnectDelay: 120000,
+            restPollInterval: 10000,
+            bybitPingInterval: 15000, 
+            startupDelay: 2000,
+            connectionCheckInterval: 15000,  // ✅ НОВОЕ
+            staleConnectionTimeout: 30000    // ✅ НОВОЕ: 30 секунд без сообщений = переподключение
+        };
+        
+        this._init();
+    }
+    
+    _init() {
+        if (this._initInProgress) return;
+        this._initInProgress = true;
+        
+        const connectSequence = [
+            () => this._connectBinanceFutures(),
+            () => this._connectBinanceSpot()
+        ];
+        
+        connectSequence.forEach((fn, index) => {
+            setTimeout(fn, index * this.config.startupDelay);
+        });
+        
+        this._restPollInterval = setInterval(() => this._pollAlertPricesViaRest(), this.config.restPollInterval);
+        setTimeout(() => this._pollAlertPricesViaRest(), 1500);
+        
+        // ✅ НОВОЕ: проверка соединений каждые 15 секунд
+        this._connectionCheckInterval = setInterval(() => {
+            this._checkConnections();
+        }, this.config.connectionCheckInterval);
+        
+        if (typeof window !== 'undefined') {
+            window.addEventListener('beforeunload', () => this.close());
+            
+            this._focusHandler = () => {
+                console.log('🔍 PriceManager: вкладка активна, пробуждаемся');
+                this.wakeUp();
+            };
+            window.addEventListener('focus', this._focusHandler);
+            
+            this._pageshowHandler = (e) => {
+                console.log('🔍 PriceManager: страница показана из кэша:', e.persisted);
+                this.wakeUp();
+            };
+            window.addEventListener('pageshow', this._pageshowHandler);
+        }
+        
+        console.log('✅ PriceManager v14 запущен (с проверкой мёртвых соединений)');
     }
 
- draw(target) {
-    if (!this.enabled) return;
+    // ✅ НОВЫЙ МЕТОД: пробуждение при возврате на вкладку
+    wakeUp() {
+        console.log('⚡ PriceManager: принудительное пробуждение');
+        
+        // 1. Отправляем все накопленные цены подписчикам
+        this._flushPendingUpdates();
+        
+        // 2. Форсируем REST polling для алертов
+        this._pollAlertPricesViaRest();
+        
+        // 3. Проверяем соединения
+        this._checkConnections();
+    }
     
-    const chartManager = this._timerManager._chartManager;
-    if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
-    
-    const timerText = this._timerManager._timerElement?.textContent || '';
-    if (!timerText) return;
-
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const hpr = scope.horizontalPixelRatio;
-        const vpr = scope.verticalPixelRatio;
-
-        // Получаем цену
-        let price = chartManager.currentRealPrice;
-        if (price == null || isNaN(price) || price <= 0) {
-            const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-            if (lastCandle && lastCandle.close != null) {
-                price = lastCandle.close;
+    // ✅ УЛУЧШЕННЫЙ МЕТОД: проверка состояния соединений
+    _checkConnections() {
+        const now = Date.now();
+        
+        for (const [key, ws] of Object.entries(this.connections)) {
+            const lastMsg = this._lastWsMessage[key] || 0;
+            const timeSinceLastMsg = now - lastMsg;
+            
+            // Если соединение открыто, но сообщений нет больше 30 секунд — переподключаемся
+            if (ws?.readyState === WebSocket.OPEN && timeSinceLastMsg > this.config.staleConnectionTimeout) {
+                console.warn(`⚠️ PriceManager: ${key} нет сообщений ${Math.round(timeSinceLastMsg/1000)}с, переподключаемся`);
+                
+                // Отключаем обработчик onclose, чтобы не сработал автоматический reconnect
+                try { 
+                    ws.onclose = null;
+                    ws.close(1000); 
+                } catch(e) {}
+                
+                // Переподключаемся вручную
+                const parts = key.split(':');
+                if (parts[0] === 'binance') {
+                    if (parts[1] === 'futures') this._connectBinanceFutures();
+                    else if (parts[1] === 'spot') this._connectBinanceSpot();
+                } else if (parts[0] === 'bybit') {
+                    if (parts[1] === 'linear') this._connectBybitLinear();
+                    else if (parts[1] === 'spot') this._connectBybitSpot();
+                }
+            }
+            
+            // Если соединение закрыто или отсутствует — переподключаемся
+            if (!ws || ws.readyState === WebSocket.CLOSED) {
+                console.log(`⚠️ PriceManager: ${key} не подключён, переподключаемся`);
+                const parts = key.split(':');
+                if (parts[0] === 'binance') {
+                    if (parts[1] === 'futures') this._connectBinanceFutures();
+                    else if (parts[1] === 'spot') this._connectBinanceSpot();
+                } else if (parts[0] === 'bybit') {
+                    if (parts[1] === 'linear') this._connectBybitLinear();
+                    else if (parts[1] === 'spot') this._connectBybitSpot();
+                }
             }
         }
-        
-        if (price == null || isNaN(price) || price <= 0) return;
+    }
 
-        // Получаем координату через серию
-        let yCoord = null;
-        const activeSeries = chartManager.currentChartType === 'candle' 
-            ? chartManager.candleSeries 
-            : chartManager.barSeries;
-        
-        if (activeSeries) {
-            try {
-                yCoord = activeSeries.priceToCoordinate(price);
-            } catch(e) {}
+    _ensureBybitConnected() {
+        const hasLinear = this._bybitSubscriptions.linear.size > 0;
+        const hasSpot = this._bybitSubscriptions.spot.size > 0;
+
+        if (hasLinear && (!this.connections['bybit:linear'] || this.connections['bybit:linear'].readyState !== WebSocket.OPEN)) {
+            console.log('🔌 Подключение Bybit Linear (появилась подписка/алерт)');
+            this._connectBybitLinear();
         }
-        
-        if (yCoord == null || isNaN(yCoord)) return;
-
-        // ✅ ИСПРАВЛЕНО: НЕ округляем bitmapY — используем дробные значения
-        const bitmapY = yCoord * vpr;
-        const bitmapWidth = scope.mediaSize.width * hpr;
-        const bitmapHeight = scope.mediaSize.height * vpr;
-
-        // Округляем только fontSize для чёткости текста
-        const fontSize = Math.round(11 * vpr);
-        ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-        const textWidth = ctx.measureText(timerText).width;
-        
-        const rectWidth = Math.ceil(textWidth + 8 * hpr);
-        const rectHeight = Math.ceil(fontSize + 6 * vpr);
-
-        const rectX = bitmapWidth - rectWidth - 4 * hpr;
-        
-        // ✅ ИСПРАВЛЕНО: НЕ используем Math.round для rectY
-        // Используем дробную координату для плавного движения
-        let rectY = bitmapY - rectHeight / 2;
-        
-        // Ограничиваем границы (но без Math.round!)
-        rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
-
-        // Определяем цвет
-        const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-        let bgColor;
-        
-        if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
-            bgColor = lastCandle.close >= lastCandle.open 
-                ? (chartManager.bullishColor || '#26a69a')
-                : (chartManager.bearishColor || '#ef5350');
-        } else {
-            bgColor = chartManager._lastAppliedColor || '#26a69a';
+        if (hasSpot && (!this.connections['bybit:spot'] || this.connections['bybit:spot'].readyState !== WebSocket.OPEN)) {
+            console.log('🔌 Подключение Bybit Spot (появилась подписка/алерт)');
+            this._connectBybitSpot();
         }
-
-        ctx.save();
-        ctx.fillStyle = bgColor + 'DD';
-        ctx.shadowColor = 'rgba(0,0,0,0.3)';
-        ctx.shadowBlur = 3 * hpr;
-        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
-        ctx.fill();
-        
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#fff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        
-        // ✅ ИСПРАВЛЕНО: используем дробные координаты для текста тоже
-        ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
-        ctx.restore();
+    }
+    
+ // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
+_connectBinanceFutures() {
+    const key = 'binance:futures';
+    // ✅ РАБОЧИЙ URL: bookTicker (присылает данные)
+    const url = 'wss://fstream.binance.com/stream?streams=!bookTicker';
+    this._connectBinance(key, url, (data) => {
+        try {
+            // bookTicker формат: { stream: "...", data: { u, s, b, B, a, A } }
+            const tickers = Array.isArray(data) ? data : [data];
+            tickers.forEach(item => {
+                const ticker = item.data || item;
+                if (!ticker.s || !ticker.b) return;
+                const price = parseFloat(ticker.b); // Лучшая цена bid
+                const change = 0; // bookTicker не содержит % изменения
+                this._setPrice(ticker.s, { price, change }, 'binance', 'futures');
+            });
+        } catch(e) {
+            console.warn('Ошибка обработки bookTicker:', e);
+        }
     });
 }
 
-    _roundRect(ctx, x, y, w, h, r) {
-        r = Math.min(r, w / 2, h / 2);
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.arcTo(x + w, y, x + w, y + h, r);
-        ctx.arcTo(x + w, y + h, x, y + h, r);
-        ctx.arcTo(x, y + h, x, y, r);
-        ctx.arcTo(x, y, x + w, y, r);
-        ctx.closePath();
-    }
-}
-
-class TimerPaneView {
-    constructor(timerManager) {
-        this._timerManager = timerManager;
-        this._renderer = new TimerRenderer(timerManager);
-    }
-
-    renderer() { 
-        return this._renderer; 
-    }
-}
-
-class TimerPrimitive {
-    constructor(timerManager, chartManager) {
-        this._timerManager = timerManager;
-        this._chartManager = chartManager;
-        this._paneView = new TimerPaneView(timerManager);
-        this._chart = null;
-        this._series = null;
-        this._requestUpdate = null;
-        this._dataReady = false;
-        this._lastPrice = null;
-    }
-
-    paneViews() { 
-        return [this._paneView]; 
-    }
-
-    attached({ chart, series, requestUpdate }) {
-        this._chart = chart;
-        this._series = series;
-        this._requestUpdate = requestUpdate;
-        this._lastPrice = null;
-        
-        if (this._chartManager?.chartData?.length > 0) {
-            this._dataReady = true;
+_connectBinanceSpot() {
+    const key = 'binance:spot';
+    // ✅ РАБОЧИЙ URL: miniTicker (присылает данные)
+    const url = 'wss://stream.binance.com:9443/ws/!miniTicker@arr';
+    this._connectBinance(key, url, (data) => {
+        try {
+            const tickers = Array.isArray(data) ? data : [data];
+            tickers.forEach(ticker => {
+                if (!ticker.s || !ticker.c) return;
+                const price = parseFloat(ticker.c);
+                const change = parseFloat(ticker.P) || 0;
+                this._setPrice(ticker.s, { price, change }, 'binance', 'spot');
+            });
+        } catch(e) {
+            console.warn('Ошибка обработки miniTicker:', e);
         }
-    }
-
-    detached() { 
-        this._dataReady = false;
-        this._lastPrice = null;
-    }
+    });
+}
     
-    updateAllViews() {}
-
-    // ✅ ПРИНУДИТЕЛЬНЫЙ redraw через timeScale.applyOptions({})
-    // lightweight-charts кэширует обычные requestUpdate(), это обходит кэш
-    requestRedraw() {
-        if (this._requestUpdate) {
-            this._requestUpdate();
+    _connectBinance(key, url, onMessageHandler) {
+        if (this.reconnectTimers.has(key)) {
+            clearTimeout(this.reconnectTimers.get(key));
+            this.reconnectTimers.delete(key);
         }
-        
-        if (this._chart) {
-            try {
-                const ts = this._chart.timeScale();
-                if (ts) {
-                    ts.applyOptions({});
-                }
+        if (this.connections[key]) {
+            try { 
+                this.connections[key].onclose = null;  // ✅ Отключаем обработчик
+                this.connections[key].close(1000); 
             } catch(e) {}
+            this.connections[key] = null;
         }
-    }
-
-    setEnabled(enabled) {
-        if (this._paneView?._renderer) {
-            const wasEnabled = this._paneView._renderer.enabled;
-            this._paneView._renderer.enabled = enabled;
-            if (enabled && !wasEnabled) {
-                this._lastPrice = null;
-                this.requestRedraw();
-            }
-        }
-    }
-
-    isEnabled() { 
-        return this._paneView?._renderer?.enabled ?? false; 
-    }
-
-    setColor(color) {
-        // Цвет определяется динамически в draw(), просто перерисовываем
-        if (this.isEnabled()) {
-            this.requestRedraw();
-        }
-    }
-    
-    setPrice(price) {
-        if (price != null && !isNaN(price) && price > 0) {
-            this._lastPrice = price;
-            if (this.isEnabled()) {
-                this.requestRedraw();
-            }
-        }
-    }
-
-    // Алиас для обратной совместимости
-    updatePrice(price) {
-        this.setPrice(price);
-    }
-
-    setDataReady(ready) { 
-        this._dataReady = ready; 
-        if (ready) {
-            this._lastPrice = null;
-        }
-    }
-    
-    isDataReady() { 
-        return this._dataReady; 
-    }
-}
-
-class TimerManager {
-    constructor(chartManager) {
-        this._chartManager = chartManager;
-        this._interval = null;
-        this._currentTf = CONFIG.defaultInterval || '1h';
-        this._primitive = null;
-        this._timerElement = { textContent: '' };
-        this._disabled = false;
         
-        this._priceSubscribed = false;
-        this._priceHandler = null;
-        this._subscribedSymbolKey = null;
-        this._colorChangeHandler = null;
-        this._initialized = false;
+        const ws = new WebSocket(url);
+        this.connections[key] = ws;
+        this._connectionAttempts[key] = (this._connectionAttempts[key] || 0) + 1;
+        this._connectionState[key] = 'connecting';
+        this._lastWsMessage[key] = Date.now();  // ✅ Устанавливаем начальное время
         
-        // ✅ НОВОЕ: RAF-loop для постоянной перерисовки
-        this._rafId = null;
-
-        chartManager.timerManager = this;
-        setTimeout(() => this._init(), 300);
-    }
-
-    // ✅ RAF-loop: принудительная перерисовка каждые ~100мс
-    _startRenderLoop() {
-        if (this._rafId) return;
+        ws.onopen = () => {
+            this._lastWsMessage[key] = Date.now();
+            this._connectionAttempts[key] = 0;
+            this._connectionState[key] = 'open';
+            console.log(`✅ PriceManager: ${key} подключён`);
+        };
         
-        const loop = () => {
-            if (this._disabled || !this._primitive?.isEnabled()) {
-                this._rafId = null;
+        ws.onmessage = (event) => {
+            this._lastWsMessage[key] = Date.now();
+            if (event.data === 'ping') {
+                try { ws.send('pong'); } catch(e) {}
                 return;
             }
-            
-            this._primitive.requestRedraw();
-            this._rafId = requestAnimationFrame(loop);
-        };
-        
-        this._rafId = requestAnimationFrame(loop);
-    }
-    
-    _stopRenderLoop() {
-        if (this._rafId) {
-            cancelAnimationFrame(this._rafId);
-            this._rafId = null;
-        }
-    }
-
-    _init() {
-        if (this._disabled || !this._chartManager?.chart) return;
-
-        this._detachPrimitive();
-
-        this._primitive = new TimerPrimitive(this, this._chartManager);
-        const series = this._chartManager.currentChartType === 'candle' 
-            ? this._chartManager.candleSeries 
-            : this._chartManager.barSeries;
-
-        if (series) {
             try {
-                series.attachPrimitive(this._primitive);
-                this._primitive.setEnabled(false);
-
-                series.subscribeDataChanged(() => {
-                    if (this._primitive && this._chartManager.chartData?.length > 0) {
-                        if (!this._primitive.isDataReady()) {
-                            this._primitive.setDataReady(true);
-                            this._updateTimerState();
-                        }
-                        if (this._primitive.isEnabled()) {
-                            this._primitive.requestRedraw();
-                        }
-                    }
-                });
-            } catch(e) {
-                console.error('TimerManager: Failed to attach primitive', e);
-            }
-        }
-        
-        this._subscribeToPrice();
-        this._subscribeToColorChanges();
-        
-        if (this._chartManager.chartData?.length > 0) {
-            this._primitive.setDataReady(true);
-            this._updateTimerState();
-        }
-        
-        this._initialized = true;
-    }
-    
-    _detachPrimitive() {
-        if (this._primitive) {
-            try {
-                const series = this._chartManager.currentChartType === 'candle'
-                    ? this._chartManager.candleSeries 
-                    : this._chartManager.barSeries;
-                if (series) {
-                    series.detachPrimitive(this._primitive);
-                }
+                const data = JSON.parse(event.data);
+                onMessageHandler(data);
             } catch(e) {}
-            this._primitive = null;
-        }
-    }
-    
-    _updateTimerState() {
-        if (!this._primitive?.isDataReady()) return;
-        
-        if (['1d','1w','1M'].includes(this._currentTf)) {
-            this._timerElement.textContent = '';
-            this._primitive.setEnabled(false);
-            this._stopRenderLoop();
-            this.stop();
-        } else {
-            this._primitive.setEnabled(true);
-            this._primitive.requestRedraw();
-            
-            if (this._interval) {
-                clearInterval(this._interval);
-                this._interval = null;
-            }
-            this._tick();
-            this._interval = setInterval(() => this._tick(), 250);
-            
-            // ✅ Запускаем RAF-loop для постоянной синхронизации с ценой
-            this._startRenderLoop();
-        }
-    }
-    
-    _subscribeToPrice() {
-        this._unsubscribeFromPrice();
-        
-        if (!this._chartManager?.priceManager) {
-            setTimeout(() => this._subscribeToPrice(), 200);
-            return;
-        }
-        
-        const key = this._chartManager.getCurrentSymbolKey();
-        if (!key) return;
-        
-        this._subscribedSymbolKey = key;
-        this._priceSubscribed = true;
-        
-        this._priceHandler = (price, symbol, exchange, marketType) => {
-            if (document.hidden) return;
-            if (!this._primitive?.isEnabled()) return;
-            
-            if (this._chartManager) {
-                this._chartManager.currentRealPrice = price;
-            }
-            
-            // ✅ Используем setPrice (он же updatePrice)
-            this._primitive.setPrice(price);
         };
         
-        try {
-            this._chartManager.priceManager.subscribe(
-                key, 
-                this._priceHandler,
-                this._chartManager.currentExchange,
-                this._chartManager.currentMarketType
+        ws.onclose = (event) => {
+            this._connectionState[key] = 'closed';
+            if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
+            
+            const attempts = this._connectionAttempts[key] || 0;
+            const delay = Math.min(
+                this.config.reconnectDelay * Math.pow(1.5, attempts),
+                this.config.maxReconnectDelay
             );
-        } catch(e) {
-            console.error('TimerManager: Failed to subscribe to price', e);
-        }
-    }
-    
-    _subscribeToColorChanges() {
-        if (this._colorChangeHandler) return;
+            console.warn(`⚠️ ${key} закрыт (код ${event.code || 'неизвестен'}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            
+            this.reconnectTimers.set(key, setTimeout(() => {
+                this._connectBinance(key, url, onMessageHandler);
+            }, delay));
+        };
         
-        if (typeof this._chartManager.onColorChange === 'function') {
-            this._colorChangeHandler = () => {
-                if (this._primitive && this._primitive.isEnabled()) {
-                    this._primitive.requestRedraw();
-                }
-            };
-            this._chartManager.onColorChange(this._colorChangeHandler);
-        }
+        ws.onerror = (error) => {
+            console.error(`❌ Ошибка WebSocket ${key}:`, error);
+        };
     }
     
-    _unsubscribeFromPrice() {
-        if (this._priceHandler && this._chartManager?.priceManager && this._subscribedSymbolKey) {
-            try {
-                this._chartManager.priceManager.unsubscribe(
-                    this._subscribedSymbolKey, 
-                    this._priceHandler
-                );
+    // ========== ПОДКЛЮЧЕНИЯ К BYBIT ==========
+    _connectBybitLinear() {
+        this._connectBybit('bybit:linear', 'wss://stream.bybit.com/v5/public/linear', 'linear', 'futures');
+    }
+    
+    _connectBybitSpot() {
+        this._connectBybit('bybit:spot', 'wss://stream.bybit.com/v5/public/spot', 'spot', 'spot');
+    }
+    
+    _connectBybit(key, url, marketKey, marketType) {
+        if (this.reconnectTimers.has(key)) {
+            clearTimeout(this.reconnectTimers.get(key));
+            this.reconnectTimers.delete(key);
+        }
+        if (this.connections[key]) {
+            try { 
+                this.connections[key].onclose = null;  // ✅ Отключаем обработчик
+                this.connections[key].close(1000); 
             } catch(e) {}
-        }
-        this._priceHandler = null;
-        this._priceSubscribed = false;
-        this._subscribedSymbolKey = null;
-    }
-
-    start(interval) {
-        if (this._disabled) return;
-        
-        const tfChanged = this._currentTf !== interval;
-        this._currentTf = interval;
-
-        if (!this._primitive && !this._initialized) {
-            this._init();
+            this.connections[key] = null;
         }
         
-        if (!this._timerElement) {
-            this._timerElement = { textContent: '' };
-        }
-
-        if (tfChanged && this._initialized) {
-            this.stop();
-            this.reattach();
-        } else if (!tfChanged) {
-            this.stop();
-            this._updateTimerState();
-        }
-    }
-
-    _tick() {
-        if (this._disabled || !this._timerElement) return;
-        if (!this._chartManager?.chartData?.length) return;
+        const ws = new WebSocket(url);
+        this.connections[key] = ws;
+        this._connectionAttempts[key] = (this._connectionAttempts[key] || 0) + 1;
+        this._connectionState[key] = 'connecting';
+        this._lastWsMessage[key] = Date.now();  // ✅ Устанавливаем начальное время
         
-        if (['1d','1w','1M'].includes(this._currentTf)) {
-            this._timerElement.textContent = '';
-            this.stop();
-            return;
-        }
-
-        const dur = TF_DURATIONS[this._currentTf];
-        if (!dur) return;
-
-        const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
-        const txt = Utils.formatTimeRemaining(left);
-
-        const textChanged = this._timerElement.textContent !== txt;
+        ws.onopen = () => {
+            this._lastWsMessage[key] = Date.now();
+            this._connectionState[key] = 'open';
+            this._connectionAttempts[key] = 0; 
+            this._startPingBybit(key, ws);
+            this._resubscribeBybit(marketKey);
+            console.log(`✅ PriceManager: ${key} подключён`);
+        };
         
-        if (textChanged) {
-            this._timerElement.textContent = txt;
-            if (this._primitive?.isEnabled()) {
-                this._primitive.requestRedraw();
-            }
-        }
-        
-        if (this._primitive && !this._primitive.isEnabled() && 
-            this._primitive.isDataReady() && 
-            !['1d','1w','1M'].includes(this._currentTf)) {
-            this._primitive.setEnabled(true);
-            this._primitive.requestRedraw();
-        }
-    }
-
-    forceColorUpdate() {
-        if (this._primitive && this._primitive.isEnabled()) {
-            this._primitive.requestRedraw();
-        }
-    }
-
-    stop() {
-        if (this._interval) { 
-            clearInterval(this._interval); 
-            this._interval = null; 
-        }
-        this._stopRenderLoop();
-    }
-
-    reattach() {
-        if (this._disabled) return;
-        
-        this._detachPrimitive();
-        this._stopRenderLoop();
-        
-        this._primitive = new TimerPrimitive(this, this._chartManager);
-        const series = this._chartManager.currentChartType === 'candle'
-            ? this._chartManager.candleSeries 
-            : this._chartManager.barSeries;
-
-        if (series) {
+        ws.onmessage = (event) => {
+            this._lastWsMessage[key] = Date.now();
             try {
-                series.attachPrimitive(this._primitive);
-                
-                series.subscribeDataChanged(() => {
-                    if (this._primitive && this._chartManager.chartData?.length > 0) {
-                        if (!this._primitive.isDataReady()) {
-                            this._primitive.setDataReady(true);
-                            this._updateTimerState();
-                        }
-                        if (this._primitive.isEnabled()) {
-                            this._primitive.requestRedraw();
+                const msg = JSON.parse(event.data);
+                if (msg.op === 'pong' || msg.ret_msg === 'pong') return;
+                if (msg.topic?.startsWith('tickers.') && msg.data) {
+                    const symbol = msg.data.symbol || msg.data.s;
+                    const price = parseFloat(msg.data.lastPrice || msg.data.c);
+                    const change = parseFloat(msg.data.price24hPcnt) || 0;
+                    
+                    if (symbol && !isNaN(price)) {
+                        this._setPrice(symbol, { price, change }, 'bybit', marketType);
+                    }
+                }
+            } catch(e) {}
+        };
+        
+        ws.onclose = (event) => {
+            this._connectionState[key] = 'closed';
+            this._stopPing(key);
+            if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
+            
+            const attempts = this._connectionAttempts[key] || 0;
+            const delay = Math.min(
+                this.config.reconnectDelay * Math.pow(1.5, attempts),
+                this.config.maxReconnectDelay
+            );
+            console.warn(`⚠️ ${key} закрыт (код ${event.code || 'неизвестен'}, reason: ${event.reason || 'нет'}), реконнект через ${delay/1000}с (попытка ${attempts + 1})`);
+            
+            this.reconnectTimers.set(key, setTimeout(() => {
+                this._connectBybit(key, url, marketKey, marketType);
+            }, delay));
+        };
+        
+        ws.onerror = (error) => {
+            console.error(`❌ Ошибка WebSocket ${key}:`, error);
+        };
+    }
+    
+    // ========== ПИНГИ ДЛЯ BYBIT ==========
+    _startPingBybit(key, ws) {
+        this._stopPing(key);
+        this.pingIntervals[key] = setInterval(() => {
+            if (ws?.readyState === WebSocket.OPEN) {
+                try { ws.send(JSON.stringify({ op: 'ping', req_id: Date.now() })); } catch(e) {}
+            }
+        }, this.config.bybitPingInterval);
+    }
+    
+    _stopPing(key) {
+        if (this.pingIntervals[key]) {
+            clearInterval(this.pingIntervals[key]);
+            this.pingIntervals[key] = null;
+        }
+    }
+    
+    _resubscribeBybit(marketKey) {
+        const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const symbols = [...this._bybitSubscriptions[marketKey]];
+        if (symbols.length === 0) return;
+        
+        for (let i = 0; i < symbols.length; i += 10) {
+            const batch = symbols.slice(i, i + 10).map(s => `tickers.${s}`);
+            ws.send(JSON.stringify({ op: 'subscribe', args: batch }));
+        }
+    }
+    
+    subscribeBybitSymbol(symbol, marketType) {
+        const marketKey = marketType === 'futures' ? 'linear' : 'spot';
+        const clean = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (this._bybitSubscriptions[marketKey].has(clean)) return;
+        
+        this._bybitSubscriptions[marketKey].add(clean);
+        this._ensureBybitConnected();
+        
+        const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
+        if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${clean}`] }));
+        }
+    }
+    
+    // ========== REST ПОЛЛИНГ ==========
+    async _pollAlertPricesViaRest() {
+        if (!window.alertLineManager) return;
+        
+        const activeAlerts = window.alertLineManager._alerts.filter(item => {
+            const a = item.alert;
+            return a.status === 'active';
+        });
+        
+        if (activeAlerts.length === 0) return;
+        
+        const groups = { 
+            'binance:futures': new Set(), 
+            'binance:spot': new Set(), 
+            'bybit:futures': new Set(), 
+            'bybit:spot': new Set() 
+        };
+        
+        for (const item of activeAlerts) {
+            const a = item.alert;
+            const key = `${(a.exchange || 'binance').toLowerCase()}:${(a.marketType || 'futures').toLowerCase()}`;
+            if (groups[key]) groups[key].add(a.symbol);
+        }
+        
+        if (groups['bybit:futures'].size > 0 || groups['bybit:spot'].size > 0) {
+            this._ensureBybitConnected();
+        }
+        
+        const tasks = [];
+        if (groups['binance:futures'].size > 0) tasks.push(this._fetchBinanceRest([...groups['binance:futures']], 'futures'));
+        if (groups['binance:spot'].size > 0) tasks.push(this._fetchBinanceRest([...groups['binance:spot']], 'spot'));
+        if (groups['bybit:futures'].size > 0) tasks.push(this._fetchBybitRest([...groups['bybit:futures']], 'futures'));
+        if (groups['bybit:spot'].size > 0) tasks.push(this._fetchBybitRest([...groups['bybit:spot']], 'spot'));
+        
+        await Promise.allSettled(tasks);
+    }
+    
+    async _fetchBinanceRest(symbols, marketType) {
+        try {
+            const url = symbols.length === 1 
+                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
+                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
+            
+            const response = await this._fetchWithRetry(url);
+            if (!response) return;
+            const data = await response.json();
+            const tickers = Array.isArray(data) ? data : [data];
+            
+            for (const ticker of tickers) {
+                const price = parseFloat(ticker.lastPrice || ticker.price);
+                const change = parseFloat(ticker.priceChangePercent) || 0;
+                if (ticker.symbol && price && !isNaN(price)) {
+                    this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
+                    window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'binance', marketType);
+                }
+            }
+        } catch(e) {
+            console.warn('⚠️ Ошибка _fetchBinanceRest:', e);
+        }
+    }
+    
+    async _fetchBybitRest(symbols, marketType) {
+        try {
+            const category = marketType === 'futures' ? 'linear' : 'spot';
+            
+            const batches = [];
+            for (let i = 0; i < symbols.length; i += 10) {
+                batches.push(symbols.slice(i, i + 10));
+            }
+            
+            const tasks = batches.map(batch => {
+                const symbolParam = batch.join(',');
+                return this._fetchWithRetry(
+                    `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${symbolParam}`
+                ).then(r => r?.json()).catch(() => null);
+            });
+            
+            const results = await Promise.all(tasks);
+            
+            for (const data of results) {
+                if (data?.retCode === 0 && Array.isArray(data.result?.list)) {
+                    for (const ticker of data.result.list) {
+                        const price = parseFloat(ticker.lastPrice);
+                        const change = parseFloat(ticker.price24hPcnt) || 0;
+                        if (ticker.symbol && price && !isNaN(price)) {
+                            this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
+                            window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
                         }
                     }
-                });
-                
-                if (this._chartManager.chartData?.length > 0) {
-                    this._primitive.setDataReady(true);
-                    this._updateTimerState();
                 }
+            }
+        } catch(e) {
+            console.warn('⚠️ Ошибка _fetchBybitRest:', e);
+        }
+    }
+    
+    async _fetchWithRetry(url, maxRetries = 3) {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                const response = await fetch(url);
+                if (response.ok) return response;
+                if (response.status === 429) {
+                    await new Promise(resolve => setTimeout(resolve, 5000 * (i + 1)));
+                    continue;
+                }
+                if (response.status >= 500) {
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                    continue;
+                }
+                return response;
             } catch(e) {
-                console.error('TimerManager: Failed to reattach primitive', e);
+                if (i === maxRetries - 1) throw e;
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+            }
+        }
+        return null;
+    }
+    
+    // ========== УСТАНОВКА ЦЕНЫ ==========
+    _setPrice(symbol, priceData, exchange, marketType) {
+        if (!symbol) return;
+        
+        const isObject = typeof priceData === 'object' && priceData !== null;
+        const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
+        const change = isObject ? parseFloat(priceData.change) : undefined;
+
+        if (isNaN(price) || price <= 0) return;
+        
+        const key = `${symbol}:${exchange}:${marketType}`;
+        const old = this.prices.get(key);
+        
+        if (old && old.price === price && old.change === change) return;
+        
+        this.prices.set(key, { price, change, time: Date.now() });
+        this._pendingUpdates.set(key, { price, change, symbol, exchange, marketType });
+        
+        if (this._flushTimeout === null) {
+            this._flushTimeout = setTimeout(() => {
+                this._flushTimeout = null;
+                this._flushPendingUpdates();
+            }, 100);
+        }
+    }
+    
+    _flushPendingUpdates() {
+        if (this._pendingUpdates.size === 0) return;
+        
+        const updates = new Map(this._pendingUpdates);
+        this._pendingUpdates.clear();
+        
+        for (const [k, data] of updates.entries()) {
+            const payload = { price: data.price, change: data.change };
+            
+            if (this.subscribers.has(k)) {
+                this.subscribers.get(k).forEach(cb => { 
+                    try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                });
+            }
+            if (this.subscribers.has(data.symbol)) {
+                this.subscribers.get(data.symbol).forEach(cb => { 
+                    try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                });
+            }
+        }
+    }
+
+    // ========== ПОДПИСКА ==========
+    subscribe(key, callback) {
+        if (!this.subscribers.has(key)) this.subscribers.set(key, []);
+        this.subscribers.get(key).push(callback);
+        const parts = key.split(':');
+        if (parts.length === 3 && parts[1] === 'bybit') {
+            this.subscribeBybitSymbol(parts[0], parts[2]);
+        }
+        const cached = this.prices.get(key);
+        if (cached) {
+            setTimeout(() => { 
+                try { 
+                    callback({ price: cached.price, change: cached.change }, parts[0], parts[1], parts[2]); 
+                } catch(e) {} 
+            }, 0);
+        }
+    }
+    
+    unsubscribe(key, callback) {
+        if (!this.subscribers.has(key)) return;
+        const list = this.subscribers.get(key);
+        const idx = list.indexOf(callback);
+        if (idx !== -1) list.splice(idx, 1);
+        if (list.length === 0) this.subscribers.delete(key);
+    }
+    
+    getPrice(symbol, exchange = null, marketType = null) {
+        let key;
+        if (exchange && marketType) key = `${symbol}:${exchange}:${marketType}`;
+        else if (symbol.includes(':')) key = symbol;
+        else key = `${symbol}:binance:futures`;
+        const data = this.prices.get(key);
+        return data ? data.price : null;
+    }
+    
+    async fetchPrice(symbol, exchange = 'binance', marketType = 'futures') {
+        if (!symbol) return null;
+        try {
+            let url;
+            if (exchange === 'binance') {
+                url = marketType === 'futures'
+                    ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+                    : `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`;
+            } else {
+                const category = marketType === 'futures' ? 'linear' : 'spot';
+                url = `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${symbol}`;
+            }
+            const response = await fetch(url);
+            const data = await response.json();
+            let price = null;
+            let change = 0;
+            
+            if (exchange === 'binance') {
+                price = parseFloat(data.lastPrice || data.price);
+                change = parseFloat(data.priceChangePercent) || 0;
+            } else {
+                if (data.retCode === 0 && data.result?.list?.[0]) {
+                    price = parseFloat(data.result.list[0].lastPrice);
+                    change = parseFloat(data.result.list[0].price24hPcnt) || 0;
+                }
+            }
+            if (price && !isNaN(price)) {
+                this._setPrice(symbol, { price, change }, exchange, marketType);
+                return price;
+            }
+        } catch(e) {}
+        return null;
+    }
+    
+    getStatus() {
+        const status = {};
+        for (const [key, ws] of Object.entries(this.connections)) {
+            const lastMsg = this._lastWsMessage[key];
+            status[key] = {
+                readyState: ws?.readyState,
+                lastMessage: lastMsg ? `${Math.round((Date.now() - lastMsg) / 1000)}с назад` : 'никогда',
+                state: this._connectionState[key] || 'unknown'
+            };
+        }
+        return {
+            connections: status,
+            totalPrices: this.prices.size,
+            totalSubscribers: this.subscribers.size
+        };
+    }
+    
+    close() {
+        // Очистка REST polling
+        if (this._restPollInterval) {
+            clearInterval(this._restPollInterval);
+            this._restPollInterval = null;
+        }
+        
+        // ✅ Очистка интервала проверки соединений
+        if (this._connectionCheckInterval) {
+            clearInterval(this._connectionCheckInterval);
+            this._connectionCheckInterval = null;
+        }
+        
+        // Очистка flush timeout
+        if (this._flushTimeout) {
+            clearTimeout(this._flushTimeout);
+            this._flushTimeout = null;
+        }
+        this._pendingUpdates.clear();
+        
+        // Очистка обработчиков пробуждения
+        if (this._focusHandler) {
+            window.removeEventListener('focus', this._focusHandler);
+            this._focusHandler = null;
+        }
+        if (this._pageshowHandler) {
+            window.removeEventListener('pageshow', this._pageshowHandler);
+            this._pageshowHandler = null;
+        }
+        
+        // Очистка пингов
+        for (const key in this.pingIntervals) {
+            this._stopPing(key);
+        }
+        
+        // Закрытие соединений
+        for (const ws of Object.values(this.connections)) { 
+            if (ws) {
+                ws.onclose = null; 
+                ws.onerror = null;
+                try { ws.close(1000); } catch(e) {} 
             }
         }
         
-        this._subscribeToPrice();
-    }
-
-    destroy() {
-        this._stopRenderLoop();
-        this.stop();
-        this._unsubscribeFromPrice();
-        
-        if (this._colorChangeHandler && typeof this._chartManager?.offColorChange === 'function') {
-            this._chartManager.offColorChange(this._colorChangeHandler);
+        // Очистка таймеров реконнекта
+        for (const timer of this.reconnectTimers.values()) {
+            clearTimeout(timer);
         }
-        this._colorChangeHandler = null;
+        this.reconnectTimers.clear();
         
-        this._detachPrimitive();
-        this._initialized = false;
+        console.log('✅ PriceManager закрыт');
     }
 }
 
 if (typeof window !== 'undefined') {
-    window.TimerManager = TimerManager;
-} таймер отстает от линии цены как сделать чтобы было на 100% синхроно
+    window.PriceManager = PriceManager;
+    if (!window.priceManagerInstance) {
+        window.priceManagerInstance = new PriceManager();
+    }
+    
+    window.checkWS = function() {
+        const pm = window.priceManagerInstance;
+        if (!pm) return console.error('❌ PriceManager не найден');
+        console.log('=== СТАТУС ===');
+        console.table(pm.getStatus().connections);
+        console.log(`💰 Цен: ${pm.prices.size}`);
+        console.log(`👥 Подписчиков: ${pm.subscribers.size}`);
+        return pm.getStatus();
+    };
+}
