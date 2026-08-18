@@ -27,7 +27,7 @@ class TimerManager {
         this._init();
     }
 
-    _init() {
+      _init() {
         if (this._disabled || !this._chartManager?.chart) {
             if (this._initRetryCount < 15) {
                 this._initRetryCount++;
@@ -66,6 +66,7 @@ class TimerManager {
             display: flex;
             flex-direction: column;
             line-height: 1.2;
+            transition: opacity 0.15s ease; /* ✅ ДОБАВЛЕНО: только opacity, чтобы top не анимировался */
         `;
 
         this._priceRow = document.createElement('div');
@@ -118,7 +119,6 @@ class TimerManager {
         this._startTracking();
         this._forceUpdate();
     }
-
     _attachScaleObserver() {
         const cm = this._chartManager;
         if (!cm?.chartContainer) return;
@@ -318,38 +318,36 @@ class TimerManager {
         }
     }
 
-         _updatePosition(price) {
-        if (!this._labelElement) return;
+          _updatePosition(price) {
+        if (!this._labelElement) return false; // ✅ Возвращаем результат
         
         if (price == null || isNaN(price) || price <= 0) {
-            return;
+            return false;
         }
         
         const cm = this._chartManager;
         if (!cm || !cm.chartContainer || !cm.chartData?.length) {
-            return;
+            return false;
         }
 
         // Игнорируем кадры, пока график масштабируется или обрезает данные
         if (cm._autoScalePending || cm._isTrimming) {
-            return;
+            return false;
         }
         
         const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-        if (!activeSeries) return;
+        if (!activeSeries) return false;
 
         let yCoord;
         try {
             yCoord = activeSeries.priceToCoordinate(price);
         } catch (e) {
-            return;
+            return false;
         }
         
-        // ✅ ЕСЛИ КООРДИНАТА ЕЩЕ НЕ ГОТОВА (null или NaN), ПРОСТО ЖДЕМ СЛЕДУЮЩЕГО КАДРА.
-        // Мы не скрываем и не показываем плашку насильно, чтобы избежать визуального "рывка".
-        // Плашка уже скрыта методом reset(), она появится только когда yCoord станет валидным.
+        // Если координата еще не готова, просто ждем следующий кадр.
         if (yCoord == null || isNaN(yCoord)) {
-            return; 
+            return false; // ✅ Не показываем плашку, выходим
         }
 
         const containerHeight = cm.chartContainer.clientHeight;
@@ -378,8 +376,8 @@ class TimerManager {
         
         // Показываем плашку только тогда, когда координата точно верная
         this._showLabel();
+        return true; // ✅ Сообщаем, что позиция успешно применена
     }
-
     updatePosition(price) {
         this.updatePrice(price);
         this._updatePosition(price);
@@ -450,7 +448,7 @@ class TimerManager {
         }
     }
 
-    _forceUpdate() {
+       _forceUpdate() {
         if (!this._labelElement) return;
         
         const scaleWidth = this._getPriceScaleWidth();
@@ -468,8 +466,10 @@ class TimerManager {
         
         if (price != null && !isNaN(price) && price > 0) {
             this._updatePriceText(price);
-            this._updatePosition(price);
-            if (!this._isVisible) {
+            
+            // ✅ ФИКС: Показываем плашку ТОЛЬКО если позиция успешно посчитана!
+            const isPositioned = this._updatePosition(price);
+            if (isPositioned && !this._isVisible) {
                 this._showLabel();
             }
         }
