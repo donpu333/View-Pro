@@ -299,7 +299,7 @@ class ChartManager {
                 const volumeScale = this.chart.priceScale('volume');
                 if (volumeScale) {
                     volumeScale.applyOptions({ 
-                        scaleMargins: { top: 0.78, bottom: 0 }, 
+                        scaleMargins: { top: 0.85, bottom: 0 }, 
                         visible: true, 
                         borderVisible: true 
                     });
@@ -465,7 +465,7 @@ class ChartManager {
         }, 30000);
     }
 
-     async _syncRecentCandles() {
+        async _syncRecentCandles() {
         try {
             const fresh = await this.fetchKlines(
                 this.currentSymbol, 
@@ -485,6 +485,7 @@ class ChartManager {
             
             const freshMap = new Map(fresh.map(c => [c.time, c]));
             let changed = false;
+            let olderCandlesChanged = false; // Флаг: изменились ли старые свечи
             
             // 1. Обновляем последние 3 свечи
             for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 3); i--) {
@@ -498,34 +499,51 @@ class ChartManager {
                     cur.volume = freshCandle.volume;
                     cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
                     
-                    // ✅ КРИТИЧЕСКИЙ ФИКС: Принудительно делаем время числом
                     const safeTime = Number(cur.time);
                     if (isNaN(safeTime) || safeTime <= 0) {
                         console.warn('⚠️ Пропуск обновления свечи: некорректное время', cur.time);
                         continue;
                     }
 
-                    const updateData = {
-                        time: safeTime, // Используем проверенное число
-                        open: cur.open,
-                        high: cur.high,
-                        low: cur.low,
-                        close: cur.close
-                    };
-                    
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
-                    
-                    if (this.volumeSeries) {
-                        const isBullish = cur.close >= cur.open;
-                        this.volumeSeries.update({
+                    // ✅ ФИКС: .update() можно вызывать ТОЛЬКО для последней свечи!
+                    if (i === currentData.length - 1) {
+                        const updateData = {
                             time: safeTime,
-                            value: cur.quoteVolume || cur.volume || 0,
-                            color: isBullish ? this.bullishColor : this.bearishColor
-                        });
+                            open: cur.open,
+                            high: cur.high,
+                            low: cur.low,
+                            close: cur.close
+                        };
+                        
+                        if (this.candleSeries) this.candleSeries.update(updateData);
+                        if (this.barSeries) this.barSeries.update(updateData);
+                        
+                        if (this.volumeSeries) {
+                            const isBullish = cur.close >= cur.open;
+                            this.volumeSeries.update({
+                                time: safeTime,
+                                value: cur.quoteVolume || cur.volume || 0,
+                                color: isBullish ? this.bullishColor : this.bearishColor
+                            });
+                        }
+                    } else {
+                        // Если обновили не последнюю свечу, помечаем, что нужен полный перерасчет
+                        olderCandlesChanged = true;
                     }
+                    
                     changed = true;
                     freshMap.delete(cur.time);
+                }
+            }
+
+            // Если старые свечи изменились, делаем setData, т.к. update() их обновить не сможет
+            if (olderCandlesChanged && this._isChartValid()) {
+                if (this.candleSeries) this.candleSeries.setData(currentData);
+                if (this.barSeries) this.barSeries.setData(currentData);
+                if (this.volumeSeries) {
+                    this._volumeDataCache = null;
+                    this._volumeDataDirty = true;
+                    this._updateVolumeOptimized();
                 }
             }
             
@@ -535,7 +553,6 @@ class ChartManager {
                 for (const candle of missing) {
                     candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
                     
-                    // ✅ КРИТИЧЕСКИЙ ФИКС: Принудительно делаем время числом
                     const safeTime = Number(candle.time);
                     if (isNaN(safeTime) || safeTime <= 0) {
                         console.warn('⚠️ Пропуск добавления свечи: некорректное время', candle.time);
@@ -546,7 +563,7 @@ class ChartManager {
                     this._addToTimeMap(safeTime, currentData.length - 1);
                     
                     const updateData = {
-                        time: safeTime, // Используем проверенное число
+                        time: safeTime,
                         open: candle.open,
                         high: candle.high,
                         low: candle.low,
@@ -1074,16 +1091,14 @@ class ChartManager {
         } catch (e) {}
     }
 
- setChartType(type) {
+setChartType(type) {
     if (!this._isChartValid()) return;
     this.currentChartType = type;
     localStorage.setItem('chartType', type);
 
     const hasData = this.chartData.length > 0;
 
-    // ===== ГЛАВНОЕ ИСПРАВЛЕНИЕ =====
-    // Перед переключением видимости синхронизируем ОБЕ серии с актуальными данными.
-    // Раньше обновлялась только скрываемая серия, а показываемая оставалась со старыми данными.
+    // Синхронизируем данные серий
     if (hasData) {
         if (this.candleSeries) this.candleSeries.setData(this.chartData);
         if (this.barSeries) this.barSeries.setData(this.chartData);
@@ -1098,12 +1113,16 @@ class ChartManager {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
     }
 
-    // Обновляем объёмы (данные берутся из this.chartData, поэтому они всегда актуальны)
-    if (this.volumeSeries && hasData) {
-        this._volumeDataCache = null;
-        this._volumeDataDirty = true;
-        this._lastVolumeUpdateIndex = -1;
-        this._updateVolumeOptimized();
+    // ✅ ФИКС ОБЪЕМОВ: Не пересчитываем и не сбрасываем кэш объемов!
+    // Данные свечей и баров идентичны, объемам незачем перерисовываться.
+    // Просто жестко фиксируем масштаб шкалы объема, чтобы она не "прыгала".
+    if (this.volumeSeries) {
+        const volumeScale = this.chart.priceScale('volume');
+        if (volumeScale) {
+            volumeScale.applyOptions({ 
+                scaleMargins: { top: 0.85, bottom: 0 } // Унифицировано с _updateMainChartHeight
+            });
+        }
     }
 
     // Применяем цвета для баров (на случай, если пользователь менял настройки)
@@ -1121,7 +1140,7 @@ class ChartManager {
         });
     }
 
-    // Синхронизация графических объектов с новым таймфреймом (если требуется)
+    // Синхронизация графических объектов с новым таймфреймом
     setTimeout(() => {
         if (window.rayManager) window.rayManager.syncWithNewTimeframe();
         if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
@@ -1152,7 +1171,6 @@ class ChartManager {
             this.timerManager.updatePrice(price);
         }
 
-        // Несколько принудительных обновлений для гарантии отрисовки
         requestAnimationFrame(() => {
             if (this.timerManager) this.timerManager._forceUpdate();
         });
@@ -1359,7 +1377,7 @@ class ChartManager {
         }
     }
 
-    updateLastCandle(candle, eventTime = null) {
+     updateLastCandle(candle, eventTime = null) {
         if (this._switchingSymbol || this._updatesSuspended || !this._isChartValid()) return;
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
         
@@ -1419,6 +1437,7 @@ class ChartManager {
                     });
                 }
             } else if (existingIndex !== undefined && existingIndex >= 0) {
+                // ✅ ФИКС: Обновляем старую свечу.
                 const existingCandle = this.chartData[existingIndex];
                 existingCandle.close = candle.close;
                 existingCandle.high = Math.max(existingCandle.high, candle.high);
@@ -1430,25 +1449,19 @@ class ChartManager {
                 }
                 existingCandle._isPlaceholder = false;
                 
-                const existingUpdateData = {
-                    time: existingCandle.time,
-                    open: existingCandle.open,
-                    high: existingCandle.high,
-                    low: existingCandle.low,
-                    close: existingCandle.close
-                };
-                
-                if (this.candleSeries) this.candleSeries.update(existingUpdateData);
-                if (this.barSeries) this.barSeries.update(existingUpdateData);
-                
-                if (this.volumeSeries) {
-                    const isBullish = existingCandle.close >= existingCandle.open;
-                    this.volumeSeries.update({
-                        time: existingCandle.time,
-                        value: existingCandle.quoteVolume || existingCandle.volume || 0,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
+                // Метод .update() упадет, если вызвать его для прошлой свечи.
+                // Поэтому вызываем .setData(), он безопасно перерисует график.
+                if (this._isChartValid()) {
+                    if (this.candleSeries) this.candleSeries.setData(this.chartData);
+                    if (this.barSeries) this.barSeries.setData(this.chartData);
+                    
+                    if (this.volumeSeries) {
+                        this._volumeDataCache = null;
+                        this._volumeDataDirty = true;
+                        this._updateVolumeOptimized();
+                    }
                 }
+                
                 this._volumeDataDirty = true;
                 return;
             } else if (isNewCandle) {
