@@ -319,8 +319,10 @@ class TimerManager {
 
   _updatePosition(price) {
     if (!this._labelElement) return;
+    
+    // ✅ Если цена временно недоступна, НЕ скрываем плашку,
+    // а просто пропускаем кадр (она останется на прежнем месте)
     if (price == null || isNaN(price) || price <= 0) {
-        this._hideLabel();
         return;
     }
     
@@ -339,6 +341,8 @@ class TimerManager {
         return;
     }
     
+    // ✅ Если координата временно недоступна (график пересчитывается при зуме),
+    // НЕ скрываем плашку — оставляем на месте до следующего кадра
     if (yCoord == null || isNaN(yCoord)) {
         return;
     }
@@ -352,14 +356,7 @@ class TimerManager {
         this._labelElement.style.width = scaleWidth + 'px';
     }
     
-    const hideBuffer = labelHeight * 2;
-    if (yCoord < -hideBuffer || yCoord > containerHeight + hideBuffer) {
-        this._hideLabel();
-        return;
-    }
-
-    this._showLabel();
-
+    // ✅ ВМЕСТО СКРЫТИЯ — ограничиваем позицию, чтобы плашка всегда была видна
     const priceRowHeight = this._priceRow.offsetHeight || 17;
     const priceRowCenter = priceRowHeight / 2;
     
@@ -374,8 +371,10 @@ class TimerManager {
         this._lastTop = finalTop;
         this._labelElement.style.top = finalTop + 'px';
     }
+    
+    // ✅ Явно показываем плашку (на случай, если она была скрыта ранее)
+    this._showLabel();
 }
-
     _scheduleRetry() {
         if (this._retryTimeout) {
             clearTimeout(this._retryTimeout);
