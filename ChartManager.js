@@ -547,41 +547,62 @@ class ChartManager {
                 }
             }
             
-            // 2. Добавляем пропущенные свечи
+            // 2. Добавляем пропущенные свечи (ИСПРАВЛЕННЫЙ БЛОК)
             if (freshMap.size > 0) {
                 const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
+                let needsFullRedraw = false;
+                
                 for (const candle of missing) {
                     candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
                     
                     const safeTime = Number(candle.time);
-                    if (isNaN(safeTime) || safeTime <= 0) {
-                        console.warn('⚠️ Пропуск добавления свечи: некорректное время', candle.time);
-                        continue;
+                    if (isNaN(safeTime) || safeTime <= 0) continue;
+
+                    // ✅ Проверка: если свеча старше последней — её нельзя добавить через update()
+                    if (currentData.length > 0 && safeTime <= currentData[currentData.length - 1].time) {
+                        needsFullRedraw = true; // Помечаем, что нужен полный перерасчет
                     }
 
                     currentData.push(candle);
                     this._addToTimeMap(safeTime, currentData.length - 1);
+                }
+
+                // Если были старые свечи, безопасно перерисовываем график через setData()
+                if (needsFullRedraw && this._isChartValid()) {
+                    currentData.sort((a, b) => a.time - b.time);
+                    this._rebuildTimeMap();
                     
-                    const updateData = {
-                        time: safeTime,
-                        open: candle.open,
-                        high: candle.high,
-                        low: candle.low,
-                        close: candle.close
-                    };
-                    
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
-                    
+                    if (this.candleSeries) this.candleSeries.setData(currentData);
+                    if (this.barSeries) this.barSeries.setData(currentData);
                     if (this.volumeSeries) {
-                        const isBullish = candle.close >= candle.open;
-                        this.volumeSeries.update({
-                            time: safeTime,
-                            value: candle.quoteVolume || candle.volume || 0,
-                            color: isBullish ? this.bullishColor : this.bearishColor
-                        });
+                        this._volumeDataCache = null;
+                        this._volumeDataDirty = true;
+                        this._updateVolumeOptimized();
+                    }
+                } else {
+                    // Если всё по порядку, просто добавляем по одной через update()
+                    for (const candle of missing) {
+                        const updateData = {
+                            time: candle.time,
+                            open: candle.open,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close
+                        };
+                        if (this.candleSeries) this.candleSeries.update(updateData);
+                        if (this.barSeries) this.barSeries.update(updateData);
+                        
+                        if (this.volumeSeries) {
+                            const isBullish = candle.close >= candle.open;
+                            this.volumeSeries.update({
+                                time: candle.time,
+                                value: candle.quoteVolume || candle.volume || 0,
+                                color: isBullish ? this.bullishColor : this.bearishColor
+                            });
+                        }
                     }
                 }
+                
                 this.lastCandle = currentData[currentData.length - 1];
                 changed = true;
             }
@@ -596,7 +617,6 @@ class ChartManager {
             console.warn('⚠️ Ошибка периодической синхронизации:', e);
         }
     }
-
     // ✅ ИСПРАВЛЕННЫЙ МЕТОД refreshCandlesAfterTabHidden
     async refreshCandlesAfterTabHidden() {
         // Проверяем валидность графика в самом начале
@@ -1091,20 +1111,16 @@ class ChartManager {
         } catch (e) {}
     }
 
-setChartType(type) {
+ssetChartType(type) {
     if (!this._isChartValid()) return;
     this.currentChartType = type;
     localStorage.setItem('chartType', type);
 
-    const hasData = this.chartData.length > 0;
+    // ✅ ГЛАВНЫЙ ФИКС: ПОЛНОСТЬЮ УБИРАЕМ setData!
+    // Данные уже загружены в обе серии ранее (в setDataQuick).
+    // Вызов setData заново заставляет LWC пересчитывать все шкалы, из-за чего прыгает объем.
+    // Нам нужно просто переключить видимость.
 
-    // Синхронизируем данные серий
-    if (hasData) {
-        if (this.candleSeries) this.candleSeries.setData(this.chartData);
-        if (this.barSeries) this.barSeries.setData(this.chartData);
-    }
-
-    // Переключаем видимость серий
     if (type === 'candle') {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
         if (this.barSeries) this.barSeries.applyOptions({ visible: false });
@@ -1113,14 +1129,13 @@ setChartType(type) {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
     }
 
-    // ✅ ФИКС ОБЪЕМОВ: Не пересчитываем и не сбрасываем кэш объемов!
-    // Данные свечей и баров идентичны, объемам незачем перерисовываться.
-    // Просто жестко фиксируем масштаб шкалы объема, чтобы она не "прыгала".
+    // Жестко фиксируем масштаб объемов, чтобы исключить любые скачки
     if (this.volumeSeries) {
         const volumeScale = this.chart.priceScale('volume');
         if (volumeScale) {
             volumeScale.applyOptions({ 
-                scaleMargins: { top: 0.85, bottom: 0 } // Унифицировано с _updateMainChartHeight
+                scaleMargins: { top: 0.85, bottom: 0 },
+                autoScale: false // Явно запрещаем библиотеке менять высоту объема
             });
         }
     }
@@ -2041,31 +2056,21 @@ setChartType(type) {
     
     scrollToLast(enableRealTime = true) {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) {
-            console.warn('⚠️ scrollToLast: График не готов или нет данных');
             return false;
         }
 
         try {
             this._isViewingHistory = false;
-            
             this.lastCandle = this.chartData[this.chartData.length - 1];
             
             const timeScale = this.chart.timeScale();
-            if (!timeScale) {
-                console.warn('⚠️ scrollToLast: timeScale недоступен');
-                return false;
-            }
+            if (!timeScale) return false;
 
+            // ✅ ИСПРАВЛЕНО: используем нативный метод LWC, он сам всё посчитает
             if (enableRealTime) {
-                const visibleBars = Math.floor(this.chartContainer.clientWidth / 12);
-                const lastIndex = this.chartData.length - 1;
-                const rightOffsetBars = 10;
-                
-                timeScale.setVisibleLogicalRange({
-                    from: Math.max(0, lastIndex - visibleBars - rightOffsetBars),
-                    to: lastIndex + rightOffsetBars
-                });
+                timeScale.scrollToRealTime();
             } else {
+                // Если нужно просто докрутить к концу с текущим зумом
                 const currentRange = timeScale.getVisibleLogicalRange();
                 if (currentRange) {
                     const visibleBars = currentRange.to - currentRange.from;
@@ -2098,7 +2103,6 @@ setChartType(type) {
             return false;
         }
     }
-
     clearChart() {
         if (!this._isChartValid()) return;
         
@@ -2898,8 +2902,9 @@ setChartType(type) {
         }
     }
 
-    _performTrimNow(fromIndex, toIndex) {
+        _performTrimNow(fromIndex, toIndex) {
         if (this._isTrimming || this.isLoadingMore || !this._isChartValid()) return;
+        // Проверяем, нужно ли вообще обрезать
         if (!this._isScrolling && this.chartData.length <= this._maxCandlesInMemory) return;
         
         const keepFrom = Math.max(0, fromIndex - (this._leftBuffer * 1.5));
@@ -2911,6 +2916,8 @@ setChartType(type) {
         this._isTrimming = true;
         
         try {
+            // ✅ ФИКС: Обновляем только JS-массив, не трогая LWC через setData()
+            // График сам перестанет рисовать удаленные свечи, так как мы сместим диапазон.
             this.chartData = this.chartData.slice(keepFrom, keepTo);
             this._rebuildTimeMap();
             this._volumeDataDirty = true;
@@ -2918,16 +2925,14 @@ setChartType(type) {
             
             const timeScale = this.chart.timeScale();
             const currentRange = timeScale.getVisibleLogicalRange();
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
 
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
-            if (activeSeries) {
-                activeSeries.setData(this.chartData);
-            }
+            // Обновляем только объемы (так как они зависят от длинны массива this.chartData)
             this._updateVolumeOptimized();
             
+            // Корректируем позицию прокрутки
             if (currentRange && leftTrim > 0) {
                 timeScale.setVisibleLogicalRange({
                     from: Math.max(0, currentRange.from - leftTrim),
@@ -2954,7 +2959,6 @@ setChartType(type) {
             this._isTrimming = false;
         }
     }
-
     async _loadHistoryAsync() {
         if (this.isLoadingMore || !this.hasMoreData || !this._isChartValid()) return;
         
