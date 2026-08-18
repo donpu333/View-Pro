@@ -1820,7 +1820,7 @@ setChartType(type) {
         }
     }
 
-    async switchSymbol(symbol, exchange, marketType) {
+     async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol) return;
         this._switchingSymbol = true;
         
@@ -1838,11 +1838,9 @@ setChartType(type) {
             this._abortAllProcesses();
             this._suspendAllUpdates();
             
-            if (this._isChartValid()) {
-                if (this.candleSeries) this.candleSeries.setData([]);
-                if (this.barSeries) this.barSeries.setData([]);
-                if (this.volumeSeries) this.volumeSeries.setData([]);
-            }
+            // ❌ УБРАНО: Очистка графика (setData([]))! 
+            // Не очищаем экран, чтобы старые свечи висели, пока грузятся новые.
+            // setDataQuick мгновенно заменит старые свечи новыми, без пустого экрана.
             
             this.chartData = [];
             this._candleTimeMap.clear();
@@ -1859,9 +1857,11 @@ setChartType(type) {
             const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
             if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision));
 
+            // 1. ПЫТАЕМСЯ ВЗЯТЬ ДАННЫЕ ИЗ КЭША (ЭТО ДАЕТ МГНОВЕННУЮ СКОРОСТЬ)
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
             let isFromCache = !!candles;
             
+            // 2. Если кэша нет, тянем с биржи
             if (!isFromCache) {
                 candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
             }
@@ -1870,6 +1870,7 @@ setChartType(type) {
                 throw new Error('Нет данных для ' + symbol);
             }
 
+            // Если пользователь успел нажать другой тикер, отменяем этот
             if (this._activeGeneration !== generationId) {
                 console.log('🔄 Символ уже переключился, отменяем старую загрузку');
                 return;
@@ -1879,6 +1880,7 @@ setChartType(type) {
                 this.timerManager.stop();
             }
 
+            // 3. МГНОВЕННО ОТОБРАЖАЕМ НОВЫЕ СВЕЧИ (замещаем старые без пустого экрана)
             if (this._isChartValid()) {
                 this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
             }
@@ -1890,6 +1892,7 @@ setChartType(type) {
                 this.timerManager._forceUpdate(); 
             }
 
+            // 4. Сохраняем в кэш, если качали с биржи
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
             }
@@ -1901,6 +1904,7 @@ setChartType(type) {
             localStorage.setItem('lastMarketType', marketType);
             this._notifySymbolChange();
 
+            // 5. ФОНОВОЕ ОБНОВЛЕНИЕ СВЕЖИМИ СВЕЧАМИ (если взяли из кэша)
             if (isFromCache) {
                 this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
             }
