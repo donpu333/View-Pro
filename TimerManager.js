@@ -21,7 +21,7 @@ class TimerManager {
         this._retryCount = 0;
         this._initRetryCount = 0;
 
-        // ✅ НОВОЕ: Кэшированные размеры для предотвращения Layout Thrashing
+        // ✅ Кэшированные размеры для предотвращения Layout Thrashing
         this._labelHeight = 20;
         this._priceRowHeight = 17;
         this._containerHeight = 0;
@@ -131,7 +131,7 @@ class TimerManager {
         this._forceUpdate();
     }
 
-    // ✅ НОВЫЙ МЕТОД: Кэширование размеров (убираем из RAF)
+    // ✅ Кэширование размеров (убираем из RAF)
     _updateCachedSizes() {
         if (!this._chartManager?.chartContainer || !this._labelElement || !this._priceRow) return;
         this._containerHeight = this._chartManager.chartContainer.clientHeight;
@@ -356,11 +356,11 @@ class TimerManager {
             return;
         }
         
-        // ❌ БАГ ИСПРАВЛЕН: При зуме (скролле) priceToCoordinate может вернуть null.
-        // Раньше мы делали return, и плашка оставалась на старой позиции, из-за чего "прыгала".
-        // Теперь скрываем плашку, если координата недоступна.
         if (yCoord == null || isNaN(yCoord)) {
-            this._hideLabel();
+            // ✅ НЕ скрываем плашку, просто показываем (если ещё не видима)
+            if (!this._isVisible) {
+                this._showLabel();
+            }
             return;
         }
 
@@ -370,8 +370,7 @@ class TimerManager {
             this._labelElement.style.width = scaleWidth + 'px';
         }
         
-        // ✅ ИСПРАВЛЕНО: Используем кэшированные размеры вместо offsetHeight/clientHeight
-        // Это убирает Layout Thrashing и тормоза при скролле
+        // Используем кэшированные размеры
         const priceRowCenter = (this._priceRowHeight || 17) / 2;
         
         let top = yCoord - priceRowCenter;
@@ -476,11 +475,11 @@ class TimerManager {
             this._retryTimeout = null;
         }
         if (this._labelElement) {
-            this._labelElement.style.visibility = 'hidden';
-            this._labelElement.style.opacity = '0';
-            this._isVisible = false;
+            // ✅ Очищаем тексты, но НЕ скрываем плашку
             if (this._priceRow) this._priceRow.textContent = '';
             if (this._timerRow) this._timerRow.textContent = '';
+            // Показываем плашку (на случай, если была скрыта)
+            this._showLabel();
         }
     }
 
@@ -509,11 +508,10 @@ class TimerManager {
         if (price != null && !isNaN(price) && price > 0) {
             this._updatePriceText(price);
             this._updatePosition(price);
-            if (!this._isVisible) {
-                this._showLabel();
-            }
         }
         
+        // ✅ Всегда показываем плашку, даже если цена временно недоступна
+        this._showLabel();
         this._updateColor();
     }
 
