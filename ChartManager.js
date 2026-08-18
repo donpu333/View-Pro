@@ -1111,16 +1111,20 @@ class ChartManager {
         } catch (e) {}
     }
 
-ssetChartType(type) {
+setChartType(type) {
     if (!this._isChartValid()) return;
     this.currentChartType = type;
     localStorage.setItem('chartType', type);
 
-    // ✅ ГЛАВНЫЙ ФИКС: ПОЛНОСТЬЮ УБИРАЕМ setData!
-    // Данные уже загружены в обе серии ранее (в setDataQuick).
-    // Вызов setData заново заставляет LWC пересчитывать все шкалы, из-за чего прыгает объем.
-    // Нам нужно просто переключить видимость.
+    const hasData = this.chartData.length > 0;
 
+    // Синхронизируем данные серий
+    if (hasData) {
+        if (this.candleSeries) this.candleSeries.setData(this.chartData);
+        if (this.barSeries) this.barSeries.setData(this.chartData);
+    }
+
+    // Переключаем видимость серий
     if (type === 'candle') {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
         if (this.barSeries) this.barSeries.applyOptions({ visible: false });
@@ -1129,13 +1133,14 @@ ssetChartType(type) {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
     }
 
-    // Жестко фиксируем масштаб объемов, чтобы исключить любые скачки
+    // ✅ ФИКС ОБЪЕМОВ: Не пересчитываем и не сбрасываем кэш объемов!
+    // Данные свечей и баров идентичны, объемам незачем перерисовываться.
+    // Просто жестко фиксируем масштаб шкалы объема, чтобы она не "прыгала".
     if (this.volumeSeries) {
         const volumeScale = this.chart.priceScale('volume');
         if (volumeScale) {
             volumeScale.applyOptions({ 
-                scaleMargins: { top: 0.85, bottom: 0 },
-                autoScale: false // Явно запрещаем библиотеке менять высоту объема
+                scaleMargins: { top: 0.85, bottom: 0 } // Унифицировано с _updateMainChartHeight
             });
         }
     }
