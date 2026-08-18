@@ -1,509 +1,537 @@
+class TimerRenderer {
+    constructor(timerManager) {
+        this._timerManager = timerManager;
+        this.enabled = true;
+    }
+
+ draw(target) {
+    if (!this.enabled) return;
+    
+    const chartManager = this._timerManager._chartManager;
+    if (!chartManager || !chartManager.chartData || chartManager.chartData.length === 0) return;
+    
+    const timerText = this._timerManager._timerElement?.textContent || '';
+    if (!timerText) return;
+
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const hpr = scope.horizontalPixelRatio;
+        const vpr = scope.verticalPixelRatio;
+
+        // Получаем цену
+        let price = chartManager.currentRealPrice;
+        if (price == null || isNaN(price) || price <= 0) {
+            const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
+            if (lastCandle && lastCandle.close != null) {
+                price = lastCandle.close;
+            }
+        }
+        
+        if (price == null || isNaN(price) || price <= 0) return;
+
+        // Получаем координату через серию
+        let yCoord = null;
+        const activeSeries = chartManager.currentChartType === 'candle' 
+            ? chartManager.candleSeries 
+            : chartManager.barSeries;
+        
+        if (activeSeries) {
+            try {
+                yCoord = activeSeries.priceToCoordinate(price);
+            } catch(e) {}
+        }
+        
+        if (yCoord == null || isNaN(yCoord)) return;
+
+        // ✅ ИСПРАВЛЕНО: НЕ округляем bitmapY — используем дробные значения
+        const bitmapY = yCoord * vpr;
+        const bitmapWidth = scope.mediaSize.width * hpr;
+        const bitmapHeight = scope.mediaSize.height * vpr;
+
+        // Округляем только fontSize для чёткости текста
+        const fontSize = Math.round(11 * vpr);
+        ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+        const textWidth = ctx.measureText(timerText).width;
+        
+        const rectWidth = Math.ceil(textWidth + 8 * hpr);
+        const rectHeight = Math.ceil(fontSize + 6 * vpr);
+
+        const rectX = bitmapWidth - rectWidth - 4 * hpr;
+        
+        // ✅ ИСПРАВЛЕНО: НЕ используем Math.round для rectY
+        // Используем дробную координату для плавного движения
+        let rectY = bitmapY - rectHeight / 2;
+        
+        // Ограничиваем границы (но без Math.round!)
+        rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
+
+        // Определяем цвет
+        const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
+        let bgColor;
+        
+        if (lastCandle && lastCandle.close != null && lastCandle.open != null) {
+            bgColor = lastCandle.close >= lastCandle.open 
+                ? (chartManager.bullishColor || '#26a69a')
+                : (chartManager.bearishColor || '#ef5350');
+        } else {
+            bgColor = chartManager._lastAppliedColor || '#26a69a';
+        }
+
+        ctx.save();
+        ctx.fillStyle = bgColor + 'DD';
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 3 * hpr;
+        this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
+        ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // ✅ ИСПРАВЛЕНО: используем дробные координаты для текста тоже
+        ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
+        ctx.restore();
+    });
+}
+
+    _roundRect(ctx, x, y, w, h, r) {
+        r = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+    }
+}
+
+class TimerPaneView {
+    constructor(timerManager) {
+        this._timerManager = timerManager;
+        this._renderer = new TimerRenderer(timerManager);
+    }
+
+    renderer() { 
+        return this._renderer; 
+    }
+}
+
+class TimerPrimitive {
+    constructor(timerManager, chartManager) {
+        this._timerManager = timerManager;
+        this._chartManager = chartManager;
+        this._paneView = new TimerPaneView(timerManager);
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+        this._dataReady = false;
+        this._lastPrice = null;
+    }
+
+    paneViews() { 
+        return [this._paneView]; 
+    }
+
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+        this._lastPrice = null;
+        
+        if (this._chartManager?.chartData?.length > 0) {
+            this._dataReady = true;
+        }
+    }
+
+    detached() { 
+        this._dataReady = false;
+        this._lastPrice = null;
+    }
+    
+    updateAllViews() {}
+
+    // ✅ ПРИНУДИТЕЛЬНЫЙ redraw через timeScale.applyOptions({})
+    // lightweight-charts кэширует обычные requestUpdate(), это обходит кэш
+    requestRedraw() {
+        if (this._requestUpdate) {
+            this._requestUpdate();
+        }
+        
+        if (this._chart) {
+            try {
+                const ts = this._chart.timeScale();
+                if (ts) {
+                    ts.applyOptions({});
+                }
+            } catch(e) {}
+        }
+    }
+
+    setEnabled(enabled) {
+        if (this._paneView?._renderer) {
+            const wasEnabled = this._paneView._renderer.enabled;
+            this._paneView._renderer.enabled = enabled;
+            if (enabled && !wasEnabled) {
+                this._lastPrice = null;
+                this.requestRedraw();
+            }
+        }
+    }
+
+    isEnabled() { 
+        return this._paneView?._renderer?.enabled ?? false; 
+    }
+
+    setColor(color) {
+        // Цвет определяется динамически в draw(), просто перерисовываем
+        if (this.isEnabled()) {
+            this.requestRedraw();
+        }
+    }
+    
+    setPrice(price) {
+        if (price != null && !isNaN(price) && price > 0) {
+            this._lastPrice = price;
+            if (this.isEnabled()) {
+                this.requestRedraw();
+            }
+        }
+    }
+
+    // Алиас для обратной совместимости
+    updatePrice(price) {
+        this.setPrice(price);
+    }
+
+    setDataReady(ready) { 
+        this._dataReady = ready; 
+        if (ready) {
+            this._lastPrice = null;
+        }
+    }
+    
+    isDataReady() { 
+        return this._dataReady; 
+    }
+}
+
 class TimerManager {
     constructor(chartManager) {
         this._chartManager = chartManager;
         this._interval = null;
         this._currentTf = CONFIG.defaultInterval || '1h';
-        this._labelElement = null;
-        this._priceRow = null;
-        this._timerRow = null;
+        this._primitive = null;
+        this._timerElement = { textContent: '' };
         this._disabled = false;
+        
+        this._priceSubscribed = false;
+        this._priceHandler = null;
+        this._subscribedSymbolKey = null;
+        this._colorChangeHandler = null;
         this._initialized = false;
-        this._currentPrice = null;
+        
+        // ✅ НОВОЕ: RAF-loop для постоянной перерисовки
         this._rafId = null;
-        this._lastTop = null;
-        this._lastColor = null;
-        this._lastWidth = null;
-        this._scaleObserver = null;
-        this._lastScaleCanvas = null;
-        this._isVisible = false;
-        this._showTimerRow = true;
-        this._initRetryCount = 0;
 
-        if (chartManager.timerManager) {
-            chartManager.timerManager.destroy();
-        }
         chartManager.timerManager = this;
-        
-        this._init();
+        setTimeout(() => this._init(), 300);
     }
 
-    _init() {
-        if (this._disabled || !this._chartManager?.chart) {
-            if (this._initRetryCount < 15) {
-                this._initRetryCount++;
-                setTimeout(() => this._init(), 200);
+    // ✅ RAF-loop: принудительная перерисовка каждые ~100мс
+    _startRenderLoop() {
+        if (this._rafId) return;
+        
+        const loop = () => {
+            if (this._disabled || !this._primitive?.isEnabled()) {
+                this._rafId = null;
+                return;
             }
-            return;
-        }
+            
+            this._primitive.requestRedraw();
+            this._rafId = requestAnimationFrame(loop);
+        };
         
-        this._initRetryCount = 0;
-        document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
-
-        this._labelElement = document.createElement('div');
-        this._labelElement.id = 'price-timer-label';
-        
-        const initColor = this._getCurrentColor();
-        this._lastColor = initColor;
-        const initWidth = 90;
-        this._lastWidth = initWidth;
-
-        this._labelElement.style.cssText = `
-            position: absolute;
-            right: 0px;
-            left: auto;
-            width: ${initWidth}px;
-            pointer-events: none;
-            z-index: 999;
-            font-family: 'Inter', Arial, sans-serif;
-            visibility: hidden;
-            opacity: 0;
-            background-color: ${initColor};
-            border-radius: 3px;
-            text-align: center;
-            box-sizing: border-box;
-            will-change: top, opacity, width;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            line-height: 1.2;
-        `;
-
-        this._priceRow = document.createElement('div');
-        this._priceRow.style.cssText = `
-            font-weight: bold;
-            font-size: 11px;
-            color: #000000;
-            padding: 2px 6px 1px 6px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            width: 100%;
-            min-width: 0;
-            box-sizing: border-box;
-        `;
-        this._priceRow.textContent = '';
-
-        this._timerRow = document.createElement('div');
-        this._timerRow.style.cssText = `
-            font-weight: bold;
-            font-size: 11px;
-            color: #000000;
-            padding: 0 6px 2px 6px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            width: 100%;
-            min-width: 0;
-            box-sizing: border-box;
-        `;
-        this._timerRow.textContent = '';
-
-        this._labelElement.appendChild(this._priceRow);
-        this._labelElement.appendChild(this._timerRow);
-
-        const initTextColor = this._getContrastTextColor(initColor);
-        this._priceRow.style.color = initTextColor;
-        this._timerRow.style.color = initTextColor;
-
-        const container = this._chartManager.chartContainer;
-        if (getComputedStyle(container).position === 'static') {
-            container.style.position = 'relative';
-        }
-
-        container.appendChild(this._labelElement);
-        this._initialized = true;
-
-        this._attachScaleObserver();
-        this._updateTimerState();
-        this._startTracking();
-        this._forceUpdate();
+        this._rafId = requestAnimationFrame(loop);
     }
-
-    _attachScaleObserver() {
-        const cm = this._chartManager;
-        if (!cm?.chartContainer) return;
-
-        const canvases = cm.chartContainer.querySelectorAll('canvas');
-        if (canvases.length < 2) {
-            requestAnimationFrame(() => this._attachScaleObserver());
-            return;
-        }
-        
-        const scaleCanvas = canvases[canvases.length - 1];
-        if (this._lastScaleCanvas === scaleCanvas) return;
-        
-        this._lastScaleCanvas = scaleCanvas;
-        
-        if (this._scaleObserver) {
-            this._scaleObserver.disconnect();
-            this._scaleObserver = null;
-        }
-
-        this._scaleObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const newWidth = Math.round(entry.contentRect.width);
-                if (newWidth > 30 && newWidth !== this._lastWidth) {
-                    this._lastWidth = newWidth;
-                    if (this._labelElement) {
-                        this._labelElement.style.width = newWidth + 'px';
-                    }
-                }
-            }
-        });
-        
-        this._scaleObserver.observe(scaleCanvas);
-        
-        const rect = scaleCanvas.getBoundingClientRect();
-        if (rect.width > 30) {
-            this._lastWidth = Math.round(rect.width);
-            if (this._labelElement) {
-                this._labelElement.style.width = this._lastWidth + 'px';
-            }
-        }
-    }
-
-    _getCurrentColor() {
-        const cm = this._chartManager;
-        if (cm?._lastAppliedColor) return cm._lastAppliedColor;
-        if (cm?.lastCandle) {
-            const price = cm.currentRealPrice || cm.lastCandle.close;
-            const isBullish = price >= cm.lastCandle.open;
-            return isBullish 
-                ? (cm.bullishColor || CONFIG.colors.bullish || '#26a69a') 
-                : (cm.bearishColor || CONFIG.colors.bearish || '#ef5350');
-        }
-        return cm?.bullishColor || CONFIG.colors.bullish || '#26a69a';
-    }
-
-    _getContrastTextColor(bgColor) {
-        if (!bgColor) return '#000000';
-        
-        let r, g, b;
-        if (bgColor.startsWith('#')) {
-            let hex = bgColor.slice(1);
-            if (hex.length === 3) {
-                hex = hex.split('').map(c => c + c).join('');
-            }
-            r = parseInt(hex.slice(0, 2), 16);
-            g = parseInt(hex.slice(2, 4), 16);
-            b = parseInt(hex.slice(4, 6), 16);
-        } else if (bgColor.startsWith('rgb')) {
-            const match = bgColor.match(/\d+/g);
-            if (match && match.length >= 3) {
-                r = parseInt(match[0]);
-                g = parseInt(match[1]);
-                b = parseInt(match[2]);
-            }
-        }
-        
-        if (isNaN(r) || isNaN(g) || isNaN(b)) return '#000000';
-        
-        const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-        return luminance > 0.55 ? '#000000' : '#ffffff';
-    }
-
-    _getPriceScaleWidth() {
-        const cm = this._chartManager;
-        if (!cm?.chartContainer) return this._lastWidth || 90;
-        
-        const canvases = cm.chartContainer.querySelectorAll('canvas');
-        if (canvases.length >= 2) {
-            const lastCanvas = canvases[canvases.length - 1];
-            const rect = lastCanvas.getBoundingClientRect();
-            if (rect.width > 30) return Math.round(rect.width);
-        }
-        return this._lastWidth || 90;
-    }
-
-    _startTracking() {
+    
+    _stopRenderLoop() {
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
         }
-        
-        const track = () => {
-            if (!this._labelElement || this._disabled) {
-                this._rafId = null;
-                return;
-            }
-
-            // ✅ КРИТИЧЕСКИ ВАЖНО: Не выполняем расчеты на скрытой вкладке.
-            // Это предотвращает чтение некорректных размеров DOM (0 или устаревших) 
-            // и исключает визуальный "скачок" плашки при возврате на вкладку.
-            if (document.hidden) {
-                this._rafId = requestAnimationFrame(track);
-                return;
-            }
-            
-            const price = this._currentPrice || 
-                         this._chartManager.currentRealPrice || 
-                         this._chartManager.lastCandle?.close;
-                         
-            if (price != null && !isNaN(price) && price > 0) {
-                this._updatePosition(price);
-            }
-            
-            this._updateColor();
-            this._rafId = requestAnimationFrame(track);
-        };
-        
-        track();
     }
 
-    _updateColor() {
-        if (!this._labelElement || !this._priceRow || !this._timerRow) return;
-        const targetColor = this._getCurrentColor();
+    _init() {
+        if (this._disabled || !this._chartManager?.chart) return;
+
+        this._detachPrimitive();
+
+        this._primitive = new TimerPrimitive(this, this._chartManager);
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+
+        if (series) {
+            try {
+                series.attachPrimitive(this._primitive);
+                this._primitive.setEnabled(false);
+
+                series.subscribeDataChanged(() => {
+                    if (this._primitive && this._chartManager.chartData?.length > 0) {
+                        if (!this._primitive.isDataReady()) {
+                            this._primitive.setDataReady(true);
+                            this._updateTimerState();
+                        }
+                        if (this._primitive.isEnabled()) {
+                            this._primitive.requestRedraw();
+                        }
+                    }
+                });
+            } catch(e) {
+                console.error('TimerManager: Failed to attach primitive', e);
+            }
+        }
         
-        if (targetColor !== this._lastColor) {
-            this._lastColor = targetColor;
-            this._labelElement.style.backgroundColor = targetColor;
-            
-            const textColor = this._getContrastTextColor(targetColor);
-            this._priceRow.style.color = textColor;
-            this._timerRow.style.color = textColor;
+        this._subscribeToPrice();
+        this._subscribeToColorChanges();
+        
+        if (this._chartManager.chartData?.length > 0) {
+            this._primitive.setDataReady(true);
+            this._updateTimerState();
+        }
+        
+        this._initialized = true;
+    }
+    
+    _detachPrimitive() {
+        if (this._primitive) {
+            try {
+                const series = this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries 
+                    : this._chartManager.barSeries;
+                if (series) {
+                    series.detachPrimitive(this._primitive);
+                }
+            } catch(e) {}
+            this._primitive = null;
         }
     }
-
+    
     _updateTimerState() {
-        if (!this._labelElement) return;
+        if (!this._primitive?.isDataReady()) return;
         
         if (['1d','1w','1M'].includes(this._currentTf)) {
-            this._showTimerRow = false;
-            if (this._timerRow) this._timerRow.style.display = 'none';
+            this._timerElement.textContent = '';
+            this._primitive.setEnabled(false);
+            this._stopRenderLoop();
             this.stop();
         } else {
-            this._showTimerRow = true;
-            if (this._timerRow) this._timerRow.style.display = 'block';
+            this._primitive.setEnabled(true);
+            this._primitive.requestRedraw();
+            
+            if (this._interval) {
+                clearInterval(this._interval);
+                this._interval = null;
+            }
             this._tick();
-            if (this._interval) clearInterval(this._interval);
             this._interval = setInterval(() => this._tick(), 250);
+            
+            // ✅ Запускаем RAF-loop для постоянной синхронизации с ценой
+            this._startRenderLoop();
         }
     }
-
-    updatePrice(price) {
-        if (this._disabled || !this._labelElement) return;
-        this._currentPrice = price;
+    
+    _subscribeToPrice() {
+        this._unsubscribeFromPrice();
         
-        if (price != null && !isNaN(price)) {
-            this._updatePriceText(price);
-        }
-    }
-
-    _updatePriceText(price) {
-        if (!this._priceRow) return;
-        const cm = this._chartManager;
-        const activeSeries = cm?.currentChartType === 'candle' ? cm.candleSeries : cm?.barSeries;
-        const precision = activeSeries?.options()?.priceFormat?.precision ?? 2;
-        const text = Number(price).toFixed(precision);
-        if (this._priceRow.textContent !== text) {
-            this._priceRow.textContent = text;
-        }
-    }
-
-    _showLabel() {
-        if (!this._labelElement) return;
-        if (!this._isVisible) {
-            this._isVisible = true;
-            this._labelElement.style.visibility = 'visible';
-            this._labelElement.style.opacity = '1';
-        }
-    }
-
-    _hideLabel() {
-        if (!this._labelElement) return;
-        if (this._isVisible) {
-            this._isVisible = false;
-            this._labelElement.style.visibility = 'hidden';
-            this._labelElement.style.opacity = '0';
-        }
-    }
-
-         _updatePosition(price) {
-        if (!this._labelElement) return;
-        
-        if (price == null || isNaN(price) || price <= 0) {
+        if (!this._chartManager?.priceManager) {
+            setTimeout(() => this._subscribeToPrice(), 200);
             return;
         }
         
-        const cm = this._chartManager;
-        if (!cm || !cm.chartContainer || !cm.chartData?.length) {
-            return;
-        }
-
-        // Игнорируем кадры, пока график масштабируется или обрезает данные
-        if (cm._autoScalePending || cm._isTrimming) {
-            return;
-        }
+        const key = this._chartManager.getCurrentSymbolKey();
+        if (!key) return;
         
-        const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-        if (!activeSeries) return;
-
-        let yCoord;
+        this._subscribedSymbolKey = key;
+        this._priceSubscribed = true;
+        
+        this._priceHandler = (price, symbol, exchange, marketType) => {
+            if (document.hidden) return;
+            if (!this._primitive?.isEnabled()) return;
+            
+            if (this._chartManager) {
+                this._chartManager.currentRealPrice = price;
+            }
+            
+            // ✅ Используем setPrice (он же updatePrice)
+            this._primitive.setPrice(price);
+        };
+        
         try {
-            yCoord = activeSeries.priceToCoordinate(price);
-        } catch (e) {
-            return;
+            this._chartManager.priceManager.subscribe(
+                key, 
+                this._priceHandler,
+                this._chartManager.currentExchange,
+                this._chartManager.currentMarketType
+            );
+        } catch(e) {
+            console.error('TimerManager: Failed to subscribe to price', e);
         }
-        
-        // ✅ ЕСЛИ КООРДИНАТА ЕЩЕ НЕ ГОТОВА (null или NaN), ПРОСТО ЖДЕМ СЛЕДУЮЩЕГО КАДРА.
-        // Мы не скрываем и не показываем плашку насильно, чтобы избежать визуального "рывка".
-        // Плашка уже скрыта методом reset(), она появится только когда yCoord станет валидным.
-        if (yCoord == null || isNaN(yCoord)) {
-            return; 
-        }
-
-        const containerHeight = cm.chartContainer.clientHeight;
-        const labelHeight = this._labelElement.offsetHeight || 20;
-        
-        const scaleWidth = this._getPriceScaleWidth();
-        if (Math.abs(this._lastWidth - scaleWidth) > 2) {
-            this._lastWidth = scaleWidth;
-            this._labelElement.style.width = scaleWidth + 'px';
-        }
-        
-        const priceRowHeight = this._priceRow.offsetHeight || 17;
-        const priceRowCenter = priceRowHeight / 2;
-        
-        let top = yCoord - priceRowCenter;
-        
-        const maxTop = containerHeight - labelHeight - 3;
-        if (top > maxTop) top = maxTop;
-        if (top < 3) top = 3;
-        
-        const finalTop = Math.round(top);
-        if (finalTop !== this._lastTop) {
-            this._lastTop = finalTop;
-            this._labelElement.style.top = finalTop + 'px';
-        }
-        
-        // Показываем плашку только тогда, когда координата точно верная
-        this._showLabel();
     }
-
-    updatePosition(price) {
-        this.updatePrice(price);
-        this._updatePosition(price);
+    
+    _subscribeToColorChanges() {
+        if (this._colorChangeHandler) return;
+        
+        if (typeof this._chartManager.onColorChange === 'function') {
+            this._colorChangeHandler = () => {
+                if (this._primitive && this._primitive.isEnabled()) {
+                    this._primitive.requestRedraw();
+                }
+            };
+            this._chartManager.onColorChange(this._colorChangeHandler);
+        }
     }
-
-  
+    
+    _unsubscribeFromPrice() {
+        if (this._priceHandler && this._chartManager?.priceManager && this._subscribedSymbolKey) {
+            try {
+                this._chartManager.priceManager.unsubscribe(
+                    this._subscribedSymbolKey, 
+                    this._priceHandler
+                );
+            } catch(e) {}
+        }
+        this._priceHandler = null;
+        this._priceSubscribed = false;
+        this._subscribedSymbolKey = null;
+    }
 
     start(interval) {
         if (this._disabled) return;
-        this._currentTf = interval;
         
-        if (!this._initialized) {
+        const tfChanged = this._currentTf !== interval;
+        this._currentTf = interval;
+
+        if (!this._primitive && !this._initialized) {
             this._init();
         }
         
-        if (!this._labelElement) return;
-        this.stop();
-        this._updateTimerState();
-        
-        this._lastWidth = null;
-        this._lastTop = null;
-        this._lastColor = null;
-        this._attachScaleObserver();
-        this._forceUpdate();
-    }
+        if (!this._timerElement) {
+            this._timerElement = { textContent: '' };
+        }
 
-    refresh() {
-        this._forceUpdate();
+        if (tfChanged && this._initialized) {
+            this.stop();
+            this.reattach();
+        } else if (!tfChanged) {
+            this.stop();
+            this._updateTimerState();
+        }
     }
 
     _tick() {
-        if (this._disabled || !this._timerRow) return;
+        if (this._disabled || !this._timerElement) return;
         if (!this._chartManager?.chartData?.length) return;
+        
         if (['1d','1w','1M'].includes(this._currentTf)) {
-            if (this._timerRow) this._timerRow.style.display = 'none';
+            this._timerElement.textContent = '';
             this.stop();
             return;
         }
+
         const dur = TF_DURATIONS[this._currentTf];
         if (!dur) return;
+
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
-        if (this._timerRow.textContent !== txt) {
-            this._timerRow.textContent = txt;
+
+        const textChanged = this._timerElement.textContent !== txt;
+        
+        if (textChanged) {
+            this._timerElement.textContent = txt;
+            if (this._primitive?.isEnabled()) {
+                this._primitive.requestRedraw();
+            }
+        }
+        
+        if (this._primitive && !this._primitive.isEnabled() && 
+            this._primitive.isDataReady() && 
+            !['1d','1w','1M'].includes(this._currentTf)) {
+            this._primitive.setEnabled(true);
+            this._primitive.requestRedraw();
+        }
+    }
+
+    forceColorUpdate() {
+        if (this._primitive && this._primitive.isEnabled()) {
+            this._primitive.requestRedraw();
         }
     }
 
     stop() {
-        if (this._interval) {
-            clearInterval(this._interval);
-            this._interval = null;
+        if (this._interval) { 
+            clearInterval(this._interval); 
+            this._interval = null; 
         }
-    }
-
-     reset() {
-        this.stop();
-        this._currentPrice = null;
-        this._lastTop = null;
-        this._lastColor = null;
-        this._lastWidth = null;
-        
-        if (this._labelElement) {
-            this._labelElement.style.visibility = 'hidden';
-            this._labelElement.style.opacity = '0';
-            this._isVisible = false;
-            if (this._priceRow) this._priceRow.textContent = '';
-            if (this._timerRow) this._timerRow.textContent = '';
-        }
-    }
-
-    _forceUpdate() {
-        if (!this._labelElement) return;
-        
-        const scaleWidth = this._getPriceScaleWidth();
-        if (scaleWidth > 30) {
-            this._lastWidth = scaleWidth;
-            this._labelElement.style.width = scaleWidth + 'px';
-        }
-        
-        this._lastTop = null;
-        this._lastColor = null;
-        
-        const price = this._currentPrice || 
-                     this._chartManager?.currentRealPrice || 
-                     this._chartManager?.lastCandle?.close;
-        
-        if (price != null && !isNaN(price) && price > 0) {
-            this._updatePriceText(price);
-            this._updatePosition(price);
-            if (!this._isVisible) {
-                this._showLabel();
-            }
-        }
-        
-        this._updateColor();
+        this._stopRenderLoop();
     }
 
     reattach() {
-        this._init();
+        if (this._disabled) return;
+        
+        this._detachPrimitive();
+        this._stopRenderLoop();
+        
+        this._primitive = new TimerPrimitive(this, this._chartManager);
+        const series = this._chartManager.currentChartType === 'candle'
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+
+        if (series) {
+            try {
+                series.attachPrimitive(this._primitive);
+                
+                series.subscribeDataChanged(() => {
+                    if (this._primitive && this._chartManager.chartData?.length > 0) {
+                        if (!this._primitive.isDataReady()) {
+                            this._primitive.setDataReady(true);
+                            this._updateTimerState();
+                        }
+                        if (this._primitive.isEnabled()) {
+                            this._primitive.requestRedraw();
+                        }
+                    }
+                });
+                
+                if (this._chartManager.chartData?.length > 0) {
+                    this._primitive.setDataReady(true);
+                    this._updateTimerState();
+                }
+            } catch(e) {
+                console.error('TimerManager: Failed to reattach primitive', e);
+            }
+        }
+        
+        this._subscribeToPrice();
     }
 
     destroy() {
+        this._stopRenderLoop();
         this.stop();
-        if (this._rafId) {
-            cancelAnimationFrame(this._rafId);
-            this._rafId = null;
+        this._unsubscribeFromPrice();
+        
+        if (this._colorChangeHandler && typeof this._chartManager?.offColorChange === 'function') {
+            this._chartManager.offColorChange(this._colorChangeHandler);
         }
-        if (this._scaleObserver) {
-            this._scaleObserver.disconnect();
-            this._scaleObserver = null;
-        }
-        this._lastScaleCanvas = null;
-        if (this._labelElement && this._labelElement.parentNode) {
-            this._labelElement.parentNode.removeChild(this._labelElement);
-        }
-        this._labelElement = null;
-        this._priceRow = null;
-        this._timerRow = null;
+        this._colorChangeHandler = null;
+        
+        this._detachPrimitive();
         this._initialized = false;
-        this._isVisible = false;
-        this._initRetryCount = 0;
     }
 }
 
 if (typeof window !== 'undefined') {
     window.TimerManager = TimerManager;
-}
+} таймер отстает от линии цены как сделать чтобы было на 100% синхроно
