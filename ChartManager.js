@@ -1700,9 +1700,16 @@ class ChartManager {
         }
     }
 
-    async switchSymbol(symbol, exchange, marketType) {
+     async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol) return;
+        
+        // ✅ 1. Сразу ставим флаг, чтобы TimerManager перестал обновлять плашку
         this._switchingSymbol = true;
+        
+        // ✅ 2. МГНОВЕННО обнуляем источники цены ДО любой очистки.
+        // Это гарантирует, что requestAnimationFrame в TimerManager не подхватит старые данные.
+        this.currentRealPrice = null;
+        this.lastCandle = null;
         
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
@@ -1715,7 +1722,6 @@ class ChartManager {
             if (this.barSeries) this.barSeries.setData([]);
             if (this.volumeSeries) this.volumeSeries.setData([]);
             
-            this.lastCandle = null;
             this.chartData = [];
             this._candleTimeMap.clear();
             this.currentSymbol = symbol;
@@ -1790,7 +1796,6 @@ class ChartManager {
             }
         }
     }
-
     loadDrawingsForCurrentSymbol() {
         Promise.allSettled([
             window.rayManager?.loadRays?.(),
