@@ -318,7 +318,7 @@ class TimerManager {
         }
     }
 
-    _updatePosition(price) {
+       _updatePosition(price) {
         if (!this._labelElement) return;
         
         if (price == null || isNaN(price) || price <= 0) {
@@ -330,9 +330,6 @@ class TimerManager {
             return;
         }
 
-        // ✅ КРИТИЧЕСКИ ВАЖНО: Игнорируем кадры, пока график масштабируется 
-        // или обрезает данные. В эти моменты priceToCoordinate() возвращает 
-        // нестабильные значения, что вызывает "скачок" плашки.
         if (cm._autoScalePending || cm._isTrimming) {
             return;
         }
@@ -368,6 +365,12 @@ class TimerManager {
         
         let top = yCoord - priceRowCenter;
         
+        // ✅ ФИКС ОТ "ПРИЛЕТА СВЕРХУ" (добавьте этот блок):
+        if (this._lastTop === null && (yCoord < 20 || yCoord > containerHeight - 20)) {
+            this._hideLabel();
+            return;
+        }
+        
         const maxTop = containerHeight - labelHeight - 3;
         if (top > maxTop) top = maxTop;
         if (top < 3) top = 3;
@@ -379,6 +382,11 @@ class TimerManager {
         }
         
         this._showLabel();
+    }
+
+    updatePosition(price) {
+        this.updatePrice(price);
+        this._updatePosition(price);
     }
 
     updatePosition(price) {
