@@ -27,7 +27,7 @@ class TimerManager {
         this._init();
     }
 
-      _init() {
+         _init() {
         if (this._disabled || !this._chartManager?.chart) {
             if (this._initRetryCount < 15) {
                 this._initRetryCount++;
@@ -66,8 +66,10 @@ class TimerManager {
             display: flex;
             flex-direction: column;
             line-height: 1.2;
-            transition: opacity 0.15s ease; /* ✅ ДОБАВЛЕНО: только opacity, чтобы top не анимировался */
         `;
+
+        // ✅ ЖЕЛЕЗОБЕТОННЫЙ ФИКС: Жестко перебивает любой CSS с !important
+        this._labelElement.style.setProperty('transition', 'opacity 0.15s ease', 'important');
 
         this._priceRow = document.createElement('div');
         this._priceRow.style.cssText = `
