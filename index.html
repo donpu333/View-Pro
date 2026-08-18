@@ -6,15 +6,10 @@
 <title>View Pro </title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./styles.css">
-
-<!-- ✅ ЛОКАЛЬНЫЕ ФАЙЛЫ (те, что ты скачал на Шаге 1) -->
-<link rel="stylesheet" href="all.min.css">
-<script src="html2canvas.min.js"></script>
-<script src="lightweight-charts.js"></script>
-
-<!-- QR-код (оставляем на CDN, он работает стабильно) -->
+<script src="https://unpkg.com/lightweight-charts@5.0.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 </head>
 <body>
@@ -475,20 +470,12 @@
 </svg>
 <span class="tooltip">Линейка Y </span>
 </button>
-<button class="tool-btn" id="toolTradeLevel" title="Торговый уровень (L)">
-    <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="192 -864 576 768" width="24" fill="currentColor">
-        <path d="M192-96v-72h576v72H192Zm288-144L336-384l51-51 57 57v-204l-57 57-51-51 144-144 144 144-51 51-57-57v204l57-57 51 51-144 144ZM192-792v-72h576v72H192Z"/>
-    </svg>
-    <span class="tooltip">Стоп Тейк (L)</span>
-</button>
 <button class="tool-btn" id="toolMagnet" title="Магнит (привязка к ценам (Z))">
 <svg width="24" height="24" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path fill="currentColor" d="M 50.5 0 L 59 4 L 64 13.5 L 61 15 L 55.5 6 L 49 3 L 50.5 0 Z" />
 <path fill="currentColor" d="M 23.5 4 Q 31.6 4.4 34 10.5 L 35 13.5 L 20.5 29 Q 18.3 28.3 19 30.5 Q 14.5 33 16 41.5 L 20.5 47 L 29.5 48 L 34.5 45 L 51.5 29 L 59 35.5 L 60 40.5 L 39.5 60 Q 33.8 63.8 24.5 64 L 12.5 60 L 6 54.5 Q 0.5 48 0 36.5 L 2 28.5 L 6 21.5 L 23.5 4 Z M 26 6 L 17 15 L 24 20 L 31 14 L 26 6 Z M 16 17 L 7 26 L 3 38 L 7 51 L 14 57 L 26 61 L 33 60 L 39 57 L 47 50 L 42 43 L 31 51 Q 22 52 18 49 L 13 43 L 13 34 L 21 24 L 16 17 Z M 51 33 L 44 40 L 50 47 L 57 39 L 51 33 Z" />
 <path fill="currentColor" d="M 47 9 Q 53.4 8 55 13.5 Q 56.5 17.9 53.5 17 L 49.5 12 L 47 10.5 L 47 9 Z" />
 </svg>
-
-
 <span class="tooltip">Магнит (привязка к ценам (Z))</span>
 </button>
 <button class="tool-btn" id="toolTrash" title="Удалить всё 0">
@@ -568,19 +555,6 @@
 </svg>
 </button>
 </div>
-<!-- Контекстное меню для торговых уровней -->
-<div class="drawing-context-menu" id="tradeContextMenu" style="display: none;">
-    <button class="context-menu-btn settings-btn" id="tradeContextSettingsBtn" title="Настройки">
-        <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-            <path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Zm56-160q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Z"/>
-        </svg>
-    </button>
-    <button class="context-menu-btn delete-btn" id="tradeContextDeleteBtn" title="Удалить">
-        <svg width="20" height="20" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path fill="currentColor" d="M 103.5 0 L 152.5 0 L 160.5 2 L 167 7.5 L 170 13.5 L 170 31 L 207.5 31 L 215.5 33 L 222 38.5 L 225 44.5 L 225 62.5 L 218.5 72 Q 215.7 75.8 210 75 L 209 77.5 L 209 91.5 L 208 92.5 L 208 106.5 L 207 107.5 L 207 121.5 L 206 122.5 L 206 136.5 L 205 137.5 L 205 151.5 L 204 152.5 L 204 166.5 L 203 167.5 L 203 182.5 L 202 183.5 L 201 206.5 Q 199.2 216.2 192.5 221 L 185 224 Q 187.3 243.5 176.5 251 L 171.5 254 L 162.5 256 L 93.5 256 L 82.5 253 L 75 246.5 Q 69.1 238.6 71 224 Q 62.9 223.2 59 216.5 L 56 210.5 L 55 198.5 L 54 197.5 L 54 183.5 L 53 182.5 L 53 167.5 L 52 166.5 L 52 152.5 L 51 151.5 L 51 137.5 L 50 136.5 L 50 122.5 L 49 121.5 L 49 107.5 L 48 106.5 L 48 92.5 L 47 91.5 L 47 77.5 L 46 75 Q 37.7 74.7 34 68.5 L 31 62.5 L 31 44.5 L 37.5 35 L 42.5 32 Q 47.3 33.2 48.5 31 L 86 31 L 86 13.5 L 92.5 4 L 97.5 1 Q 102.2 2.3 103.5 0 Z M 100 15 L 100 31 L 156 31 L 156 31 L 156 17 L 155 15 L 100 15 Z M 47 46 L 45 48 L 45 60 L 47 61 L 210 61 L 211 60 L 211 48 L 210 46 L 47 46 Z M 61 76 L 62 105 L 63 106 L 63 121 L 64 122 L 64 136 L 65 137 L 65 151 L 66 152 L 66 166 L 67 167 L 67 181 L 68 182 L 68 196 L 69 197 Q 68 204 70 208 L 74 211 L 183 211 L 187 206 L 189 167 L 190 166 L 190 152 L 191 151 L 191 137 L 192 136 L 192 122 L 193 121 L 193 106 L 194 105 L 194 91 L 195 90 L 195 77 L 195 76 L 61 76 Z M 85 226 L 85 237 L 90 241 L 167 241 L 171 237 L 171 227 L 171 226 L 85 226 Z"/>
-        </svg>
-    </button>
-</div>
 <!-- Контекстное меню для текста -->
 <div class="drawing-context-menu" id="textContextMenu" style="display: none;">
 <button class="context-menu-btn copy-btn" id="textContextCopyBtn" title="Копировать текст">
@@ -659,67 +633,6 @@
         <button class="delete-btn" id="deleteDrawing">Удалить</button>
     </div>
 </div>
-
-
-<div class="drawing-settings-panel" id="tradeCreatePanel" style="display: none; user-select: none;">
-    <div class="settings-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: move; padding-bottom: 10px; border-bottom: 1px solid #404040;">
-        <span style="color: #fff; font-size: 14px; font-weight: bold;"> Стоп Тейк</span>
-        <button id="closeTradeCreate" style="background:transparent; border:none; color:#B0B0B0; font-size:18px; cursor:pointer;">✕</button>
-    </div>
-    
-    <div style="margin-bottom: 12px;">
-        <label style="color: #B0B0B0; font-size: 12px; display: block; margin-bottom: 4px;">Цена входа (ТВХ)</label>
-        <input type="number" id="tradeEntryInput" step="0.01" 
-               style="width: 100%; padding: 8px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px; box-sizing: border-box;">
-    </div>
-    
-    <div style="margin-bottom: 12px;">
-        <label style="color: #B0B0B0; font-size: 12px; display: block; margin-bottom: 4px;">Стоп-лосс (SL)</label>
-        <input type="number" id="tradeSLInput" step="0.01" 
-               style="width: 100%; padding: 8px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px; box-sizing: border-box;">
-    </div>
-       
-    
-    <!-- ✅ ВСТАВЬТЕ СЮДА НОВОЕ ПОЛЕ ДЛЯ TP -->
-    <div style="margin-bottom: 12px;">
-        <label style="color: #B0B0B0; font-size: 12px; display: block; margin-bottom: 4px;">
-            Тейк-профит (TP) <span style="color:#666; font-size:10px;">(необязательно, иначе по R:R)</span>
-        </label>
-        <input type="number" id="tradeTPInput" step="0.01" placeholder="Оставьте пустым для расчета по R:R"
-               style="width: 100%; padding: 8px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px; box-sizing: border-box;">
-    </div>
-    <div style="margin-bottom: 12px;">
-        <label style="color: #B0B0B0; font-size: 12px; display: block; margin-bottom: 4px;">Направление</label>
-        <div style="display: flex; gap: 10px;">
-            <button id="tradeDirectionLong" style="flex: 1; padding: 6px; background: #4A90E2; border: 2px solid #4A90E2; border-radius: 4px; color: #fff; cursor: pointer; transition: all 0.2s;"> Long</button>
-            <button id="tradeDirectionShort" style="flex: 1; padding: 6px; background: #2D2D2D; border: 2px solid #404040; border-radius: 4px; color: #fff; cursor: pointer; transition: all 0.2s;"> Short</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 15px;">
-        <label style="color: #B0B0B0; font-size: 12px; display: block; margin-bottom: 4px;">Риск/Прибыль (1 : __)</label>
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="color: #B0B0B0; font-size: 14px;">1 :</span>
-            <input type="number" id="tradeRRInput" value="2" min="1" max="10" step="1" 
-                   style="flex: 1; padding: 6px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; text-align: center;">
-        </div>
-    </div>
-    
-    <div id="tradePreviewInfo" style="margin-bottom: 15px; padding: 10px; background: #2D2D2D; border-radius: 4px; border-left: 3px solid #4A90E2;">
-        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #B0B0B0;">
-            <span>TP: <span id="tradePreviewTP" style="color: #00ff88;">—</span></span>
-            <span>Риск: <span id="tradePreviewRisk" style="color: #f23645;">—</span></span>
-            <span>Прибыль: <span id="tradePreviewReward" style="color: #00ff88;">—</span></span>
-        </div>
-    </div>
-    
-    <div style="display: flex; gap: 10px;">
-        <button id="tradeCreateBtn" style="flex: 1; padding: 8px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;"> Создать </button>
-        <button id="tradeCancelBtn" style="flex: 1; padding: 8px; background: #404040; color: #fff; border: none; border-radius: 4px; cursor: pointer;"> Отмена</button>
-    </div>
-</div>
-
-
 
 <!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ТРЕНДОВЫХ ЛИНИЙ ========== -->
 <div class="drawing-settings-panel" id="trendSettings">
@@ -1183,159 +1096,120 @@ currentColorBox.style.backgroundColor = hex;
 colorOpacity.addEventListener('input', function() { colorOpacityValue.textContent = this.value + '%'; });
 let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
 let toolbarRafId = null; // Для плавности
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ИСПРАВЛЕННАЯ ВЕРСИЯ) ==========
-(function() {
-    const toolbar = document.getElementById('drawingToolbar');
-    const header = document.getElementById('toolbarHeader');
-    const toggleBtn = document.getElementById('toolbarToggle');
+
+// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ==========
+
+// 1. ✅ ВОССТАНОВЛЕНИЕ ПОЗИЦИИ ПРИ ЗАГРУЗКЕ СТРАНИЦЫ
+const savedLeft = localStorage.getItem('drawingToolbarLeft');
+const savedTop = localStorage.getItem('drawingToolbarTop');
+if (savedLeft) drawingToolbar.style.left = savedLeft;
+if (savedTop) drawingToolbar.style.top = savedTop;
+
+// 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ
+toolbarHeader.addEventListener('mousedown', (e) => {
+    // Игнорируем клики по кнопкам управления, чтобы не начинать перетаскивание
+    if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) {
+        return;
+    }
     
-    if (!toolbar || !header) return;
-
-    // 1. ВОССТАНОВЛЕНИЕ ПОЗИЦИИ
-    const savedLeft = localStorage.getItem('drawingToolbarLeft');
-    const savedTop = localStorage.getItem('drawingToolbarTop');
-    if (savedLeft) toolbar.style.left = savedLeft;
-    if (savedTop) toolbar.style.top = savedTop;
-
-    let isDragging = false;
-    let startX = 0, startY = 0;
-    let startLeft = 0, startTop = 0;
-    let containerWidth = 0, containerHeight = 0;
-    let toolbarWidth = 0, toolbarHeight = 0;
-    let rafId = null;
+    isDraggingToolbar = true;
+    const rect = drawingToolbar.getBoundingClientRect();
+    dragToolbarStartX = e.clientX; 
+    dragToolbarStartY = e.clientY; 
+    dragToolbarStartLeft = rect.left; 
+    dragToolbarStartTop = rect.top;
     
-    // Ссылка на ResizeObserver, чтобы отключать его во время драга
-    let resizeObserver = null; 
+    toolbarWidth = rect.width;
+    toolbarHeight = rect.height;
 
-    // 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ
-    header.addEventListener('mousedown', (e) => {
-        // Игнорируем клики по кнопкам управления
-        if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) return;
-        
-        isDragging = true;
-        
-        // Фиксируем начальные координаты курсора
-        startX = e.clientX;
-        startY = e.clientY;
-        
-        // ✅ ИСПРАВЛЕНИЕ: Используем offsetLeft/offsetTop вместо getBoundingClientRect
-        // Это дает координаты относительно позиционированного родителя, 
-        // что совпадает с системой координат style.left/top
-        startLeft = toolbar.offsetLeft;
-        startTop = toolbar.offsetTop;
-        
-        // Кэшируем размеры один раз при старте, чтобы не вызывать reflow на каждом движении
-        const parent = toolbar.offsetParent || document.body;
-        containerWidth = parent.clientWidth;
-        containerHeight = parent.clientHeight;
-        toolbarWidth = toolbar.offsetWidth;
-        toolbarHeight = toolbar.offsetHeight;
-        
-        // Блокируем выделение текста и меняем курсор
-        document.body.style.userSelect = 'none';
-        document.body.style.webkitUserSelect = 'none';
-        header.style.cursor = 'grabbing';
-        
-        // ✅ Отключаем ResizeObserver, чтобы он не мешал перетаскиванию
-        if (resizeObserver) {
-            resizeObserver.disconnect();
-        }
-        
-        e.preventDefault();
-    });
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+    toolbarHeader.style.cursor = 'grabbing';
+    e.preventDefault();
+});
 
-    // 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        
-        // Используем RAF для плавности, но без пропуска кадров через флаг
-        if (rafId) cancelAnimationFrame(rafId);
-        
-        rafId = requestAnimationFrame(() => {
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
+// 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ
+document.addEventListener('mousemove', (e) => {
+    if (!isDraggingToolbar) return;
+
+    if (!toolbarRafId) {
+        toolbarRafId = requestAnimationFrame(() => {
+            const deltaX = e.clientX - dragToolbarStartX;
+            const deltaY = e.clientY - dragToolbarStartY;
+            let newLeft = dragToolbarStartLeft + deltaX;
+            let newTop = dragToolbarStartTop + deltaY;
             
-            let newLeft = startLeft + deltaX;
-            let newTop = startTop + deltaY;
+            const containerRect = chartElement.getBoundingClientRect();
+            // Убрали жесткий отступ 60, теперь можно прижимать к самому верху (5px)
+            newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, newLeft));
+            newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, newTop));
             
-            // Ограничение границами контейнера (с небольшим отступом 5px)
-            const maxLeft = containerWidth - toolbarWidth - 5;
-            const maxTop = containerHeight - toolbarHeight - 5;
+            drawingToolbar.style.left = newLeft + 'px';
+            drawingToolbar.style.top = newTop + 'px';
             
-            newLeft = Math.max(5, Math.min(maxLeft, newLeft));
-            newTop = Math.max(5, Math.min(maxTop, newTop));
-            
-            toolbar.style.left = newLeft + 'px';
-            toolbar.style.top = newTop + 'px';
+            toolbarRafId = null;
         });
-    });
+    }
+});
 
-    // 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ
-    document.addEventListener('mouseup', () => {
-        if (!isDragging) return;
+// 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ И СОХРАНЕНИЕ
+document.addEventListener('mouseup', () => {
+    if (isDraggingToolbar) {
+        isDraggingToolbar = false;
+        toolbarHeader.style.cursor = 'grab';
         
-        isDragging = false;
-        header.style.cursor = 'grab';
         document.body.style.userSelect = '';
         document.body.style.webkitUserSelect = '';
         
-        if (rafId) {
-            cancelAnimationFrame(rafId);
-            rafId = null;
+        if (toolbarRafId) {
+            cancelAnimationFrame(toolbarRafId);
+            toolbarRafId = null;
         }
+
+        // ✅ Сохраняем точную позицию в память браузера
+        localStorage.setItem('drawingToolbarLeft', drawingToolbar.style.left);
+        localStorage.setItem('drawingToolbarTop', drawingToolbar.style.top);
+    }
+});
+
+// 5. СВОРАЧИВАНИЕ ПАНЕЛИ
+toolbarToggle.addEventListener('click', () => {
+    drawingToolbar.classList.toggle('collapsed');
+    toolbarToggle.textContent = drawingToolbar.classList.contains('collapsed') ? '▶' : '◀';
+    
+    setTimeout(() => {
+        const rect = drawingToolbar.getBoundingClientRect();
+        toolbarWidth = rect.width;
+        toolbarHeight = rect.height;
+    }, 50);
+});
+
+// 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА (БЕЗ СБИВАНИЯ СОХРАНЕННОЙ ПОЗИЦИИ)
+const chartContainerForToolbar = document.getElementById('chart-container');
+if (chartContainerForToolbar && window.ResizeObserver) {
+    const toolbarObserver = new ResizeObserver(() => {
+        if (!drawingToolbar) return;
+        const containerRect = chartContainerForToolbar.getBoundingClientRect();
         
-        // Сохраняем позицию
-        localStorage.setItem('drawingToolbarLeft', toolbar.style.left);
-        localStorage.setItem('drawingToolbarTop', toolbar.style.top);
+        toolbarWidth = drawingToolbar.offsetWidth;
+        toolbarHeight = drawingToolbar.offsetHeight;
         
-        // ✅ Включаем ResizeObserver обратно
-        if (resizeObserver && toolbar.offsetParent) {
-            resizeObserver.observe(toolbar.offsetParent);
+        let currentLeft = parseFloat(drawingToolbar.style.left) || 20;
+        let currentTop = parseFloat(drawingToolbar.style.top) || 60;
+        
+        let newLeft = Math.max(5, Math.min(containerRect.width - toolbarWidth - 5, currentLeft));
+        let newTop = Math.max(5, Math.min(containerRect.height - toolbarHeight - 5, currentTop)); // Убрали 60
+        
+        // Обновляем координаты ТОЛЬКО если панель вылезла за границы из-за уменьшения окна
+        if (newLeft !== currentLeft || newTop !== currentTop) {
+            drawingToolbar.style.left = newLeft + 'px';
+            drawingToolbar.style.top = newTop + 'px';
+            localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
+            localStorage.setItem('drawingToolbarTop', newTop + 'px');
         }
     });
-
-    // 5. СВОРАЧИВАНИЕ ПАНЕЛИ
-    if (toggleBtn) {
-        toggleBtn.addEventListener('click', () => {
-            toolbar.classList.toggle('collapsed');
-            toggleBtn.textContent = toolbar.classList.contains('collapsed') ? '▶' : '◀';
-            // Обновляем кэш размеров после анимации сворачивания
-            setTimeout(() => {
-                toolbarWidth = toolbar.offsetWidth;
-                toolbarHeight = toolbar.offsetHeight;
-            }, 300);
-        });
-    }
-
-    // 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА
-    // ✅ Создаем Observer здесь, чтобы иметь ссылку для отключения в mousedown
-    if (window.ResizeObserver && toolbar.offsetParent) {
-        resizeObserver = new ResizeObserver(() => {
-            if (isDragging) return; // Не трогаем во время драга
-            
-            const parent = toolbar.offsetParent || document.body;
-            const cW = parent.clientWidth;
-            const cH = parent.clientHeight;
-            const tW = toolbar.offsetWidth;
-            const tH = toolbar.offsetHeight;
-            
-            let curLeft = parseFloat(toolbar.style.left) || 20;
-            let curTop = parseFloat(toolbar.style.top) || 60;
-            
-            // Корректируем только если панель вылезла за границы
-            const newLeft = Math.max(5, Math.min(cW - tW - 5, curLeft));
-            const newTop = Math.max(5, Math.min(cH - tH - 5, curTop));
-            
-            if (newLeft !== curLeft || newTop !== curTop) {
-                toolbar.style.left = newLeft + 'px';
-                toolbar.style.top = newTop + 'px';
-                localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
-                localStorage.setItem('drawingToolbarTop', newTop + 'px');
-            }
-        });
-        resizeObserver.observe(toolbar.offsetParent);
-    }
-})();
+    toolbarObserver.observe(chartContainerForToolbar);
+}
 
 // ========== TELEGRAM ==========
 function saveTelegramChatId(id) {
@@ -2116,351 +1990,238 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
 </script>
 <!-- СКРИПТ ПОЛНОЭКРАННОГО РЕЖИМА -->
 <style>
-/* Плавное движение контейнера графика */
-#chart-container {
-    transition: left 0.3s ease, right 0.3s ease, width 0.3s ease;
-    will-change: left, right, width;
-}
-
-/* Панель тикеров скрывается мгновенно (display: none) */
 .fullscreen-mode .ticker-panel {
-    display: none !important;
+display: none !important;
 }
-
-/* В полноэкранном режиме график занимает весь экран */
 .fullscreen-mode #chart-container {
-    right: 0 !important;
-    width: 100vw !important;
-    left: 0 !important;
+right: 0 !important;
+width: 100vw !important;
+left: 0 !important;
 }
 </style>
-
 <script>
 (function() {
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const body = document.body;
-    const containerId = 'chart-container';
+    const chartContainer = document.getElementById('chart-container');
+    let resizeTimeout = null;
+    let isResizing = false;
 
-    let animFrameId = null;          // ID requestAnimationFrame во время анимации
-    let savedLogicalRange = null;    // { from, to } – логический диапазон
-
-    // ============================================================
-    // Сохранить логический диапазон (как в оригинале)
-    // ============================================================
-    function saveLogicalRange(cm) {
-        if (!cm?.chart) return null;
-        const ts = cm.chart.timeScale();
-        const lr = ts.getVisibleLogicalRange();
-        if (lr && isFinite(lr.from) && isFinite(lr.to)) {
-            return { from: lr.from, to: lr.to };
-        }
-        return null;
+    // Кроссбраузерная функция запроса полного экрана
+    function requestFullscreen(elem) {
+        if (elem.requestFullscreen) return elem.requestFullscreen();
+        if (elem.webkitRequestFullscreen) return elem.webkitRequestFullscreen(); // Safari
+        if (elem.msRequestFullscreen) return elem.msRequestFullscreen(); // IE/Edge
     }
 
-    // ============================================================
-    // Восстановить логический диапазон
-    // ============================================================
-    function restoreLogicalRange(cm, range) {
-        if (!cm?.chart || !range) return;
-        cm.chart.timeScale().setVisibleLogicalRange(range);
+    function exitFullscreen() {
+        if (document.exitFullscreen) return document.exitFullscreen();
+        if (document.webkitExitFullscreen) return document.webkitExitFullscreen(); // Safari
+        if (document.msExitFullscreen) return document.msExitFullscreen();
     }
 
-    // ============================================================
-    // Перерисовать оверлеи
-    // ============================================================
-    function redrawOverlays(cm) {
-        if (!cm) return;
-        ['rayManager','trendLineManager','alertLineManager','rulerLineManager']
-            .forEach(name => {
-                const mgr = window[name];
-                mgr?._requestRedraw?.();
-            });
-        cm.indicatorManager?.redrawAll?.();
-    }
-
-    // ============================================================
-    // Основной ресайз графика под текущий размер контейнера
-    // ============================================================
-    function resizeChart() {
-        const cm = window.chartManagerInstance;
-        const container = document.getElementById(containerId);
-        if (!cm?.chart || !container) return;
-
-        const w = container.clientWidth;
-        const h = container.clientHeight;
-        if (w <= 0 || h <= 0) return;
-
-        // Сохраняем диапазон при первом вызове в цепочке
-        if (!savedLogicalRange) {
-            savedLogicalRange = saveLogicalRange(cm);
-        }
-
-        cm.chart.resize(w, h);
-
-        if (savedLogicalRange) {
-            restoreLogicalRange(cm, savedLogicalRange);
-        } else {
-            cm.chart.timeScale().fitContent();
-        }
-
-        redrawOverlays(cm);
-    }
-
-    // ============================================================
-    // Запуск цикла плавного ресайза на время CSS-перехода
-    // ============================================================
-    function startSmoothResize() {
-        const cm = window.chartManagerInstance;
-        if (!cm?.chart) return;
-
-        // Фиксируем диапазон перед началом анимации
-        savedLogicalRange = saveLogicalRange(cm);
-
-        function step() {
-            resizeChart();
-            animFrameId = requestAnimationFrame(step);
-        }
-        animFrameId = requestAnimationFrame(step);
-
-        // Остановка цикла по окончании CSS-перехода контейнера
-        const container = document.getElementById(containerId);
-        const onTransitionEnd = () => {
-            if (animFrameId) {
-                cancelAnimationFrame(animFrameId);
-                animFrameId = null;
-            }
-            savedLogicalRange = null;          // снимаем фиксацию
-            resizeChart();                     // финальный ресайз
-            container.removeEventListener('transitionend', onTransitionEnd);
-        };
-        container.addEventListener('transitionend', onTransitionEnd);
-    }
-
-    // ============================================================
-    // Обработчик полноэкранного режима
-    // ============================================================
-    function handleFullscreenChange() {
-        const isFull = !!document.fullscreenElement;
-        body.classList.toggle('fullscreen-mode', isFull);
-
-        if (fullscreenBtn) {
-            fullscreenBtn.style.backgroundColor = isFull ? '#4A4A4A' : '';
-        }
-
-        startSmoothResize();
-    }
-
-    // ============================================================
-    // Кнопка переключения
-    // ============================================================
     function toggleFullscreen() {
         if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen?.()
-                || document.documentElement.webkitRequestFullscreen?.()
-                || document.documentElement.msRequestFullscreen?.();
+            requestFullscreen(document.documentElement).catch(err => {
+                console.error('Ошибка перехода в полный экран:', err);
+            });
         } else {
-            document.exitFullscreen?.()
-                || document.webkitExitFullscreen?.()
-                || document.msExitFullscreen?.();
+            exitFullscreen();
         }
     }
 
-    // ============================================================
-    // Обработчик обычного изменения размера окна
-    // ============================================================
-    let resizeDebounce;
-    window.addEventListener('resize', () => {
-        if (animFrameId) return;   // не мешаем анимации
-        clearTimeout(resizeDebounce);
-        resizeDebounce = setTimeout(() => {
-            const cm = window.chartManagerInstance;
-            savedLogicalRange = saveLogicalRange(cm);
-            resizeChart();
-            savedLogicalRange = null;
-        }, 50);
-    });
+    function smoothRedraw() {
+        if (isResizing) return;
+        isResizing = true;
+        
+        requestAnimationFrame(() => {
+            try {
+                const cm = window.chartManagerInstance;
+                if (!cm || !cm.chart) {
+                    isResizing = false;
+                    return;
+                }
+                
+                const container = chartContainer || document.getElementById('chart-container');
+                if (!container) {
+                    isResizing = false;
+                    return;
+                }
+                
+                const rect = container.getBoundingClientRect();
+                const width = rect.width || container.clientWidth || window.innerWidth;
+                const height = rect.height || container.clientHeight || window.innerHeight - 100;
+                
+                if (width < 100 || height < 100) {
+                    isResizing = false;
+                    return;
+                }
+                
+                // Изменяем размер и подгоняем масштаб
+                cm.chart.resize(width, Math.max(height, 200));
+                cm.chart.timeScale().fitContent();
+                
+                // Легкая перерисовка объектов
+                const managers = ['rayManager', 'trendLineManager', 'alertLineManager', 'rulerLineManager'];
+                managers.forEach(managerName => {
+                    const manager = window[managerName];
+                    if (manager && typeof manager._requestRedraw === 'function') {
+                        manager._requestRedraw();
+                    }
+                });
+                
+                console.log('✅ График адаптирован к размеру');
+            } catch (e) {
+                console.warn('⚠️ Ошибка при перерисовке:', e);
+            } finally {
+                // Гарантированный сброс флага в любом случае
+                isResizing = false;
+            }
+        });
+    }
 
-    // ============================================================
-    // Привязка событий
-    // ============================================================
+    function handleFullscreenChange() {
+        const isFullscreen = !!document.fullscreenElement;
+        
+        if (fullscreenBtn) {
+            fullscreenBtn.style.backgroundColor = isFullscreen ? '#4A4A4A' : '';
+        }
+        
+        if (isFullscreen) {
+            body.classList.add('fullscreen-mode');
+        } else {
+            body.classList.remove('fullscreen-mode');
+        }
+        
+        if (resizeTimeout) {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = null;
+        }
+        
+        // Небольшая задержка нужна, чтобы браузер успел применить CSS-переходы полного экрана
+        resizeTimeout = setTimeout(() => {
+            smoothRedraw();
+            resizeTimeout = null;
+        }, isFullscreen ? 150 : 200);
+    }
+
+    // Назначаем обработчики
     if (fullscreenBtn) {
         fullscreenBtn.addEventListener('click', toggleFullscreen);
     }
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
-    // ============================================================
-    // Первичная отрисовка после загрузки
-    // ============================================================
-    window.addEventListener('load', () => {
-        setTimeout(() => {
-            savedLogicalRange = null;
-            resizeChart();
-        }, 50);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Для Safari
+
+    // Оптимизированный обработчик resize
+    let resizeTimer = null;
+    window.addEventListener('resize', function() {
+        // УДАЛИТЕ эту строку, если график должен ресайзиться и в обычном режиме:
+        // if (!document.fullscreenElement) return; 
+        
+        if (resizeTimer) {
+            cancelAnimationFrame(resizeTimer);
+        }
+        
+        resizeTimer = requestAnimationFrame(() => {
+            smoothRedraw();
+            resizeTimer = null;
+        });
     });
+
+    // При возвращении на вкладку
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden && document.fullscreenElement) {
+            setTimeout(smoothRedraw, 150);
+        }
+    });
+
+    console.log('✅ Полноэкранный режим и ресайз оптимизированы');
 })();
 </script>
 
-
 <!-- СКРИПТ ДЛЯ СКРИНШОТА -->
 <script>
-function getSymbolAndTimeframe() {
-  let symbol = null;
-  let timeframe = null;
-
-  // 1. Самый надёжный источник – ваш менеджер
-  if (window.chartManagerInstance) {
-    if (window.chartManagerInstance.currentSymbol) {
-      symbol = window.chartManagerInstance.currentSymbol;
-    }
-    if (window.chartManagerInstance.currentInterval) {
-      const tfMap = {
-        '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-        '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
-        '1d': '1D', '1w': '1W', '1M': '1M'
-      };
-      timeframe = tfMap[window.chartManagerInstance.currentInterval]
-        || window.chartManagerInstance.currentInterval;
-    }
-  }
-
-  // 2. DOM‑элементы (ваш исходный способ)
-  const pairDisplay = document.getElementById('pairDisplay');
-  const tfBadge = document.getElementById('currentTfBadge');
-
-  if (!symbol && pairDisplay) {
-    symbol = pairDisplay.textContent?.trim();
-  }
-  if (!timeframe && tfBadge) {
-    timeframe = tfBadge.textContent?.trim();
-  }
-
-  // 3. Парсим URL (например, /exchange/BTCUSDT или ?symbol=ETHUSDT)
-  if (!symbol) {
-    const urlParams = new URLSearchParams(window.location.search);
-    symbol = urlParams.get('symbol') || urlParams.get('pair');
-    if (!symbol) {
-      const pathParts = window.location.pathname.split('/');
-      const lastPart = pathParts[pathParts.length - 1];
-      if (lastPart && /^[A-Z0-9]+$/i.test(lastPart)) {
-        symbol = lastPart;
-      }
-    }
-  }
-  if (!timeframe) {
-    const urlParams = new URLSearchParams(window.location.search);
-    timeframe = urlParams.get('interval') || urlParams.get('tf') || urlParams.get('timeframe');
-  }
-
-  // 4. Глобальная переменная (если используется виджет TradingView)
-  if (!symbol && window.TradingViewSymbol) symbol = window.TradingViewSymbol;
-  if (!timeframe && window.TradingViewInterval) timeframe = window.TradingViewInterval;
-
-  // 5. Fallback
-  if (!symbol || symbol === '') symbol = 'chart';
-  if (!timeframe || timeframe === '') timeframe = 'unk';
-
-  return { symbol, timeframe };
-}
 function takeChartScreenshot() {
-  const { symbol, timeframe } = getSymbolAndTimeframe();
-  const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
-  const filename = `${cleanSymbol}_${timeframe}.png`;
+const element = document.documentElement;
+let symbol = 'UNKNOWN';
+let timeframe = 'UNKNOWN';
+const pairDisplay = document.getElementById('pairDisplay');
+const currentTfBadge = document.getElementById('currentTfBadge');
 
-  const width = window.innerWidth;
-  const height = window.innerHeight;
+if (pairDisplay) symbol = pairDisplay.textContent || 'UNKNOWN';
+if (currentTfBadge) timeframe = currentTfBadge.textContent || 'UNKNOWN';
 
-  // Сохраняем оригинальные стили, чтобы потом восстановить
-  const originalStyles = [];
-  document.querySelectorAll('*').forEach(el => {
-    const orig = {
-      transform: el.style.transform,
-      willChange: el.style.willChange,
-    };
-    originalStyles.push({ el, orig });
-    // Временно убираем проблемные стили
-    el.style.transform = 'none';
-    el.style.willChange = 'auto';
-  });
-
-  // Два RAF для стабилизации
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      html2canvas(document.documentElement, {
-        scale: 1, // 1 вместо 2 – меньше артефактов
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#000000',
-        width: width,
-        height: height,
-        windowWidth: width,
-        windowHeight: height,
-        x: 0,
-        y: 0,
-        foreignObjectRendering: true, // включаем альтернативный рендеринг
-        onclone: (clonedDoc) => {
-          // В клоне тоже сбрасываем всё лишнее
-          clonedDoc.querySelectorAll('*').forEach(el => {
-            el.style.transform = 'none';
-            el.style.willChange = 'auto';
-          });
-          clonedDoc.documentElement.style.overflow = 'hidden';
-          clonedDoc.body.style.overflow = 'hidden';
-          clonedDoc.documentElement.style.width = width + 'px';
-          clonedDoc.documentElement.style.height = height + 'px';
-          clonedDoc.body.style.width = width + 'px';
-          clonedDoc.body.style.height = height + 'px';
-        }
-      }).then(canvas => {
-        // Восстанавливаем оригинальные стили
-        originalStyles.forEach(({ el, orig }) => {
-          el.style.transform = orig.transform || '';
-          el.style.willChange = orig.willChange || '';
-        });
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      }).catch(err => {
-        console.error(err);
-        // Восстанавливаем стили даже при ошибке
-        originalStyles.forEach(({ el, orig }) => {
-          el.style.transform = orig.transform || '';
-          el.style.willChange = orig.willChange || '';
-        });
-      });
-    });
-  });
+if (window.chartManagerInstance) {
+if (window.chartManagerInstance.currentSymbol) {
+symbol = window.chartManagerInstance.currentSymbol;
+}
+if (window.chartManagerInstance.currentInterval) {
+const interval = window.chartManagerInstance.currentInterval;
+const tfMap = {
+'1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+'1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
+'1d': '1D', '1w': '1W', '1M': '1M'
+};
+timeframe = tfMap[interval] || interval;
+}
 }
 
-// Обработчики
-document.addEventListener('DOMContentLoaded', function() {
-  const screenshotBtn = document.getElementById('toolScreenshot');
-  if (screenshotBtn) {
-    screenshotBtn.addEventListener('click', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      takeChartScreenshot();
-    });
-  }
+const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
+const filename = `${cleanSymbol}_${timeframe}.png`;
+const originalOverflow = document.body.style.overflow;
+document.body.style.overflow = 'hidden';
 
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 's' || e.key === 'S') {
-      const tag = document.activeElement?.tagName;
-      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
-        e.preventDefault();
-        takeChartScreenshot();
-      }
-    }
-  });
+html2canvas(element, {
+scale: 2,
+logging: false,
+allowTaint: false,
+useCORS: true,
+backgroundColor: '#000000',
+windowWidth: window.innerWidth,
+windowHeight: window.innerHeight
+}).then((canvas) => {
+document.body.style.overflow = originalOverflow;
+const link = document.createElement('a');
+link.download = filename;
+link.href = canvas.toDataURL('image/png');
+link.click();
+}).catch((error) => {
+document.body.style.overflow = originalOverflow;
+console.error('❌ Ошибка html2canvas:', error);
+});
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+const screenshotBtn = document.getElementById('toolScreenshot');
+if (screenshotBtn) {
+screenshotBtn.addEventListener('click', function(e) {
+e.preventDefault();
+e.stopPropagation();
+takeChartScreenshot();
+});
+}
+
+document.addEventListener('keydown', function(e) {
+if (e.key === 's' || e.key === 'S') {
+if (document.activeElement.tagName !== 'INPUT' &&
+document.activeElement.tagName !== 'TEXTAREA' &&
+document.activeElement.tagName !== 'SELECT') {
+e.preventDefault();
+takeChartScreenshot();
+}
+}
+});
 });
 
-// Восстановление ориентации панели (ваш код, без изменений)
+// ✅ ВОССТАНОВЛЕНИЕ ПОЗИЦИИ И ОРИЕНТАЦИИ ПАНЕЛИ ПРИ ЗАГРУЗКЕ
 (function() {
     const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
     const drawingToolbar = document.getElementById('drawingToolbar');
+    
     if (!toolbarOrientationBtn || !drawingToolbar) return;
 
+    // 1. Восстанавливаем ориентацию
     const savedOrientation = localStorage.getItem('drawingToolbarOrientation') || 'horizontal';
     if (savedOrientation === 'vertical') {
         drawingToolbar.classList.add('vertical');
@@ -2469,17 +2230,30 @@ document.addEventListener('DOMContentLoaded', function() {
         toolbarOrientationBtn.textContent = '⇄';
     }
 
+    // 2. Восстанавливаем позицию СТРОГО из localStorage (без сбросов)
     const savedLeft = localStorage.getItem('drawingToolbarLeft');
     const savedTop = localStorage.getItem('drawingToolbarTop');
+
     if (savedLeft) drawingToolbar.style.left = savedLeft;
     if (savedTop) drawingToolbar.style.top = savedTop;
 
+    // 3. Обработчик кнопки ориентации (с обновлением кэша размеров)
     toolbarOrientationBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+        e.stopPropagation(); // Предотвращаем всплытие, чтобы не сработал drag
         drawingToolbar.classList.toggle('vertical');
-        const isVertical = drawingToolbar.classList.contains('vertical');
-        toolbarOrientationBtn.textContent = isVertical ? '⇅' : '⇄';
-        localStorage.setItem('drawingToolbarOrientation', isVertical ? 'vertical' : 'horizontal');
+        
+        if (drawingToolbar.classList.contains('vertical')) {
+            toolbarOrientationBtn.textContent = '⇅';
+            localStorage.setItem('drawingToolbarOrientation', 'vertical');
+        } else {
+            toolbarOrientationBtn.textContent = '⇄';
+            localStorage.setItem('drawingToolbarOrientation', 'horizontal');
+        }
+        
+        setTimeout(() => {
+            if (typeof toolbarWidth !== 'undefined') toolbarWidth = drawingToolbar.offsetWidth;
+            if (typeof toolbarHeight !== 'undefined') toolbarHeight = drawingToolbar.offsetHeight;
+        }, 50);
     });
 })();
 </script>
@@ -3337,47 +3111,6 @@ setTimeout(function() {
         });
     });
 </script>
-<script>
-(function() {
-    const candleBtn = document.getElementById('candleBtn');
-    const barBtn = document.getElementById('barBtn');
-    
-    if (!candleBtn || !barBtn) return;
 
-    // Функция синхронизации UI с localStorage
-    function syncChartTypeUI() {
-        const savedType = localStorage.getItem('chartType') || 'candle';
-        if (savedType === 'bar') {
-            candleBtn.classList.remove('active');
-            barBtn.classList.add('active');
-        } else {
-            candleBtn.classList.add('active');
-            barBtn.classList.remove('active');
-        }
-    }
-
-    // При клике на свечи
-    candleBtn.addEventListener('click', function() {
-        candleBtn.classList.add('active');
-        barBtn.classList.remove('active');
-    });
-
-    // При клике на бары
-    barBtn.addEventListener('click', function() {
-        barBtn.classList.add('active');
-        candleBtn.classList.remove('active');
-    });
-
-    // 1. При загрузке страницы синхронизируем кнопки с сохраненным значением
-    syncChartTypeUI();
-    
-    // 2. Слушаем изменения localStorage (на случай, если переключение происходит из другого места)
-    window.addEventListener('storage', function(e) {
-        if (e.key === 'chartType') {
-            syncChartTypeUI();
-        }
-    });
-})();
-</script>
 </body>
 </html>
