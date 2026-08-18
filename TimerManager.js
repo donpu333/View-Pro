@@ -217,7 +217,7 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
-    _startTracking() {
+ _startTracking() {
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
@@ -229,20 +229,21 @@ class TimerManager {
                 return;
             }
 
-            // ✅ КРИТИЧЕСКИ ВАЖНО: Не выполняем расчеты на скрытой вкладке.
-            // Это предотвращает чтение некорректных размеров DOM (0 или устаревших) 
-            // и исключает визуальный "скачок" плашки при возврате на вкладку.
             if (document.hidden) {
                 this._rafId = requestAnimationFrame(track);
                 return;
             }
             
+            const cm = this._chartManager;
             const price = this._currentPrice || 
-                         this._chartManager.currentRealPrice || 
-                         this._chartManager.lastCandle?.close;
+                         cm?.currentRealPrice || 
+                         cm?.lastCandle?.close;
                          
             if (price != null && !isNaN(price) && price > 0) {
-                this._updatePosition(price);
+                // ✅ ФИКС: Обновляем позицию только если график не масштабируется и не переключает тикер
+                if (!cm._switchingSymbol && !cm._updatesSuspended && !cm._autoScalePending) {
+                    this._updatePosition(price);
+                }
             }
             
             this._updateColor();
@@ -251,6 +252,7 @@ class TimerManager {
         
         track();
     }
+
 
     _updateColor() {
         if (!this._labelElement || !this._priceRow || !this._timerRow) return;
@@ -320,8 +322,9 @@ class TimerManager {
         }
     }
 
-          _updatePosition(price) {
-        if (!this._labelElement) return false; // ✅ Возвращаем результат
+      
+    _updatePosition(price) {
+        if (!this._labelElement) return false;
         
         if (price == null || isNaN(price) || price <= 0) {
             return false;
@@ -332,9 +335,10 @@ class TimerManager {
             return false;
         }
 
-        // Игнорируем кадры, пока график масштабируется или обрезает данные
-        if (cm._autoScalePending || cm._isTrimming) {
-            return false;
+        // ✅ ФИКС: Замораживаем плашку, пока график масштабируется.
+        // В это время priceToCoordinate возвращает мусорные координаты (3px или 849px).
+        if (cm._switchingSymbol || cm._updatesSuspended || cm._autoScalePending || cm._isTrimming) {
+            return false; 
         }
         
         const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
@@ -347,9 +351,8 @@ class TimerManager {
             return false;
         }
         
-        // Если координата еще не готова, просто ждем следующий кадр.
         if (yCoord == null || isNaN(yCoord)) {
-            return false; // ✅ Не показываем плашку, выходим
+            return false; 
         }
 
         const containerHeight = cm.chartContainer.clientHeight;
@@ -376,9 +379,8 @@ class TimerManager {
             this._labelElement.style.top = finalTop + 'px';
         }
         
-        // Показываем плашку только тогда, когда координата точно верная
         this._showLabel();
-        return true; // ✅ Сообщаем, что позиция успешно применена
+        return true;
     }
     updatePosition(price) {
         this.updatePrice(price);
