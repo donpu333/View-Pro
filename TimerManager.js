@@ -341,11 +341,14 @@ class TimerManager {
         return;
     }
     
-    // ✅ Если координата временно недоступна (график пересчитывается при зуме),
-    // НЕ скрываем плашку — оставляем на месте до следующего кадра
-    if (yCoord == null || isNaN(yCoord)) {
-        return;
+  if (yCoord == null || isNaN(yCoord)) {
+    // График ещё не отрисовал координату, но плашка должна быть видимой.
+    // Показываем её с последней известной позицией (или в центре, если позиции нет).
+    if (!this._isVisible) {
+        this._showLabel();
     }
+    return;
+}
 
     const containerHeight = cm.chartContainer.clientHeight;
     const labelHeight = this._labelElement.offsetHeight || 20;
@@ -470,36 +473,39 @@ class TimerManager {
         }
     }
 
-    _forceUpdate() {
-        if (!this._labelElement) return;
-        
-        this._retryCount = 0;
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-            this._retryTimeout = null;
-        }
-        
-        const scaleWidth = this._getPriceScaleWidth();
-        if (scaleWidth > 30) {
-            this._lastWidth = scaleWidth;
-            this._labelElement.style.width = scaleWidth + 'px';
-        }
-        
-        this._lastTop = null;
-        this._lastColor = null;
-        
-        const price = this._currentPrice || 
-                     this._chartManager?.currentRealPrice || 
-                     this._chartManager?.lastCandle?.close;
-        
-        if (price != null && !isNaN(price) && price > 0) {
-            this._updatePriceText(price);
-            this._updatePosition(price);
-        }
-        
-        this._updateColor();
+   _forceUpdate() {
+    if (!this._labelElement) return;
+    
+    this._retryCount = 0;
+    if (this._retryTimeout) {
+        clearTimeout(this._retryTimeout);
+        this._retryTimeout = null;
     }
-
+    
+    const scaleWidth = this._getPriceScaleWidth();
+    if (scaleWidth > 30) {
+        this._lastWidth = scaleWidth;
+        this._labelElement.style.width = scaleWidth + 'px';
+    }
+    
+    this._lastTop = null;
+    this._lastColor = null;
+    
+    const price = this._currentPrice || 
+                 this._chartManager?.currentRealPrice || 
+                 this._chartManager?.lastCandle?.close;
+    
+    if (price != null && !isNaN(price) && price > 0) {
+        this._updatePriceText(price);
+        this._updatePosition(price);
+        // ✅ Страховка: если после обновления плашка всё ещё скрыта, показываем принудительно
+        if (!this._isVisible) {
+            this._showLabel();
+        }
+    }
+    
+    this._updateColor();
+}
     reattach() {
         this._init();
     }
