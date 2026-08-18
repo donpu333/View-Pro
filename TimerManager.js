@@ -453,27 +453,27 @@ class TimerManager {
     }
 
     // ✅ Новый метод: мягкий сброс состояния без удаления DOM
-    reset() {
-        this.stop();
-        this._currentPrice = null;
-        this._lastTop = null;
-        this._lastColor = null;
-        this._lastWidth = null;
-        this._retryCount = 0;
-        if (this._retryTimeout) {
-            clearTimeout(this._retryTimeout);
-            this._retryTimeout = null;
-        }
-        if (this._labelElement) {
-            this._labelElement.style.visibility = 'hidden';
-            this._labelElement.style.opacity = '0';
-            this._isVisible = false;
-            if (this._priceRow) this._priceRow.textContent = '';
-            if (this._timerRow) this._timerRow.textContent = '';
-        }
+ reset() {
+    this.stop();
+    this._currentPrice = null;
+    this._lastTop = null;
+    this._lastColor = null;
+    this._lastWidth = null;
+    this._retryCount = 0;
+    if (this._retryTimeout) {
+        clearTimeout(this._retryTimeout);
+        this._retryTimeout = null;
     }
+    if (this._labelElement) {
+        // ✅ Очищаем тексты, но НЕ скрываем плашку
+        if (this._priceRow) this._priceRow.textContent = '';
+        if (this._timerRow) this._timerRow.textContent = '';
+        // Показываем плашку (на случай, если была скрыта)
+        this._showLabel();
+    }
+}
 
-   _forceUpdate() {
+ _forceUpdate() {
     if (!this._labelElement) return;
     
     this._retryCount = 0;
@@ -498,12 +498,10 @@ class TimerManager {
     if (price != null && !isNaN(price) && price > 0) {
         this._updatePriceText(price);
         this._updatePosition(price);
-        // ✅ Страховка: если после обновления плашка всё ещё скрыта, показываем принудительно
-        if (!this._isVisible) {
-            this._showLabel();
-        }
     }
     
+    // ✅ Показываем плашку всегда, даже если цена временно недоступна
+    this._showLabel();
     this._updateColor();
 }
     reattach() {
