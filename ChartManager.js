@@ -111,45 +111,57 @@ class ChartManager {
         this._pendingDrawingsRedraw = false;
 
         // ============ VISIBILITY HANDLER ============
-        this._visibilityHandler = () => {
-            if (!document.hidden) {
-                // ✅ Проверяем график перед использованием
-                if (!this._isChartValid()) {
-                    console.warn('⚠️ График не готов после возврата, ждём...');
-                    setTimeout(() => {
-                        if (this._isChartValid()) {
-                            this.refreshCandlesAfterTabHidden();
-                        }
-                    }, 100);
-                    return;
-                }
-                
-                if (window.wsManager) {
-                    window.wsManager.forceReconnect?.();
-                }
-                this.refreshCandlesAfterTabHidden();
-                const price = this.getCurrentPrice();
-                if (price != null) {
-                    this._syncPriceLine(price);
-                }
-                this.scheduleDrawingsUpdate(true);
-                this.requestDrawingsRedraw();
-                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            } else {
-                // ✅ Сохраняем точную видимую позицию перед уходом с вкладки
-                try {
-                    if (this.chart && this.chart.timeScale()) {
-                        const range = this.chart.timeScale().getVisibleLogicalRange();
-                        this._savedLogicalRange = range ? { from: range.from, to: range.to } : null;
+         // ============ VISIBILITY HANDLER ============
+    this._visibilityHandler = () => {
+        if (!document.hidden) {
+            // ✅ Проверяем график перед использованием
+            if (!this._isChartValid()) {
+                console.warn('⚠️ График не готов после возврата, ждём...');
+                setTimeout(() => {
+                    if (this._isChartValid()) {
+                        this.refreshCandlesAfterTabHidden();
                     }
-                } catch (e) {
-                    this._savedLogicalRange = null;
-                }
-                this._startBackgroundTitleUpdate();
+                }, 100);
+                return;
             }
-        };
-        document.addEventListener('visibilitychange', this._visibilityHandler);
-       
+            
+            if (window.wsManager) {
+                window.wsManager.forceReconnect?.();
+            }
+            this.refreshCandlesAfterTabHidden();
+            const price = this.getCurrentPrice();
+            if (price != null) {
+                this._syncPriceLine(price);
+            }
+            this.scheduleDrawingsUpdate(true);
+            this.requestDrawingsRedraw();
+            if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+            
+            // ✅ ФИКС: Принудительно пересчитываем размеры после возврата на вкладку
+            requestAnimationFrame(() => {
+                if (this._isChartValid()) {
+                    this._updateMainChartHeight();
+                    if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                    this.chart.applyOptions({ 
+                        width: this.chartContainer.clientWidth, 
+                        height: this.chartContainer.clientHeight 
+                    });
+                }
+            });
+        } else {
+            // ✅ Сохраняем точную видимую позицию перед уходом с вкладки
+            try {
+                if (this.chart && this.chart.timeScale()) {
+                    const range = this.chart.timeScale().getVisibleLogicalRange();
+                    this._savedLogicalRange = range ? { from: range.from, to: range.to } : null;
+                }
+            } catch (e) {
+                this._savedLogicalRange = null;
+            }
+            this._startBackgroundTitleUpdate();
+        }
+    };
+    document.addEventListener('visibilitychange', this._visibilityHandler);
         // ============ ХЕНДЛЕРЫ ============
         this._priceUpdateHandler = null;
         this._candleCheckerTimeout = null;
@@ -341,7 +353,7 @@ class ChartManager {
             }
         })();
 
-        this._initPromise = (async () => {
+            this._initPromise = (async () => {
             await this.waitForReady();
             this._updateMainChartHeight();
             
@@ -352,6 +364,19 @@ class ChartManager {
                 });
                 this._resizeObserver.observe(panelsContainer);
             }
+            
+            // ✅ НОВОЕ: Следим за изменением размера самого контейнера графика
+            this._chartContainerResizeObserver = new ResizeObserver(() => {
+                clearTimeout(this._containerResizeTimeout);
+                this._containerResizeTimeout = setTimeout(() => {
+                    if (this._isChartValid()) {
+                        this._updateMainChartHeight();
+                        if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                        this.forceRedraw();
+                    }
+                }, 50);
+            });
+            this._chartContainerResizeObserver.observe(this.chartContainer);
         })();
      
         this._setupPanelsSync();
@@ -809,7 +834,7 @@ class ChartManager {
         this.forceRedraw();
     }
 
-    destroy() {
+      destroy() {
         if (this._bgTitleInterval) {
             clearInterval(this._bgTitleInterval);
             this._bgTitleInterval = null;
@@ -847,6 +872,10 @@ class ChartManager {
         document.removeEventListener('visibilitychange', this._visibilityHandler);
         if (this._resizeObserver) this._resizeObserver.disconnect();
         
+        // ✅ ДОБАВЛЕНО: Очистка новых Observer'ов для фикса F12
+        if (this._chartContainerResizeObserver) this._chartContainerResizeObserver.disconnect();
+        if (this._containerResizeTimeout) clearTimeout(this._containerResizeTimeout);
+        
         if (this.timerManager && typeof this.timerManager.destroy === 'function') {
             this.timerManager.destroy();
         }
@@ -862,7 +891,6 @@ class ChartManager {
         this._symbolChangeCallbacks = [];
         console.log('✅ ChartManager полностью уничтожен, утечек памяти нет');
     }
-
     _startNewCandleChecker() {
         const check = () => {
             if (document.hidden) {
@@ -1031,17 +1059,22 @@ class ChartManager {
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
     
-    setupEventListeners() {
+         setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
                 if (this._isChartValid()) {
-                    const width = this.chartContainer.clientWidth;
-                    const height = this.chartContainer.clientHeight;
-                    this.chart.applyOptions({ width, height });
+                    // 1. СНАЧАЛА пересчитываем высоту главного графика
+                    this._updateMainChartHeight();
+                    
+                    // 2. ПОТОМ обновляем панели индикаторов
                     if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                    if (this._updateMainChartHeight) this._updateMainChartHeight();
+                    
+                    // 3. Принудительно перерисовываем
+                    this.forceRedraw();
+                    
+                    // 4. Обновляем позицию
                     setTimeout(() => this.scrollToLast(), 50);
                 }
                 this.scheduleDrawingsUpdate(true);
@@ -2162,7 +2195,6 @@ setChartType(type) {
         if (this.currentRealPrice !== null && this.currentRealPrice !== undefined && !isNaN(this.currentRealPrice)) return this.currentRealPrice;
         return null;
     }
-
     _updateMainChartHeight() {
         if (!this._isChartValid()) return;
         const chartContainer = document.getElementById('chart-container');
@@ -2185,8 +2217,25 @@ setChartType(type) {
         this.chart.resize(width, newChartHeight);
         const volumeScale = this.chart.priceScale('volume');
         if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+        
+        // ✅ НОВОЕ: Обновляем размеры всех панелей индикаторов
+        if (this.indicatorManager?.panelManager) {
+            const panels = this.indicatorManager.panelManager.panels;
+            if (panels && Array.isArray(panels)) {
+                panels.forEach(panel => {
+                    if (panel.chart && !panel.isCollapsed && panel.container) {
+                        try {
+                            const panelHeight = panel.container.clientHeight;
+                            const panelWidth = panel.container.clientWidth;
+                            if (panelHeight > 0 && panelWidth > 0) {
+                                panel.chart.resize(panelWidth, panelHeight);
+                            }
+                        } catch (e) {}
+                    }
+                });
+            }
+        }
     }
-
     _resizeIndicatorPanels() {
         const chartContainer = document.getElementById('chart-container');
         if (!chartContainer) return;
