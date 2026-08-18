@@ -897,64 +897,64 @@ class ChartManager {
 
     _setupPanelsSync() {}
 
-    setupOptimizedSubscriptions() {
-        this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-            const now = performance.now();
-            this._isScrollingFast = (now - this._lastScrollTime) < 40;
-            this._isScrolling = true;
-            this._lastScrollTime = now;
-            this._lastVisibleRange = range;
+  setupOptimizedSubscriptions() {
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        const now = performance.now();
+        this._isScrollingFast = (now - this._lastScrollTime) < 40;
+        this._isScrolling = true;
+        this._lastScrollTime = now;
+        this._lastVisibleRange = range;
 
-            // ✅ ОБНОВЛЯЕМ ФЛАГ ПРОСМОТРА ИСТОРИИ
-            if (range && this.chartData && this.chartData.length > 0) {
-                const lastIndex = this.chartData.length - 1;
-                this._isViewingHistory = range.to < lastIndex;
+        if (range && this.chartData && this.chartData.length > 0) {
+            const lastIndex = this.chartData.length - 1;
+            this._isViewingHistory = range.to < lastIndex;
+        }
+
+        clearTimeout(this._scrollStopTimeout);
+        this._pendingDrawingsRedraw = true;
+
+        this._scrollStopTimeout = setTimeout(() => {
+            this._isScrolling = false;
+            this._isScrollingFast = false;
+            
+            this._applyPendingTrim();
+            this.onVisibleLogicalRangeChange(this._lastVisibleRange);
+            
+            if (this._pendingDrawingsRedraw) {
+                this._pendingDrawingsRedraw = false;
+                this.requestDrawingsRedraw();
             }
+        }, 150);
 
-            clearTimeout(this._scrollStopTimeout);
-            this._pendingDrawingsRedraw = true;
+        // ✅ МГНОВЕННО обновляем позицию плашки при зуме/скролле
+        if (this.timerManager) {
+            const price = this.currentRealPrice ?? this.lastCandle?.close;
+            if (price != null) {
+                this.timerManager.updatePosition(price);
+            }
+        }
 
-            this._scrollStopTimeout = setTimeout(() => {
-                this._isScrolling = false;
-                this._isScrollingFast = false;
-                
-                this._applyPendingTrim();
-                this.onVisibleLogicalRangeChange(this._lastVisibleRange);
-                
-                if (this._pendingDrawingsRedraw) {
-                    this._pendingDrawingsRedraw = false;
-                    this.requestDrawingsRedraw();
-                }
-            }, 150);
-
-            // ✅ FIX: убран прямой вызов timerManager.updatePosition() на каждый тик скролла/зума.
-            // TimerManager сам непрерывно отслеживает позицию в собственном rAF-цикле
-            // (_startTracking). Дублирующий синхронный вызов здесь использовал источник
-            // цены (currentRealPrice/lastCandle.close), который на лету мог отличаться
-            // от того, что использует TimerManager, и это давало "дребезг" плашки при скролле.
-
-            if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
-                if (!this._panelsSyncRafId) {
-                    this._panelsSyncRafId = requestAnimationFrame(() => {
-                        this._isSyncing = true;
-                        const panels = this.indicatorManager.panelManager.panels;
-                        panels.forEach((panel) => {
-                            if (panel.chart && !panel.isCollapsed) {
-                                try { 
-                                    panel.chart.timeScale().setVisibleLogicalRange(range); 
-                                } catch(e) {}
-                            }
-                        });
-                        this._isSyncing = false;
-                        this._panelsSyncRafId = null;
+        if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
+            if (!this._panelsSyncRafId) {
+                this._panelsSyncRafId = requestAnimationFrame(() => {
+                    this._isSyncing = true;
+                    const panels = this.indicatorManager.panelManager.panels;
+                    panels.forEach((panel) => {
+                        if (panel.chart && !panel.isCollapsed) {
+                            try { 
+                                panel.chart.timeScale().setVisibleLogicalRange(range); 
+                            } catch(e) {}
+                        }
                     });
-                }
+                    this._isSyncing = false;
+                    this._panelsSyncRafId = null;
+                });
             }
-        });
-        
-        this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
-    }
-
+        }
+    });
+    
+    this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
+}
     setupEventListeners() {
         let resizeTimeout;
         window.addEventListener('resize', () => {
@@ -1040,86 +1040,101 @@ class ChartManager {
         } catch (e) {}
     }
 
-     setChartType(type) {
-        if (!this.chart) return;
-        this.currentChartType = type;
-        localStorage.setItem('chartType', type);
-        
-        // ✅ 1. Синхронизируем данные в ОБЕИХ сериях ДО переключения видимости.
-        // Это предотвращает "пустой экран" или дерганье при смене типа.
-        if (this.chartData && this.chartData.length > 0) {
-            if (this.candleSeries) this.candleSeries.setData(this.chartData);
-            if (this.barSeries) this.barSeries.setData(this.chartData);
+   setChartType(type) {
+    if (!this.chart) return;
+    this.currentChartType = type;
+    localStorage.setItem('chartType', type);
+    
+    // ✅ СИНХРОНИЗИРУЕМ неактивную серию перед переключением
+    // Даже если мы обновляем обе серии в updateLastCandle, при первом
+    // переключении после старта неактивная может быть пустой
+    if (type === 'candle') {
+        // Обновляем barSeries (неактивную) на случай если отстала
+        if (this.barSeries && this.chartData.length > 0) {
+            this.barSeries.setData(this.chartData);
         }
-        
-        // ✅ 2. Переключаем видимость
-        if (type === 'candle') {
-            this.candleSeries.applyOptions({ visible: true });
-            this.barSeries.applyOptions({ visible: false });
-        } else if (type === 'bar') {
-            this.barSeries.applyOptions({ visible: true });
-            this.candleSeries.applyOptions({ visible: false });
+        if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
+        if (this.barSeries) this.barSeries.applyOptions({ visible: false });
+    } else if (type === 'bar') {
+        // Обновляем candleSeries (неактивную) на случай если отстала
+        if (this.candleSeries && this.chartData.length > 0) {
+            this.candleSeries.setData(this.chartData);
         }
-        
-        // ✅ 3. Обновляем объемы СТРОГО ОДИН РАЗ после переключения главных серий
-        if (this.volumeSeries && this.chartData && this.chartData.length > 0) {
-            this._volumeDataCache = null;
-            this._volumeDataDirty = true;
-            this._lastVolumeUpdateIndex = -1; 
-            this._updateVolumeOptimized();
-        }
-        
-        if (this.barSeries) {
-            this.barSeries.applyOptions({ 
-                upColor: CONFIG.colors.bullish, 
-                downColor: CONFIG.colors.bearish 
-            });
-        }
-        
-        if (this.indicatorManager?.activeIndicators) {
-            this.indicatorManager.activeIndicators.forEach(indicator => {
-                try { indicator.createSeries(); } catch (e) {}
-            });
-        }
-        
-        setTimeout(() => {
-            if (window.rayManager) window.rayManager.syncWithNewTimeframe();
-            if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
-            if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
-            if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
-            if (window.textManager) window.textManager.syncWithNewTimeframe();
-        }, 50);
-        
-        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (activeSeries) {
-            const lineColor = this._getLineColor();
-            activeSeries.applyOptions({
-                priceLineVisible: true, 
-                lastValueVisible: false,
-                priceLineColor: lineColor,
-                priceLineSource: 'lastBar',
-                priceLineWidth: 1,
-                priceLineStyle: LightweightCharts.LineStyle.Dashed
-            });
-            this._lastAppliedColor = lineColor;
-        }
-
-        // ✅ 4. Обновляем таймер ОДИН раз, без спама requestAnimationFrame
-        if (this.timerManager) {
-            const price = this.currentRealPrice ?? this.lastCandle?.close;
-            if (price != null) {
-                this.timerManager.updatePrice(price);
-                this.timerManager._forceUpdate();
-            }
-        }
-
-        if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
-            window._dailySeparator.reattach();
-        }
-        if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
-            window._sessionHighlighter.reattach();
-        }
+        if (this.barSeries) this.barSeries.applyOptions({ visible: true });
+        if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
     }
+    
+    if (this.volumeSeries && this.chartData.length > 0) {
+        this._volumeDataCache = null;
+        this._volumeDataDirty = true;
+        this._lastVolumeUpdateIndex = -1; 
+        this._updateVolumeOptimized();
+    }
+    
+    if (this.barSeries) {
+        this.barSeries.applyOptions({ 
+            upColor: CONFIG.colors.bullish, 
+            downColor: CONFIG.colors.bearish 
+        });
+    }
+    
+    if (this.indicatorManager?.activeIndicators) {
+        this.indicatorManager.activeIndicators.forEach(indicator => {
+            try { indicator.createSeries(); } catch (e) {}
+        });
+    }
+    
+    setTimeout(() => {
+        if (window.rayManager) window.rayManager.syncWithNewTimeframe();
+        if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
+        if (window.rulerLineManager) window.rulerLineManager.syncWithNewTimeframe();
+        if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
+        if (window.textManager) window.textManager.syncWithNewTimeframe();
+    }, 50);
+    
+    const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (activeSeries) {
+        const lineColor = this._getLineColor();
+        activeSeries.applyOptions({
+            priceLineVisible: true, 
+            lastValueVisible: false,
+            priceLineColor: lineColor,
+            priceLineSource: 'lastBar',
+            priceLineWidth: 1,
+            priceLineStyle: LightweightCharts.LineStyle.Dashed
+        });
+        this._lastAppliedColor = lineColor;
+    }
+
+    if (this.timerManager) {
+        const price = this.currentRealPrice ?? this.lastCandle?.close;
+        if (price != null) {
+            this.timerManager.updatePrice(price);
+        }
+        
+        requestAnimationFrame(() => {
+            if (this.timerManager) this.timerManager._forceUpdate();
+        });
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (this.timerManager) this.timerManager._forceUpdate();
+            });
+        });
+        setTimeout(() => {
+            if (this.timerManager) this.timerManager._forceUpdate();
+        }, 150);
+        setTimeout(() => {
+            if (this.timerManager) this.timerManager._forceUpdate();
+        }, 400);
+    }
+
+    if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
+        window._dailySeparator.reattach();
+    }
+    if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
+        window._sessionHighlighter.reattach();
+    }
+}
 
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended) return;
