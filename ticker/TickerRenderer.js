@@ -132,7 +132,7 @@ class TickerRenderer {
 
         for (const item of elementsToFlash) {
             item.el.classList.remove('flash-up', 'flash-down');
-            void item.el.offsetWidth; 
+            // ✅ УБРАНО: void item.el.offsetWidth; (Вызывало фризы)
             item.el.classList.add(item.flashClass);
         }
 
@@ -160,7 +160,7 @@ class TickerRenderer {
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
                     const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
                     els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth; 
+                    // ✅ УБРАНО: void els.price.offsetWidth; (Вызывало фризы)
                     els.price.classList.add(flashClass);
                 }
             }
@@ -184,83 +184,82 @@ class TickerRenderer {
         return [...arrayToSort].sort((a, b) => this._compareTickers(a, b, sortBy, direction));
     }
 
- getFilteredTickers() {
-    const state = this.parent?.state;
-    if (!state) return [];
+    getFilteredTickers() {
+        const state = this.parent?.state;
+        if (!state) return [];
 
-    // ✅ ИЗМЕНЕНО: Если сортировка отключена, используем 'none', чтобы кэш не путался
-    let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'none'}:${state.sortDirection || 'none'}`;
+        let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'none'}:${state.sortDirection || 'none'}`;
 
-    if (state.activeTab === 'favorites') {
-        const favs = state.favorites || [];
-        cacheKey += `:favs_${favs.length}_${favs[0] || ''}_${favs[favs.length - 1] || ''}`;
-    }
+        if (state.activeTab === 'favorites') {
+            const favs = state.favorites || [];
+            cacheKey += `:favs_${favs.length}_${favs[0] || ''}_${favs[favs.length - 1] || ''}`;
+        }
 
-    if (state.activeTab === 'flags') {
-        const flags = state.flags || {};
-        const activeFlags = Object.keys(flags).filter(k => flags[k]);
-        cacheKey += `:flags_${activeFlags.length}_${activeFlags[0] || ''}`;
-    }
+        if (state.activeTab === 'flags') {
+            const flags = state.flags || {};
+            const activeFlags = Object.keys(flags).filter(k => flags[k]);
+            cacheKey += `:flags_${activeFlags.length}_${activeFlags[0] || ''}`;
+        }
 
-    if (this.parent.filterCache?.key === cacheKey) {
-        return this.parent.filterCache.result;
-    }
+        if (this.parent.filterCache?.key === cacheKey) {
+            return this.parent.filterCache.result;
+        }
 
-    let result = [];
-    try {
-        const map = this.parent.tickersMap;
-        if (!map) return [];
+        let result = [];
+        try {
+            const map = this.parent.tickersMap;
+            if (!map) return [];
 
-        switch (state.activeTab) {
-            case 'favorites': {
-                const favSet = new Set(state.favorites || []);
-                result = Array.from(map.values()).filter(t => favSet.has(t.symbol));
-                break;
-            }
-            case 'flags': {
-                const flags = state.flags || {};
-                const flagTab = state.activeFlagTab;
-                result = Object.entries(flags)
-                    .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
-                    .map(([key]) => map.get(key))
-                    .filter(t => t !== undefined);
-                break;
-            }
-            default: {
-                const sourceKeys = state.customSymbols || [];
-                if (sourceKeys.length === 0) {
-                    result = Array.from(map.values());
-                } else {
-                    let filteredKeys = [...sourceKeys];
-                    if (state.marketFilter && state.marketFilter !== 'all') {
-                        filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
-                    }
-                    if (state.exchangeFilter && state.exchangeFilter !== 'all') {
-                        filteredKeys = filteredKeys.filter(k => {
-                            const parts = k.split(':');
-                            return parts[1] === state.exchangeFilter;
-                        });
-                    }
-                    result = filteredKeys.map(key => map.get(key)).filter(t => t !== undefined);
+            switch (state.activeTab) {
+                case 'favorites': {
+                    const favSet = new Set(state.favorites || []);
+                    result = Array.from(map.values()).filter(t => favSet.has(t.symbol));
+                    break;
                 }
-                break;
+                case 'flags': {
+                    const flags = state.flags || {};
+                    const flagTab = state.activeFlagTab;
+                    result = Object.entries(flags)
+                        .filter(([, flag]) => flag && (!flagTab || flag === flagTab))
+                        .map(([key]) => map.get(key))
+                        .filter(t => t !== undefined);
+                    break;
+                }
+                default: {
+                    const sourceKeys = state.customSymbols || [];
+                    if (sourceKeys.length === 0) {
+                        result = Array.from(map.values());
+                    } else {
+                        let filteredKeys = [...sourceKeys];
+                        if (state.marketFilter && state.marketFilter !== 'all') {
+                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                        }
+                        if (state.exchangeFilter && state.exchangeFilter !== 'all') {
+                            filteredKeys = filteredKeys.filter(k => {
+                                const parts = k.split(':');
+                                return parts[1] === state.exchangeFilter;
+                            });
+                        }
+                        result = filteredKeys.map(key => map.get(key)).filter(t => t !== undefined);
+                    }
+                    break;
+                }
             }
+
+            if (state.sortBy) {
+                const direction = state.sortDirection === 'asc' ? 1 : -1;
+                result.sort((a, b) => this._compareTickers(a, b, state.sortBy, direction));
+            }
+
+        } catch (error) {
+            console.error('❌ getFilteredTickers error:', error);
+            result = Array.from(this.parent.tickersMap?.values() || []);
         }
 
-        // ✅ ИЗМЕНЕНО: Сортируем ТОЛЬКО если sortBy не null
-        if (state.sortBy) {
-            const direction = state.sortDirection === 'asc' ? 1 : -1;
-            result.sort((a, b) => this._compareTickers(a, b, state.sortBy, direction));
-        }
-
-    } catch (error) {
-        console.error('❌ getFilteredTickers error:', error);
-        result = Array.from(this.parent.tickersMap?.values() || []);
+        this.parent.filterCache = { key: cacheKey, result };
+        return result;
     }
 
-    this.parent.filterCache = { key: cacheKey, result };
-    return result;
-}
     _compareTickers(a, b, sortBy, direction) {
         if (!a || !b) return 0;
         const flagPriority = { red: 1, yellow: 2, green: 3, lime: 4, blue: 5, cyan: 6, purple: 7, null: 999 };
@@ -431,7 +430,7 @@ class TickerRenderer {
                 el.style.display = 'none';
             }
         }
-    } // <--- ВОТ ЭТА СКОБКА БЫЛА ПОТЕРЯНА
+    } 
 
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
@@ -566,96 +565,87 @@ class TickerRenderer {
         return result;
     }
 
-  setupHeaderSorting() {
-    const parent = this.parent;
-    if (!parent) return;
+    setupHeaderSorting() {
+        const parent = this.parent;
+        if (!parent) return;
 
-    if (parent._sortClickHandler) {
-        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.removeEventListener('click', parent._sortClickHandler);
-        });
-    }
+        if (parent._sortClickHandler) {
+            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+                header.removeEventListener('click', parent._sortClickHandler);
+            });
+        }
 
-    const savedSortBy = localStorage.getItem('tickerSortBy');
-    const savedSortDir = localStorage.getItem('tickerSortDir');
-    const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
-    
-    // ✅ ИЗМЕНЕНО: Разрешаем null, чтобы сортировку можно было отключить
-    // Если в localStorage пусто, sortBy и sortDirection будут null
-    parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null;
-    parent.state.sortDirection = (savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null;
+        const savedSortBy = localStorage.getItem('tickerSortBy');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
+        
+        parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null;
+        parent.state.sortDirection = (savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null;
 
-    parent._sortClickHandler = (e) => {
-        e.stopPropagation();
-        const header = e.currentTarget;
-        const sortBy = header.dataset.sort;
+        parent._sortClickHandler = (e) => {
+            e.stopPropagation();
+            const header = e.currentTarget;
+            const sortBy = header.dataset.sort;
 
-        // ✅ Логика трех состояний: desc -> asc -> отключено
-        if (parent.state.sortBy === sortBy) {
-            if (parent.state.sortDirection === 'desc') {
-                parent.state.sortDirection = 'asc';
-            } else if (parent.state.sortDirection === 'asc') {
-                // Третье нажатие отключает сортировку
-                parent.state.sortBy = null;
-                parent.state.sortDirection = null;
+            if (parent.state.sortBy === sortBy) {
+                if (parent.state.sortDirection === 'desc') {
+                    parent.state.sortDirection = 'asc';
+                } else if (parent.state.sortDirection === 'asc') {
+                    parent.state.sortBy = null;
+                    parent.state.sortDirection = null;
+                }
+            } else {
+                parent.state.sortBy = sortBy;
+                parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
             }
-        } else {
-            // Если кликаем по новой колонке, включаем с дефолтным направлением
-            parent.state.sortBy = sortBy;
-            parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
-        }
 
-        // ✅ ИЗМЕНЕНО: Сохраняем пустую строку вместо null, чтобы localStorage не превращал null в строку "null"
-        localStorage.setItem('tickerSortBy', parent.state.sortBy || '');
-        localStorage.setItem('tickerSortDir', parent.state.sortDirection || '');
+            localStorage.setItem('tickerSortBy', parent.state.sortBy || '');
+            localStorage.setItem('tickerSortDir', parent.state.sortDirection || '');
 
-        if (parent.watchlistManager?._saveSortForList) {
-            parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
-        }
+            if (parent.watchlistManager?._saveSortForList) {
+                parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
+            }
 
-        // 1. Сбрасываем все иконки к виду "неактивно"
-        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-            icon.className = 'fas fa-sort'; 
-            icon.style.display = '';        
+            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+                icon.className = 'fas fa-sort'; 
+                icon.style.display = '';        
+            });
+
+            if (parent.state.sortBy) {
+                const icon = header.querySelector('i');
+                if (icon) {
+                    if (parent.state.sortBy === 'flag') {
+                        icon.style.display = 'none';
+                    } else {
+                        icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                    }
+                }
+            }
+
+            parent.filterCache = null;
+            parent.renderTickerList();
+        };
+
+        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+            header.addEventListener('click', parent._sortClickHandler);
+            if (header.dataset.sort === 'flag') {
+                const icon = header.querySelector('i');
+                if (icon) icon.style.display = 'none';
+            }
         });
 
-        // 2. Если сортировка активна, подсвечиваем нужную иконку
         if (parent.state.sortBy) {
-            const icon = header.querySelector('i');
-            if (icon) {
-                if (parent.state.sortBy === 'flag') {
-                    icon.style.display = 'none';
-                } else {
+            const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
+            if (activeHeader) {
+                const icon = activeHeader.querySelector('i');
+                if (icon) {
                     icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                    if (parent.state.sortBy === 'flag') icon.style.display = 'none';
                 }
             }
         }
-
-        parent.filterCache = null;
-        parent.renderTickerList();
-    };
-
-    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-        header.addEventListener('click', parent._sortClickHandler);
-        if (header.dataset.sort === 'flag') {
-            const icon = header.querySelector('i');
-            if (icon) icon.style.display = 'none';
-        }
-    });
-
-    // ✅ ИЗМЕНЕНО: Восстановление состояния при загрузке
-    // Если state.sortBy пуст, то ни одна стрелка не будет подсвечена
-    if (parent.state.sortBy) {
-        const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
-        if (activeHeader) {
-            const icon = activeHeader.querySelector('i');
-            if (icon) {
-                icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                if (parent.state.sortBy === 'flag') icon.style.display = 'none';
-            }
-        }
     }
-}
+
     destroy() {
         if (this._scrollHandler) {
             const container = document.getElementById('tickerListContainer');
