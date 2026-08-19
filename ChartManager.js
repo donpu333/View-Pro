@@ -1146,18 +1146,15 @@ class ChartManager {
 
 setChartType(type) {
     if (!this._isChartValid()) return;
+    
+    // ✅ ВКЛЮЧАЕМ ЗАМОК: запрещаем фоновым процессам пересчитывать объемы
+    this._isSwitchingChartType = true; 
+    
     this.currentChartType = type;
     localStorage.setItem('chartType', type);
 
-    const hasData = this.chartData.length > 0;
-
-    // Синхронизируем данные серий
-    if (hasData) {
-        if (this.candleSeries) this.candleSeries.setData(this.chartData);
-        if (this.barSeries) this.barSeries.setData(this.chartData);
-    }
-
-    // Переключаем видимость серий
+    // ✅ УБРАНО: this.candleSeries.setData() и this.barSeries.setData()
+    // Данные уже в памяти. Меняем только видимость серий.
     if (type === 'candle') {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
         if (this.barSeries) this.barSeries.applyOptions({ visible: false });
@@ -1166,14 +1163,13 @@ setChartType(type) {
         if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
     }
 
-    // ✅ ФИКС ОБЪЕМОВ: Не пересчитываем и не сбрасываем кэш объемов!
-    // Данные свечей и баров идентичны, объемам незачем перерисовываться.
-    // Просто жестко фиксируем масштаб шкалы объема, чтобы она не "прыгала".
+    // ✅ ФИКС ОБЪЕМОВ: Жестко запрещаем автомасштаб и фиксируем отступы
     if (this.volumeSeries) {
         const volumeScale = this.chart.priceScale('volume');
         if (volumeScale) {
             volumeScale.applyOptions({ 
-                scaleMargins: { top: 0.85, bottom: 0 } // Унифицировано с _updateMainChartHeight
+                scaleMargins: { top: 0.85, bottom: 0 },
+                autoScale: false // Жестко запрещаем библиотеке менять масштаб
             });
         }
     }
@@ -1247,6 +1243,11 @@ setChartType(type) {
     if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
         window._sessionHighlighter.reattach();
     }
+    
+    // ✅ ВЫКЛЮЧАЕМ ЗАМОК через 300мс (даем графику время успокоиться)
+    setTimeout(() => {
+        this._isSwitchingChartType = false;
+    }, 300);
 }
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended || !this._isChartValid()) return;
@@ -2457,8 +2458,11 @@ setChartType(type) {
         return volumeData;
     }
 
-    _updateVolumeOptimized() {
+      _updateVolumeOptimized() {
         if (!this.volumeSeries || !this.chartData.length || !this._isChartValid()) return;
+        
+        // ✅ ФИКС: Если идет переключение типа графика - полностью блокируем пересчет объемов!
+        if (this._isSwitchingChartType) return;
         
         if (this._volumeDataDirty && this._lastVolumeUpdateIndex === this.chartData.length - 1) {
             const lastCandle = this.chartData[this.chartData.length - 1];
@@ -2479,7 +2483,6 @@ setChartType(type) {
             this._lastVolumeUpdateIndex = this.chartData.length - 1;
         }
     }
-
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
         let controller;
         if (requestType === 'history') {
