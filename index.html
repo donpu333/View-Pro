@@ -3083,95 +3083,6 @@ setTimeout(function() {
 
 <script>
 (function() {
-    function updateOHLCContrast() {
-        const bgColor = localStorage.getItem('chartBgColor') || '#000000';
-        const overlay = document.getElementById('candleStatsOverlay');
-        
-        const hex = bgColor.replace('#', '');
-        const r = parseInt(hex.substr(0, 2), 16);
-        const g = parseInt(hex.substr(2, 2), 16);
-        const b = parseInt(hex.substr(4, 2), 16);
-        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-        
-        const isLight = brightness > 128;
-        
-        // ====== 1. OVERLAY ======
-        if (overlay) {
-            const labelColor = isLight ? '#333333' : '#B0B0B0';
-            const shadow = isLight 
-                ? '0 0 3px rgba(255,255,255,0.9), 1px 1px 2px rgba(255,255,255,0.7)'
-                : '0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8)';
-            
-            overlay.querySelectorAll('.stat-label').forEach(el => {
-                el.style.color = labelColor;
-                el.style.textShadow = shadow;
-            });
-            
-            overlay.querySelectorAll('.stat-value, .change-value').forEach(el => {
-                el.style.textShadow = shadow;
-            });
-        }
-        
-        // ====== 2. CROSSHAIR — ПУНКТИР ======
-        if (window.chartManagerInstance && window.chartManagerInstance.chart) {
-            const chart = window.chartManagerInstance.chart;
-            
-            const crosshairColor = isLight ? '#333333' : '#9598A1';
-            const crosshairLabelBg = isLight ? '#FFFFFF' : '#333333';
-            const borderColor = isLight ? '#888888' : '#333333';
-            const textColor = isLight ? '#333333' : '#808080';
-            
-           chart.applyOptions({
-    crosshair: {
-        vertLine: {
-            color: crosshairColor,
-            width: 1,
-            style: LightweightCharts.LineStyle.LargeDashed,  // 🔥 КРУПНЫЙ пунктир как в TradingView
-            labelBackgroundColor: crosshairLabelBg
-        },
-        horzLine: {
-            color: crosshairColor,
-            width: 1,
-            style: LightweightCharts.LineStyle.LargeDashed,  // 🔥 КРУПНЫЙ пунктир как в TradingView
-            labelBackgroundColor: crosshairLabelBg
-        }
-    },
-    timeScale: {
-        borderColor: borderColor,
-        tickColor: textColor
-    },
-    rightPriceScale: {
-        borderColor: borderColor,
-        textColor: textColor
-    }
-});
-        }
-    }
-    
-    setTimeout(updateOHLCContrast, 500);
-    
-    const originalApply = window.applyColorsToChart;
-    if (typeof originalApply === 'function') {
-        window.applyColorsToChart = function(bg, bullish, bearish) {
-            originalApply(bg, bullish, bearish);
-            setTimeout(updateOHLCContrast, 50);
-        };
-    }
-    
-    const bgPicker = document.getElementById('bgColorPicker');
-    if (bgPicker) bgPicker.addEventListener('input', () => setTimeout(updateOHLCContrast, 50));
-    
-    const bgGrid = document.getElementById('bgColorsGrid');
-    if (bgGrid) bgGrid.addEventListener('click', () => setTimeout(updateOHLCContrast, 50));
-    
-    const resetBtn = document.getElementById('resetChartColors');
-    if (resetBtn) resetBtn.addEventListener('click', () => setTimeout(updateOHLCContrast, 100));
-    
-    console.log('✅ Адаптация OHLC + Crosshair (пунктир) активирована');
-})();
-</script>
-<script>
-(function() {
     function updateChartTypeColors() {
         if (!window.chartManagerInstance) return;
         
@@ -3183,7 +3094,7 @@ setTimeout(function() {
         if (cm.currentChartType === 'candle') {
             if (cm.candleSeries) {
                 cm.candleSeries.applyOptions({
-                    visible: true, // Показываем свечи
+                    visible: true,
                     upColor: bullishColor,
                     downColor: bearishColor,
                     wickUpColor: bullishColor,
@@ -3191,18 +3102,18 @@ setTimeout(function() {
                 });
             }
             if (cm.barSeries) {
-                cm.barSeries.applyOptions({ visible: false }); // Скрываем бары
+                cm.barSeries.applyOptions({ visible: false });
             }
         } else if (cm.currentChartType === 'bar') {
             if (cm.barSeries) {
                 cm.barSeries.applyOptions({
-                    visible: true, // Показываем бары
+                    visible: true,
                     upColor: bullishColor,
                     downColor: bearishColor
                 });
             }
             if (cm.candleSeries) {
-                cm.candleSeries.applyOptions({ visible: false }); // Скрываем свечи
+                cm.candleSeries.applyOptions({ visible: false });
             }
         }
         
@@ -3215,47 +3126,13 @@ setTimeout(function() {
         if (activeSeries && cm.currentRealPrice) {
             activeSeries.applyOptions({ 
                 priceLineColor: lineColor,
-                priceLineWidth: 1 // Явное задание ширины предотвращает артефакты отрисовки
+                priceLineWidth: 1
             });
         }
         
-        // 3. Обновляем объёмы
-        if (cm.volumeSeries && cm.chartData && cm.chartData.length > 0) {
-            const volumeData = cm.chartData.map(candle => ({
-                time: candle.time,
-                value: candle.volume,
-                color: candle.close >= candle.open ? bullishColor : bearishColor
-            }));
-            cm.volumeSeries.setData(volumeData);
-        }
+        // ❌ УБРАНО: Блок "3. Обновляем объёмы", который вызывал setData() и ломал масштаб!
+        // ChartManager сам корректно обновит цвета объемов без сброса шкалы.
     }
-    
-    // Отслеживаем переключение типа графика
-    const candleBtn = document.getElementById('candleBtn');
-    const barBtn = document.getElementById('barBtn');
-    
-    if (candleBtn) {
-        candleBtn.addEventListener('click', function() {
-            // 50-100 мс достаточно, чтобы chartManager успел обработать базовое переключение
-            setTimeout(updateChartTypeColors, 50);
-        });
-    }
-    
-    if (barBtn) {
-        barBtn.addEventListener('click', function() {
-            setTimeout(updateChartTypeColors, 50);
-        });
-    }
-    
-    // Также обновляем при изменении данных графика извне
-    const originalApplyColors = window.applyColorsToChart;
-    if (typeof originalApplyColors === 'function') {
-        window.applyColorsToChart = function(bg, bullish, bearish) {
-            originalApplyColors(bg, bullish, bearish);
-            setTimeout(updateChartTypeColors, 50);
-        };
-    }
-    
     console.log('✅ Исправление подсветки баров/свечей активировано (с управлением видимостью)');
 })();
 </script>
