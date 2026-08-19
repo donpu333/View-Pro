@@ -133,13 +133,11 @@ class TickerPanel {
         window.tickerPanelInstance = this;
         
         const savedSortBy = localStorage.getItem('tickerSortBy');
-const savedSortDir = localStorage.getItem('tickerSortDir');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        this.state.sortBy = savedSortBy || 'volume';
+        this.state.sortDirection = savedSortDir || 'desc';
 
-// ✅ ИСПРАВЛЕНО: Обрабатываем три состояния (объем по умолчанию / сортировка / отключено)
-this.state.sortBy = savedSortBy === null ? 'volume' : (savedSortBy || null);
-this.state.sortDirection = savedSortDir === null ? 'desc' : (savedSortDir || null);
-
-this.init();
+        this.init();
     }  
 
     // 🚀 НОВЫЙ МЕТОД: Умная группировка перерисовок (Batching)
@@ -221,30 +219,28 @@ this.init();
         window.addEventListener('focus', () => this._restoreWebSockets());
     }
 
-       _restoreWebSockets() {
-    console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
-    
-    // 1. Принудительно сбрасываем флаги, чтобы разблокировать процесс, 
-    // даже если предыдущий запрос "завис" или был прерван уходом вкладки в фон
-    this._isRestRunning = false;
-    this._restQueue = []; // Очищаем очередь, чтобы начать сбор данных с чистого листа
-    
-    // ✅ ДОБАВЛЕНО: Сбрасываем кэш фильтрации, чтобы перерисовка применила актуальную сортировку
-    this.filterCache = null; 
-    
-    // 2. Запускаем обновление с небольшой задержкой (100мс). 
-    // Это критически важно: позволяет браузеру сначала отрисовать кадр 
-    // после возвращения фокуса, избегая визуального "фриза" от синхронной блокировки потока
-    if (this.pollRestData) {
-        setTimeout(() => {
-            this.pollRestData();
-        }, 100);
+        _restoreWebSockets() {
+        console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
+        
+        // 1. Принудительно сбрасываем флаги, чтобы разблокировать процесс, 
+        // даже если предыдущий запрос "завис" или был прерван уходом вкладки в фон
+        this._isRestRunning = false;
+        this._restQueue = []; // Очищаем очередь, чтобы начать сбор данных с чистого листа
+        
+        // 2. Запускаем обновление с небольшой задержкой (100мс). 
+        // Это критически важно: позволяет браузеру сначала отрисовать кадр 
+        // после возвращения фокуса, избегая визуального "фриза" от синхронной блокировки потока
+        if (this.pollRestData) {
+            setTimeout(() => {
+                this.pollRestData();
+            }, 100);
+        }
+
+        // 3. Гарантируем перерисовку списка тикеров, если она была пропущена 
+        // из-за заморозки requestAnimationFrame в фоновой вкладке
+        this._scheduleRender();
     }
 
-    // 3. Гарантируем перерисовку списка тикеров, если она была пропущена 
-    // из-за заморозки requestAnimationFrame в фоновой вкладке
-    this._scheduleRender();
-}
       async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
         const loader = document.getElementById('tickerLoader');
@@ -347,56 +343,40 @@ this.init();
         }
     }
 
-       _onPriceUpdate(symbol, data, exchange, marketType) {
-    const compositeKey = `${symbol}:${exchange}:${marketType}`;
-    const ticker = this.tickersMap.get(compositeKey);
-    if (!ticker) return;
+           _onPriceUpdate(symbol, data, exchange, marketType) {
+        const compositeKey = `${symbol}:${exchange}:${marketType}`;
+        const ticker = this.tickersMap.get(compositeKey);
+        if (!ticker) return;
 
-    const newPrice = typeof data === 'object' && data !== null ? parseFloat(data.price) : parseFloat(data);
-    if (isNaN(newPrice)) return;
+        const newPrice = typeof data === 'object' && data !== null ? parseFloat(data.price) : parseFloat(data);
+        const newChange = typeof data === 'object' && data.change !== undefined ? parseFloat(data.change) : ticker.change;
 
-    // Вычисляем change. Если PriceManager его не прислал, берем старый из тикера.
-    let newChange = typeof data === 'object' && data.change !== undefined ? parseFloat(data.change) : ticker.change;
+        if (ticker.price === newPrice && ticker.change === newChange) return;
 
-    if (ticker.price === newPrice && ticker.change === newChange) return;
+        ticker.prevPrice = ticker.price || newPrice;
+        ticker.price = newPrice;
+        ticker.change = newChange;
+        ticker._lastUpdateTime = Date.now();
 
-    // ✅ ИСПРАВЛЕНО: Запоминаем честную старую цену (без бага с нулем)
-    ticker.prevPrice = ticker.price > 0 ? ticker.price : newPrice;
-    
-    // ✅ ВАЖНО: Временный change ТОЛЬКО для рендерера, чтобы он покрасил цифры!
-    // Если цена выросла — делаем change > 0 (зеленый). Если упала — < 0 (красный).
-    let renderChange = newChange;
-    if (newPrice > ticker.prevPrice) {
-        renderChange = Math.max(0.01, newChange); // Гарантируем зеленый цвет
-    } else if (newPrice < ticker.prevPrice) {
-        renderChange = Math.min(-0.01, newChange); // Гарантируем красный цвет
-    }
-
-    // Обновляем тикер настоящими данными
-    ticker.price = newPrice;
-    ticker.change = newChange;
-    ticker._lastUpdateTime = Date.now();
-
-    // ПАКЕТНОЕ ОБНОВЛЕНИЕ DOM
-    if (!this._blockDOMUpdates && this.renderer) {
-        if (!this._pendingPriceUpdates) this._pendingPriceUpdates = new Map();
-        
-        // Отправляем в рендерер временный renderChange, чтобы цифры стали цветными!
-        this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: renderChange });
-        
-        if (!this._priceUpdateRaf) {
-            this._priceUpdateRaf = requestAnimationFrame(() => {
-                this._priceUpdateRaf = null;
-                const batch = this._pendingPriceUpdates;
-                this._pendingPriceUpdates = new Map(); 
+        // ПАКЕТНОЕ ОБНОВЛЕНИЕ DOM
+        if (!this._blockDOMUpdates && this.renderer) {
+            if (!this._pendingPriceUpdates) this._pendingPriceUpdates = new Map(); // <--- ИСПРАВЛЕНО
             
-                for (const [key, val] of batch.entries()) {
-                    this.renderer.updatePriceForSymbol(key, val.price, val.change);
-                }
-            });
+            this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: ticker.change });
+            
+            if (!this._priceUpdateRaf) {
+                this._priceUpdateRaf = requestAnimationFrame(() => {
+                    this._priceUpdateRaf = null; // <--- ИСПРАВЛЕНО (сброс флага)
+                    const batch = this._pendingPriceUpdates;
+                    this._pendingPriceUpdates = new Map(); 
+                
+                    for (const [key, val] of batch.entries()) {
+                        this.renderer.updatePriceForSymbol(key, val.price, val.change);
+                    }
+                });
+            }
         }
     }
-}
     processParallelData(results, updateOnly = false) {
         const MAX_SYMBOLS = 4000;
         let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
@@ -683,23 +663,18 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         console.log('✅ Очистка завершена! Тикеров:', this.tickersMap.size);
     }
 
-  syncWithActiveWatchlist() {
-    if (!this.watchlistManager) return;
-    const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
-    if (activeList) {
-        if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
-            activeList.symbols = [...this.state.customSymbols];
+    syncWithActiveWatchlist() {
+        if (!this.watchlistManager) return;
+        const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
+        if (activeList) {
+            if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
+                activeList.symbols = [...this.state.customSymbols];
+            }
+            activeList.flags = { ...this.state.flags };
+            activeList.favorites = [...this.state.favorites];
         }
-        activeList.flags = { ...this.state.flags };
-        activeList.favorites = [...this.state.favorites];
     }
-    
-    // ✅ ДОБАВЛЕНО: Очищаем кэши при смене вотчлиста, чтобы стрелки и сортировка работали корректно
-    this.filterCache = null;
-    this.tickerElements.clear();
-    this._rowDomCache.clear();
-    this._scheduleRender();
-}
+
    addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
     symbol = symbol.trim().toUpperCase();
     if (!this._isValidSymbol(symbol)) return false;
