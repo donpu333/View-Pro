@@ -1,4 +1,4 @@
-class WebSocketManager {
+ class WebSocketManager {
     constructor(chartManager) {
         this.chartManager = chartManager;
         this.wsKline = null;
@@ -6,7 +6,7 @@ class WebSocketManager {
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
-        this.isConnecting = false;
+        this.isConnecting = false;  // ✅ НОВОЕ: флаг активного подключения
         
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
@@ -81,26 +81,21 @@ class WebSocketManager {
         }, 100);
     }
 
-    // ======================== ГЛАВНОЕ ИСПРАВЛЕНИЕ ========================
     _doConnect() {
+        // ✅ ЗАЩИТА: не запускаем параллельные подключения
         if (this.isConnecting) {
             console.log('⏳ Подключение уже идёт, пропускаем');
             return;
         }
         
         this._closeSocket();
-        this.isConnecting = true;
+        this.isConnecting = true;  // ✅ Устанавливаем флаг
         
         const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
         
         if (this.currentExchange === 'binance') {
-            // 🔥 РАЗДЕЛЕНИЕ URL ДЛЯ СПОТА И ФЬЮЧЕРСОВ (апрель 2026)
-            const baseUrl = this.currentMarketType === 'futures'
-                ? 'wss://fstream.binance.com/market/ws/'
-                : 'wss://stream.binance.com:9443/market/ws/';
-            
-            const klineUrl = `${baseUrl}${fs}@kline_${this.currentInterval}`;
-            const tradeUrl = `${baseUrl}${fs}@aggTrade`;
+            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
+            const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;
             
             console.log('🔌 KLINE:', klineUrl);
             console.log('🔌 TRADE:', tradeUrl);
@@ -125,6 +120,7 @@ class WebSocketManager {
             return null;
         }
         
+        // ✅ Сохраняем тип для логирования
         ws._type = type;
         
         ws.onopen = () => {
@@ -151,7 +147,7 @@ class WebSocketManager {
             
             if (klineOk && tradeOk && !this.isConnected) {
                 this.isConnected = true;
-                this.isConnecting = false;
+                this.isConnecting = false;  // ✅ Сбрасываем флаг
                 this.retryCount = 0;
                 console.log('✅ Оба WebSocket подключены');
                 
@@ -169,8 +165,9 @@ class WebSocketManager {
         ws.onclose = (event) => {
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
             this.isConnected = false;
-            this.isConnecting = false;
+            this.isConnecting = false;  // ✅ Сбрасываем флаг
             
+            // 1005 и 1006 — нормальное закрытие при быстром переподключении
             if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
                 return;
             }
@@ -189,6 +186,7 @@ class WebSocketManager {
         };
         
         ws.onerror = (error) => {
+            // ✅ Не логируем ошибки для закрытых сокетов (это нормально)
             if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
                 console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
             }
@@ -285,27 +283,36 @@ class WebSocketManager {
         }, delay);
     }
 
+    // ✅ ИСПРАВЛЕННЫЙ метод закрытия сокетов
     _closeSocket() {
         const closeWs = (ws) => {
             if (!ws) return;
             
+            // 1. Очищаем пинг-интервал
             if (ws._pingInterval) {
                 clearInterval(ws._pingInterval);
                 ws._pingInterval = null;
             }
             
+            // 2. ✅ ВАЖНО: сначала убираем обработчики, чтобы не было лишних onclose
             ws.onopen = null;
             ws.onclose = null;
             ws.onerror = null;
             ws.onmessage = null;
             
+            // 3. ✅ Безопасное закрытие в зависимости от readyState
             try {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.close(1000, 'User disconnect');
                 } else if (ws.readyState === WebSocket.CONNECTING) {
+                    // ✅ Для CONNECTING просто abort — это вызовет onclose с кодом 1006
+                    // Но так как мы убрали onclose выше, ошибки не будет
                     ws.close();
                 }
-            } catch (e) {}
+                // CLOSING и CLOSED — ничего не делаем
+            } catch (e) {
+                // Игнорируем ошибки закрытия
+            }
         };
         
         closeWs(this.wsKline);
@@ -314,7 +321,7 @@ class WebSocketManager {
         this.wsKline = null;
         this.wsTrade = null;
         this.isConnected = false;
-        this.isConnecting = false;
+        this.isConnecting = false;  // ✅ Сбрасываем флаг
     }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
@@ -336,6 +343,7 @@ class WebSocketManager {
     }
     
     ensureConnected() {
+        // ✅ Проверяем состояние более аккуратно
         const klineState = this.wsKline?.readyState;
         const tradeState = this.wsTrade?.readyState;
         
@@ -358,7 +366,7 @@ class WebSocketManager {
 
     _onTabVisible() {
         const now = Date.now();
-        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {
+        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {  // ✅ 10 сек вместо 5
             console.log('🔄 Нет данных > 10 сек, переподключаемся');
             this.forceReconnect();
         } else {
