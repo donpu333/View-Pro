@@ -564,86 +564,69 @@ class TickerRenderer {
         return result;
     }
 
-  setupHeaderSorting() {
-    const parent = this.parent;
-    if (!parent) return;
+    setupHeaderSorting() {
+        const parent = this.parent;
+        if (!parent) return;
 
-    if (parent._sortClickHandler) {
-        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.removeEventListener('click', parent._sortClickHandler);
-        });
-    }
+        if (parent._sortClickHandler) {
+            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+                header.removeEventListener('click', parent._sortClickHandler);
+            });
+        }
 
-    const savedSortBy = localStorage.getItem('tickerSortBy');
-    const savedSortDir = localStorage.getItem('tickerSortDir');
-    const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
-    
-    // ✅ ИЗМЕНЕНО: Разрешаем null, чтобы сортировку можно было отключить
-    // Если в localStorage пусто, sortBy и sortDirection будут null
-    parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null;
-    parent.state.sortDirection = (savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null;
+        const savedSortBy = localStorage.getItem('tickerSortBy');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
+        const VALID_DIRECTIONS = ['asc', 'desc'];
 
-    parent._sortClickHandler = (e) => {
-        e.stopPropagation();
-        const header = e.currentTarget;
-        const sortBy = header.dataset.sort;
+        parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : 'volume';
+        parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) ? savedSortDir : 'desc';
 
-        // ✅ Логика трех состояний: desc -> asc -> отключено
-        if (parent.state.sortBy === sortBy) {
-            if (parent.state.sortDirection === 'desc') {
-                parent.state.sortDirection = 'asc';
-            } else if (parent.state.sortDirection === 'asc') {
-                // Третье нажатие отключает сортировку
-                parent.state.sortBy = null;
-                parent.state.sortDirection = null;
+        parent._sortClickHandler = (e) => {
+            e.stopPropagation();
+            const header = e.currentTarget;
+            const sortBy = header.dataset.sort;
+
+            if (parent.state.sortBy === sortBy) {
+                parent.state.sortDirection = parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                parent.state.sortBy = sortBy;
+                parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
             }
-        } else {
-            // Если кликаем по новой колонке, включаем с дефолтным направлением
-            parent.state.sortBy = sortBy;
-            parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
-        }
 
-        // ✅ ИЗМЕНЕНО: Сохраняем пустую строку вместо null, чтобы localStorage не превращал null в строку "null"
-        localStorage.setItem('tickerSortBy', parent.state.sortBy || '');
-        localStorage.setItem('tickerSortDir', parent.state.sortDirection || '');
+            localStorage.setItem('tickerSortBy', parent.state.sortBy);
+            localStorage.setItem('tickerSortDir', parent.state.sortDirection);
 
-        if (parent.watchlistManager?._saveSortForList) {
-            parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
-        }
+            if (parent.watchlistManager?._saveSortForList) {
+                parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
+            }
 
-        // 1. Сбрасываем все иконки к виду "неактивно"
-        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-            icon.className = 'fas fa-sort'; 
-            icon.style.display = '';        
-        });
+            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+                icon.className = 'fas fa-sort'; 
+                icon.style.display = '';        
+            });
 
-        // 2. Если сортировка активна, подсвечиваем нужную иконку
-        if (parent.state.sortBy) {
             const icon = header.querySelector('i');
             if (icon) {
-                if (parent.state.sortBy === 'flag') {
+                if (sortBy === 'flag') {
                     icon.style.display = 'none';
                 } else {
                     icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
                 }
             }
-        }
 
-        parent.filterCache = null;
-        parent.renderTickerList();
-    };
+            parent.filterCache = null;
+            parent.renderTickerList();
+        };
 
-    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-        header.addEventListener('click', parent._sortClickHandler);
-        if (header.dataset.sort === 'flag') {
-            const icon = header.querySelector('i');
-            if (icon) icon.style.display = 'none';
-        }
-    });
+        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+            header.addEventListener('click', parent._sortClickHandler);
+            if (header.dataset.sort === 'flag') {
+                const icon = header.querySelector('i');
+                if (icon) icon.style.display = 'none';
+            }
+        });
 
-    // ✅ ИЗМЕНЕНО: Восстановление состояния при загрузке
-    // Если state.sortBy пуст, то ни одна стрелка не будет подсвечена
-    if (parent.state.sortBy) {
         const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
         if (activeHeader) {
             const icon = activeHeader.querySelector('i');
@@ -653,7 +636,7 @@ class TickerRenderer {
             }
         }
     }
-}
+
     destroy() {
         if (this._scrollHandler) {
             const container = document.getElementById('tickerListContainer');
