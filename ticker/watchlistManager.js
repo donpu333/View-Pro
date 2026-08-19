@@ -273,59 +273,36 @@ class WatchlistManager {
         });
     }
 
-  _restoreSortForList(listId) {
-    if (!this._listSorts) this._listSorts = new Map();
-    const saved = this._listSorts.get(listId);
-    
-    // ✅ Если у списка есть сохраненная сортировка — применяем её
-    if (saved && saved.sortBy) {
-        this.tickerPanel.state.sortBy = saved.sortBy;
-        this.tickerPanel.state.sortDirection = saved.sortDirection;
-    } else {
-        // ✅ Если списка нет в памяти (старый список, дефолтный или сброс) 
-        // — по умолчанию ставим сортировку по объему!
-        this.tickerPanel.state.sortBy = 'volume';
-        this.tickerPanel.state.sortDirection = 'desc';
-        
-        // Сохраняем эти настройки для списка, чтобы они там остались
-        this._listSorts.set(listId, { sortBy: 'volume', sortDirection: 'desc' });
-    }
-    
-    this.tickerPanel.filterCache = null;
-    this._updateHeaderIcons();
-    
-    // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ для перерисовки
-    if (this.tickerPanel._scheduleRender) {
-        this.tickerPanel._scheduleRender();
-    } else {
+    _restoreSortForList(listId) {
+        if (!this._listSorts) this._listSorts = new Map();
+        const saved = this._listSorts.get(listId);
+        if (saved) {
+            this.tickerPanel.state.sortBy = saved.sortBy;
+            this.tickerPanel.state.sortDirection = saved.sortDirection;
+        }
+        this.tickerPanel.filterCache = null;
+        this._updateHeaderIcons();
         this.tickerPanel.renderTickerList();
     }
-}
-   _updateHeaderIcons() {
-    const sortBy = this.tickerPanel.state.sortBy;
-    const sortDirection = this.tickerPanel.state.sortDirection;
-    
-    // 1. Сбрасываем все иконки к виду "неактивно"
-    document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-        icon.className = 'fas fa-sort';
-        icon.style.display = 'inline-block';
-    });
-    
-    // 2. ✅ ДОБАВЛЕНО: Если сортировка отключена (null), выходим, оставляя все стрелки серыми
-    if (!sortBy) return;
-    
-    // 3. Подсвечиваем нужную иконку
-    const activeHeader = document.querySelector(`.table-header span[data-sort="${sortBy}"]`);
-    if (activeHeader) {
-        const icon = activeHeader.querySelector('i');
-        if (icon) {
-            icon.className = sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            if (sortBy === 'flag') {
-                icon.style.display = 'none';
+
+    _updateHeaderIcons() {
+        const sortBy = this.tickerPanel.state.sortBy;
+        const sortDirection = this.tickerPanel.state.sortDirection;
+        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+            icon.className = 'fas fa-sort';
+            icon.style.display = 'inline-block';
+        });
+        const activeHeader = document.querySelector(`.table-header span[data-sort="${sortBy}"]`);
+        if (activeHeader) {
+            const icon = activeHeader.querySelector('i');
+            if (icon) {
+                icon.className = sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                if (sortBy === 'flag') {
+                    icon.style.display = 'none';
+                }
             }
         }
     }
-}
 
     // ✅ Ускорено: таймер уменьшен до 500 мс и убран renderTickerList
     _schedulePriceLoadForList(symbols) {
@@ -349,43 +326,41 @@ class WatchlistManager {
         }
         return true;
     }
-loadSymbolsFromList(listId) {
-    const list = this.lists.get(listId);
-    if (!list) return;
 
-    this.tickerPanel.tickers = [];
-    this.tickerPanel.tickersMap.clear();
-    this.tickerPanel.tickerElements?.clear();
-    
-    // ✅ ДОБАВЛЕНО: Очистка кэша DOM-элементов, чтобы избежать артефактов при смене списка
-    this.tickerPanel._rowDomCache?.clear(); 
-    
-    this.tickerPanel.renderer.displayedTickers = [];
-    this.tickerPanel.renderer.totalItems = list.symbols.length;
-    this.tickerPanel.filterCache = null;
-    this.tickerPanel.state.customSymbols = [...list.symbols];
-    this.tickerPanel.state.flags = { ...(list.flags || {}) };
-    this.tickerPanel.state.favorites = [...(list.favorites || [])];
+    loadSymbolsFromList(listId) {
+        const list = this.lists.get(listId);
+        if (!list) return;
 
-    const container = document.getElementById('tickerListContainer');
-    if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+        this.tickerPanel.tickers = [];
+        this.tickerPanel.tickersMap.clear();
+        this.tickerPanel.tickerElements?.clear();
+        this.tickerPanel.renderer.displayedTickers = [];
+        this.tickerPanel.renderer.totalItems = list.symbols.length;
+        this.tickerPanel.filterCache = null;
+        this.tickerPanel.state.customSymbols = [...list.symbols];
+        this.tickerPanel.state.flags = { ...(list.flags || {}) };
+        this.tickerPanel.state.favorites = [...(list.favorites || [])];
 
-    for (const symbolKey of list.symbols) {
-        const parts = symbolKey.split(':');
-        if (parts.length !== 3) continue;
-        const [symbol, exchange, marketType] = parts;
-        const flag = this.tickerPanel.state.flags[symbolKey] || null;
-        const t = {
-            symbol, price: 0, change: 0, volume: 0,
-            trades: null, custom: true, prevPrice: 0,
-            exchange, marketType, flag
-        };
-        this.tickerPanel.tickers.push(t);
-        this.tickerPanel.tickersMap.set(symbolKey, t);
+        const container = document.getElementById('tickerListContainer');
+        if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+
+        for (const symbolKey of list.symbols) {
+            const parts = symbolKey.split(':');
+            if (parts.length !== 3) continue;
+            const [symbol, exchange, marketType] = parts;
+            const flag = this.tickerPanel.state.flags[symbolKey] || null;
+            const t = {
+                symbol, price: 0, change: 0, volume: 0,
+                trades: null, custom: true, prevPrice: 0,
+                exchange, marketType, flag
+            };
+            this.tickerPanel.tickers.push(t);
+            this.tickerPanel.tickersMap.set(symbolKey, t);
+        }
+
+        this.tickerPanel.updateModalCount();
     }
 
-    this.tickerPanel.updateModalCount();
-}
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
