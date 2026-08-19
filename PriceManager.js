@@ -98,19 +98,17 @@ class PriceManager {
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
-        _connectBinanceFutures() {
+      _connectBinanceFutures() {
         const key = 'binance:futures';
-        // ✅ ИСПРАВЛЕНО: Возвращаем правильный URL общего потока, 
-        // а не гигантский URL с перечислением 700 монет!
-        const url = 'wss://fstream.binance.com/ws/!miniTicker@arr';
-        
+        // 🔥 ИСПРАВЛЕНО: новый URL с /market/ws/ для совместимости с обновлением Binance (апрель 2026)
+        const url = 'wss://fstream.binance.com/market/ws/!miniTicker@arr';
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
             for (let i = 0; i < tickers.length; i++) {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
                 
-                // ФИЛЬТРАЦИЯ: обрабатываем только те 695 монет, которые есть в панели
+                // ✅ ФИЛЬТРАЦИЯ: Обрабатываем только те монеты, которые есть в панели
                 const subKey = `${t.s}:binance:futures`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
@@ -120,17 +118,17 @@ class PriceManager {
             }
         });
     }
-      _connectBinanceSpot() {
+    
+    _connectBinanceSpot() {
         const key = 'binance:spot';
-        // ✅ ИСПРАВЛЕНО: Общий поток спота
         const url = 'wss://stream.binance.com:9443/ws/!ticker@arr';
-        
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
             for (let i = 0; i < tickers.length; i++) {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
-                
+
+                // ✅ ФИЛЬТРАЦИЯ: Обрабатываем только те монеты, которые есть в панели
                 const subKey = `${t.s}:binance:spot`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
@@ -140,6 +138,7 @@ class PriceManager {
             }
         });
     }
+    
     _connectBinance(key, url, onMessageHandler) {
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
