@@ -2302,49 +2302,33 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
 </script>
 
 
-<!-- СКРИПТ ДЛЯ СКРИНШОТА -->
+<!-- БЫСТРЫЙ СКРИПТ СКРИНШОТА (БЕЗ ИСКАЖЕНИЙ) -->
 <script>
 function getSymbolAndTimeframe() {
   let symbol = null;
   let timeframe = null;
 
-  // 1. Самый надёжный источник – ваш менеджер
   if (window.chartManagerInstance) {
-    if (window.chartManagerInstance.currentSymbol) {
-      symbol = window.chartManagerInstance.currentSymbol;
-    }
+    if (window.chartManagerInstance.currentSymbol) symbol = window.chartManagerInstance.currentSymbol;
     if (window.chartManagerInstance.currentInterval) {
-      const tfMap = {
-        '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-        '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h',
-        '1d': '1D', '1w': '1W', '1M': '1M'
-      };
-      timeframe = tfMap[window.chartManagerInstance.currentInterval]
-        || window.chartManagerInstance.currentInterval;
+      const tfMap = { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '6h': '6h', '12h': '12h', '1d': '1D', '1w': '1W', '1M': '1M' };
+      timeframe = tfMap[window.chartManagerInstance.currentInterval] || window.chartManagerInstance.currentInterval;
     }
   }
 
-  // 2. DOM‑элементы (ваш исходный способ)
   const pairDisplay = document.getElementById('pairDisplay');
   const tfBadge = document.getElementById('currentTfBadge');
 
-  if (!symbol && pairDisplay) {
-    symbol = pairDisplay.textContent?.trim();
-  }
-  if (!timeframe && tfBadge) {
-    timeframe = tfBadge.textContent?.trim();
-  }
+  if (!symbol && pairDisplay) symbol = pairDisplay.textContent?.trim();
+  if (!timeframe && tfBadge) timeframe = tfBadge.textContent?.trim();
 
-  // 3. Парсим URL (например, /exchange/BTCUSDT или ?symbol=ETHUSDT)
   if (!symbol) {
     const urlParams = new URLSearchParams(window.location.search);
     symbol = urlParams.get('symbol') || urlParams.get('pair');
     if (!symbol) {
       const pathParts = window.location.pathname.split('/');
       const lastPart = pathParts[pathParts.length - 1];
-      if (lastPart && /^[A-Z0-9]+$/i.test(lastPart)) {
-        symbol = lastPart;
-      }
+      if (lastPart && /^[A-Z0-9]+$/i.test(lastPart)) symbol = lastPart;
     }
   }
   if (!timeframe) {
@@ -2352,88 +2336,55 @@ function getSymbolAndTimeframe() {
     timeframe = urlParams.get('interval') || urlParams.get('tf') || urlParams.get('timeframe');
   }
 
-  // 4. Глобальная переменная (если используется виджет TradingView)
   if (!symbol && window.TradingViewSymbol) symbol = window.TradingViewSymbol;
   if (!timeframe && window.TradingViewInterval) timeframe = window.TradingViewInterval;
 
-  // 5. Fallback
   if (!symbol || symbol === '') symbol = 'chart';
   if (!timeframe || timeframe === '') timeframe = 'unk';
 
   return { symbol, timeframe };
 }
+
 function takeChartScreenshot() {
   const { symbol, timeframe } = getSymbolAndTimeframe();
   const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `${cleanSymbol}_${timeframe}.png`;
 
-  const width = window.innerWidth;
-  const height = window.innerHeight;
+  // 1. Временно скрываем курсор мыши на всей странице
+  document.body.style.cursor = 'none';
 
-  // Сохраняем оригинальные стили, чтобы потом восстановить
-  const originalStyles = [];
-  document.querySelectorAll('*').forEach(el => {
-    const orig = {
-      transform: el.style.transform,
-      willChange: el.style.willChange,
-    };
-    originalStyles.push({ el, orig });
-    // Временно убираем проблемные стили
-    el.style.transform = 'none';
-    el.style.willChange = 'auto';
-  });
+  // 2. Запускаем html2canvas
+  html2canvas(document.documentElement, {
+    scale: 1, // Scale 1 работает быстро. (Scale 2 делал минуту)
+    useCORS: true,
+    allowTaint: true,
+    backgroundColor: '#000000',
+    windowWidth: window.innerWidth,
+    windowHeight: window.innerHeight,
+    logging: false
+    // ВАЖНО: Мы полностью убрали блок onclone. Именно он ломал верстку (transform: none)!
+  }).then(canvas => {
+    // 3. Возвращаем курсор мыши
+    document.body.style.cursor = '';
 
-  // Два RAF для стабилизации
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      html2canvas(document.documentElement, {
-        scale: 1, // 1 вместо 2 – меньше артефактов
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#000000',
-        width: width,
-        height: height,
-        windowWidth: width,
-        windowHeight: height,
-        x: 0,
-        y: 0,
-        foreignObjectRendering: true, // включаем альтернативный рендеринг
-        onclone: (clonedDoc) => {
-          // В клоне тоже сбрасываем всё лишнее
-          clonedDoc.querySelectorAll('*').forEach(el => {
-            el.style.transform = 'none';
-            el.style.willChange = 'auto';
-          });
-          clonedDoc.documentElement.style.overflow = 'hidden';
-          clonedDoc.body.style.overflow = 'hidden';
-          clonedDoc.documentElement.style.width = width + 'px';
-          clonedDoc.documentElement.style.height = height + 'px';
-          clonedDoc.body.style.width = width + 'px';
-          clonedDoc.body.style.height = height + 'px';
-        }
-      }).then(canvas => {
-        // Восстанавливаем оригинальные стили
-        originalStyles.forEach(({ el, orig }) => {
-          el.style.transform = orig.transform || '';
-          el.style.willChange = orig.willChange || '';
-        });
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      }).catch(err => {
-        console.error(err);
-        // Восстанавливаем стили даже при ошибке
-        originalStyles.forEach(({ el, orig }) => {
-          el.style.transform = orig.transform || '';
-          el.style.willChange = orig.willChange || '';
-        });
-      });
-    });
+    // 4. Скачиваем через toBlob (не вешает интерфейс)
+    canvas.toBlob(function(blob) {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      
+      // Очищаем память
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }, 'image/png');
+  }).catch(err => {
+    // Возвращаем курсор, если вдруг произошла ошибка
+    document.body.style.cursor = '';
+    console.error("Ошибка скриншота:", err);
   });
 }
 
-// Обработчики
+// Обработчики (кнопка и горячая клавиша S)
 document.addEventListener('DOMContentLoaded', function() {
   const screenshotBtn = document.getElementById('toolScreenshot');
   if (screenshotBtn) {
@@ -2455,7 +2406,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 });
 
-// Восстановление ориентации панели (ваш код, без изменений)
+// Восстановление ориентации панели
 (function() {
     const toolbarOrientationBtn = document.getElementById('toolbarOrientation');
     const drawingToolbar = document.getElementById('drawingToolbar');
