@@ -20,6 +20,7 @@
 <body>
 <!-- ПАНЕЛЬ КОТИРОВОК -->
 <div class="ticker-panel" id="tickerPanel">
+    
 <div class="tabs-container">
 <div class="tabs">
 <button class="tab active" data-tab="all">Все</button>
@@ -3203,6 +3204,263 @@ setTimeout(function() {
         if (e.key === 'chartType') {
             syncChartTypeUI();
         }
+    });
+})();
+</script>
+<script>
+(function() {
+    const toggleBtn = document.createElement('div');
+    toggleBtn.id = 'floatingToggleBtn';
+    toggleBtn.innerHTML = '〈';
+    document.body.appendChild(toggleBtn);
+
+    const style = document.createElement('style');
+    style.textContent = `
+        /* ═══════════ КНОПКА ПЕРЕКЛЮЧЕНИЯ ═══════════ */
+        #floatingToggleBtn {
+            position: fixed;
+            top: 50%;
+            right: var(--ticker-width, 380px);
+            transform: translateY(-50%) scaleX(0.3);
+            transform-origin: right center;
+            z-index: 9999999;
+            width: 14px;
+            height: 56px;
+            background: rgba(70, 70, 70, 0.55);
+            color: #a0a0a0;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: bold;
+            border-radius: 4px 0 0 4px;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.25);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+
+            opacity: 0;
+            pointer-events: none;
+
+            /* ✅ ПЛАВНАЯ КРИВАЯ Material Design + GPU */
+            transition:
+                opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.25s ease,
+                right 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.25s ease,
+                height 0.25s ease,
+                box-shadow 0.25s ease;
+
+            will-change: opacity, transform, right;
+        }
+
+        #floatingToggleBtn.visible {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-50%) scaleX(1);
+        }
+
+        #floatingToggleBtn:hover {
+            background: rgba(100, 100, 100, 0.9);
+            color: #ffffff;
+            width: 18px;
+            height: 62px;
+            box-shadow: -3px 0 14px rgba(0,0,0,0.5);
+        }
+
+        #floatingToggleBtn:active {
+            transform: translateY(-50%) scaleX(0.9);
+            transition-duration: 0.08s;
+        }
+
+        body.ticker-panel-hidden #floatingToggleBtn {
+            right: 0 !important;
+        }
+
+        body.ticker-panel-hidden {
+            --ticker-width: 0px !important;
+        }
+
+        /* ═══════════ ПАНЕЛЬ ТИКЕРОВ ═══════════ */
+        .ticker-panel {
+            transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            will-change: transform;
+        }
+
+        body.ticker-panel-hidden .ticker-panel {
+            transform: translateX(100%) !important;
+        }
+
+        /* ═══════════ КОНТЕЙНЕР ГРАФИКА ═══════════ */
+        #chart-container {
+            transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            will-change: width;
+        }
+
+        body.ticker-panel-hidden #chart-container {
+            width: 100vw !important;
+        }
+
+        /* ═══════════ КНОПКИ ФУТЕРА ═══════════ */
+        .chart-footer-buttons {
+            transition:
+                right 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+                bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            will-change: right, bottom;
+        }
+
+        body.ticker-panel-hidden .chart-footer-buttons {
+            right: 20px !important;
+        }
+
+        /* ═══════════ ПАНЕЛЬ РИСОВАЛОК ═══════════ */
+        .drawing-toolbar {
+            transition: none !important;
+        }
+    `;
+    document.head.appendChild(style);
+
+    let hideTimeout = null;
+    const SHOW_ZONE = 90;        // Зона появления (чуть больше для удобства)
+    const HIDE_DELAY = 800;      // ← Задержка скрытия (0.8 сек)
+
+    function showButton() {
+        toggleBtn.classList.add('visible');
+        if (hideTimeout) {
+            clearTimeout(hideTimeout);
+            hideTimeout = null;
+        }
+    }
+
+    function scheduleHide() {
+        if (hideTimeout) clearTimeout(hideTimeout);
+        hideTimeout = setTimeout(() => {
+            toggleBtn.classList.remove('visible');
+        }, HIDE_DELAY);
+    }
+
+    // ✅ Throttling для mousemove
+    let lastMoveTime = 0;
+    document.addEventListener('mousemove', (e) => {
+        const now = performance.now();
+        if (now - lastMoveTime < 50) return;
+        lastMoveTime = now;
+
+        const panel = document.querySelector('.ticker-panel');
+        const isHidden = document.body.classList.contains('ticker-panel-hidden');
+
+        if (isHidden) {
+            if (e.clientX > window.innerWidth - SHOW_ZONE) {
+                showButton();
+            } else {
+                scheduleHide();
+            }
+        } else {
+            if (panel) {
+                const panelLeft = window.innerWidth - panel.offsetWidth;
+                const distanceFromBorder = Math.abs(e.clientX - panelLeft);
+                if (distanceFromBorder < SHOW_ZONE) {
+                    showButton();
+                } else {
+                    scheduleHide();
+                }
+            }
+        }
+    });
+
+    function placeButton(attempts = 0) {
+        if (attempts > 20) return;
+        const panel = document.querySelector('.ticker-panel');
+        if (panel && panel.offsetWidth > 0) {
+            const width = panel.offsetWidth;
+            document.documentElement.style.setProperty('--ticker-width', width + 'px');
+        } else {
+            setTimeout(() => placeButton(attempts + 1), 500);
+        }
+    }
+
+    setTimeout(() => placeButton(0), 1000);
+    window.addEventListener('resize', () => placeButton(0));
+
+    function recalcDrawingToolbar() {
+        const toolbar = document.getElementById('drawingToolbar');
+        if (!toolbar) return;
+
+        const parent = document.getElementById('chart-container') || document.body;
+        const parentRect = parent.getBoundingClientRect();
+        const parentW = parentRect.width;
+        const parentH = parentRect.height;
+
+        if (parentW <= 0 || parentH <= 0) return;
+
+        const tbW = toolbar.offsetWidth;
+        const tbH = toolbar.offsetHeight;
+
+        let curLeft = parseFloat(toolbar.style.left) || 20;
+        let curTop = parseFloat(toolbar.style.top) || 60;
+
+        const maxLeft = parentW - tbW - 10;
+        const maxTop = parentH - tbH - 10;
+
+        const newLeft = Math.max(10, Math.min(maxLeft, curLeft));
+        const newTop = Math.max(60, Math.min(maxTop, curTop));
+
+        toolbar.style.left = newLeft + 'px';
+        toolbar.style.top = newTop + 'px';
+        localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
+        localStorage.setItem('drawingToolbarTop', newTop + 'px');
+    }
+
+    function recalcFooterButtons() {
+        const buttons = document.querySelector('.chart-footer-buttons');
+        if (!buttons) return;
+
+        const panelsContainer = document.getElementById('indicator-panels-container');
+        let offset = 20;
+
+        if (panelsContainer && panelsContainer.offsetHeight > 0) {
+            offset += panelsContainer.offsetHeight;
+        }
+
+        buttons.style.bottom = offset + 'px';
+    }
+
+    toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.body.classList.toggle('ticker-panel-hidden');
+
+        const isHidden = document.body.classList.contains('ticker-panel-hidden');
+        toggleBtn.innerHTML = isHidden ? '〈' : '〉';
+
+        // ✅ Чуть дольше CSS-анимации (0.45s), чтобы всё успело отрисоваться
+        setTimeout(() => {
+            const cm = window.chartManager || window.chartManagerInstance;
+            if (cm && cm._isChartValid && cm._isChartValid()) {
+                cm.forceRedraw();
+                if (cm.timerManager) {
+                    cm.timerManager._forceUpdate();
+                }
+            }
+
+            recalcDrawingToolbar();
+            recalcFooterButtons();
+        }, 480);
+
+        showButton();
+        scheduleHide();
+    });
+
+    toggleBtn.addEventListener('mouseenter', () => {
+        if (hideTimeout) {
+            clearTimeout(hideTimeout);
+            hideTimeout = null;
+        }
+    });
+
+    toggleBtn.addEventListener('mouseleave', () => {
+        scheduleHide();
     });
 })();
 </script>
