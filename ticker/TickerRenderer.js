@@ -132,7 +132,7 @@ class TickerRenderer {
 
         for (const item of elementsToFlash) {
             item.el.classList.remove('flash-up', 'flash-down');
-            // ✅ УБРАНО: void item.el.offsetWidth; (Вызывало фризы)
+            void item.el.offsetWidth; 
             item.el.classList.add(item.flashClass);
         }
 
@@ -160,7 +160,7 @@ class TickerRenderer {
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
                     const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
                     els.price.classList.remove('flash-up', 'flash-down');
-                    // ✅ УБРАНО: void els.price.offsetWidth; (Вызывало фризы)
+                    void els.price.offsetWidth; 
                     els.price.classList.add(flashClass);
                 }
             }
@@ -188,7 +188,7 @@ class TickerRenderer {
         const state = this.parent?.state;
         if (!state) return [];
 
-        let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'none'}:${state.sortDirection || 'none'}`;
+        let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
 
         if (state.activeTab === 'favorites') {
             const favs = state.favorites || [];
@@ -246,10 +246,9 @@ class TickerRenderer {
                 }
             }
 
-            if (state.sortBy) {
-                const direction = state.sortDirection === 'asc' ? 1 : -1;
-                result.sort((a, b) => this._compareTickers(a, b, state.sortBy, direction));
-            }
+            const sortBy = state.sortBy || 'volume';
+            const direction = state.sortDirection === 'asc' ? 1 : -1;
+            result.sort((a, b) => this._compareTickers(a, b, sortBy, direction));
 
         } catch (error) {
             console.error('❌ getFilteredTickers error:', error);
@@ -430,7 +429,7 @@ class TickerRenderer {
                 el.style.display = 'none';
             }
         }
-    } 
+    } // <--- ВОТ ЭТА СКОБКА БЫЛА ПОТЕРЯНА
 
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
@@ -578,9 +577,10 @@ class TickerRenderer {
         const savedSortBy = localStorage.getItem('tickerSortBy');
         const savedSortDir = localStorage.getItem('tickerSortDir');
         const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
-        
-        parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null;
-        parent.state.sortDirection = (savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null;
+        const VALID_DIRECTIONS = ['asc', 'desc'];
+
+        parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : 'volume';
+        parent.state.sortDirection = VALID_DIRECTIONS.includes(savedSortDir) ? savedSortDir : 'desc';
 
         parent._sortClickHandler = (e) => {
             e.stopPropagation();
@@ -588,19 +588,14 @@ class TickerRenderer {
             const sortBy = header.dataset.sort;
 
             if (parent.state.sortBy === sortBy) {
-                if (parent.state.sortDirection === 'desc') {
-                    parent.state.sortDirection = 'asc';
-                } else if (parent.state.sortDirection === 'asc') {
-                    parent.state.sortBy = null;
-                    parent.state.sortDirection = null;
-                }
+                parent.state.sortDirection = parent.state.sortDirection === 'asc' ? 'desc' : 'asc';
             } else {
                 parent.state.sortBy = sortBy;
                 parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
             }
 
-            localStorage.setItem('tickerSortBy', parent.state.sortBy || '');
-            localStorage.setItem('tickerSortDir', parent.state.sortDirection || '');
+            localStorage.setItem('tickerSortBy', parent.state.sortBy);
+            localStorage.setItem('tickerSortDir', parent.state.sortDirection);
 
             if (parent.watchlistManager?._saveSortForList) {
                 parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
@@ -611,14 +606,12 @@ class TickerRenderer {
                 icon.style.display = '';        
             });
 
-            if (parent.state.sortBy) {
-                const icon = header.querySelector('i');
-                if (icon) {
-                    if (parent.state.sortBy === 'flag') {
-                        icon.style.display = 'none';
-                    } else {
-                        icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                    }
+            const icon = header.querySelector('i');
+            if (icon) {
+                if (sortBy === 'flag') {
+                    icon.style.display = 'none';
+                } else {
+                    icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
                 }
             }
 
@@ -634,14 +627,12 @@ class TickerRenderer {
             }
         });
 
-        if (parent.state.sortBy) {
-            const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
-            if (activeHeader) {
-                const icon = activeHeader.querySelector('i');
-                if (icon) {
-                    icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                    if (parent.state.sortBy === 'flag') icon.style.display = 'none';
-                }
+        const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
+        if (activeHeader) {
+            const icon = activeHeader.querySelector('i');
+            if (icon) {
+                icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                if (parent.state.sortBy === 'flag') icon.style.display = 'none';
             }
         }
     }
