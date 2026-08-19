@@ -9,6 +9,7 @@ class PriceManager {
         this._flushRafId = null;
         
         this._restPollInterval = null;
+        this._heartbeatInterval = null; // ✅ НОВОЕ: Таймер для проверки зомби-соединений
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
@@ -30,8 +31,6 @@ class PriceManager {
         if (this._initInProgress) return;
         this._initInProgress = true;
         
-        // ✅ ИСПРАВЛЕНО: Bybit убран из автоматического запуска. 
-        // Он подключится только тогда, когда действительно понадобится.
         const connectSequence = [
             () => this._connectBinanceFutures(),
             () => this._connectBinanceSpot()
@@ -44,14 +43,46 @@ class PriceManager {
         this._restPollInterval = setInterval(() => this._pollAlertPricesViaRest(), this.config.restPollInterval);
         setTimeout(() => this._pollAlertPricesViaRest(), 1500);
         
+        // ✅ НОВОЕ: Запускаем проверку пульса (Heartbeat) каждые 30 секунд
+        this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 30000);
+        
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v12 запущен (Bybit подключается только по требованию)');
+        console.log('✅ PriceManager v13 запущен (Добавлен Heartbeat)');
     }
 
-    // ✅ НОВЫЙ МЕТОД: Проверяет, нужен ли Bybit, и подключает его только при наличии подписок
+    // ✅ НОВЫЙ МЕТОД: Проверка пульса WebSocket
+    _checkHeartbeats() {
+        const now = Date.now();
+        const ZOMBIE_TIMEOUT = 45000; // 45 секунд. Если данных нет 45 сек - убиваем.
+
+        for (const key in this.connections) {
+            const ws = this.connections[key];
+            if (!ws || ws.readyState !== WebSocket.OPEN) continue;
+
+            const lastMsgTime = this._lastWsMessage[key] || 0;
+            const elapsed = now - lastMsgTime;
+
+            if (elapsed > ZOMBIE_TIMEOUT) {
+                console.warn(`💔 ${key} ЗОМБИ! Нет данных ${Math.round(elapsed/1000)}с. Принудительное переподключение...`);
+                
+                // Убираем обработчики, чтобы не вызывать авто-реконнект дважды
+                ws.onclose = null; 
+                ws.onerror = null;
+                
+                try { ws.close(4000, 'Zombie connection'); } catch(e) {}
+                
+                // Вызываем переподключение вручную
+                if (key === 'binance:futures') this._connectBinanceFutures();
+                else if (key === 'binance:spot') this._connectBinanceSpot();
+                else if (key === 'bybit:linear') this._connectBybitLinear();
+                else if (key === 'bybit:spot') this._connectBybitSpot();
+            }
+        }
+    }
+
     _ensureBybitConnected() {
         const hasLinear = this._bybitSubscriptions.linear.size > 0;
         const hasSpot = this._bybitSubscriptions.spot.size > 0;
@@ -240,7 +271,7 @@ class PriceManager {
         const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         const symbols = [...this._bybitSubscriptions[marketKey]];
-        if (symbols.length === 0) return; // ✅ Не отправляем пустые запросы
+        if (symbols.length === 0) return;
         
         for (let i = 0; i < symbols.length; i += 10) {
             const batch = symbols.slice(i, i + 10).map(s => `tickers.${s}`);
@@ -254,7 +285,7 @@ class PriceManager {
         if (this._bybitSubscriptions[marketKey].has(clean)) return;
         
         this._bybitSubscriptions[marketKey].add(clean);
-        this._ensureBybitConnected(); // ✅ ИСПРАВЛЕНО: инициируем подключение при добавлении символа
+        this._ensureBybitConnected();
         
         const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
         if (ws?.readyState === WebSocket.OPEN) {
@@ -263,12 +294,9 @@ class PriceManager {
     }
     
     // ========== REST (главный источник цен для алертов) ==========
-       // ========== ИСПРАВЛЕННЫЙ REST ПОЛЛИНГ ==========
     async _pollAlertPricesViaRest() {
         if (!window.alertLineManager) return;
         
-        // ИСПРАВЛЕНИЕ #1: Фильтруем только по статусу, 
-        // повторяющиеся алерты (triggered=true) НЕ пропускаем
         const activeAlerts = window.alertLineManager._alerts.filter(item => {
             const a = item.alert;
             return a.status === 'active';
@@ -302,7 +330,6 @@ class PriceManager {
         await Promise.allSettled(tasks);
     }
     
-    // ИСПРАВЛЕНИЕ #2: Убран прямой вызов _checkAlerts
     async _fetchBinanceRest(symbols, marketType) {
         try {
             const url = symbols.length === 1 
@@ -318,19 +345,15 @@ class PriceManager {
                 const price = parseFloat(ticker.lastPrice || ticker.price);
                 const change = parseFloat(ticker.priceChangePercent) || 0;
                 if (ticker.symbol && price && !isNaN(price)) {
-                    // _setPrice сам уведомит подписчиков через RAF
                     this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
                 }
             }
         } catch(e) {}
     }
     
-    // ИСПРАВЛЕНИЕ #2 + #3: Батч-запрос + убран прямой вызов _checkAlerts
     async _fetchBybitRest(symbols, marketType) {
         try {
             const category = marketType === 'futures' ? 'linear' : 'spot';
-            
-            // Bybit V5 поддерживает батч через запятую (до 10 символов)
             const batches = [];
             for (let i = 0; i < symbols.length; i += 10) {
                 batches.push(symbols.slice(i, i + 10));
@@ -351,56 +374,8 @@ class PriceManager {
                         const price = parseFloat(ticker.lastPrice);
                         const change = parseFloat(ticker.price24hPcnt) || 0;
                         if (ticker.symbol && price && !isNaN(price)) {
-                            // _setPrice сам уведомит подписчиков через RAF
                             this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
                         }
-                    }
-                }
-            }
-        } catch(e) {}
-    }
-    
-    async _fetchBinanceRest(symbols, marketType) {
-        try {
-            const url = symbols.length === 1 
-                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
-                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
-            
-            const response = await this._fetchWithRetry(url);
-            if (!response) return;
-            const data = await response.json();
-            const tickers = Array.isArray(data) ? data : [data];
-            
-            for (const ticker of tickers) {
-                const price = parseFloat(ticker.lastPrice || ticker.price);
-                const change = parseFloat(ticker.priceChangePercent) || 0;
-                if (ticker.symbol && price && !isNaN(price)) {
-                    this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
-                    window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'binance', marketType);
-                }
-            }
-        } catch(e) {}
-    }
-    
-    async _fetchBybitRest(symbols, marketType) {
-        try {
-            const category = marketType === 'futures' ? 'linear' : 'spot';
-            const tasks = symbols.map(sym => 
-                fetch(`https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${sym}`)
-                    .then(r => r.json())
-                    .catch(() => null)
-            );
-            
-            const results = await Promise.all(tasks);
-            
-            for (const data of results) {
-                if (data?.retCode === 0 && data.result?.list?.[0]) {
-                    const ticker = data.result.list[0];
-                    const price = parseFloat(ticker.lastPrice);
-                    const change = parseFloat(ticker.price24hPcnt) || 0;
-                    if (price && !isNaN(price)) {
-                        this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
-                        window.alertLineManager?._checkAlerts?.(ticker.symbol, price, 'bybit', marketType);
                     }
                 }
             }
@@ -476,7 +451,7 @@ class PriceManager {
         this.subscribers.get(key).push(callback);
         const parts = key.split(':');
         if (parts.length === 3 && parts[1] === 'bybit') {
-            this.subscribeBybitSymbol(parts[0], parts[2]); // Здесь уже вызовется _ensureBybitConnected
+            this.subscribeBybitSymbol(parts[0], parts[2]);
         }
         const cached = this.prices.get(key);
         if (cached) {
@@ -560,6 +535,11 @@ class PriceManager {
         if (this._restPollInterval) {
             clearInterval(this._restPollInterval);
             this._restPollInterval = null;
+        }
+        
+        if (this._heartbeatInterval) { // ✅ НОВОЕ: Очистка пульсации
+            clearInterval(this._heartbeatInterval);
+            this._heartbeatInterval = null;
         }
         
         if (this._flushRafId) {
