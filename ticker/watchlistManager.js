@@ -273,16 +273,22 @@ class WatchlistManager {
         });
     }
 
-   _restoreSortForList(listId) {
+  _restoreSortForList(listId) {
     if (!this._listSorts) this._listSorts = new Map();
     const saved = this._listSorts.get(listId);
-    if (saved) {
+    
+    // ✅ Если у списка есть сохраненная сортировка — применяем её
+    if (saved && saved.sortBy) {
         this.tickerPanel.state.sortBy = saved.sortBy;
         this.tickerPanel.state.sortDirection = saved.sortDirection;
     } else {
-        // ✅ ДОБАВЛЕНО: Если для списка нет сохраненной сортировки, сбрасываем её
-        this.tickerPanel.state.sortBy = null;
-        this.tickerPanel.state.sortDirection = null;
+        // ✅ Если списка нет в памяти (старый список, дефолтный или сброс) 
+        // — по умолчанию ставим сортировку по объему!
+        this.tickerPanel.state.sortBy = 'volume';
+        this.tickerPanel.state.sortDirection = 'desc';
+        
+        // Сохраняем эти настройки для списка, чтобы они там остались
+        this._listSorts.set(listId, { sortBy: 'volume', sortDirection: 'desc' });
     }
     
     this.tickerPanel.filterCache = null;
@@ -295,7 +301,6 @@ class WatchlistManager {
         this.tickerPanel.renderTickerList();
     }
 }
-
    _updateHeaderIcons() {
     const sortBy = this.tickerPanel.state.sortBy;
     const sortDirection = this.tickerPanel.state.sortDirection;
