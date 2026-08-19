@@ -9,7 +9,7 @@ class PriceManager {
         this._flushRafId = null;
         
         this._restPollInterval = null;
-        this._heartbeatInterval = null; // ✅ НОВОЕ: Таймер для проверки зомби-соединений
+        this._heartbeatInterval = null;
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
@@ -43,20 +43,18 @@ class PriceManager {
         this._restPollInterval = setInterval(() => this._pollAlertPricesViaRest(), this.config.restPollInterval);
         setTimeout(() => this._pollAlertPricesViaRest(), 1500);
         
-        // ✅ НОВОЕ: Запускаем проверку пульса (Heartbeat) каждые 30 секунд
         this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 30000);
         
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v13 запущен (Добавлен Heartbeat)');
+        console.log('✅ PriceManager v14 запущен (исправлены проценты Bybit)');
     }
 
-    // ✅ НОВЫЙ МЕТОД: Проверка пульса WebSocket
     _checkHeartbeats() {
         const now = Date.now();
-        const ZOMBIE_TIMEOUT = 45000; // 45 секунд. Если данных нет 45 сек - убиваем.
+        const ZOMBIE_TIMEOUT = 45000;
 
         for (const key in this.connections) {
             const ws = this.connections[key];
@@ -67,14 +65,10 @@ class PriceManager {
 
             if (elapsed > ZOMBIE_TIMEOUT) {
                 console.warn(`💔 ${key} ЗОМБИ! Нет данных ${Math.round(elapsed/1000)}с. Принудительное переподключение...`);
-                
-                // Убираем обработчики, чтобы не вызывать авто-реконнект дважды
                 ws.onclose = null; 
                 ws.onerror = null;
-                
                 try { ws.close(4000, 'Zombie connection'); } catch(e) {}
                 
-                // Вызываем переподключение вручную
                 if (key === 'binance:futures') this._connectBinanceFutures();
                 else if (key === 'binance:spot') this._connectBinanceSpot();
                 else if (key === 'bybit:linear') this._connectBybitLinear();
@@ -98,9 +92,9 @@ class PriceManager {
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
-      _connectBinanceFutures() {
+    _connectBinanceFutures() {
         const key = 'binance:futures';
-        // 🔥 ИСПРАВЛЕНО: новый URL с /market/ws/ для совместимости с обновлением Binance (апрель 2026)
+        // ✅ Обновлённый URL для фьючерсов (апрель 2026)
         const url = 'wss://fstream.binance.com/market/ws/!miniTicker@arr';
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
@@ -108,12 +102,11 @@ class PriceManager {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
                 
-                // ✅ ФИЛЬТРАЦИЯ: Обрабатываем только те монеты, которые есть в панели
                 const subKey = `${t.s}:binance:futures`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
                 const price = parseFloat(t.c);
-                const change = parseFloat(t.P) || 0;
+                const change = parseFloat(t.P) || 0; // Binance даёт проценты (например, 0.5)
                 this._setPrice(t.s, { price, change }, 'binance', 'futures');
             }
         });
@@ -128,7 +121,6 @@ class PriceManager {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
 
-                // ✅ ФИЛЬТРАЦИЯ: Обрабатываем только те монеты, которые есть в панели
                 const subKey = `${t.s}:binance:spot`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
@@ -232,7 +224,8 @@ class PriceManager {
                 if (msg.topic?.startsWith('tickers.') && msg.data) {
                     const symbol = msg.data.symbol || msg.data.s;
                     const price = parseFloat(msg.data.lastPrice || msg.data.c);
-                    const change = parseFloat(msg.data.price24hPcnt) || 0;
+                    // 🔥 ИСПРАВЛЕНО: умножаем на 100, так как Bybit даёт десятичную дробь (0.01 = 1%)
+                    const change = (parseFloat(msg.data.price24hPcnt) || 0) * 100;
                     
                     if (symbol && !isNaN(price)) {
                         this._setPrice(symbol, { price, change }, 'bybit', marketType);
@@ -385,7 +378,8 @@ class PriceManager {
                 if (data?.retCode === 0 && Array.isArray(data.result?.list)) {
                     for (const ticker of data.result.list) {
                         const price = parseFloat(ticker.lastPrice);
-                        const change = parseFloat(ticker.price24hPcnt) || 0;
+                        // 🔥 ИСПРАВЛЕНО: умножаем на 100, так как Bybit даёт десятичную дробь
+                        const change = (parseFloat(ticker.price24hPcnt) || 0) * 100;
                         if (ticker.symbol && price && !isNaN(price)) {
                             this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
                         }
@@ -516,7 +510,8 @@ class PriceManager {
             } else {
                 if (data.retCode === 0 && data.result?.list?.[0]) {
                     price = parseFloat(data.result.list[0].lastPrice);
-                    change = parseFloat(data.result.list[0].price24hPcnt) || 0;
+                    // 🔥 ИСПРАВЛЕНО: умножаем на 100 для Bybit
+                    change = (parseFloat(data.result.list[0].price24hPcnt) || 0) * 100;
                 }
             }
             if (price && !isNaN(price)) {
@@ -550,7 +545,7 @@ class PriceManager {
             this._restPollInterval = null;
         }
         
-        if (this._heartbeatInterval) { // ✅ НОВОЕ: Очистка пульсации
+        if (this._heartbeatInterval) {
             clearInterval(this._heartbeatInterval);
             this._heartbeatInterval = null;
         }
