@@ -9,7 +9,7 @@ class PriceManager {
         this._flushRafId = null;
         
         this._restPollInterval = null;
-        this._heartbeatInterval = null;
+        this._heartbeatInterval = null; // ✅ Таймер для проверки зомби-соединений
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
@@ -43,18 +43,20 @@ class PriceManager {
         this._restPollInterval = setInterval(() => this._pollAlertPricesViaRest(), this.config.restPollInterval);
         setTimeout(() => this._pollAlertPricesViaRest(), 1500);
         
-        this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 30000);
+        // ✅ Агрессивная проверка пульса (Heartbeat) каждые 5 секунд
+        this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 5000);
         
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v14 запущен (исправлены проценты Bybit)');
+        console.log('✅ PriceManager v14 запущен (Агрессивный Heartbeat + Новые URL Binance)');
     }
 
+    // ✅ Проверка пульса WebSocket (убивает зомби за 7 секунд)
     _checkHeartbeats() {
         const now = Date.now();
-        const ZOMBIE_TIMEOUT = 45000;
+        const ZOMBIE_TIMEOUT = 7000; // 7 секунд. Если данных нет - убиваем.
 
         for (const key in this.connections) {
             const ws = this.connections[key];
@@ -65,8 +67,10 @@ class PriceManager {
 
             if (elapsed > ZOMBIE_TIMEOUT) {
                 console.warn(`💔 ${key} ЗОМБИ! Нет данных ${Math.round(elapsed/1000)}с. Принудительное переподключение...`);
+                
                 ws.onclose = null; 
                 ws.onerror = null;
+                
                 try { ws.close(4000, 'Zombie connection'); } catch(e) {}
                 
                 if (key === 'binance:futures') this._connectBinanceFutures();
@@ -94,19 +98,21 @@ class PriceManager {
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
     _connectBinanceFutures() {
         const key = 'binance:futures';
-        // ✅ Обновлённый URL для фьючерсов (апрель 2026)
+        // ✅ АКТУАЛЬНЫЙ URL: Категория /market/ws/ + общий поток всех цен
         const url = 'wss://fstream.binance.com/market/ws/!miniTicker@arr';
+        
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
             for (let i = 0; i < tickers.length; i++) {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
                 
+                // ✅ ФИЛЬТРАЦИЯ: берем только наши монеты
                 const subKey = `${t.s}:binance:futures`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
                 const price = parseFloat(t.c);
-                const change = parseFloat(t.P) || 0; // Binance даёт проценты (например, 0.5)
+                const change = parseFloat(t.P) || 0;
                 this._setPrice(t.s, { price, change }, 'binance', 'futures');
             }
         });
@@ -114,7 +120,9 @@ class PriceManager {
     
     _connectBinanceSpot() {
         const key = 'binance:spot';
-        const url = 'wss://stream.binance.com:9443/ws/!ticker@arr';
+        // ✅ АКТУАЛЬНЫЙ URL: Убран старый порт 9443, оставлен стандартный /ws/
+        const url = 'wss://stream.binance.com/ws/!ticker@arr';
+        
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
             for (let i = 0; i < tickers.length; i++) {
@@ -150,6 +158,7 @@ class PriceManager {
             this._lastWsMessage[key] = Date.now();
             this._connectionAttempts[key] = 0;
             this._connectionState[key] = 'open';
+            console.log(`✅ ${key} WebSocket подключен (новый URL)`);
         };
         
         ws.onmessage = (event) => {
@@ -224,8 +233,7 @@ class PriceManager {
                 if (msg.topic?.startsWith('tickers.') && msg.data) {
                     const symbol = msg.data.symbol || msg.data.s;
                     const price = parseFloat(msg.data.lastPrice || msg.data.c);
-                    // 🔥 ИСПРАВЛЕНО: умножаем на 100, так как Bybit даёт десятичную дробь (0.01 = 1%)
-                    const change = (parseFloat(msg.data.price24hPcnt) || 0) * 100;
+                    const change = parseFloat(msg.data.price24hPcnt) || 0;
                     
                     if (symbol && !isNaN(price)) {
                         this._setPrice(symbol, { price, change }, 'bybit', marketType);
@@ -378,8 +386,7 @@ class PriceManager {
                 if (data?.retCode === 0 && Array.isArray(data.result?.list)) {
                     for (const ticker of data.result.list) {
                         const price = parseFloat(ticker.lastPrice);
-                        // 🔥 ИСПРАВЛЕНО: умножаем на 100, так как Bybit даёт десятичную дробь
-                        const change = (parseFloat(ticker.price24hPcnt) || 0) * 100;
+                        const change = parseFloat(ticker.price24hPcnt) || 0;
                         if (ticker.symbol && price && !isNaN(price)) {
                             this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
                         }
@@ -510,8 +517,7 @@ class PriceManager {
             } else {
                 if (data.retCode === 0 && data.result?.list?.[0]) {
                     price = parseFloat(data.result.list[0].lastPrice);
-                    // 🔥 ИСПРАВЛЕНО: умножаем на 100 для Bybit
-                    change = (parseFloat(data.result.list[0].price24hPcnt) || 0) * 100;
+                    change = parseFloat(data.result.list[0].price24hPcnt) || 0;
                 }
             }
             if (price && !isNaN(price)) {
