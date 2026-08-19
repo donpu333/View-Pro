@@ -133,13 +133,11 @@ class TickerPanel {
         window.tickerPanelInstance = this;
         
         const savedSortBy = localStorage.getItem('tickerSortBy');
-const savedSortDir = localStorage.getItem('tickerSortDir');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        this.state.sortBy = savedSortBy || 'volume';
+        this.state.sortDirection = savedSortDir || 'desc';
 
-// ✅ ИСПРАВЛЕНО: Обрабатываем три состояния (объем по умолчанию / сортировка / отключено)
-this.state.sortBy = savedSortBy === null ? 'volume' : (savedSortBy || null);
-this.state.sortDirection = savedSortDir === null ? 'desc' : (savedSortDir || null);
-
-this.init();
+        this.init();
     }  
 
     // 🚀 НОВЫЙ МЕТОД: Умная группировка перерисовок (Batching)
@@ -221,30 +219,28 @@ this.init();
         window.addEventListener('focus', () => this._restoreWebSockets());
     }
 
-       _restoreWebSockets() {
-    console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
-    
-    // 1. Принудительно сбрасываем флаги, чтобы разблокировать процесс, 
-    // даже если предыдущий запрос "завис" или был прерван уходом вкладки в фон
-    this._isRestRunning = false;
-    this._restQueue = []; // Очищаем очередь, чтобы начать сбор данных с чистого листа
-    
-    // ✅ ДОБАВЛЕНО: Сбрасываем кэш фильтрации, чтобы перерисовка применила актуальную сортировку
-    this.filterCache = null; 
-    
-    // 2. Запускаем обновление с небольшой задержкой (100мс). 
-    // Это критически важно: позволяет браузеру сначала отрисовать кадр 
-    // после возвращения фокуса, избегая визуального "фриза" от синхронной блокировки потока
-    if (this.pollRestData) {
-        setTimeout(() => {
-            this.pollRestData();
-        }, 100);
+        _restoreWebSockets() {
+        console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
+        
+        // 1. Принудительно сбрасываем флаги, чтобы разблокировать процесс, 
+        // даже если предыдущий запрос "завис" или был прерван уходом вкладки в фон
+        this._isRestRunning = false;
+        this._restQueue = []; // Очищаем очередь, чтобы начать сбор данных с чистого листа
+        
+        // 2. Запускаем обновление с небольшой задержкой (100мс). 
+        // Это критически важно: позволяет браузеру сначала отрисовать кадр 
+        // после возвращения фокуса, избегая визуального "фриза" от синхронной блокировки потока
+        if (this.pollRestData) {
+            setTimeout(() => {
+                this.pollRestData();
+            }, 100);
+        }
+
+        // 3. Гарантируем перерисовку списка тикеров, если она была пропущена 
+        // из-за заморозки requestAnimationFrame в фоновой вкладке
+        this._scheduleRender();
     }
 
-    // 3. Гарантируем перерисовку списка тикеров, если она была пропущена 
-    // из-за заморозки requestAnimationFrame в фоновой вкладке
-    this._scheduleRender();
-}
       async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
         const loader = document.getElementById('tickerLoader');
@@ -667,23 +663,18 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         console.log('✅ Очистка завершена! Тикеров:', this.tickersMap.size);
     }
 
-  syncWithActiveWatchlist() {
-    if (!this.watchlistManager) return;
-    const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
-    if (activeList) {
-        if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
-            activeList.symbols = [...this.state.customSymbols];
+    syncWithActiveWatchlist() {
+        if (!this.watchlistManager) return;
+        const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
+        if (activeList) {
+            if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
+                activeList.symbols = [...this.state.customSymbols];
+            }
+            activeList.flags = { ...this.state.flags };
+            activeList.favorites = [...this.state.favorites];
         }
-        activeList.flags = { ...this.state.flags };
-        activeList.favorites = [...this.state.favorites];
     }
-    
-    // ✅ ДОБАВЛЕНО: Очищаем кэши при смене вотчлиста, чтобы стрелки и сортировка работали корректно
-    this.filterCache = null;
-    this.tickerElements.clear();
-    this._rowDomCache.clear();
-    this._scheduleRender();
-}
+
    addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
     symbol = symbol.trim().toUpperCase();
     if (!this._isValidSymbol(symbol)) return false;
