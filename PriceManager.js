@@ -98,17 +98,23 @@ class PriceManager {
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
-    _connectBinanceFutures() {
+      _connectBinanceFutures() {
         const key = 'binance:futures';
         const url = 'wss://fstream.binance.com/ws/!miniTicker@arr';
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
-            tickers.forEach(ticker => {
-                if (!ticker.s || !ticker.c) return;
-                const price = parseFloat(ticker.c);
-                const change = parseFloat(ticker.P) || 0;
-                this._setPrice(ticker.s, { price, change }, 'binance', 'futures');
-            });
+            for (let i = 0; i < tickers.length; i++) {
+                const t = tickers[i];
+                if (!t.s || !t.c) continue;
+                
+                // ✅ ФИЛЬТРАЦИЯ: Обрабатываем только те монеты, которые есть в панели
+                const subKey = `${t.s}:binance:futures`;
+                if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
+
+                const price = parseFloat(t.c);
+                const change = parseFloat(t.P) || 0;
+                this._setPrice(t.s, { price, change }, 'binance', 'futures');
+            }
         });
     }
     
@@ -117,12 +123,18 @@ class PriceManager {
         const url = 'wss://stream.binance.com:9443/ws/!ticker@arr';
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
-            tickers.forEach(ticker => {
-                if (!ticker.s || !ticker.c) return;
-                const price = parseFloat(ticker.c);
-                const change = parseFloat(ticker.P) || 0;
-                this._setPrice(ticker.s, { price, change }, 'binance', 'spot');
-            });
+            for (let i = 0; i < tickers.length; i++) {
+                const t = tickers[i];
+                if (!t.s || !t.c) continue;
+
+                // ✅ ФИЛЬТРАЦИЯ: Обрабатываем только те монеты, которые есть в панели
+                const subKey = `${t.s}:binance:spot`;
+                if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
+
+                const price = parseFloat(t.c);
+                const change = parseFloat(t.P) || 0;
+                this._setPrice(t.s, { price, change }, 'binance', 'spot');
+            }
         });
     }
     
