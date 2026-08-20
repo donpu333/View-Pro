@@ -9,7 +9,7 @@ class PriceManager {
         this._flushRafId = null;
         
         this._restPollInterval = null;
-        this._heartbeatInterval = null; // ✅ Таймер для проверки зомби-соединений
+        this._heartbeatInterval = null;
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
@@ -20,7 +20,7 @@ class PriceManager {
             reconnectDelay: 15000,
             maxReconnectDelay: 120000,
             restPollInterval: 10000,
-            bybitPingInterval: 15000, 
+            bybitPingInterval: 15000,
             startupDelay: 2000
         };
         
@@ -43,20 +43,20 @@ class PriceManager {
         this._restPollInterval = setInterval(() => this._pollAlertPricesViaRest(), this.config.restPollInterval);
         setTimeout(() => this._pollAlertPricesViaRest(), 1500);
         
-        // ✅ Агрессивная проверка пульса (Heartbeat) каждые 5 секунд
-        this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 5000);
+        // Heartbeat каждые 15 секунд, таймаут зомби 20 секунд
+        this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 15000);
         
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
         }
         
-        console.log('✅ PriceManager v14 запущен (Агрессивный Heartbeat + Новые URL Binance)');
+        console.log('✅ PriceManager v16 запущен (Исправлены URL Binance и убраны лишние пинги)');
     }
 
-    // ✅ Проверка пульса WebSocket (убивает зомби за 7 секунд)
+    // Проверка пульса WebSocket (убивает зомби за 20 секунд)
     _checkHeartbeats() {
         const now = Date.now();
-        const ZOMBIE_TIMEOUT = 7000; // 7 секунд. Если данных нет - убиваем.
+        const ZOMBIE_TIMEOUT = 20000;
 
         for (const key in this.connections) {
             const ws = this.connections[key];
@@ -98,8 +98,8 @@ class PriceManager {
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
     _connectBinanceFutures() {
         const key = 'binance:futures';
-        // ✅ АКТУАЛЬНЫЙ URL: Категория /market/ws/ + общий поток всех цен
-        const url = 'wss://fstream.binance.com/market/ws/!ticker@arr';
+        // Правильный URL для Binance Futures: без /market/
+        const url = 'wss://fstream.binance.com/ws/!ticker@arr';
         
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
@@ -107,20 +107,21 @@ class PriceManager {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
                 
-                // ✅ ФИЛЬТРАЦИЯ: берем только наши монеты
                 const subKey = `${t.s}:binance:futures`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
                 const price = parseFloat(t.c);
                 const change = parseFloat(t.P) || 0;
-                this._setPrice(t.s, { price, change }, 'binance', 'futures');
+                const volume = parseFloat(t.q) || 0;
+                const trades = parseInt(t.n) || 0;
+                this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'futures');
             }
         });
     }
     
     _connectBinanceSpot() {
         const key = 'binance:spot';
-        // ✅ АКТУАЛЬНЫЙ URL: Убран старый порт 9443, оставлен стандартный /ws/
+        // Стандартный URL для спота
         const url = 'wss://stream.binance.com/ws/!ticker@arr';
         
         this._connectBinance(key, url, (data) => {
@@ -134,7 +135,9 @@ class PriceManager {
 
                 const price = parseFloat(t.c);
                 const change = parseFloat(t.P) || 0;
-                this._setPrice(t.s, { price, change }, 'binance', 'spot');
+                const volume = parseFloat(t.q) || 0;
+                const trades = parseInt(t.n) || 0;
+                this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
             }
         });
     }
@@ -158,11 +161,13 @@ class PriceManager {
             this._lastWsMessage[key] = Date.now();
             this._connectionAttempts[key] = 0;
             this._connectionState[key] = 'open';
-            console.log(`✅ ${key} WebSocket подключен (новый URL)`);
+            console.log(`✅ ${key} WebSocket подключен`);
+            // ❌ НЕ запускаем пинг для Binance — браузер сам отвечает на серверные ping-кадры
         };
         
         ws.onmessage = (event) => {
             this._lastWsMessage[key] = Date.now();
+            // Binance может отправлять текстовый 'ping', отвечаем 'pong'
             if (event.data === 'ping') {
                 try { ws.send('pong'); } catch(e) {}
                 return;
@@ -234,9 +239,12 @@ class PriceManager {
                     const symbol = msg.data.symbol || msg.data.s;
                     const price = parseFloat(msg.data.lastPrice || msg.data.c);
                     const change = parseFloat(msg.data.price24hPcnt) || 0;
+                    const volume = parseFloat(msg.data.turnover24h) || 
+                                   (parseFloat(msg.data.volume24h) * price) || 0;
+                    const trades = parseInt(msg.data.count) || 0;
                     
                     if (symbol && !isNaN(price)) {
-                        this._setPrice(symbol, { price, change }, 'bybit', marketType);
+                        this._setPrice(symbol, { price, change, volume, trades }, 'bybit', marketType);
                     }
                 }
             } catch(e) {}
@@ -358,8 +366,10 @@ class PriceManager {
             for (const ticker of tickers) {
                 const price = parseFloat(ticker.lastPrice || ticker.price);
                 const change = parseFloat(ticker.priceChangePercent) || 0;
+                const volume = parseFloat(ticker.quoteVolume) || 0;
+                const trades = parseInt(ticker.count) || 0;
                 if (ticker.symbol && price && !isNaN(price)) {
-                    this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
+                    this._setPrice(ticker.symbol, { price, change, volume, trades }, 'binance', marketType);
                 }
             }
         } catch(e) {}
@@ -387,8 +397,10 @@ class PriceManager {
                     for (const ticker of data.result.list) {
                         const price = parseFloat(ticker.lastPrice);
                         const change = parseFloat(ticker.price24hPcnt) || 0;
+                        const volume = parseFloat(ticker.turnover24h) || (parseFloat(ticker.volume24h) * price) || 0;
+                        const trades = parseInt(ticker.totalTrades) || parseInt(ticker.count) || 0;
                         if (ticker.symbol && price && !isNaN(price)) {
-                            this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
+                            this._setPrice(ticker.symbol, { price, change, volume, trades }, 'bybit', marketType);
                         }
                     }
                 }
@@ -425,16 +437,28 @@ class PriceManager {
         const isObject = typeof priceData === 'object' && priceData !== null;
         const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
         const change = isObject ? parseFloat(priceData.change) : undefined;
+        
+        const volume = isObject ? parseFloat(priceData.volume) : undefined;
+        const trades = isObject ? parseInt(priceData.trades) : undefined;
 
         if (isNaN(price) || price <= 0) return;
         
         const key = `${symbol}:${exchange}:${marketType}`;
         const old = this.prices.get(key);
         
-        if (old && old.price === price && old.change === change) return;
+        const newVolume = (volume !== undefined && !isNaN(volume)) ? volume : (old?.volume);
+        const newTrades = (trades !== undefined && !isNaN(trades)) ? trades : (old?.trades);
         
-        this.prices.set(key, { price, change, time: Date.now() });
-        this._pendingUpdates.set(key, { price, change, symbol, exchange, marketType });
+        if (old && 
+            old.price === price && 
+            old.change === change && 
+            (volume === undefined || old.volume === volume) && 
+            (trades === undefined || old.trades === trades)) {
+            return;
+        }
+        
+        this.prices.set(key, { price, change, volume: newVolume, trades: newTrades, time: Date.now() });
+        this._pendingUpdates.set(key, { price, change, volume: newVolume, trades: newTrades, symbol, exchange, marketType });
         
         if (this._flushRafId === null) {
             this._flushRafId = requestAnimationFrame(() => {
@@ -442,7 +466,12 @@ class PriceManager {
                 const updates = new Map(this._pendingUpdates);
                 this._pendingUpdates.clear();
                 for (const [k, data] of updates.entries()) {
-                    const payload = { price: data.price, change: data.change };
+                    const payload = { 
+                        price: data.price, 
+                        change: data.change,
+                        volume: data.volume,
+                        trades: data.trades
+                    };
                     
                     if (this.subscribers.has(k)) {
                         this.subscribers.get(k).forEach(cb => { 
@@ -471,7 +500,12 @@ class PriceManager {
         if (cached) {
             setTimeout(() => { 
                 try { 
-                    callback({ price: cached.price, change: cached.change }, parts[0], parts[1], parts[2]); 
+                    callback({ 
+                        price: cached.price, 
+                        change: cached.change,
+                        volume: cached.volume,
+                        trades: cached.trades
+                    }, parts[0], parts[1], parts[2]); 
                 } catch(e) {} 
             }, 0);
         }
@@ -510,18 +544,24 @@ class PriceManager {
             const data = await response.json();
             let price = null;
             let change = 0;
+            let volume = 0;
+            let trades = 0;
             
             if (exchange === 'binance') {
                 price = parseFloat(data.lastPrice || data.price);
                 change = parseFloat(data.priceChangePercent) || 0;
+                volume = parseFloat(data.quoteVolume) || 0;
+                trades = parseInt(data.count) || 0;
             } else {
                 if (data.retCode === 0 && data.result?.list?.[0]) {
                     price = parseFloat(data.result.list[0].lastPrice);
                     change = parseFloat(data.result.list[0].price24hPcnt) || 0;
+                    volume = parseFloat(data.result.list[0].turnover24h) || (parseFloat(data.result.list[0].volume24h) * price) || 0;
+                    trades = parseInt(data.result.list[0].totalTrades) || parseInt(data.result.list[0].count) || 0;
                 }
             }
             if (price && !isNaN(price)) {
-                this._setPrice(symbol, { price, change }, exchange, marketType);
+                this._setPrice(symbol, { price, change, volume, trades }, exchange, marketType);
                 return price;
             }
         } catch(e) {}
