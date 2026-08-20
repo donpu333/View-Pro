@@ -16,7 +16,7 @@ class HorizontalRay {
         extendLeft: restOptions.extendLeft || false,
         extendRight: restOptions.extendRight !== undefined ? restOptions.extendRight : true,
         showPrice: restOptions.showPrice !== undefined ? restOptions.showPrice : true,
-        fontSize: restOptions.fontSize || 11,
+        fontSize: restOptions.fontSize || 12,
         ...restOptions
     };
     
@@ -177,19 +177,22 @@ class HorizontalRayRenderer {
             ctx.fill();
         }
 
-                    if (ray.options.showPrice) {
+                              if (ray.options.showPrice) {
             const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
             const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
             const priceText = ray.price.toFixed(precision);
 
-            ctx.font = `bold ${ray.options.fontSize * scope.horizontalPixelRatio}px 'Trebuchet MS', Arial, sans-serif`;
+            // ЗАЩИТА ОТ ПОЛОВКИ: если размера нет, ставим 20. Иначе луч будет пропадать.
+            const currentFontSize = parseInt(ray.options.fontSize) > 0 ? parseInt(ray.options.fontSize) : 20;
+
+            // Настраиваем шрифт (можете поменять 'Trebuchet MS' на 'Consolas' или 'Arial', если хотите)
+        ctx.font = `bold ${currentFontSize * scope.horizontalPixelRatio}px 'Trebuchet MS', Arial, sans-serif`;
             const textMetrics = ctx.measureText(priceText);
             const textWidth = textMetrics.width;
             const padding = 10 * scope.horizontalPixelRatio;
             const labelWidth = textWidth + padding * 2;
-            const labelHeight = (ray.options.fontSize + 8) * scope.verticalPixelRatio;
+            const labelHeight = (currentFontSize + 8) * scope.verticalPixelRatio;
 
-            // Сдвигаем плашку левее, чтобы хвостик смотрел на линию
             const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
             const labelYPos = yPos - labelHeight / 2;
 
@@ -214,7 +217,10 @@ class HorizontalRayRenderer {
             ctx.shadowBlur = 0;
             ctx.shadowColor = 'transparent';
 
+            // Пишем сам текст цены
             ctx.fillStyle = textColor;
+            // ПОВТОРНО указываем шрифт перед текстом (Canvas так работает)
+      ctx.font = `bold ${currentFontSize * scope.horizontalPixelRatio}px 'Trebuchet MS', Arial, sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
