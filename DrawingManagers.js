@@ -16,7 +16,7 @@ class HorizontalRay {
         extendLeft: restOptions.extendLeft || false,
         extendRight: restOptions.extendRight !== undefined ? restOptions.extendRight : true,
         showPrice: restOptions.showPrice !== undefined ? restOptions.showPrice : true,
-        fontSize: restOptions.fontSize || 10,
+        fontSize: restOptions.fontSize || 11,
         ...restOptions
     };
     
@@ -177,53 +177,48 @@ class HorizontalRayRenderer {
             ctx.fill();
         }
 
-        if (ray.options.showPrice) {
+                    if (ray.options.showPrice) {
             const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
             const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
             const priceText = ray.price.toFixed(precision);
 
-            ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+            ctx.font = `bold ${ray.options.fontSize * scope.horizontalPixelRatio}px 'Trebuchet MS', Arial, sans-serif`;
             const textMetrics = ctx.measureText(priceText);
             const textWidth = textMetrics.width;
-            const padding = 8 * scope.horizontalPixelRatio;
+            const padding = 10 * scope.horizontalPixelRatio;
             const labelWidth = textWidth + padding * 2;
-            const labelHeight = (ray.options.fontSize + 6) * scope.verticalPixelRatio;
+            const labelHeight = (ray.options.fontSize + 8) * scope.verticalPixelRatio;
 
+            // Сдвигаем плашку левее, чтобы хвостик смотрел на линию
             const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
             const labelYPos = yPos - labelHeight / 2;
 
             this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
 
-            ctx.fillStyle = rgbaColor;
-            ctx.shadowBlur = 4;
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            const solidBgColor = parsed ? `rgb(${parsed.r}, ${parsed.g}, ${parsed.b})` : color;
+            const brightness = this._getBrightness(solidBgColor);
+            const textColor = brightness < 128 ? '#FFFFFF' : '#000000';
+
+            // Рисуем плашку с хвостиком
+            ctx.fillStyle = solidBgColor;
+            ctx.shadowBlur = 3;
+            ctx.shadowColor = 'rgba(0,0,0,0.4)';
             ctx.beginPath();
-            this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+            ctx.moveTo(labelXPos, labelYPos);
+            ctx.lineTo(labelXPos + labelWidth, labelYPos);
+            ctx.lineTo(labelXPos + labelWidth, labelYPos + labelHeight);
+            ctx.lineTo(labelXPos, labelYPos + labelHeight);
+            ctx.closePath();
             ctx.fill();
 
             ctx.shadowBlur = 0;
             ctx.shadowColor = 'transparent';
-            
-            const brightness = this._getBrightness(ray.options.color);
-            const textColor = brightness < 128 ? '#FFFFFF' : '#000000';
-            
-            ctx.shadowColor = brightness < 128 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
-            ctx.shadowBlur = 2;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
-            
+
             ctx.fillStyle = textColor;
-            ctx.font = `${ray.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
-            
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
         }
-        
         ctx.restore();
     });
 }
