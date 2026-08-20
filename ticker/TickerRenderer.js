@@ -141,40 +141,53 @@ class TickerRenderer {
         }
     }
 
-    updatePriceForSymbol(key, price, change) {
-        const el = this.tickerElements.get(key);
-        if (!el || !el.isConnected) return;
+    updatePriceForSymbol(key, price, change, volume, trades) {
+    const el = this.tickerElements.get(key);
+    if (!el || !el.isConnected) return;
 
-        const ticker = this.parent.tickersMap?.get(key);
-        if (!ticker) return;
+    const ticker = this.parent.tickersMap?.get(key);
+    if (!ticker) return;
 
-        const els = el._cachedEls || {};
-        const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
-        
-        if (els.price) {
-            const newPrice = this.formatPrice(price);
-            if (els.price.textContent !== newPrice) {
-                els.price.textContent = newPrice;
-                els.price.className = `ticker-price ${colorClass}`;
-                
-                if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
-                    const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-                    els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth; 
-                    els.price.classList.add(flashClass);
-                }
-            }
-        }
-        
-        if (els.change) {
-            const newChange = this.formatChange(change) + '%';
-            if (els.change.textContent !== newChange) {
-                els.change.textContent = newChange;
-                els.change.className = `ticker-change ${colorClass}`;
+    const els = el._cachedEls || {};
+    const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
+    
+    if (els.price) {
+        const newPrice = this.formatPrice(price);
+        if (els.price.textContent !== newPrice) {
+            els.price.textContent = newPrice;
+            els.price.className = `ticker-price ${colorClass}`;
+            
+            if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
+                const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
+                els.price.classList.remove('flash-up', 'flash-down');
+                void els.price.offsetWidth; 
+                els.price.classList.add(flashClass);
             }
         }
     }
+    
+    if (els.change) {
+        const newChange = this.formatChange(change) + '%';
+        if (els.change.textContent !== newChange) {
+            els.change.textContent = newChange;
+            els.change.className = `ticker-change ${colorClass}`;
+        }
+    }
 
+    if (els.volume && volume !== undefined && !isNaN(volume)) {
+        const newVolume = this.formatVolume(volume);
+        if (els.volume.textContent !== newVolume) {
+            els.volume.textContent = newVolume;
+        }
+    }
+
+    if (els.trades && trades !== undefined && !isNaN(trades)) {
+        const newTrades = this.formatTrades(trades);
+        if (els.trades.textContent !== newTrades) {
+            els.trades.textContent = newTrades;
+        }
+    }
+}
     sortTickers(tickers) {
         const arrayToSort = tickers || this.parent?.tickers;
         if (!arrayToSort || !Array.isArray(arrayToSort)) return [];
