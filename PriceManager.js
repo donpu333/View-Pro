@@ -99,7 +99,7 @@ class PriceManager {
     _connectBinanceFutures() {
         const key = 'binance:futures';
         // ✅ АКТУАЛЬНЫЙ URL: Категория /market/ws/ + общий поток всех цен
-        const url = 'wss://fstream.binance.com/market/ws/!miniTicker@arr';
+        const url = 'wss://fstream.binance.com/market/ws/!ticker@arr';
         
         this._connectBinance(key, url, (data) => {
             const tickers = Array.isArray(data) ? data : [data];
