@@ -5,6 +5,7 @@ class ChartManager {
         this.lastCandle = null;
         this._loadingSymbol = false;
         this._switchingSymbol = false;
+        this._pendingSymbolSwitch = null; // ✅ ФИКС: очередь на случай быстрого переключения тикеров
         this._generationCounter = 0;
         this._activeGeneration = 0;
         this._updatesSuspended = false;
@@ -111,57 +112,56 @@ class ChartManager {
         this._pendingDrawingsRedraw = false;
 
         // ============ VISIBILITY HANDLER ============
-         // ============ VISIBILITY HANDLER ============
-    this._visibilityHandler = () => {
-        if (!document.hidden) {
-            // ✅ Проверяем график перед использованием
-            if (!this._isChartValid()) {
-                console.warn('⚠️ График не готов после возврата, ждём...');
-                setTimeout(() => {
+        this._visibilityHandler = () => {
+            if (!document.hidden) {
+                // ✅ Проверяем график перед использованием
+                if (!this._isChartValid()) {
+                    console.warn('⚠️ График не готов после возврата, ждём...');
+                    setTimeout(() => {
+                        if (this._isChartValid()) {
+                            this.refreshCandlesAfterTabHidden();
+                        }
+                    }, 100);
+                    return;
+                }
+                
+                if (window.wsManager) {
+                    window.wsManager.forceReconnect?.();
+                }
+                this.refreshCandlesAfterTabHidden();
+                const price = this.getCurrentPrice();
+                if (price != null) {
+                    this._syncPriceLine(price);
+                }
+                this.scheduleDrawingsUpdate(true);
+                this.requestDrawingsRedraw();
+                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                
+                // ✅ ФИКС: Принудительно пересчитываем размеры после возврата на вкладку
+                requestAnimationFrame(() => {
                     if (this._isChartValid()) {
-                        this.refreshCandlesAfterTabHidden();
+                        this._updateMainChartHeight();
+                        if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                        this.chart.applyOptions({ 
+                            width: this.chartContainer.clientWidth, 
+                            height: this.chartContainer.clientHeight 
+                        });
                     }
-                }, 100);
-                return;
-            }
-            
-            if (window.wsManager) {
-                window.wsManager.forceReconnect?.();
-            }
-            this.refreshCandlesAfterTabHidden();
-            const price = this.getCurrentPrice();
-            if (price != null) {
-                this._syncPriceLine(price);
-            }
-            this.scheduleDrawingsUpdate(true);
-            this.requestDrawingsRedraw();
-            if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            
-            // ✅ ФИКС: Принудительно пересчитываем размеры после возврата на вкладку
-            requestAnimationFrame(() => {
-                if (this._isChartValid()) {
-                    this._updateMainChartHeight();
-                    if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                    this.chart.applyOptions({ 
-                        width: this.chartContainer.clientWidth, 
-                        height: this.chartContainer.clientHeight 
-                    });
+                });
+            } else {
+                // ✅ Сохраняем точную видимую позицию перед уходом с вкладки
+                try {
+                    if (this.chart && this.chart.timeScale()) {
+                        const range = this.chart.timeScale().getVisibleLogicalRange();
+                        this._savedLogicalRange = range ? { from: range.from, to: range.to } : null;
+                    }
+                } catch (e) {
+                    this._savedLogicalRange = null;
                 }
-            });
-        } else {
-            // ✅ Сохраняем точную видимую позицию перед уходом с вкладки
-            try {
-                if (this.chart && this.chart.timeScale()) {
-                    const range = this.chart.timeScale().getVisibleLogicalRange();
-                    this._savedLogicalRange = range ? { from: range.from, to: range.to } : null;
-                }
-            } catch (e) {
-                this._savedLogicalRange = null;
+                this._startBackgroundTitleUpdate();
             }
-            this._startBackgroundTitleUpdate();
-        }
-    };
-    document.addEventListener('visibilitychange', this._visibilityHandler);
+        };
+        document.addEventListener('visibilitychange', this._visibilityHandler);
         // ============ ХЕНДЛЕРЫ ============
         this._priceUpdateHandler = null;
         this._candleCheckerTimeout = null;
@@ -698,7 +698,8 @@ class ChartManager {
                     console.warn('⚠️ chart отсутствует перед setDataQuick');
                     return;
                 }
-                this.setDataQuick(freshCandles, interval, symbol, exchange, marketType);
+                // ✅ ФИКС: это фактически первая загрузка данных — считаем как новый символ
+                this.setDataQuick(freshCandles, interval, symbol, exchange, marketType, true);
                 return;
             }
             
@@ -1580,7 +1581,14 @@ setChartType(type) {
     }
 
     // ✅ ИСПРАВЛЕННЫЙ МЕТОД setDataQuick
-    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures') {
+    // ✅ ФИКС: добавлен явный параметр forceNewSymbol. Раньше isNewSymbol
+    // вычислялся как (this.currentSymbol !== symbol), но к моменту вызова
+    // switchSymbol() уже успевал переписать this.currentSymbol = symbol,
+    // поэтому сравнение всегда было false и график ошибочно пытался
+    // восстановить logical-range предыдущего (уже несуществующего) тикера —
+    // отсюда "иногда криво" при переключении. Теперь вызывающая сторона
+    // явно говорит, новый это символ или нет.
+    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false) {
         try {
             // Проверяем валидность графика
             if (!this._isChartValid()) {
@@ -1591,7 +1599,7 @@ setChartType(type) {
             if (!data || data.length === 0) return;
 
             const currentScale = this._captureScale();
-            const isNewSymbol = this.currentSymbol !== symbol;
+            const isNewSymbol = forceNewSymbol;
 
             this.chart.applyOptions({ 
                 handleScroll: false, 
@@ -1687,6 +1695,10 @@ setChartType(type) {
                 }
             }, 0);
 
+            // ✅ ФИКС: при смене тикера (isNewSymbol === true) ВСЕГДА скроллим
+            // к последней свече и делаем autoScale — как в TradingView.
+            // Восстанавливать сохранённый logical-range имеет смысл только
+            // при смене таймфрейма на ТОМ ЖЕ тикере.
             if (currentScale && !isNewSymbol) {
                 this._restoreScale(currentScale);
             } else {
@@ -1732,6 +1744,10 @@ setChartType(type) {
                 if (window.renderDrawings) window.renderDrawings();
             }, 0);
 
+            // ✅ ФИКС: уведомление о смене символа теперь вызывается только
+            // здесь. Раньше switchSymbol() дублировал этот вызов ещё раз
+            // после setDataQuick(), и все подписчики (_symbolChangeCallbacks)
+            // срабатывали дважды на одно переключение тикера.
             this._notifySymbolChange();
             this._lastTimeframe = interval;
 
@@ -1822,7 +1838,14 @@ setChartType(type) {
     }
 
      async switchSymbol(symbol, exchange, marketType) {
-        if (this._switchingSymbol) return;
+        // ✅ ФИКС: раньше повторный клик по тикеру, пока идёт переключение,
+        // молча отбрасывался (return без сохранения). Теперь последний
+        // запрошенный тикер запоминается и доигрывается после завершения
+        // текущего переключения — так же ведёт себя TradingView.
+        if (this._switchingSymbol) {
+            this._pendingSymbolSwitch = { symbol, exchange, marketType };
+            return;
+        }
         this._switchingSymbol = true;
         
         if (this.timerManager) {
@@ -1882,16 +1905,17 @@ setChartType(type) {
             }
 
             // 3. МГНОВЕННО ОТОБРАЖАЕМ НОВЫЕ СВЕЧИ (замещаем старые без пустого экрана)
+            // ✅ ФИКС: передаём forceNewSymbol = true, чтобы setDataQuick всегда
+            // делал scrollToLast() + autoScale() для нового тикера, а не
+            // пытался наследовать zoom/диапазон предыдущего символа.
             if (this._isChartValid()) {
-                this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType);
+                this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true);
             }
             
-            if (this.timerManager) {
-                this.timerManager.start(this.currentInterval);
-                const price = this.lastCandle?.close || candles[candles.length - 1]?.close;
-                this.timerManager.updatePrice(price);
-                this.timerManager._forceUpdate(); 
-            }
+            // ✅ ФИКС: убран дублирующий блок timerManager.start()/updatePrice()/
+            // _forceUpdate() — всё это уже один раз выполняется внутри
+            // setDataQuick(). Двойной запуск таймера вызывал его "дёргание"
+            // при переключении тикера.
 
             // 4. Сохраняем в кэш, если качали с биржи
             if (!isFromCache) {
@@ -1903,7 +1927,8 @@ setChartType(type) {
             localStorage.setItem('lastSymbol', symbol);
             localStorage.setItem('lastExchange', exchange);
             localStorage.setItem('lastMarketType', marketType);
-            this._notifySymbolChange();
+            // ✅ ФИКС: убран повторный вызов this._notifySymbolChange() —
+            // он уже был выполнен внутри setDataQuick() выше.
 
             // 5. ФОНОВОЕ ОБНОВЛЕНИЕ СВЕЖИМИ СВЕЧАМИ (если взяли из кэша)
             if (isFromCache) {
@@ -1916,6 +1941,14 @@ setChartType(type) {
             if (this._activeGeneration === generationId) {
                 this._switchingSymbol = false;
                 this._resumeAllUpdates(generationId);
+
+                // ✅ ФИКС: если за время загрузки пользователь кликнул на
+                // другой тикер, доигрываем именно последний запрошенный.
+                if (this._pendingSymbolSwitch) {
+                    const next = this._pendingSymbolSwitch;
+                    this._pendingSymbolSwitch = null;
+                    this.switchSymbol(next.symbol, next.exchange, next.marketType);
+                }
             }
         }
     }
