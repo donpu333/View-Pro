@@ -6,10 +6,10 @@ class PriceManager {
         this.reconnectTimers = new Map();
         this.pingIntervals = new Map();
         this._pendingUpdates = new Map();
-        this._flushRafId = null;
+        this._flushTimerId = null; // ✅ Заменили _flushRafId на таймер
         
         this._restPollInterval = null;
-        this._heartbeatInterval = null; // ✅ Таймер для проверки зомби-соединений
+        this._heartbeatInterval = null; 
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
@@ -43,20 +43,60 @@ class PriceManager {
         this._restPollInterval = setInterval(() => this._pollAlertPricesViaRest(), this.config.restPollInterval);
         setTimeout(() => this._pollAlertPricesViaRest(), 1500);
         
-        // ✅ Агрессивная проверка пульса (Heartbeat) каждые 5 секунд
         this._heartbeatInterval = setInterval(() => this._checkHeartbeats(), 5000);
         
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => this.close());
         }
+
+        // ✅ ЗАЩИТА ОТ ПРОБУЖДЕНИЯ ВКЛАДКИ
+        if (typeof document !== 'undefined') {
+            this._visibilityHandler = () => {
+                if (!document.hidden) {
+                    const now = Date.now();
+                    for (const key in this.connections) {
+                        if (this.connections[key]?.readyState === WebSocket.OPEN) {
+                            this._lastWsMessage[key] = now;
+                        }
+                    }
+                    
+                    // Даем 5 секунд на получение новых данных после пробуждения
+                    setTimeout(() => {
+                        if (document.hidden) return; // Вкладку снова свернули
+                        const checkNow = Date.now();
+                        for (const key in this.connections) {
+                            const ws = this.connections[key];
+                            if (ws?.readyState === WebSocket.OPEN) {
+                                const elapsed = checkNow - (this._lastWsMessage[key] || 0);
+                                if (elapsed > 5000) {
+                                    console.warn(`💔 ${key} не ожил после сна вкладки. Реконнект...`);
+                                    ws.onclose = null; 
+                                    ws.onerror = null;
+                                    try { ws.close(4000, 'Zombie after sleep'); } catch(e) {}
+                                    
+                                    if (key === 'binance:futures') this._connectBinanceFutures();
+                                    else if (key === 'binance:spot') this._connectBinanceSpot();
+                                    else if (key === 'bybit:linear') this._connectBybitLinear();
+                                    else if (key === 'bybit:spot') this._connectBybitSpot();
+                                }
+                            }
+                        }
+                    }, 5000);
+                }
+            };
+            document.addEventListener('visibilitychange', this._visibilityHandler);
+        }
         
-        console.log('✅ PriceManager v14 запущен (Агрессивный Heartbeat + Новые URL Binance)');
+        console.log('✅ PriceManager v16 запущен (Защита от сна вкладки + Оптимизация 600+ монет)');
     }
 
-    // ✅ Проверка пульса WebSocket (убивает зомби за 7 секунд)
+    // ✅ Проверка пульса (убивает зомби за 30 секунд)
     _checkHeartbeats() {
         const now = Date.now();
-        const ZOMBIE_TIMEOUT = 7000; // 7 секунд. Если данных нет - убиваем.
+        const ZOMBIE_TIMEOUT = 30000; 
+
+        // Если вкладка не активна, браузер тротлит таймеры и WebSocket. Не убиваем соединения зазря.
+        if (typeof document !== 'undefined' && document.hidden) return;
 
         for (const key in this.connections) {
             const ws = this.connections[key];
@@ -98,7 +138,6 @@ class PriceManager {
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
     _connectBinanceFutures() {
         const key = 'binance:futures';
-        // ✅ АКТУАЛЬНЫЙ URL: Категория /market/ws/ + общий поток всех цен
         const url = 'wss://fstream.binance.com/market/ws/!ticker@arr';
         
         this._connectBinance(key, url, (data) => {
@@ -107,22 +146,21 @@ class PriceManager {
                 const t = tickers[i];
                 if (!t.s || !t.c) continue;
                 
-                // ✅ ФИЛЬТРАЦИЯ: берем только наши монеты
                 const subKey = `${t.s}:binance:futures`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
-            const price = parseFloat(t.c);
-const change = parseFloat(t.P) || 0;
-const volume = parseFloat(t.q) || 0;   // объём в котируемой валюте (USDT)
-const trades = parseInt(t.n) || 0;     // количество сделок
-this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'futures');
+                const price = parseFloat(t.c);
+                const change = parseFloat(t.P) || 0;
+                const volume = parseFloat(t.q) || 0;   
+                const trades = parseInt(t.n) || 0;     
+                
+                this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'futures');
             }
         });
     }
     
     _connectBinanceSpot() {
         const key = 'binance:spot';
-        // ✅ АКТУАЛЬНЫЙ URL: Убран старый порт 9443, оставлен стандартный /ws/
         const url = 'wss://stream.binance.com/ws/!ticker@arr';
         
         this._connectBinance(key, url, (data) => {
@@ -134,11 +172,12 @@ this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'futures');
                 const subKey = `${t.s}:binance:spot`;
                 if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
-              const price = parseFloat(t.c);
-const change = parseFloat(t.P) || 0;
-const volume = parseFloat(t.q) || 0;   // объём в котируемой валюте (USDT)
-const trades = parseInt(t.n) || 0;     // количество сделок
-this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
+                const price = parseFloat(t.c);
+                const change = parseFloat(t.P) || 0;
+                const volume = parseFloat(t.q) || 0;   
+                const trades = parseInt(t.n) || 0;     
+                
+                this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
             }
         });
     }
@@ -162,15 +201,13 @@ this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
             this._lastWsMessage[key] = Date.now();
             this._connectionAttempts[key] = 0;
             this._connectionState[key] = 'open';
-            console.log(`✅ ${key} WebSocket подключен (новый URL)`);
+            console.log(`✅ ${key} WebSocket подключен`);
         };
         
         ws.onmessage = (event) => {
+            // ✅ Обновляем пульс МГНОВЕННО, до тяжелого парсинга JSON
             this._lastWsMessage[key] = Date.now();
-            if (event.data === 'ping') {
-                try { ws.send('pong'); } catch(e) {}
-                return;
-            }
+            
             try {
                 const data = JSON.parse(event.data);
                 onMessageHandler(data);
@@ -234,21 +271,19 @@ this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.op === 'pong' || msg.ret_msg === 'pong') return;
-              if (msg.topic?.startsWith('tickers.') && msg.data) {
-    const symbol = msg.data.symbol || msg.data.s;
-    const price = parseFloat(msg.data.lastPrice || msg.data.c);
-    const change = parseFloat(msg.data.price24hPcnt) || 0;
-    // Объём в USDT (turnover24h), если нет — пересчитываем из базового объёма
-    const volume = parseFloat(msg.data.turnover24h) || 
-                   (parseFloat(msg.data.volume24h) * price) || 0;
-    // Количество сделок (в потоке Bybit tickers обычно отсутствует, поэтому 0)
-    const trades = parseInt(msg.data.count) || 0;
-    
-    if (symbol && !isNaN(price)) {
-        this._setPrice(symbol, { price, change, volume, trades }, 'bybit', marketType);
-    }
-}
                 
+                if (msg.topic?.startsWith('tickers.') && msg.data) {
+                    const symbol = msg.data.symbol || msg.data.s;
+                    const price = parseFloat(msg.data.lastPrice || msg.data.c);
+                    const change = parseFloat(msg.data.price24hPcnt) || 0;
+                    const volume = parseFloat(msg.data.turnover24h) || 
+                                   (parseFloat(msg.data.volume24h) * price) || 0;
+                    const trades = parseInt(msg.data.count) || 0;
+                    
+                    if (symbol && !isNaN(price)) {
+                        this._setPrice(symbol, { price, change, volume, trades }, 'bybit', marketType);
+                    }
+                }
             } catch(e) {}
         };
         
@@ -430,64 +465,63 @@ this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
     
     // ========== УСТАНОВКА ЦЕНЫ ==========
     _setPrice(symbol, priceData, exchange, marketType) {
-    if (!symbol) return;
-    
-    const isObject = typeof priceData === 'object' && priceData !== null;
-    const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
-    const change = isObject ? parseFloat(priceData.change) : undefined;
-    
-    // Новые поля (могут быть undefined)
-    const volume = isObject ? parseFloat(priceData.volume) : undefined;
-    const trades = isObject ? parseInt(priceData.trades) : undefined;
+        if (!symbol) return;
+        
+        const isObject = typeof priceData === 'object' && priceData !== null;
+        const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
+        const change = isObject ? parseFloat(priceData.change) : undefined;
+        
+        const volume = isObject ? parseFloat(priceData.volume) : undefined;
+        const trades = isObject ? parseInt(priceData.trades) : undefined;
 
-    if (isNaN(price) || price <= 0) return;
-    
-    const key = `${symbol}:${exchange}:${marketType}`;
-    const old = this.prices.get(key);
-    
-    // Сохраняем старые volume/trades, если новые не определены
-    const newVolume = (volume !== undefined && !isNaN(volume)) ? volume : (old?.volume);
-    const newTrades = (trades !== undefined && !isNaN(trades)) ? trades : (old?.trades);
-    
-    // Проверка: если ничего не изменилось (с учётом undefined)
-    if (old && 
-        old.price === price && 
-        old.change === change && 
-        (volume === undefined || old.volume === volume) && 
-        (trades === undefined || old.trades === trades)) {
-        return;
+        if (isNaN(price) || price <= 0) return;
+        
+        const key = `${symbol}:${exchange}:${marketType}`;
+        const old = this.prices.get(key);
+        
+        const newVolume = (volume !== undefined && !isNaN(volume)) ? volume : (old?.volume);
+        const newTrades = (trades !== undefined && !isNaN(trades)) ? trades : (old?.trades);
+        
+        if (old && 
+            old.price === price && 
+            old.change === change && 
+            (volume === undefined || old.volume === volume) && 
+            (trades === undefined || old.trades === trades)) {
+            return;
+        }
+        
+        this.prices.set(key, { price, change, volume: newVolume, trades: newTrades, time: Date.now() });
+        this._pendingUpdates.set(key, { price, change, volume: newVolume, trades: newTrades, symbol, exchange, marketType });
+        
+        // ✅ Используем setTimeout вместо requestAnimationFrame, чтобы вкладка не умирала в фоне
+        if (this._flushTimerId === null) {
+            this._flushTimerId = setTimeout(() => {
+                this._flushTimerId = null;
+                const updates = new Map(this._pendingUpdates);
+                this._pendingUpdates.clear();
+                for (const [k, data] of updates.entries()) {
+                    const payload = { 
+                        price: data.price, 
+                        change: data.change,
+                        volume: data.volume,
+                        trades: data.trades
+                    };
+                    
+                    if (this.subscribers.has(k)) {
+                        this.subscribers.get(k).forEach(cb => { 
+                            try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                        });
+                    }
+                    if (this.subscribers.has(data.symbol)) {
+                        this.subscribers.get(data.symbol).forEach(cb => { 
+                            try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
+                        });
+                    }
+                }
+            }, 100); // Батчинг каждые 100мс
+        }
     }
     
-    this.prices.set(key, { price, change, volume: newVolume, trades: newTrades, time: Date.now() });
-    this._pendingUpdates.set(key, { price, change, volume: newVolume, trades: newTrades, symbol, exchange, marketType });
-    
-    if (this._flushRafId === null) {
-        this._flushRafId = requestAnimationFrame(() => {
-            this._flushRafId = null;
-            const updates = new Map(this._pendingUpdates);
-            this._pendingUpdates.clear();
-            for (const [k, data] of updates.entries()) {
-                const payload = { 
-                    price: data.price, 
-                    change: data.change,
-                    volume: data.volume,
-                    trades: data.trades
-                };
-                
-                if (this.subscribers.has(k)) {
-                    this.subscribers.get(k).forEach(cb => { 
-                        try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
-                    });
-                }
-                if (this.subscribers.has(data.symbol)) {
-                    this.subscribers.get(data.symbol).forEach(cb => { 
-                        try { cb(payload, data.symbol, data.exchange, data.marketType); } catch(e) {} 
-                    });
-                }
-            }
-        });
-    }
-}
     // ========== ПОДПИСКА ==========
     subscribe(key, callback) {
         if (!this.subscribers.has(key)) this.subscribers.set(key, []);
@@ -584,10 +618,16 @@ this._setPrice(t.s, { price, change, volume, trades }, 'binance', 'spot');
             clearInterval(this._heartbeatInterval);
             this._heartbeatInterval = null;
         }
+
+        // ✅ Удаляем слушатель пробуждения вкладки для предотвращения утечек памяти
+        if (this._visibilityHandler && typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', this._visibilityHandler);
+            this._visibilityHandler = null;
+        }
         
-        if (this._flushRafId) {
-            cancelAnimationFrame(this._flushRafId);
-            this._flushRafId = null;
+        if (this._flushTimerId) {
+            clearTimeout(this._flushTimerId);
+            this._flushTimerId = null;
         }
         this._pendingUpdates.clear();
         
