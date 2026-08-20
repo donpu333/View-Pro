@@ -16,7 +16,7 @@ class HorizontalRay {
         extendLeft: restOptions.extendLeft || false,
         extendRight: restOptions.extendRight !== undefined ? restOptions.extendRight : true,
         showPrice: restOptions.showPrice !== undefined ? restOptions.showPrice : true,
-        fontSize: restOptions.fontSize || 12,
+        fontSize: restOptions.fontSize || 11.8,
         ...restOptions
     };
     
