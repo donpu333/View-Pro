@@ -347,7 +347,7 @@ this.init();
         }
     }
 
-         _onPriceUpdate(symbol, data, exchange, marketType) {
+        _onPriceUpdate(symbol, data, exchange, marketType) {
         const compositeKey = `${symbol}:${exchange}:${marketType}`;
         const ticker = this.tickersMap.get(compositeKey);
         if (!ticker) return;
@@ -360,19 +360,36 @@ this.init();
             newChange = ticker.change || 0;
         }
 
-        if (ticker.price === newPrice && ticker.change === newChange) return;
+        // ✅ НОВОЕ: Извлекаем объем и сделки
+        let newVolume = typeof data === 'object' && data !== null ? parseFloat(data.volume) : undefined;
+        if (isNaN(newVolume)) newVolume = ticker.volume;
+
+        let newTrades = typeof data === 'object' && data !== null ? parseInt(data.trades) : undefined;
+        if (isNaN(newTrades)) newTrades = ticker.trades;
+
+        // Проверяем, изменилось ли хоть что-то (цена, процент, объем или сделки)
+        if (ticker.price === newPrice && 
+            ticker.change === newChange && 
+            ticker.volume === newVolume && 
+            ticker.trades === newTrades) return;
 
         ticker.prevPrice = ticker.price > 0 ? ticker.price : newPrice;
         ticker.price = newPrice;
         ticker.change = newChange;
+        ticker.volume = newVolume; // ✅ Сохраняем в объект
+        ticker.trades = newTrades; // ✅ Сохраняем в объект
         ticker._lastUpdateTime = Date.now();
 
         if (!this._blockDOMUpdates && this.renderer) {
             if (!this._pendingPriceUpdates) this._pendingPriceUpdates = new Map();
             
-            // ✅ ИСПРАВЛЕНО: Убран дурацкий renderChange, который подменял процент на -0.01!
-            // Отправляем настоящий процент (6.32%), он не будет прыгать.
-            this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: newChange });
+            // ✅ Передаем volume и trades в батч
+            this._pendingPriceUpdates.set(compositeKey, { 
+                price: ticker.price, 
+                change: newChange,
+                volume: newVolume,
+                trades: newTrades
+            });
             
             if (!this._priceUpdateRaf) {
                 this._priceUpdateRaf = requestAnimationFrame(() => {
@@ -381,7 +398,8 @@ this.init();
                     this._pendingPriceUpdates = new Map(); 
                 
                     for (const [key, val] of batch.entries()) {
-                        this.renderer.updatePriceForSymbol(key, val.price, val.change);
+                        // ✅ Передаем volume и trades в рендерер
+                        this.renderer.updatePriceForSymbol(key, val.price, val.change, val.volume, val.trades);
                     }
                 });
             }
@@ -856,42 +874,44 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-    _updateTickerFromBinance(data, marketType) {
-        const key = `${data.symbol}:binance:${marketType}`;
-        const ticker = this.tickersMap.get(key);
-        if (!ticker) return;
+ _updateTickerFromBinance(data, marketType) {
+    const key = `${data.symbol}:binance:${marketType}`;
+    const ticker = this.tickersMap.get(key);
+    if (!ticker) return;
 
-        const oldPrice = ticker.price || 0;
-        const newPrice = parseFloat(data.lastPrice) || 0;
-        
-        ticker.prevPrice = oldPrice;
-        ticker.price = newPrice;
-        ticker.change = parseFloat(data.priceChangePercent) || 0;
-        ticker.volume = parseFloat(data.quoteVolume) || 0;
-        ticker.trades = parseInt(data.count) || 0;
-        
-        if (!this._blockDOMUpdates) {
-            this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
-        }
+    const newPrice = parseFloat(data.lastPrice) || 0;
+    if (newPrice <= 0) return;
+
+    ticker.prevPrice = ticker.price || newPrice;
+    ticker.price = newPrice;
+    // ❌ УБИРАЕМ ОБНОВЛЕНИЕ CHANGE
+    // ticker.change = parseFloat(data.priceChangePercent) || 0;
+    ticker.volume = parseFloat(data.quoteVolume) || 0;
+    ticker.trades = parseInt(data.count) || 0;
+
+    if (!this._blockDOMUpdates) {
+        this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
     }
+}
 
-    _updateTickerFromBybit(data, marketType) {
-        const key = `${data.symbol}:bybit:${marketType}`;
-        const ticker = this.tickersMap.get(key);
-        if (!ticker) return;
+   _updateTickerFromBybit(data, marketType) {
+    const key = `${data.symbol}:bybit:${marketType}`;
+    const ticker = this.tickersMap.get(key);
+    if (!ticker) return;
 
-        const oldPrice = ticker.price || 0;
-        const newPrice = parseFloat(data.lastPrice) || 0;
-        
-        ticker.prevPrice = oldPrice;
-        ticker.price = newPrice;
-        ticker.change = parseFloat(data.price24hPcnt) * 100 || 0;
-        ticker.volume = parseFloat(data.volume24h) * newPrice || 0;
-        
-        if (!this._blockDOMUpdates) {
-            this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
-        }
+    const newPrice = parseFloat(data.lastPrice) || 0;
+    if (newPrice <= 0) return;
+
+    ticker.prevPrice = ticker.price || newPrice;
+    ticker.price = newPrice;
+    // ❌ УБИРАЕМ ОБНОВЛЕНИЕ CHANGE
+    // ticker.change = parseFloat(data.price24hPcnt) * 100 || 0;
+    ticker.volume = parseFloat(data.volume24h) * newPrice || 0;
+
+    if (!this._blockDOMUpdates) {
+        this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
     }
+}
 
     async fetchInitialDataForSymbol(symbol, exchange, marketType) {
         try {
