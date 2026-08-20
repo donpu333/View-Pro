@@ -141,7 +141,7 @@ class TickerRenderer {
         }
     }
 
-    updatePriceForSymbol(key, price, change) {
+           updatePriceForSymbol(key, price, change, volume, trades) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
 
@@ -151,6 +151,7 @@ class TickerRenderer {
         const els = el._cachedEls || {};
         const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
         
+        // --- Цена ---
         if (els.price) {
             const newPrice = this.formatPrice(price);
             if (els.price.textContent !== newPrice) {
@@ -166,6 +167,7 @@ class TickerRenderer {
             }
         }
         
+        // --- Процент ---
         if (els.change) {
             const newChange = this.formatChange(change) + '%';
             if (els.change.textContent !== newChange) {
@@ -173,8 +175,31 @@ class TickerRenderer {
                 els.change.className = `ticker-change ${colorClass}`;
             }
         }
-    }
 
+        // ✅ --- ТЕСТ: Объем (Volume) --- //
+        if (volume !== undefined && volume !== null) {
+            const volEl = els.volume || el.querySelector('.ticker-volume'); 
+            if (volEl) {
+                // Убрали проверку и добавили красный цвет
+                volEl.textContent = this.formatVolume(volume);
+                volEl.style.color = 'red'; 
+            } else {
+                console.warn(`❌ Не найден DOM элемент объема для ${key}. Класс .ticker-volume неверный!`);
+            }
+        }
+
+        // ✅ --- ТЕСТ: Количество сделок (Trades) --- //
+        if (trades !== undefined && trades !== null) {
+            const tradesEl = els.trades || el.querySelector('.ticker-trades');
+            if (tradesEl) {
+                // Убрали проверку и добавили голубой цвет
+                tradesEl.textContent = this.formatTrades(trades);
+                tradesEl.style.color = 'aqua';
+            } else {
+                console.warn(`❌ Не найден DOM элемент сделок для ${key}. Класс .ticker-trades неверный!`);
+            }
+        }
+    }
     sortTickers(tickers) {
         const arrayToSort = tickers || this.parent?.tickers;
         if (!arrayToSort || !Array.isArray(arrayToSort)) return [];
