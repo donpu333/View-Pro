@@ -5,7 +5,7 @@ class ChartManager {
         this.lastCandle = null;
         this._loadingSymbol = false;
         this._switchingSymbol = false;
-        this._pendingSymbolSwitch = null; // ✅ ФИКС: очередь на случай быстрого переключения тикеров
+        this._pendingSymbolSwitch = null;
         this._generationCounter = 0;
         this._activeGeneration = 0;
         this._updatesSuspended = false;
@@ -43,7 +43,7 @@ class ChartManager {
         this._pendingRedraw = false;
         this._updatePositionRafId = null;
         this._lastAppliedColor = null;
-        this._lastAppliedPrecision = null; // ✅ ФИКС: кэш применённой точности, чтобы не дёргать applyPriceFormat на каждый rAF-тик
+        this._lastAppliedPrecision = null;
         this._isSyncing = false;
         this._currentFetchController = null;
         this._historyFetchController = null;
@@ -60,9 +60,9 @@ class ChartManager {
         this._quarantineTimeout = null;
         this._lastKlineEventTime = 0;
 
-        // ✅ НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ЦИКЛА СИНХРОНИЗАЦИИ ПЛАШКИ
-        this._interactionRafId = null;
-        this._isInteracting = false;
+        // ✅ ФИКС: Переменные для глобального цикла и кэша высоты
+        this._globalSyncRafId = null;
+        this._cachedTimerHeight = null;
 
         // ============ ВРЕМЕННЫЕ ОБЪЕКТЫ ============
         this._candleTimeMap = new Map();
@@ -106,12 +106,16 @@ class ChartManager {
         this._lastVolumeUpdateIndex = -1;
 
         // ============ FETCH TIMEOUT ============
-        this._fetchTimeoutMs = 15000; // ✅ ФИКС: хардлимит на подвисший fetch, чтобы _switchingSymbol не залипал навечно
+        this._fetchTimeoutMs = 15000;
+
+        // ============ ДИАГНОСТИКА ПЛАШКИ ============
+        this._debugPriceLine = document.createElement('div');
+        this._debugPriceLine.style.cssText = 'position:fixed; top:100px; left:10px; z-index:9999; background:rgba(0,0,0,0.8); color:#00ff00; padding:10px; font-size:12px; font-family:monospace; pointer-events:none; border:1px solid #00ff00; border-radius:5px;';
+        document.body.appendChild(this._debugPriceLine);
 
         // ============ VISIBILITY HANDLER ============
         this._visibilityHandler = () => {
             if (!document.hidden) {
-                // ✅ Проверяем график перед использованием
                 if (!this._isChartValid()) {
                     console.warn('⚠️ График не готов после возврата, ждём...');
                     setTimeout(() => {
@@ -134,7 +138,6 @@ class ChartManager {
                 this.requestDrawingsRedraw();
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
 
-                // ✅ ФИКС: Принудительно пересчитываем размеры после возврата на вкладку
                 requestAnimationFrame(() => {
                     if (this._isChartValid()) {
                         this._updateMainChartHeight();
@@ -146,7 +149,6 @@ class ChartManager {
                     }
                 });
             } else {
-                // ✅ Сохраняем точную видимую позицию перед уходом с вкладки
                 try {
                     if (this.chart && this.chart.timeScale()) {
                         const range = this.chart.timeScale().getVisibleLogicalRange();
@@ -322,7 +324,6 @@ class ChartManager {
             }
         }
 
-        // ✅ Создаём TimerManager сразу, чтобы плашка появилась без задержки
         if (!this.timerManager) {
             this.timerManager = new TimerManager(this);
         }
@@ -363,11 +364,8 @@ class ChartManager {
                 this._resizeObserver.observe(panelsContainer);
             }
 
-            // ✅ НОВОЕ: Следим за изменением размера самого контейнера графика
             this._chartContainerResizeObserver = new ResizeObserver(() => {
                 clearTimeout(this._containerResizeTimeout);
-                
-                // ✅ ФИКС: Мгновенное обновление при ресайзе контейнера
                 this.updatePriceLineTimerPosition();
 
                 this._containerResizeTimeout = setTimeout(() => {
@@ -375,12 +373,14 @@ class ChartManager {
                         this._updateMainChartHeight();
                         if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
                         this.forceRedraw();
-                        this.scheduleUpdatePosition(); // ✅ ФИКС: та же причина, что и в _resizeHandler —
-                        // без этого плашка цены "отлипает" при сужении/расширении контейнера графика.
+                        this.scheduleUpdatePosition();
                     }
                 }, 50);
             });
             this._chartContainerResizeObserver.observe(this.chartContainer);
+
+            // ✅ ФИКС: Запускаем глобальный цикл синхронизации после готовности графика
+            this._startGlobalSyncLoop();
         })();
 
         this._setupPanelsSync();
@@ -402,7 +402,6 @@ class ChartManager {
         }, 1000);
     }
 
-    // ✅ Проверка валидности графика
     _isChartValid() {
         return this.chart &&
                this.candleSeries &&
@@ -436,7 +435,6 @@ class ChartManager {
         this._candleTimeMap.set(time, index);
     }
 
-    // ============ ЕДИНЫЙ МЕТОД ЦВЕТА ЛИНИИ ============
     _getLineColor() {
         if (!this.chartData || this.chartData.length === 0) {
             return this.bullishColor || CONFIG.colors.bullish || '#26a69a';
@@ -495,7 +493,7 @@ class ChartManager {
     }
 
     async _syncRecentCandles() {
-        const genId = this._activeGeneration; // ✅ ФИКС: снимок поколения ДО await
+        const genId = this._activeGeneration;
         try {
             const fresh = await this.fetchKlines(
                 this.currentSymbol,
@@ -508,7 +506,6 @@ class ChartManager {
             );
             if (!fresh || fresh.length === 0) return;
 
-            // ✅ ФИКС: если за время запроса тикер/стейт сменился — не трогаем chartData
             if (this._updatesSuspended || this._switchingSymbol || this._activeGeneration !== genId) return;
 
             const currentData = this.chartData;
@@ -516,9 +513,8 @@ class ChartManager {
 
             const freshMap = new Map(fresh.map(c => [c.time, c]));
             let changed = false;
-            let olderCandlesChanged = false; // Флаг: изменились ли старые свечи
+            let olderCandlesChanged = false;
 
-            // 1. Обновляем последние 3 свечи
             for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 3); i--) {
                 const cur = currentData[i];
                 const freshCandle = freshMap.get(cur.time);
@@ -536,7 +532,6 @@ class ChartManager {
                         continue;
                     }
 
-                    // ✅ .update() можно вызывать ТОЛЬКО для последней свечи!
                     if (i === currentData.length - 1) {
                         const updateData = {
                             time: safeTime,
@@ -576,7 +571,6 @@ class ChartManager {
                 }
             }
 
-            // 2. Добавляем пропущенные свечи
             if (freshMap.size > 0) {
                 const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
                 let needsFullRedraw = false;
@@ -655,7 +649,7 @@ class ChartManager {
 
         const wasSuspended = this._updatesSuspended;
         this._updatesSuspended = true;
-        const genId = this._activeGeneration; // ✅ ФИКС: снимок поколения ДО await
+        const genId = this._activeGeneration;
 
         try {
             const symbol = this.currentSymbol;
@@ -684,9 +678,7 @@ class ChartManager {
                 } else if (this._savedLogicalRange) {
                     try {
                         this.chart.timeScale().setVisibleLogicalRange(this._savedLogicalRange);
-                    } catch (e) {
-                        // Если не удалось восстановить, оставляем как есть
-                    }
+                    } catch (e) {}
                 }
                 return;
             }
@@ -697,7 +689,6 @@ class ChartManager {
                     console.warn('⚠️ chart отсутствует перед setDataQuick');
                     return;
                 }
-                // ✅ ФИКС: фактически первая загрузка данных — считаем как новый символ
                 this.setDataQuick(freshCandles, interval, symbol, exchange, marketType, true);
                 return;
             }
@@ -864,7 +855,6 @@ class ChartManager {
         if (this._drawingsFinalUpdateTimeout) clearTimeout(this._drawingsFinalUpdateTimeout);
         if (this._scrollStopTimeout) clearTimeout(this._scrollStopTimeout);
 
-        // ✅ ФИКС: снимаем ВСЕ window-слушатели через сохранённые ссылки (раньше resize/blur были анонимными и никогда не снимались)
         if (this._globalMouseUpHandler) {
             window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
         }
@@ -873,22 +863,6 @@ class ChartManager {
         }
         if (this._blurHandler) {
             window.removeEventListener('blur', this._blurHandler);
-        }
-
-        // ✅ ФИКС: снимаем новые слушатели для цикла синхронизации плашки
-        if (this._interactionRafId) {
-            cancelAnimationFrame(this._interactionRafId);
-            this._interactionRafId = null;
-        }
-        if (this._onInteractionStart) {
-            this.chartContainer.removeEventListener('mousedown', this._onInteractionStart);
-            this.chartContainer.removeEventListener('touchstart', this._onInteractionStart);
-            this.chartContainer.removeEventListener('wheel', this._onInteractionStart);
-        }
-        if (this._onInteractionEnd) {
-            window.removeEventListener('mouseup', this._onInteractionEnd);
-            window.removeEventListener('touchend', this._onInteractionEnd);
-            window.removeEventListener('touchcancel', this._onInteractionEnd);
         }
 
         document.removeEventListener('visibilitychange', this._visibilityHandler);
@@ -904,6 +878,16 @@ class ChartManager {
         if (this.chart) {
             this.chart.remove();
             this.chart = null;
+        }
+
+        // ✅ ФИКС: Очистка глобального цикла и окна диагностики
+        if (this._globalSyncRafId) {
+            cancelAnimationFrame(this._globalSyncRafId);
+            this._globalSyncRafId = null;
+        }
+        if (this._debugPriceLine) {
+            this._debugPriceLine.remove();
+            this._debugPriceLine = null;
         }
 
         this.chartData = [];
@@ -959,7 +943,7 @@ class ChartManager {
 
     async _catchUpMissedCandles() {
         if (!this._isChartValid() || !this.currentSymbol || !this.currentInterval) return;
-        const genId = this._activeGeneration; // ✅ ФИКС: снимок поколения
+        const genId = this._activeGeneration;
 
         try {
             console.log('🔄 Догружаем пропущенные свечи...');
@@ -1032,7 +1016,7 @@ class ChartManager {
             this._lastScrollTime = now;
             this._lastVisibleRange = range;
 
-            // ✅ ФИКС: Мгновенно двигаем плашку при любом смещении графика программно или мышью
+            // ✅ ФИКС: Мгновенно двигаем плашку при любом смещении графика
             this.updatePriceLineTimerPosition();
 
             if (range && this.chartData && this.chartData.length > 0) {
@@ -1085,14 +1069,13 @@ class ChartManager {
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: resize и blur слушатели теперь именованные функции,
-    // сохранённые в this._resizeHandler / this._blurHandler и корректно снимаемые в destroy()
     setupEventListeners() {
         let resizeTimeout;
         this._resizeHandler = () => {
             clearTimeout(resizeTimeout);
 
-            // ✅ ФИКС: Позицию плашки обновляем МГНОВЕННО, без ожидания debounce
+            // ✅ ФИКС: Сбрасываем кэш высоты при ресайзе
+            this._cachedTimerHeight = null;
             this.updatePriceLineTimerPosition();
 
             resizeTimeout = setTimeout(() => {
@@ -1100,9 +1083,7 @@ class ChartManager {
                     this._updateMainChartHeight();
                     if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
                     this.forceRedraw();
-                    this.scheduleUpdatePosition(); // ✅ ФИКС: пересчитываем позицию плашки цены —
-                    // раньше при ресайзе координаты серии менялись, а плашка не пересчитывалась
-                    // до следующего тика цены, из-за чего "отлипала" от линии цены при сужении/расширении.
+                    this.scheduleUpdatePosition();
                     setTimeout(() => this.scrollToLast(), 50);
                 }
                 this.scheduleDrawingsUpdate(true);
@@ -1159,41 +1140,6 @@ class ChartManager {
             }
         };
         window.addEventListener('blur', this._blurHandler);
-
-        // ✅ ФИКС: Запускаем непрерывный цикл синхронизации плашки во время любых манипуляций
-        this._onInteractionStart = () => {
-            this._isInteracting = true;
-            if (!this._interactionRafId) {
-                this._runInteractionLoop();
-            }
-        };
-        this._onInteractionEnd = () => {
-            this._isInteracting = false;
-        };
-
-        this.chartContainer.addEventListener('mousedown', this._onInteractionStart);
-        this.chartContainer.addEventListener('touchstart', this._onInteractionStart, { passive: true });
-        this.chartContainer.addEventListener('wheel', this._onInteractionStart, { passive: true });
-        window.addEventListener('mouseup', this._onInteractionEnd);
-        window.addEventListener('touchend', this._onInteractionEnd);
-        window.addEventListener('touchcancel', this._onInteractionEnd);
-    }
-
-    // ✅ НОВЫЙ МЕТОД: цикл синхронизации плашки при взаимодействии с графиком
-    _runInteractionLoop() {
-        const loop = () => {
-            // Обновляем позицию плашки каждый кадр
-            this.updatePriceLineTimerPosition();
-
-            if (this._isInteracting) {
-                this._interactionRafId = requestAnimationFrame(loop);
-            } else {
-                this._interactionRafId = null;
-                // Финальная синхронизация после завершения манипуляции
-                this.updatePriceLineTimerPosition();
-            }
-        };
-        this._interactionRafId = requestAnimationFrame(loop);
     }
 
     _fixStuckAxisDrag() {
@@ -1210,10 +1156,21 @@ class ChartManager {
         } catch (e) {}
     }
 
+    // ✅ НОВЫЙ МЕТОД: Глобальный цикл синхронизации, который приклеивает плашку к графику
+    _startGlobalSyncLoop() {
+        if (this._globalSyncRafId) return;
+        const loop = () => {
+            this.updatePriceLineTimerPosition();
+            this._globalSyncRafId = requestAnimationFrame(loop);
+        };
+        this._globalSyncRafId = requestAnimationFrame(loop);
+    }
+
     setChartType(type) {
         if (!this._isChartValid()) return;
 
         this._isSwitchingChartType = true;
+        this._cachedTimerHeight = null; // Сбрасываем кэш
 
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
@@ -1337,23 +1294,43 @@ class ChartManager {
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!activeSeries) return;
 
-        const coordinate = activeSeries.priceToCoordinate(price);
-        if (coordinate !== null && !isNaN(coordinate)) {
-            const containerRect = this.chartContainer.getBoundingClientRect();
-            let topPosition = coordinate + containerRect.top;
-            const timerHeight = this.priceLineTimer.offsetHeight || 30;
-            topPosition = Math.max(5, Math.min(window.innerHeight - timerHeight - 5, topPosition));
-            this.priceLineTimer.style.top = topPosition + 'px';
-            this.priceLineTimer.style.right = '10px';
+        const yCoord = activeSeries.priceToCoordinate(price);
+        if (yCoord === null || isNaN(yCoord)) return;
 
-            const isBullish = this.lastCandle ? (this.lastCandle.close >= this.lastCandle.open) : true;
-            this.priceLineTimer.classList.remove('bullish', 'bearish');
-            this.priceLineTimer.classList.add(isBullish ? 'bullish' : 'bearish');
+        const containerRect = this.chartContainer.getBoundingClientRect();
+
+        // ✅ ФИКС 1: Кэшируем высоту! Чтение offsetHeight каждый кадр убивает performance и вызывает болтанку
+        if (!this._cachedTimerHeight) {
+            this._cachedTimerHeight = this.priceLineTimer.offsetHeight || 30;
         }
+        const timerHeight = this._cachedTimerHeight;
+
+        let topPosition = yCoord + containerRect.top;
+        topPosition = Math.max(5, Math.min(window.innerHeight - timerHeight - 5, topPosition));
+
+        // ✅ ДИАГНОСТИКА: Выводим координаты, чтобы увидеть рассинхрон
+        if (this._debugPriceLine) {
+            this._debugPriceLine.innerHTML = `
+                Y Графика: ${yCoord.toFixed(2)}px<br>
+                Top Контейнера: ${containerRect.top.toFixed(2)}px<br>
+                Итоговый Top: ${topPosition.toFixed(2)}px<br>
+                Transform: translateY(${topPosition}px)
+            `;
+        }
+
+        // ✅ ФИКС 2: ИСПОЛЬЗУЕМ ТОЛЬКО TRANSFORM! 
+        // Свойство 'top' вызывает Layout/Paint и отстаёт от canvas. 
+        // Transform рендерится на GPU синхронно с canvas.
+        this.priceLineTimer.style.willChange = 'transform';
+        this.priceLineTimer.style.transform = `translateY(${topPosition}px)`;
+        this.priceLineTimer.style.top = '0px'; // Обязательно сбрасываем top в 0
+        this.priceLineTimer.style.right = '10px';
+
+        const isBullish = this.lastCandle ? (this.lastCandle.close >= this.lastCandle.open) : true;
+        this.priceLineTimer.classList.remove('bullish', 'bearish');
+        this.priceLineTimer.classList.add(isBullish ? 'bullish' : 'bearish');
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: precision применяется только если реально изменилась
-    // (раньше localStorage.getItem + applyPriceFormat дёргались на КАЖДЫЙ rAF-тик)
     _performUpdate() {
         if (!this.chartData.length || this._updatesSuspended || !this._isChartValid()) return;
 
@@ -1361,7 +1338,7 @@ class ChartManager {
             `precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`
         );
         if (cachedPrecision) {
-            if (this._lastAppliedPrecision !== cachedPrecision) { // ✅ ФИКС: скип, если не изменилось
+            if (this._lastAppliedPrecision !== cachedPrecision) {
                 this.applyPriceFormat(parseInt(cachedPrecision));
                 this._lastAppliedPrecision = cachedPrecision;
             }
@@ -1636,12 +1613,6 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД setDataQuick
-    // forceNewSymbol передаётся ЯВНО вызывающей стороной. Раньше isNewSymbol
-    // вычислялся как this.currentSymbol !== symbol, но currentSymbol уже был
-    // перезаписан в switchSymbol() до вызова этого метода — сравнение всегда
-    // давало false, и график при смене тикера пытался восстановить старый
-    // зум/диапазон цены вместо scrollToLast()+autoScale() (как в TradingView).
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false) {
         try {
             if (!this._isChartValid()) {
@@ -1750,15 +1721,9 @@ class ChartManager {
                 }
             }, 0);
 
-            // ✅ ФИКС: при новом символе (или первой загрузке) — ВСЕГДА scrollToLast + autoScale,
-            // как в TradingView. При смене таймфрейма на ТОМ ЖЕ тикере — восстанавливаем
-            // logical-диапазон, но ВСЕГДА добиваем autoScale(), т.к. _restoreScale()
-            // восстанавливает только временной диапазон, а не диапазон цены — при смене TF
-            // (например 1m -> 1W) цены сильно отличаются, и без autoScale часть свечей
-            // визуально "срезана" сверху/снизу шкалы.
             if (currentScale && !isNewSymbol) {
                 this._restoreScale(currentScale);
-                this.autoScale(); // ✅ ФИКС: добиваем ценовую шкалу под новый набор данных
+                this.autoScale();
             } else {
                 this.scrollToLast();
                 this.autoScale();
@@ -1803,8 +1768,6 @@ class ChartManager {
                 if (window.renderDrawings) window.renderDrawings();
             }, 0);
 
-            // ✅ ФИКС: _notifySymbolChange() и localStorage-запись переехали в switchSymbol()
-            // и выполняются там один раз за переключение (раньше дублировались).
             this._lastTimeframe = interval;
 
             if (!window._dailySeparator && window.DailySeparator) {
@@ -1889,11 +1852,7 @@ class ChartManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД switchSymbol
     async switchSymbol(symbol, exchange, marketType) {
-        // ✅ ФИКС: раньше повторный клик по тикеру во время загрузки предыдущего
-        // просто отбрасывался. Теперь запрос ставится в очередь и доигрывается
-        // сразу после завершения текущего переключения ("последний клик побеждает").
         if (this._switchingSymbol) {
             this._pendingSymbolSwitch = { symbol, exchange, marketType };
             return;
@@ -1914,9 +1873,6 @@ class ChartManager {
             this._abortAllProcesses();
             this._suspendAllUpdates();
 
-            // ❌ Не очищаем экран (setData([])) — старые свечи висят, пока грузятся новые.
-            // setDataQuick мгновенно заменит их без пустого экрана.
-
             this.chartData = [];
             this._candleTimeMap.clear();
             this.currentSymbol = symbol;
@@ -1932,11 +1888,9 @@ class ChartManager {
             const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
             if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision));
 
-            // 1. Пытаемся взять данные из кэша (мгновенная скорость)
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
             let isFromCache = !!candles;
 
-            // 2. Если кэша нет, тянем с биржи
             if (!isFromCache) {
                 candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
             }
@@ -1945,7 +1899,6 @@ class ChartManager {
                 throw new Error('Нет данных для ' + symbol);
             }
 
-            // Если пользователь успел нажать другой тикер, отменяем этот
             if (this._activeGeneration !== generationId) {
                 console.log('🔄 Символ уже переключился, отменяем старую загрузку');
                 return;
@@ -1955,18 +1908,10 @@ class ChartManager {
                 this.timerManager.stop();
             }
 
-            // 3. Мгновенно отображаем новые свечи (замещаем старые без пустого экрана)
-            // ✅ ФИКС: forceNewSymbol=true — гарантирует scrollToLast()+autoScale()
-            // вместо попытки восстановить зум/диапазон цены от предыдущего тикера.
             if (this._isChartValid()) {
                 this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true);
             }
 
-            // ✅ ФИКС: убран дублирующий блок timerManager.start()/updatePrice()/_forceUpdate() —
-            // setDataQuick() уже делает это внутри себя. Двойной вызов приводил к дёрганью
-            // плашки таймера цены при каждом переключении тикера.
-
-            // 4. Сохраняем в кэш, если качали с биржи
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
             }
@@ -1977,11 +1922,8 @@ class ChartManager {
             localStorage.setItem('lastExchange', exchange);
             localStorage.setItem('lastMarketType', marketType);
 
-            // ✅ ФИКС: _notifySymbolChange() вызывается один раз за переключение
-            // (раньше вызывался ещё и внутри setDataQuick — подписчики срабатывали дважды).
             this._notifySymbolChange();
 
-            // 5. Фоновое обновление свежими свечами (если взяли из кэша)
             if (isFromCache) {
                 this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
             }
@@ -1993,8 +1935,6 @@ class ChartManager {
                 this._switchingSymbol = false;
                 this._resumeAllUpdates(generationId);
 
-                // ✅ ФИКС: если за время загрузки пользователь кликнул по другому тикеру —
-                // доигрываем последний запрошенный переход вместо того, чтобы его терять.
                 if (this._pendingSymbolSwitch) {
                     const next = this._pendingSymbolSwitch;
                     this._pendingSymbolSwitch = null;
@@ -2245,7 +2185,6 @@ class ChartManager {
         if (priceScale) priceScale.applyOptions({ autoScale: true });
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД autoScale
     autoScale() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
         const priceScale = this.chart.priceScale('right');
@@ -2268,15 +2207,12 @@ class ChartManager {
                 }
                 this._autoScalePending = false;
                 if (this.timerManager) this.timerManager._forceUpdate();
-                this.scheduleUpdatePosition(); // ✅ ФИКС: пересчитываем позицию плашки цены ПОСЛЕ того,
-                // как ценовая шкала зафиксировалась после autoScale — иначе плашка залипала
-                // в промежуточной, ещё не устоявшейся позиции при переключении тикера.
+                this.scheduleUpdatePosition();
 
-                // ✅ ФИКС: Запускаем короткий цикл синхронизации, чтобы поймать анимацию расширения шкалы
                 let frames = 0;
                 const updateLoop = () => {
                     this.updatePriceLineTimerPosition();
-                    if (frames++ < 10) { // ~160мс ловим анимацию
+                    if (frames++ < 10) {
                         requestAnimationFrame(updateLoop);
                     }
                 };
@@ -2298,7 +2234,6 @@ class ChartManager {
         return null;
     }
 
-    // ✅ ФИКС: используем уже закэшированный this.chartContainer вместо повторного getElementById на каждый вызов
     _updateMainChartHeight() {
         if (!this._isChartValid()) return;
         const chartContainer = this.chartContainer;
@@ -2405,15 +2340,12 @@ class ChartManager {
         this._subscribeToPrice();
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: toString() для цен < 1e-6 уходит в экспоненциальную запись
-    // без точки ("1.2e-7"), из-за чего функция решала, что точности нет, и подставляла
-    // дефолтные 2 знака — для дешёвых токенов график показывал "0.00" вместо реальной цены.
     _inferPrecisionFromData() {
         if (!this.chartData || this.chartData.length === 0) return 2;
         const lastPrice = this.chartData[this.chartData.length - 1].close;
         if (!lastPrice || lastPrice === 0) return 2;
 
-        const fixed = lastPrice < 1 ? lastPrice.toFixed(10) : lastPrice.toString(); // ✅ ФИКС
+        const fixed = lastPrice < 1 ? lastPrice.toFixed(10) : lastPrice.toString();
         if (fixed.includes('.')) {
             const decimals = fixed.split('.')[1].replace(/0+$/, '').length || 2;
             return Math.min(Math.max(decimals, 2), 8);
@@ -2585,10 +2517,6 @@ class ChartManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: добавлен хардлимит по времени (_fetchTimeoutMs).
-    // Раньше при "зависшем" (не оборванном) сетевом запросе await мог не завершиться
-    // никогда — из-за этого _switchingSymbol оставался true навсегда, и весь свитчер
-    // тикеров переставал отвечать до перезагрузки страницы.
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
         let controller;
         if (requestType === 'history') {
@@ -2612,7 +2540,7 @@ class ChartManager {
         }
 
         const signal = controller.signal;
-        const timeoutId = setTimeout(() => controller.abort(), this._fetchTimeoutMs); // ✅ ФИКС: хардлимит
+        const timeoutId = setTimeout(() => controller.abort(), this._fetchTimeoutMs);
 
         const bybitIntervalMap = {
             '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
@@ -2704,7 +2632,7 @@ class ChartManager {
             }
             return [];
         } finally {
-            clearTimeout(timeoutId); // ✅ ФИКС: снимаем таймер после завершения запроса
+            clearTimeout(timeoutId);
             if (requestType === 'history' && this._historyFetchController?.signal === signal) {
                 this._historyFetchController = null;
             } else if (requestType === 'background' && this._backgroundFetchController?.signal === signal) {
@@ -2910,10 +2838,6 @@ class ChartManager {
         if (this._symbolChangeCallbacks) this._symbolChangeCallbacks.forEach(cb => cb());
     }
 
-    // ✅ НОВЫЙ ХЕЛПЕР: единая точка ожидания готовности IndexedDB.
-    // Раньше saveCandlesToCache честно ждал window.dbReady (поллинг до 2с),
-    // а loadCandlesFromCache — нет, поэтому на холодном старте страницы кэш
-    // просто не срабатывал в самый нужный момент (первая загрузка тикера).
     async _waitForDb(timeoutMs = 2000) {
         if (window.dbReady) return true;
         return new Promise(resolve => {
@@ -2937,21 +2861,17 @@ class ChartManager {
         };
         if (!window.db) return;
         try {
-            await this._waitForDb(); // ✅ ФИКС: используем общий хелпер
+            await this._waitForDb();
             await window.db.put('candles', cacheData);
         } catch (error) { console.warn('❌ Ошибка сохранения свечей в кэш:', error); }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: теперь тоже ждёт готовности БД перед чтением
-    // (раньше на холодном старте страницы кэш всегда промахивался мимо ещё
-    // не инициализированного window.db, и график всегда шёл на биржу за данными,
-    // хотя кэш формально уже мог существовать).
     async loadCandlesFromCache(symbol, exchange, marketType, interval) {
         const CACHE_VERSION = '2';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
         if (!window.db) return null;
         try {
-            await this._waitForDb(); // ✅ ФИКС
+            await this._waitForDb();
             const cached = await window.db.get('candles', key);
             if (!cached) return null;
             if (cached.version !== CACHE_VERSION) {
@@ -3083,14 +3003,9 @@ class ChartManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: убрана бессмысленная привязка раннего выхода к _isScrolling —
-    // условие `!this._isScrolling && length <= max` было почти всегда ложным во время
-    // скролла и функция каждый раз досчитывала keepFrom/keepTo впустую, полагаясь на
-    // последующий `if (leftTrim === 0 && rightTrim === 0) return;`. Теперь выход
-    // единственный и понятный: если данных меньше лимита — обрезать нечего.
     _performTrimNow(fromIndex, toIndex) {
         if (this._isTrimming || this.isLoadingMore || !this._isChartValid()) return;
-        if (this.chartData.length <= this._maxCandlesInMemory) return; // ✅ ФИКС
+        if (this.chartData.length <= this._maxCandlesInMemory) return;
 
         const keepFrom = Math.max(0, fromIndex - (this._leftBuffer * 1.5));
         const keepTo = Math.min(this.chartData.length, toIndex + (this._rightBuffer * 1.5));
@@ -3141,10 +3056,6 @@ class ChartManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: добавлен generation guard после await.
-    // Раньше при быстром переключении тикера (switchSymbol обнуляет chartData=[])
-    // именно в момент, когда этот запрос уже успел зарезолвиться, следующая строка
-    // `this.chartData[0].time` могла упасть с TypeError на пустом массиве.
     async _loadHistoryAsync() {
         if (this.isLoadingMore || !this.hasMoreData || !this._isChartValid()) return;
 
@@ -3153,7 +3064,7 @@ class ChartManager {
 
         this.isLoadingMore = true;
         this._lastHistoryLoadTime = now;
-        const genId = this._activeGeneration; // ✅ ФИКС: снимок поколения ДО await
+        const genId = this._activeGeneration;
 
         try {
             const oldestCandle = this.chartData[0];
@@ -3174,7 +3085,6 @@ class ChartManager {
                 'history'
             );
 
-            // ✅ ФИКС: проверяем, что за время запроса тикер не сменился и данные не обнулились
             if (!olderCandles || olderCandles.length === 0 || !this._isChartValid() ||
                 this._activeGeneration !== genId || this.chartData.length === 0) {
                 this.hasMoreData = false;
@@ -3240,11 +3150,8 @@ class ChartManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД: добавлен generation guard после await —
-    // без него фоновое обновление могло дописать чужие (от предыдущего тикера)
-    // свечи в chartData нового тикера при неудачном стечении таймингов.
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
-        const genId = this._activeGeneration; // ✅ ФИКС
+        const genId = this._activeGeneration;
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange || !this._isChartValid()) return;
             const freshCandles = await this.fetchKlines(
@@ -3253,7 +3160,7 @@ class ChartManager {
                 'background'
             );
             if (!freshCandles || freshCandles.length === 0 || !this._isChartValid()) return;
-            if (symbol !== this.currentSymbol || this._activeGeneration !== genId) return; // ✅ ФИКС
+            if (symbol !== this.currentSymbol || this._activeGeneration !== genId) return;
 
             const lastCachedTime = this.chartData.length > 0 ? this.chartData[this.chartData.length - 1].time : 0;
             const lastFreshTime = freshCandles[freshCandles.length - 1].time;
