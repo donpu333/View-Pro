@@ -1139,14 +1139,13 @@ class ChartManager {
         } catch (e) {}
     }
 
-    setChartType(type) {
+       setChartType(type) {
         if (!this._isChartValid()) return;
-
+        
         this._isSwitchingChartType = true;
-
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
-
+        
         if (type === 'candle') {
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
             if (this.barSeries) this.barSeries.applyOptions({ visible: false });
@@ -1154,7 +1153,7 @@ class ChartManager {
             if (this.barSeries) this.barSeries.applyOptions({ visible: true });
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
         }
-
+        
         if (this.volumeSeries) {
             const volumeScale = this.chart.priceScale('volume');
             if (volumeScale) {
@@ -1164,20 +1163,20 @@ class ChartManager {
                 });
             }
         }
-
+        
         if (this.barSeries) {
             this.barSeries.applyOptions({
                 upColor: CONFIG.colors.bullish,
                 downColor: CONFIG.colors.bearish
             });
         }
-
+        
         if (this.indicatorManager?.activeIndicators) {
             this.indicatorManager.activeIndicators.forEach(indicator => {
                 try { indicator.createSeries(); } catch (e) {}
             });
         }
-
+        
         setTimeout(() => {
             if (window.rayManager) window.rayManager.syncWithNewTimeframe();
             if (window.trendLineManager) window.trendLineManager.syncWithNewTimeframe();
@@ -1185,7 +1184,7 @@ class ChartManager {
             if (window.alertLineManager) window.alertLineManager.syncWithNewTimeframe();
             if (window.textManager) window.textManager.syncWithNewTimeframe();
         }, 50);
-
+        
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (activeSeries) {
             const lineColor = this._getLineColor();
@@ -1199,36 +1198,31 @@ class ChartManager {
             });
             this._lastAppliedColor = lineColor;
         }
-
+        
+        // ✅ ФИКС: Убран "грязный хак" с 4-мя вызовами _forceUpdate() через setTimeout.
+        // Один надежный вызов после того, как браузер гарантированно готов к отрисовке.
         if (this.timerManager) {
             const price = this.currentRealPrice ?? this.lastCandle?.close;
             if (price != null) {
                 this.timerManager.updatePrice(price);
             }
-
-            requestAnimationFrame(() => {
-                if (this.timerManager) this.timerManager._forceUpdate();
-            });
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
-                    if (this.timerManager) this.timerManager._forceUpdate();
+                    if (this.timerManager && this._isChartValid()) {
+                        this.timerManager._forceUpdate();
+                        this.scheduleUpdatePosition(); // Дополнительная страховка позиции
+                    }
                 });
             });
-            setTimeout(() => {
-                if (this.timerManager) this.timerManager._forceUpdate();
-            }, 150);
-            setTimeout(() => {
-                if (this.timerManager) this.timerManager._forceUpdate();
-            }, 400);
         }
-
+        
         if (window._dailySeparator && typeof window._dailySeparator.reattach === 'function') {
             window._dailySeparator.reattach();
         }
         if (window._sessionHighlighter && typeof window._sessionHighlighter.reattach === 'function') {
             window._sessionHighlighter.reattach();
         }
-
+        
         setTimeout(() => {
             this._isSwitchingChartType = false;
         }, 300);
@@ -1565,24 +1559,18 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД setDataQuick
-    // forceNewSymbol передаётся ЯВНО вызывающей стороной. Раньше isNewSymbol
-    // вычислялся как this.currentSymbol !== symbol, но currentSymbol уже был
-    // перезаписан в switchSymbol() до вызова этого метода — сравнение всегда
-    // давало false, и график при смене тикера пытался восстановить старый
-    // зум/диапазон цены вместо scrollToLast()+autoScale() (как в TradingView).
+        // ✅ ИСПРАВЛЕННЫЙ МЕТОД setDataQuick
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false) {
         try {
             if (!this._isChartValid()) {
                 console.error('❌ setDataQuick: chart не инициализирован');
                 return;
             }
-
             if (!data || data.length === 0) return;
-
+            
             const currentScale = this._captureScale();
             const isNewSymbol = forceNewSymbol;
-
+            
             this.chart.applyOptions({
                 handleScroll: false,
                 handleScale: false
@@ -1687,30 +1675,32 @@ class ChartManager {
             // визуально "срезана" сверху/снизу шкалы.
             if (currentScale && !isNewSymbol) {
                 this._restoreScale(currentScale);
-                this.autoScale(); // ✅ ФИКС: добиваем ценовую шкалу под новый набор данных
+                this.autoScale(); 
             } else {
                 this.scrollToLast();
                 this.autoScale();
             }
 
-            this.scheduleUpdatePosition();
+            // ✅ КРИТИЧЕСКИЙ ФИКС: Даем графику ровно 1 кадр на применение autoScale.
+            // Только после этого priceToCoordinate вернет правильную Y-координату,
+            // и таймер не будет "залипать" на старой позиции при зуме.
+            requestAnimationFrame(() => {
+                this.scheduleUpdatePosition();
+            });
+            
             this._updatePageTitle();
 
             if (this.timerManager) {
                 this.timerManager.start(this.currentInterval);
                 this.timerManager.updatePrice(this.lastCandle.close);
-                this.timerManager._forceUpdate();
-
-                requestAnimationFrame(() => {
-                    if (this.timerManager) {
-                        this.timerManager._forceUpdate();
-                    }
-                });
-
+                
+                // ✅ ФИКС: Убран "грязный хак" с множественными вызовами _forceUpdate().
+                // Один надежный вызов после того, как DOM и Canvas синхронизировались.
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
-                        if (this.timerManager) {
+                        if (this.timerManager && this._isChartValid()) {
                             this.timerManager._forceUpdate();
+                            this.scheduleUpdatePosition(); // Дополнительная страховка позиции
                         }
                     });
                 });
@@ -1732,8 +1722,6 @@ class ChartManager {
                 if (window.renderDrawings) window.renderDrawings();
             }, 0);
 
-            // ✅ ФИКС: _notifySymbolChange() и localStorage-запись переехали в switchSymbol()
-            // и выполняются там один раз за переключение (раньше дублировались).
             this._lastTimeframe = interval;
 
             if (!window._dailySeparator && window.DailySeparator) {
