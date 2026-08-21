@@ -986,7 +986,7 @@ class ChartManager {
 
     _setupPanelsSync() {}
 
-    setupOptimizedSubscriptions() {
+      setupOptimizedSubscriptions() {
         if (!this.chart || !this.chart.timeScale()) return;
 
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -1049,9 +1049,10 @@ class ChartManager {
             }
         });
 
-        const priceScale = this.chart.priceScale('right');
-        if (priceScale) {
-            priceScale.subscribeVisibleLogicalRangeChange(() => {
+        // ✅ ФИКС: Отслеживаем вертикальный зум через wheel событие и mouse drag
+        this.chartContainer.addEventListener('wheel', (e) => {
+            // Проверяем, что колесо мыши используется для вертикального зума
+            if (e.ctrlKey || e.metaKey) {
                 this._isVerticalZooming = true;
                 
                 clearTimeout(this._verticalZoomTimeout);
@@ -1063,10 +1064,29 @@ class ChartManager {
                 }, 100);
                 
                 this.scheduleUpdatePosition();
+            }
+        }, { passive: true });
+
+        // ✅ ФИКС: Отслеживаем drag по ценовой шкале
+        const priceScaleElement = this.chartContainer.querySelector('.price-axis');
+        if (priceScaleElement) {
+            priceScaleElement.addEventListener('mousedown', () => {
+                this._isVerticalZooming = true;
+                
+                const onMouseUp = () => {
+                    this._isVerticalZooming = false;
+                    this.scheduleUpdatePosition();
+                    setTimeout(() => this.scheduleUpdatePosition(), 50);
+                    setTimeout(() => this.scheduleUpdatePosition(), 150);
+                    
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+                
+                document.addEventListener('mouseup', onMouseUp);
+                
+                this.scheduleUpdatePosition();
             });
         }
-
-        this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
 
     setupEventListeners() {
