@@ -2,10 +2,7 @@ const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
     CACHE_REFRESH_INTERVAL: 4 * 60 * 60 * 1000,
     HEALTH_CHECK_INTERVAL: 30 * 1000,
-    
-    // ✅ ИЗМЕНЕНО: Было 5 минут, стало 1 час (снимаем нагрузку на API)
     REST_POLL_INTERVAL: 60 * 60 * 1000, 
-    
     FINAL_RERENDER_DELAY: 3000,
     WS_RECONNECT_DELAY: 5000,
     FETCH_TIMEOUT: 15000,
@@ -35,6 +32,12 @@ class TickerPanel {
             this._onPriceUpdate(symbol, price, exchange, marketType);
         };
         
+        // ✅ НОВОЕ: Явная инициализация всех флагов и коллекций в конструкторе
+        this._restToken = 0;
+        this._pendingPriceUpdates = new Map();
+        this._priceUpdateRaf = null;
+        this._isDestroyed = false;
+
         this.state = this.storage.state;
         this.tickers = this.storage.tickers;
         this.tickersMap = this.storage.tickersMap;
@@ -57,8 +60,6 @@ class TickerPanel {
         this._isBulkAdding = false;
         this._suppressWatchlistLoad = false;
         this._restDebounceTimer = null;
-        
-        // 🚀 ОПТИМИЗАЦИЯ: Флаг для группировки (батчинга) запросов на перерисовку
         this._renderPending = false;
         
         this._rowDomCache = new Map();
@@ -66,20 +67,24 @@ class TickerPanel {
         
         this._fetchBatchInProgress = false;
         this._restInProgress = false;
+        this._priceEngineStarted = false;
         
         this.rowHeight = 36;
         this.visibleCount = 30;
         this.tickerElements = this.renderer.tickerElements;
+        
         Object.defineProperties(this, {
             displayedTickers: { get: () => this.renderer.displayedTickers },
             totalItems: { get: () => this.renderer.totalItems }
         });
+        
         this._scrollHandler = this.renderer._scrollHandler;
         this._renderScheduled = this.renderer._renderScheduled;
         this._renderRafId = this.renderer._renderRafId;
         this._firstRender = this.renderer._firstRender;
         this._blockDOMUpdates = true;
         
+        // Привязка методов
         this.loadUserData = this.storage.loadUserData.bind(this.storage);
         this.saveCurrentSymbol = this.storage.saveCurrentSymbol.bind(this.storage);
         this.loadFromLocalStorage = this.storage.loadFromLocalStorage.bind(this.storage);
@@ -101,7 +106,6 @@ class TickerPanel {
         this.formatChange = this.renderer.formatChange.bind(this.renderer);
         this.formatVolume = this.renderer.formatVolume.bind(this.renderer);
         this.formatTrades = this.renderer.formatTrades.bind(this.renderer);
-       
         this.setupHeaderSorting = this.renderer.setupHeaderSorting.bind(this.renderer);
         
         this.setupModal = this.modal.setupModal.bind(this.modal);
@@ -129,20 +133,34 @@ class TickerPanel {
         this.handleDoubleClick = this.handleDoubleClick.bind(this);
         this.handleKeyDelete = this.handleKeyDelete.bind(this);
         
+        // ✅ НОВОЕ: Именованные обработчики для корректного удаления в destroy()
+        this._visibilityHandler = () => { if (!document.hidden) this._restoreWebSockets(); };
+        this._focusHandler = () => this._restoreWebSockets();
+        this._globalClickHandler = (e) => {
+            const tickerMenu = document.getElementById('tickerContextMenu');
+            if (tickerMenu && tickerMenu.style.display === 'block' && !tickerMenu.contains(e.target)) {
+                tickerMenu.style.display = 'none';
+            }
+        };
+        this._globalContextMenuHandler = (e) => {
+            let target = e.target;
+            if (target && target.nodeType === 3) target = target.parentElement;
+            const tickerItem = target.closest('.ticker-item');
+            if (tickerItem) { e.preventDefault(); this.handleContextMenu(e); }
+        };
+
         this.loadFromLocalStorage();
         window.tickerPanelInstance = this;
         
         const savedSortBy = localStorage.getItem('tickerSortBy');
-const savedSortDir = localStorage.getItem('tickerSortDir');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
 
-// ✅ ИСПРАВЛЕНО: Обрабатываем три состояния (объем по умолчанию / сортировка / отключено)
-this.state.sortBy = savedSortBy === null ? 'volume' : (savedSortBy || null);
-this.state.sortDirection = savedSortDir === null ? 'desc' : (savedSortDir || null);
+        this.state.sortBy = savedSortBy === null ? 'volume' : (savedSortBy || null);
+        this.state.sortDirection = savedSortDir === null ? 'desc' : (savedSortDir || null);
 
-this.init();
+        this.init();
     }  
 
-    // 🚀 НОВЫЙ МЕТОД: Умная группировка перерисовок (Batching)
     _scheduleRender() {
         if (this._renderPending) return;
         this._renderPending = true;
@@ -172,8 +190,10 @@ this.init();
     }
 
     async init() {
+        if (this._isDestroyed) return;
         console.log('📋 TickerPanel: быстрая инициализация');
-        document.getElementById('tickerLoader').style.display = 'block';
+        const loader = document.getElementById('tickerLoader');
+        if (loader) loader.style.display = 'block';
         
         this.setupFilters();
         this.setupFlagContextMenu();
@@ -182,23 +202,16 @@ this.init();
         this.setupHeaderSorting();
         this.setupModal();
 
-        document.addEventListener('contextmenu', (e) => {
-            let target = e.target;
-            if (target && target.nodeType === 3) target = target.parentElement;
-            const tickerItem = target.closest('.ticker-item');
-            if (tickerItem) { e.preventDefault(); this.handleContextMenu(e); }
-        });
-        
-        document.addEventListener('click', (e) => {
-            const tickerMenu = document.getElementById('tickerContextMenu');
-            if (tickerMenu && tickerMenu.style.display === 'block' && !tickerMenu.contains(e.target)) {
-                tickerMenu.style.display = 'none';
-            }
-        });
+        // ✅ НОВОЕ: Используем именованные обработчики
+        document.addEventListener('contextmenu', this._globalContextMenuHandler);
+        document.addEventListener('click', this._globalClickHandler);
+        document.addEventListener('visibilitychange', this._visibilityHandler);
+        window.addEventListener('focus', this._focusHandler);
 
         if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
 
         setTimeout(async () => {
+            if (this._isDestroyed) return;
             console.log('⏳ Ожидание загрузки Watchlist...');
             if (this.watchlistManager) {
                 await this.watchlistManager._initPromise;
@@ -211,60 +224,44 @@ this.init();
             if (this.watchlistManager) await this.watchlistManager.initializeWithPriority();
 
             this._cacheRefreshInterval = setInterval(() => {
-                this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
+                if (!this._isDestroyed) {
+                    this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление кэша:', err));
+                }
             }, TICKER_TIMINGS.CACHE_REFRESH_INTERVAL);
         }, 100);
-
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) this._restoreWebSockets();
-        });
-        window.addEventListener('focus', () => this._restoreWebSockets());
     }
 
-       _restoreWebSockets() {
-    console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
-    
-    // 1. Принудительно сбрасываем флаги, чтобы разблокировать процесс, 
-    // даже если предыдущий запрос "завис" или был прерван уходом вкладки в фон
-    this._isRestRunning = false;
-    this._restQueue = []; // Очищаем очередь, чтобы начать сбор данных с чистого листа
-    
-    // ✅ ДОБАВЛЕНО: Сбрасываем кэш фильтрации, чтобы перерисовка применила актуальную сортировку
-    this.filterCache = null; 
-    
-    // 2. Запускаем обновление с небольшой задержкой (100мс). 
-    // Это критически важно: позволяет браузеру сначала отрисовать кадр 
-    // после возвращения фокуса, избегая визуального "фриза" от синхронной блокировки потока
-    if (this.pollRestData) {
-        setTimeout(() => {
-            this.pollRestData();
-        }, 100);
+    _restoreWebSockets() {
+        if (this._isDestroyed) return;
+        console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
+        
+        this._restToken = (this._restToken || 0) + 1;
+        this._isRestRunning = false;
+        this._restQueue = [];
+        this.filterCache = null; 
+        
+        if (this.pollRestData) {
+            setTimeout(() => {
+                if (!this._isDestroyed) this.pollRestData();
+            }, 100);
+        }
+        this._scheduleRender();
     }
 
-    // 3. Гарантируем перерисовку списка тикеров, если она была пропущена 
-    // из-за заморозки requestAnimationFrame в фоновой вкладке
-    this._scheduleRender();
-}
-      async initializeDataParallel() {
+    async initializeDataParallel() {
         const container = document.getElementById('tickerListContainer');
         const loader = document.getElementById('tickerLoader');
         
-        // 1. Пытаемся загрузить данные из быстрого кэша (IndexedDB)
         const loaded = await this.loadFromIndexedDB();
         if (loaded) {
             this.addInitialSymbols(); 
             this.updateModalCount();
-            
-            // Скрываем лоадер, так как данные уже отображены
             if (loader) loader.style.display = 'none';
             if (container) container.classList.add('ready');
-            
-            // Фоновое обновление кэша через 1 секунду
             setTimeout(() => this.refreshSymbolCache(10000).catch(err => console.warn('⚠️ Фон. обновление:', err)), 1000);
             return;
         }
 
-        // 2. Если кэша нет, гарантируем показ лоадера и чистим контейнер от возможного мусора
         if (loader) loader.style.display = 'block';
         if (container) container.innerHTML = ''; 
 
@@ -273,10 +270,9 @@ this.init();
             const controller = new AbortController();
             controllers.push(controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
-            
             return fetch(url, { signal: controller.signal })
-                .then(r => r.json())
-                .catch(() => null) // Ловим ошибки сети/аборта здесь, чтобы Promise.allSettled не считал это фатальным крахом всего массива
+                .then(r => r.ok ? r.json() : null)
+                .catch(() => null)
                 .finally(() => clearTimeout(timeoutId));
         };
 
@@ -288,7 +284,6 @@ this.init();
         ];
 
         try {
-            // Ждем все запросы, даже если один из них упадет
             const allResults = await Promise.allSettled(urls.map(url => fetchWithTimeout(url, 5000)));
             const finalResults = allResults.map(r => r.status === 'fulfilled' ? r.value : null);
             
@@ -296,37 +291,34 @@ this.init();
             this.addInitialSymbols();
             await this.saveSymbolsToIndexedDB();
             
-            // 3. Успех: очищаем контейнер (убираем лоадер) и готовим к рендеру
             if (container) {
                 container.innerHTML = ''; 
                 container.classList.add('ready');
             }
             if (loader) loader.style.display = 'none';
-
         } catch (error) {
             console.error('❌ Ошибка загрузки данных:', error);
-            // 4. Ошибка: показываем понятное сообщение пользователю, а не просто пустой экран
             if (container) {
                 container.innerHTML = '<div style="padding: 20px; text-align: center; color: #f23645; font-size: 14px;">⚠️ Не удалось загрузить данные бирж. Проверьте подключение к интернету.</div>';
             }
             if (loader) loader.style.display = 'none';
         } finally {
-            // 5. БЕЗОПАСНАЯ ОЧИСТКА: 
-            // Мы НЕ вызываем c.abort() здесь, так как Promise.allSettled уже завершился.
-            // Вызов abort() на завершенном запросе может вызвать предупреждения в консоли.
-            // Просто обнуляем массив, чтобы сборщик мусора удалил ссылки на контроллеры.
             controllers.length = 0; 
         }
     }
+
     async refreshSymbolCache(timeout = 10000) {
-        if (this._isRefreshing) return;
+        if (this._isRefreshing || this._isDestroyed) return;
         this._isRefreshing = true;
         const controllers = [];
         const fetchWithTimeout = (url, timeout) => {
             const controller = new AbortController();
             controllers.push(controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
-            return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeoutId));
+            return fetch(url, { signal: controller.signal })
+                .then(r => r.ok ? r.json() : null)
+                .catch(() => null)
+                .finally(() => clearTimeout(timeoutId));
         };
         const urls = [
             'https://fapi.binance.com/fapi/v1/exchangeInfo',
@@ -335,7 +327,7 @@ this.init();
             'https://api.bybit.com/v5/market/instruments-info?category=spot'
         ];
         try {
-            const results = await Promise.allSettled(urls.map(url => fetchWithTimeout(url, timeout).then(r => r.json()).catch(e => null)));
+            const results = await Promise.allSettled(urls.map(url => fetchWithTimeout(url, timeout)));
             const finalResults = results.map(r => r.status === 'fulfilled' ? r.value : null);
             this.processParallelData(finalResults, true);
             await this.saveSymbolsToIndexedDB();
@@ -347,7 +339,8 @@ this.init();
         }
     }
 
-        _onPriceUpdate(symbol, data, exchange, marketType) {
+    _onPriceUpdate(symbol, data, exchange, marketType) {
+        if (this._isDestroyed) return;
         const compositeKey = `${symbol}:${exchange}:${marketType}`;
         const ticker = this.tickersMap.get(compositeKey);
         if (!ticker) return;
@@ -356,55 +349,39 @@ this.init();
         if (isNaN(newPrice)) return;
 
         let newChange = typeof data === 'object' && data !== null ? parseFloat(data.change) : undefined;
-        if (isNaN(newChange)) {
-            newChange = ticker.change || 0;
-        }
+        if (isNaN(newChange)) newChange = ticker.change || 0;
 
-        // ✅ НОВОЕ: Извлекаем объем и сделки
         let newVolume = typeof data === 'object' && data !== null ? parseFloat(data.volume) : undefined;
         if (isNaN(newVolume)) newVolume = ticker.volume;
 
         let newTrades = typeof data === 'object' && data !== null ? parseInt(data.trades) : undefined;
         if (isNaN(newTrades)) newTrades = ticker.trades;
 
-        // Проверяем, изменилось ли хоть что-то (цена, процент, объем или сделки)
-        if (ticker.price === newPrice && 
-            ticker.change === newChange && 
-            ticker.volume === newVolume && 
-            ticker.trades === newTrades) return;
+        if (ticker.price === newPrice && ticker.change === newChange && ticker.volume === newVolume && ticker.trades === newTrades) return;
 
         ticker.prevPrice = ticker.price > 0 ? ticker.price : newPrice;
         ticker.price = newPrice;
         ticker.change = newChange;
-        ticker.volume = newVolume; // ✅ Сохраняем в объект
-        ticker.trades = newTrades; // ✅ Сохраняем в объект
+        ticker.volume = newVolume;
+        ticker.trades = newTrades;
         ticker._lastUpdateTime = Date.now();
 
         if (!this._blockDOMUpdates && this.renderer) {
-            if (!this._pendingPriceUpdates) this._pendingPriceUpdates = new Map();
-            
-            // ✅ Передаем volume и trades в батч
-            this._pendingPriceUpdates.set(compositeKey, { 
-                price: ticker.price, 
-                change: newChange,
-                volume: newVolume,
-                trades: newTrades
-            });
+            this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: newChange, volume: newVolume, trades: newTrades });
             
             if (!this._priceUpdateRaf) {
                 this._priceUpdateRaf = requestAnimationFrame(() => {
                     this._priceUpdateRaf = null;
                     const batch = this._pendingPriceUpdates;
                     this._pendingPriceUpdates = new Map(); 
-                
                     for (const [key, val] of batch.entries()) {
-                        // ✅ Передаем volume и trades в рендерер
                         this.renderer.updatePriceForSymbol(key, val.price, val.change, val.volume, val.trades);
                     }
                 });
             }
         }
     }
+
     processParallelData(results, updateOnly = false) {
         const MAX_SYMBOLS = 4000;
         let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
@@ -448,17 +425,20 @@ this.init();
 
     addInitialSymbols() {
         const savedSymbols = this.state.customSymbols;
+        
+        this._isBulkAdding = true;
         savedSymbols.forEach(symbolKey => {
             const parts = symbolKey.split(':');
             if (parts.length === 3) this.addSymbol(parts[0], true, parts[1], parts[2], false, false, true);
         });
+        this._isBulkAdding = false;
+        
         this.updateModalCount();
         this.filterCache = null;
-        
-        // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ вместо прямого вызова
         this._scheduleRender();
         
         requestAnimationFrame(() => {
+            if (this._isDestroyed) return;
             const container = document.getElementById('tickerListContainer');
             const loader = document.getElementById('tickerLoader');
             if (container) container.classList.add('ready');
@@ -467,17 +447,17 @@ this.init();
             this.startTickerPanelPriceEngine();
             this.setupDelegatedEvents();
             setTimeout(() => {
-                if (this.renderer) {
+                if (this.renderer && !this._isDestroyed) {
                     this.filterCache = null;
                     this.renderer.updatePriceElements?.();
-                    // 🚀 УДАЛЕНО: this.renderTickerList() — это лишняя тяжелая операция, которая вызывала лаг через 3 сек после старта
                     console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
                 }
             }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
         });
     }
+
     _syncToPriceManager() {
-        if (!window.priceManagerInstance) return;
+        if (!window.priceManagerInstance || this._isDestroyed) return;
         let count = 0;
         for (const [key] of this.tickersMap.entries()) {
             if (!this._subscribedSymbols.has(key)) {
@@ -489,16 +469,16 @@ this.init();
         console.log(`✅ TickerPanel подписан на PriceManager (${count} символов)`);
     }
 
-      startTickerPanelPriceEngine() {
-        if (this._priceEngineStarted) return;
+    startTickerPanelPriceEngine() {
+        if (this._priceEngineStarted || this._isDestroyed) return;
         this._priceEngineStarted = true;
-        console.log('🚀 TickerPriceEngine: Запуск (Live через PriceManager + REST для 24h каждые 10 мин)');
+        console.log('🚀 TickerPriceEngine: Запуск (Live через PriceManager + REST для 24h)');
         
         this._restQueue = [];           
         this._isRestRunning = false;    
+        this._restToken = 0;            
         this._wsUpdateRafId = null;
 
-        // 🛡️ Безопасный fetch с повторными попытками и таймаутом
         this._safeFetch = async (url, retries = 3) => {
             for (let i = 0; i < retries; i++) {
                 try {
@@ -508,7 +488,6 @@ this.init();
                     const response = await fetch(url, { signal: controller.signal });
                     clearTimeout(timeoutId);
                     
-                    // Пропускаем ошибки rate-limit биржи
                     if (response.status === 418 || response.status === 429) continue;
                     if (!response.ok) return null;
                     return await response.json();
@@ -519,14 +498,19 @@ this.init();
             return null;
         };
 
-        // 🛡️ Обработка очереди запросов с задержкой, чтобы не получить бан от биржи
         this._processRestQueue = async () => {
-            if (this._isRestRunning) return;
+            if (this._isRestRunning || this._isDestroyed) return;
             this._isRestRunning = true;
             this._restInProgress = true;
+            const myToken = this._restToken;
             let count = 0;
+            let stale = false;
             try {
                 while (this._restQueue.length > 0) {
+                    if (this._restToken !== myToken || this._isDestroyed) {
+                        stale = true;
+                        break;
+                    }
                     const task = this._restQueue.shift();
                     count++;
                     await task();
@@ -535,13 +519,15 @@ this.init();
                     }
                 }
             } finally {
-                this._isRestRunning = false;
-                this._restInProgress = false;
+                if (this._restToken === myToken && !this._isDestroyed) {
+                    this._isRestRunning = false;
+                    this._restInProgress = false;
+                }
             }
+            if (stale) return;
             console.log(`✅ REST завершён (${count} запросов)`);
             
-            // 🚀 Обновляем DOM только один раз после завершения ВСЕХ запросов
-            if (!this._blockDOMUpdates) {
+            if (!this._blockDOMUpdates && !this._isDestroyed) {
                 setTimeout(() => { 
                     this.renderer.updatePriceElements?.(); 
                     this.updateModalCount?.(); 
@@ -549,9 +535,8 @@ this.init();
             }
         };
 
-        // 📦 Функция сбора и постановки задач в очередь
         const loadAllData = async () => {
-            if (this.tickersMap.size === 0) return;
+            if (this.tickersMap.size === 0 || this._isDestroyed) return;
             const groups = { bnFut: [], bnSpot: [], byFut: [], bySpot: [] };
             
             for (const [, t] of this.tickersMap.entries()) {
@@ -589,7 +574,6 @@ this.init();
                 };
             };
 
-            // Разбиваем на батчи для Binance
             for (let i = 0; i < groups.bnFut.length; i += TICKER_TIMINGS.BINANCE_BATCH_SIZE) {
                 this._restQueue.push(createBinanceTask(groups.bnFut.slice(i, i + TICKER_TIMINGS.BINANCE_BATCH_SIZE), 'futures'));
             }
@@ -597,7 +581,6 @@ this.init();
                 this._restQueue.push(createBinanceTask(groups.bnSpot.slice(i, i + TICKER_TIMINGS.BINANCE_BATCH_SIZE), 'spot'));
             }
             
-            // Bybit отдаем одним запросом (у них нет жестких лимитов на этот эндпоинт)
             if (groups.byFut.length > 0) this._restQueue.push(createBybitTask(groups.byFut, 'futures'));
             if (groups.bySpot.length > 0) this._restQueue.push(createBybitTask(groups.bySpot, 'spot'));
 
@@ -605,21 +588,16 @@ this.init();
             console.log(`💰 Загружено ${this.tickersMap.size} тикеров с ценами!`);
         };
 
-        // 1️⃣ Первичная загрузка данных при старте
         console.log('⏳ Первичная загрузка REST...');
-        setTimeout(() => loadAllData(), TICKER_TIMINGS.INITIAL_DATA_DELAY);
+        setTimeout(() => { if (!this._isDestroyed) loadAllData(); }, TICKER_TIMINGS.INITIAL_DATA_DELAY);
 
-        // 2️⃣ Фоновое обновление (ВАЖНО: интервал берется из TICKER_TIMINGS.REST_POLL_INTERVAL)
-        // Убедитесь, что в начале файла у вас: REST_POLL_INTERVAL: 10 * 60 * 1000 (10 минут)
         this._pollInterval = setInterval(() => {
-            if (!this._isRestRunning && this._restQueue.length === 0 && !document.hidden) {
+            if (!this._isRestRunning && this._restQueue.length === 0 && !document.hidden && !this._isDestroyed) {
                 loadAllData().catch(e => console.warn('⚠️ Ошибка REST:', e));
             }
         }, TICKER_TIMINGS.REST_POLL_INTERVAL);
 
         this.pollRestData = loadAllData;
-        
-        // 3️⃣ Подписка на WebSocket для мгновенного обновления цены (lastPrice)
         this._syncToPriceManager();
     }
 
@@ -637,13 +615,54 @@ this.init();
         this._priceEngineStarted = false;
     }
 
+    // ✅ НОВОЕ: Полноценный метод уничтожения для предотвращения утечек памяти
+    destroy() {
+        console.log('🗑️ Уничтожение TickerPanel...');
+        this._isDestroyed = true;
+        
+        this.destroyPriceEngine();
+        
+        if (this._restDebounceTimer) {
+            clearTimeout(this._restDebounceTimer);
+            this._restDebounceTimer = null;
+        }
+        if (this._cacheRefreshInterval) {
+            clearInterval(this._cacheRefreshInterval);
+            this._cacheRefreshInterval = null;
+        }
+        if (this._priceUpdateRaf) {
+            cancelAnimationFrame(this._priceUpdateRaf);
+            this._priceUpdateRaf = null;
+        }
+
+        document.removeEventListener('contextmenu', this._globalContextMenuHandler);
+        document.removeEventListener('click', this._globalClickHandler);
+        document.removeEventListener('visibilitychange', this._visibilityHandler);
+        window.removeEventListener('focus', this._focusHandler);
+
+        this.tickers.length = 0;
+        this.tickersMap.clear();
+        this._subscribedSymbols.clear();
+        this._rowDomCache.clear();
+        this._pendingPriceUpdates.clear();
+        
+        console.log('✅ TickerPanel полностью уничтожен');
+    }
+
     _clearDomCache() {
         this._rowDomCache.clear();
     }
 
     clearAllSymbols() {
         console.log('🗑️ Начало очистки всех символов...');
-        this.tickers = []; 
+        
+        if (window.priceManagerInstance && this._pmPriceHandler) {
+            for (const key of this._subscribedSymbols) {
+                window.priceManagerInstance.unsubscribe(key, this._pmPriceHandler);
+            }
+        }
+        
+        this.tickers.length = 0; 
         this.tickersMap.clear(); 
         this.state.customSymbols = []; 
         this.state.favorites = [];   
@@ -659,7 +678,7 @@ this.init();
         }
         this.filterCache = null; 
         this.formatCache = { prices: new Map(), volumes: new Map(), changes: new Map() };
-if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш рендерера
+        if (this.renderer) this.renderer._formatCache.clear();
         
         if (this.watchlistManager) {
             const list = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
@@ -682,8 +701,10 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             container.scrollTop = 0; 
             container.classList.remove('ready');
             requestAnimationFrame(() => {
-                this._scheduleRender(); // 🚀 Используем батчинг
-                setTimeout(() => { if (container) container.classList.add('ready'); }, 50);
+                if (!this._isDestroyed) {
+                    this._scheduleRender();
+                    setTimeout(() => { if (container) container.classList.add('ready'); }, 50);
+                }
             });
         }
         this.saveState();
@@ -691,77 +712,77 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         console.log('✅ Очистка завершена! Тикеров:', this.tickersMap.size);
     }
 
-  syncWithActiveWatchlist() {
-    if (!this.watchlistManager) return;
-    const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
-    if (activeList) {
-        if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
-            activeList.symbols = [...this.state.customSymbols];
+    syncWithActiveWatchlist() {
+        if (!this.watchlistManager || this._isDestroyed) return;
+        const activeList = this.watchlistManager.lists.get(this.watchlistManager.activeListId);
+        if (activeList) {
+            if (!this._arraysEqual(this.state.customSymbols, activeList.symbols)) {
+                activeList.symbols = [...this.state.customSymbols];
+            }
+            activeList.flags = { ...this.state.flags };
+            activeList.favorites = [...this.state.favorites];
         }
-        activeList.flags = { ...this.state.flags };
-        activeList.favorites = [...this.state.favorites];
-    }
-    
-    // ✅ ДОБАВЛЕНО: Очищаем кэши при смене вотчлиста, чтобы стрелки и сортировка работали корректно
-    this.filterCache = null;
-    this.tickerElements.clear();
-    this._rowDomCache.clear();
-    this._scheduleRender();
-}
-   addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
-    symbol = symbol.trim().toUpperCase();
-    if (!this._isValidSymbol(symbol)) return false;
-    const key = `${symbol}:${exchange}:${marketType}`;
-    
-    if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
-        this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
-        this.watchlistManager.renderDropdown(); 
+        
+        this.filterCache = null;
+        this.tickerElements.clear();
+        this._rowDomCache.clear();
+        this._scheduleRender();
     }
 
-    if (this.tickersMap.has(key)) {
-        const existingTicker = this.tickersMap.get(key);
-        if (!this.tickers.includes(existingTicker)) {
-            this.tickers.push(existingTicker);
-            this.filterCache = null;
-            if (render) this._scheduleRender();
+    addSymbol(symbol, isCustom = true, exchange = 'binance', marketType = 'futures', render = true, skipInitialFetch = false, skipWatchlistSync = false) {
+        if (this._isDestroyed) return false;
+        symbol = symbol.trim().toUpperCase();
+        if (!this._isValidSymbol(symbol)) return false;
+        const key = `${symbol}:${exchange}:${marketType}`;
+        
+        if (isCustom && this.watchlistManager && !skipWatchlistSync) { 
+            this.watchlistManager.addSymbolToActiveList(symbol, exchange, marketType); 
+            this.watchlistManager.renderDropdown(); 
         }
+
+        if (this.tickersMap.has(key)) {
+            const existingTicker = this.tickersMap.get(key);
+            if (!this.tickers.includes(existingTicker)) {
+                this.tickers.push(existingTicker);
+                this.filterCache = null;
+                if (render) this._scheduleRender();
+            }
+            return true;
+        }
+        
+        const newTicker = {
+            symbol, price: 0, change: 0, volume: 0, trades: null,
+            custom: true, prevPrice: 0, exchange, marketType,
+            flag: this.state.flags[key] || null
+        };
+        
+        this.tickers.push(newTicker);
+        this.tickersMap.set(key, newTicker);
+        if (!this.state.customSymbols.includes(key)) this.state.customSymbols.push(key);
+        
+        if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
+            window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
+            this._subscribedSymbols.add(key);
+        }
+        
+        this.filterCache = null;
+        if (render) this._scheduleRender();
+        
+        if (!skipInitialFetch && !this._isBulkAdding) {
+            this.fetchInitialDataForSymbol(symbol, exchange, marketType).then(() => {
+                if (!this._isDestroyed) {
+                    setTimeout(() => { this.renderTickerList(); }, 50);
+                }
+            }).catch(err => {
+                console.warn('⚠️ Ошибка получения начальных данных:', err);
+            });
+        }
+        
         return true;
     }
-    
-    const newTicker = {
-        symbol, price: 0, change: 0, volume: 0, trades: null,
-        custom: true, prevPrice: 0, exchange, marketType,
-        flag: this.state.flags[key] || null
-    };
-    
-    this.tickers.push(newTicker);
-    this.tickersMap.set(key, newTicker);
-    if (!this.state.customSymbols.includes(key)) this.state.customSymbols.push(key);
-    
-    if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
-        window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
-        this._subscribedSymbols.add(key);
-    }
-    
-    this.filterCache = null;
-    if (render) this._scheduleRender();
-    
-    if (!skipInitialFetch && !this._isBulkAdding) {
-        // После получения данных с биржи — принудительная перерисовка списка
-        this.fetchInitialDataForSymbol(symbol, exchange, marketType).then(() => {
-            // Небольшая задержка, чтобы точно отработали все внутренние процессы
-            setTimeout(() => {
-                this.renderTickerList(); // Прямой вызов, а не _scheduleRender
-            }, 50);
-        }).catch(err => {
-            console.warn('⚠️ Ошибка получения начальных данных:', err);
-        });
-    }
-    
-    return true;
-}
+
     async addSymbolsBatch(symbolsData) {
-        if (!symbolsData || symbolsData.length === 0) return;
+        if (!symbolsData || symbolsData.length === 0 || this._isDestroyed) return;
         const addedKeys = [];
         
         symbolsData.forEach(({ symbol, exchange, marketType }) => {
@@ -805,18 +826,16 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         this.saveState();
         this.filterCache = null; 
         this.tickerElements.clear();
-        this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
-        
-        
+        this._scheduleRender();
         
         if (this._restDebounceTimer) clearTimeout(this._restDebounceTimer);
         this._restDebounceTimer = setTimeout(() => { 
-            if (this.pollRestData) this.pollRestData(); 
+            if (this.pollRestData && !this._isDestroyed) this.pollRestData(); 
         }, 1000);
     }
 
     async fetchBatchSnapshots(symbols) {
-        if (!symbols || symbols.length === 0) return;
+        if (!symbols || symbols.length === 0 || this._isDestroyed) return;
         const startTime = Date.now();
         while (this._fetchBatchInProgress && Date.now() - startTime < 10000) {
             await new Promise(r => setTimeout(r, 100));
@@ -841,6 +860,7 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                     try {
                         const url = marketType === 'futures' ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]` : `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`;
                         const response = await fetch(url);
+                        if (!response.ok) continue; // ✅ ФИКС: проверка ответа
                         const data = await response.json();
                         if (Array.isArray(data)) data.forEach(t => this._updateTickerFromBinance(t, marketType));
                     } catch (e) {}
@@ -854,6 +874,7 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                     const category = marketType === 'futures' ? 'linear' : 'spot';
                     const url = `https://api.bybit.com/v5/market/tickers?category=${category}`;
                     const response = await fetch(url);
+                    if (!response.ok) return; // ✅ ФИКС: проверка ответа
                     const data = await response.json();
                     if (data.retCode === 0 && data.result?.list) {
                         const symbolSet = new Set(symbolList.map(s => s.symbol));
@@ -868,60 +889,60 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 fetchBybitBulk(byFutures, 'futures'),
                 fetchBybitBulk(bySpot, 'spot')
             ]);
-            this.renderer?.updatePriceElements();
+            if (!this._isDestroyed) this.renderer?.updatePriceElements();
         } finally {
             this._fetchBatchInProgress = false;
         }
     }
 
- _updateTickerFromBinance(data, marketType) {
-    const key = `${data.symbol}:binance:${marketType}`;
-    const ticker = this.tickersMap.get(key);
-    if (!ticker) return;
+    _updateTickerFromBinance(data, marketType) {
+        const key = `${data.symbol}:binance:${marketType}`;
+        const ticker = this.tickersMap.get(key);
+        if (!ticker) return;
 
-    const newPrice = parseFloat(data.lastPrice) || 0;
-    if (newPrice <= 0) return;
+        const newPrice = parseFloat(data.lastPrice) || 0;
+        if (newPrice <= 0) return;
 
-    ticker.prevPrice = ticker.price || newPrice;
-    ticker.price = newPrice;
-    // ❌ УБИРАЕМ ОБНОВЛЕНИЕ CHANGE
-    // ticker.change = parseFloat(data.priceChangePercent) || 0;
-    ticker.volume = parseFloat(data.quoteVolume) || 0;
-    ticker.trades = parseInt(data.count) || 0;
+        ticker.prevPrice = ticker.price || newPrice;
+        ticker.price = newPrice;
+        ticker.volume = parseFloat(data.quoteVolume) || 0;
+        ticker.trades = parseInt(data.count) || 0;
 
-    if (!this._blockDOMUpdates) {
-        this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
+        if (!this._blockDOMUpdates && !this._isDestroyed) {
+            this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
+        }
     }
-}
 
-   _updateTickerFromBybit(data, marketType) {
-    const key = `${data.symbol}:bybit:${marketType}`;
-    const ticker = this.tickersMap.get(key);
-    if (!ticker) return;
+    _updateTickerFromBybit(data, marketType) {
+        const key = `${data.symbol}:bybit:${marketType}`;
+        const ticker = this.tickersMap.get(key);
+        if (!ticker) return;
 
-    const newPrice = parseFloat(data.lastPrice) || 0;
-    if (newPrice <= 0) return;
+        const newPrice = parseFloat(data.lastPrice) || 0;
+        if (newPrice <= 0) return;
 
-    ticker.prevPrice = ticker.price || newPrice;
-    ticker.price = newPrice;
-    // ❌ УБИРАЕМ ОБНОВЛЕНИЕ CHANGE
-    // ticker.change = parseFloat(data.price24hPcnt) * 100 || 0;
-    ticker.volume = parseFloat(data.volume24h) * newPrice || 0;
+        ticker.prevPrice = ticker.price || newPrice;
+        ticker.price = newPrice;
+        ticker.volume = parseFloat(data.volume24h) * newPrice || 0;
 
-    if (!this._blockDOMUpdates) {
-        this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
+        if (!this._blockDOMUpdates && !this._isDestroyed) {
+            this.renderer.updatePriceForSymbol(key, newPrice, ticker.change);
+        }
     }
-}
 
     async fetchInitialDataForSymbol(symbol, exchange, marketType) {
+        if (this._isDestroyed) return;
         try {
             const url = exchange === 'binance' 
                 ? (marketType === 'futures' ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}` : `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
                 : `https://api.bybit.com/v5/market/tickers?category=${marketType === 'futures' ? 'linear' : 'spot'}&symbol=${symbol}`;
+            
             const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`); // ✅ ФИКС: валидация ответа
+            
             const data = await response.json();
             const ticker = this.tickersMap.get(`${symbol}:${exchange}:${marketType}`);
-            if (!ticker) return;
+            if (!ticker || this._isDestroyed) return;
 
             if (exchange === 'binance') {
                 ticker.price = parseFloat(data.lastPrice); 
@@ -934,18 +955,21 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 ticker.change = parseFloat(d.price24hPcnt) * 100; 
                 ticker.volume = parseFloat(d.turnover24h) || parseFloat(d.volume24h) * parseFloat(d.lastPrice);
             }
-          
         } catch (error) { 
             console.warn(`⚠️ Не удалось загрузить ${symbol}:`, error); 
         }
     }
 
     async fetchBybitSnapshots() {
+        if (this._isDestroyed) return;
         try {
             const [futRes, spotRes] = await Promise.all([
                 fetch('https://api.bybit.com/v5/market/tickers?category=linear'), 
                 fetch('https://api.bybit.com/v5/market/tickers?category=spot')
             ]);
+            
+            if (!futRes.ok || !spotRes.ok) throw new Error('Bybit API error'); // ✅ ФИКС: валидация ответа
+
             const futData = await futRes.json(); 
             const spotData = await spotRes.json();
             
@@ -965,13 +989,14 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                     }
                 });
             }
-            this.renderer.updatePriceElements();
+            if (!this._isDestroyed) this.renderer.updatePriceElements();
         } catch (error) { 
             console.error('❌ Ошибка загрузки Bybit:', error); 
         }
     }
+
     removeSymbol(symbol, exchange, marketType) {
-        if (!symbol) return;
+        if (!symbol || this._isDestroyed) return;
         const key = `${symbol}:${exchange}:${marketType}`;
         
         const wasCurrentSymbol = (
@@ -997,9 +1022,12 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
         
         delete this.state.flags[key];
-        this.tickers = this.tickers.filter(t => 
-            !(t.symbol === symbol && t.exchange === exchange && t.marketType === marketType)
+        
+        const tickerIdx = this.tickers.findIndex(t => 
+            t.symbol === symbol && t.exchange === exchange && t.marketType === marketType
         );
+        if (tickerIdx !== -1) this.tickers.splice(tickerIdx, 1);
+        
         this.tickersMap.delete(key);
         this._rowDomCache.delete(key);
         this._subscribedSymbols.delete(key);
@@ -1034,7 +1062,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 console.error('❌ Ошибка переключения символа:', error);
             }
             
-            // 🚀 ДОБАВЛЕНО: Прямое обновление DOM элементов заголовка графика (как в оригинале)
             const pairDisplay = document.getElementById('pairDisplay');
             if (pairDisplay) pairDisplay.textContent = nextTicker.symbol;
             
@@ -1044,7 +1071,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             const contractTypeDisplay = document.getElementById('contractTypeDisplay');
             if (contractTypeDisplay) contractTypeDisplay.textContent = nextTicker.marketType === 'futures' ? 'PERP' : 'SPOT';
             
-            // Дополнительный вызов для совместимости, если он используется в проекте
             if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
             
         } else if (wasCurrentSymbol) {
@@ -1052,7 +1078,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             this.state.currentExchange = 'binance';
             this.state.currentMarketType = 'futures';
             
-            // 🚀 ДОБАВЛЕНО: Сброс заголовков, если тикеры закончились
             const pairDisplay = document.getElementById('pairDisplay');
             if (pairDisplay) pairDisplay.textContent = 'Выберите пару';
             
@@ -1064,10 +1089,11 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
         
         this.filterCache = null;
-        this._scheduleRender(); // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ
+        this._scheduleRender();
         
         if (wasCurrentSymbol && nextTicker) {
             setTimeout(() => {
+                if (this._isDestroyed) return;
                 const activeEl = document.querySelector(
                     `.ticker-item[data-symbol="${nextTicker.symbol}"][data-exchange="${nextTicker.exchange}"][data-market-type="${nextTicker.marketType}"]`
                 );
@@ -1099,7 +1125,8 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         }
     }
 
-         handleTickerClick(e) {
+    handleTickerClick(e) {
+        if (this._isDestroyed) return;
         const star = e.target.closest('.star');
         if (star) { e.preventDefault(); e.stopPropagation(); this.handleStarClick(star); return; }
         const flag = e.target.closest('.flag');
@@ -1125,7 +1152,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 if (this.coordinator?.chartManager) this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
             } catch (error) { console.error('❌ Ошибка переключения символа:', error); }
             
-            // 🚀 ВОЗВРАЩЕНО: Прямое обновление DOM элементов как в оригинале
             const pairDisplay = document.getElementById('pairDisplay');
             if (pairDisplay) pairDisplay.textContent = symbol;
             const exchangeDisplay = document.getElementById('exchangeDisplay');
@@ -1136,7 +1162,9 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
         }
     }
+
     handleStarClick(star) {
+        if (this._isDestroyed) return;
         const symbol = star.dataset.symbol; 
         if (!symbol) return;
         const index = this.state.favorites.indexOf(symbol);
@@ -1147,13 +1175,13 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         this.saveState(); 
         star.classList.toggle('favorite', index === -1);
         
-        // 🚀 ИСПРАВЛЕНО: Перерисовываем список, если мы находимся на вкладке Избранного
         if (this.state.activeTab === 'favorites') {
             this._scheduleRender();
         }
     }
 
     handleContextMenu(e) {
+        if (this._isDestroyed) return;
         let target = e.target;
         if (target && target.nodeType === 3) target = target.parentElement;
         if (!target) return;
@@ -1210,7 +1238,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             this.watchlistManager.listOrder.forEach(listId => { 
                 const list = this.watchlistManager.lists.get(listId); 
                 if (list) { 
-                    // 🛡️ ИСПРАВЛЕНО: Используем this._escapeHtml вместо потенциально отсутствующего метода watchlistManager
                     html += `<div class="context-menu-item" data-action="add-wl" data-list-id="${listId}" data-symbol="${symbol}" data-exchange="${exchange}" data-market-type="${marketType}">${listId === this.watchlistManager.activeListId ? '⭐' : '📋'} ${this._escapeHtml(list.name)} <span style="margin-left:auto;color:#666;font-size:11px">${list.symbols.length}</span></div>`; 
                 } 
             }); 
@@ -1261,6 +1288,7 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
     }
 
     handleDoubleClick(e) {
+        if (this._isDestroyed) return;
         const flag = e.target.closest('.flag'); 
         if (!flag) return; 
         e.preventDefault(); e.stopPropagation();
@@ -1283,13 +1311,13 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         this.filterCache = null; 
         this.saveState();
         
-        // 🚀 ИСПРАВЛЕНО: Если мы на вкладке флагов, перерисовываем, чтобы строка пропала
         if (this.state.activeTab === 'flags') {
             this._scheduleRender();
         }
     }
 
-       focusOnSymbol(symbol, exchange, marketType) {
+    focusOnSymbol(symbol, exchange, marketType) {
+        if (this._isDestroyed) return;
         this.state.currentSymbol = symbol;
         this.state.currentExchange = exchange;
         this.state.currentMarketType = marketType;
@@ -1305,6 +1333,7 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
                 container.scrollTop = Math.max(0, index * (this.renderer.rowHeight || 36) - container.clientHeight / 2);
                 
                 setTimeout(() => {
+                    if (this._isDestroyed) return;
                     const el = document.querySelector(`.ticker-item[data-symbol="${symbol}"][data-exchange="${exchange}"][data-market-type="${marketType}"]`);
                     if (el) el.classList.add('active');
                 }, 50); 
@@ -1314,7 +1343,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
             if (this.coordinator?.chartManager) this.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
         } catch (error) { console.error('❌ Ошибка переключения символа:', error); }
         
-        // 🚀 ВОЗВРАЩЕНО: Прямое обновление DOM элементов
         const pairDisplay = document.getElementById('pairDisplay');
         if (pairDisplay) pairDisplay.textContent = symbol;
         const exchangeDisplay = document.getElementById('exchangeDisplay');
@@ -1324,9 +1352,12 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         
         if (window.timeframeManager) window.timeframeManager.updateInstrumentInfo();
         
-        document.getElementById('addInstrumentModal').classList.remove('show');
+        const modal = document.getElementById('addInstrumentModal');
+        if (modal) modal.classList.remove('show');
     }
+
     handleFlagSelect(e) {
+        if (this._isDestroyed) return;
         e.stopPropagation(); 
         const contextMenu = document.getElementById('flagContextMenu');
         const symbol = contextMenu.dataset.symbol;
@@ -1357,7 +1388,6 @@ if (this.renderer) this.renderer._formatCache.clear(); // Очищаем кэш 
         this.saveState(); 
         contextMenu.style.display = 'none';
         
-        // 🚀 ИСПРАВЛЕНО: Если на вкладке флагов - добавляем перерисовку
         if (this.state.activeTab === 'flags') {
             this._scheduleRender();
         }
