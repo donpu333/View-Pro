@@ -217,7 +217,7 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
-     _startTracking() {
+ _startTracking() {
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
@@ -240,8 +240,8 @@ class TimerManager {
                          cm?.lastCandle?.close;
                          
             if (price != null && !isNaN(price) && price > 0) {
-                // ✅ ТОЛЬКО эти два флага должны здесь быть
-                if (!cm._switchingSymbol && !cm._updatesSuspended) {
+                // ✅ ФИКС: Обновляем позицию только если график не масштабируется и не переключает тикер
+                if (!cm._switchingSymbol && !cm._updatesSuspended && !cm._autoScalePending) {
                     this._updatePosition(price);
                 }
             }
@@ -323,7 +323,7 @@ class TimerManager {
     }
 
       
-      _updatePosition(price) {
+    _updatePosition(price) {
         if (!this._labelElement) return false;
         
         if (price == null || isNaN(price) || price <= 0) {
@@ -335,11 +335,9 @@ class TimerManager {
             return false;
         }
 
-        // ✅ ИСПРАВЛЕНО: Убраны cm._autoScalePending и cm._isTrimming.
-        // Они срабатывают при обычном зуме/скролле, из-за чего плашка "застывала",
-        // пока график менял масштаб. Теперь мы блокируем обновление ТОЛЬКО 
-        // при реальной смене символа или полной приостановке обновлений.
-        if (cm._switchingSymbol || cm._updatesSuspended) {
+        // ✅ ФИКС: Замораживаем плашку, пока график масштабируется.
+        // В это время priceToCoordinate возвращает мусорные координаты (3px или 849px).
+        if (cm._switchingSymbol || cm._updatesSuspended || cm._autoScalePending || cm._isTrimming) {
             return false; 
         }
         
@@ -384,11 +382,11 @@ class TimerManager {
         this._showLabel();
         return true;
     }
-
     updatePosition(price) {
         this.updatePrice(price);
         this._updatePosition(price);
     }
+
   
 
     start(interval) {
