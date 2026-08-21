@@ -35,11 +35,9 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
 
-            // Берем цену закрытия последней свечи для идеальной синхронизации тик-в-тик
             const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
             let price = lastCandle?.close;
             
-            // Фолбэк, если вдруг данных нет
             if (price == null || isNaN(price) || price <= 0) {
                 price = chartManager.currentRealPrice;
             }
@@ -94,7 +92,6 @@ class TimerRenderer {
             if (!bgColor) bgColor = '#26a69a';
 
             ctx.save();
-            // Убрана прозрачность ('CC'), теперь плашка полностью непрозрачная
             ctx.fillStyle = bgColor; 
             ctx.shadowColor = 'rgba(0,0,0,0.4)';
             ctx.shadowBlur = 4 * hpr;
@@ -406,6 +403,18 @@ class TimerManager {
 
     forceColorUpdate() {
         this._primitive?.invalidateColor();
+    }
+
+    // ✅ ДОБАВЛЕННЫЙ МЕТОД: делегирует вызов к primitive, предотвращая ошибку "is not a function"
+    updatePrice(price) {
+        if (this._primitive) {
+            this._primitive.updatePrice(price);
+        } else {
+            // Фолбэк, если primitive ещё не инициализирован
+            if (this._chartManager) {
+                this._chartManager.currentRealPrice = price;
+            }
+        }
     }
 
     stop() {
