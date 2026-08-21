@@ -6,7 +6,7 @@ class PriceManager {
         this.reconnectTimers = new Map();
         this.pingIntervals = new Map();
         this._pendingUpdates = new Map();
-        this._flushTimerId = null; // ✅ Заменили _flushRafId на таймер
+        this._flushTimerId = null;
         
         this._restPollInterval = null;
         this._heartbeatInterval = null; 
@@ -15,6 +15,8 @@ class PriceManager {
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
         this._connectionState = {};
         this._initInProgress = false;
+        this._destroyed = false;          // ✅ НОВОЕ: флаг уничтожения менеджера
+        this._wakeCheckTimerId = null;     // ✅ НОВОЕ: id вложенного таймера пробуждения вкладки
         
         this.config = {
             reconnectDelay: 15000,
@@ -49,9 +51,9 @@ class PriceManager {
             window.addEventListener('beforeunload', () => this.close());
         }
 
-        // ✅ ЗАЩИТА ОТ ПРОБУЖДЕНИЯ ВКЛАДКИ
         if (typeof document !== 'undefined') {
             this._visibilityHandler = () => {
+                if (this._destroyed) return; // ✅ ФИКС: не реагируем после close()
                 if (!document.hidden) {
                     const now = Date.now();
                     for (const key in this.connections) {
@@ -60,9 +62,11 @@ class PriceManager {
                         }
                     }
                     
-                    // Даем 5 секунд на получение новых данных после пробуждения
-                    setTimeout(() => {
-                        if (document.hidden) return; // Вкладку снова свернули
+                    if (this._wakeCheckTimerId) clearTimeout(this._wakeCheckTimerId); // ✅ ФИКС: не копим параллельные таймеры
+                    this._wakeCheckTimerId = setTimeout(() => {
+                        this._wakeCheckTimerId = null;
+                        if (this._destroyed) return; // ✅ ФИКС: менеджер уже уничтожен — не воскрешаем сокеты
+                        if (document.hidden) return;
                         const checkNow = Date.now();
                         for (const key in this.connections) {
                             const ws = this.connections[key];
@@ -87,15 +91,14 @@ class PriceManager {
             document.addEventListener('visibilitychange', this._visibilityHandler);
         }
         
-        console.log('✅ PriceManager v16 запущен (Защита от сна вкладки + Оптимизация 600+ монет)');
+        console.log('✅ PriceManager v17 запущен (Защита от сна вкладки + Оптимизация 600+ монет)');
     }
 
-    // ✅ Проверка пульса (убивает зомби за 30 секунд)
     _checkHeartbeats() {
+        if (this._destroyed) return; // ✅ ФИКС
         const now = Date.now();
         const ZOMBIE_TIMEOUT = 30000; 
 
-        // Если вкладка не активна, браузер тротлит таймеры и WebSocket. Не убиваем соединения зазря.
         if (typeof document !== 'undefined' && document.hidden) return;
 
         for (const key in this.connections) {
@@ -125,11 +128,17 @@ class PriceManager {
         const hasLinear = this._bybitSubscriptions.linear.size > 0;
         const hasSpot = this._bybitSubscriptions.spot.size > 0;
 
-        if (hasLinear && (!this.connections['bybit:linear'] || this.connections['bybit:linear'].readyState !== WebSocket.OPEN)) {
+        // ✅ ФИКС: CONNECTING считаем "уже подключаемся", а не поводом для нового connect.
+        // Раньше проверка "!== OPEN" на каждый REST-полл (раз в 10с) заново дёргала
+        // _connectBybitLinear/Spot, пока сокет ещё в процессе установки соединения —
+        // это обрывало живой хэндшейк и запускало паразитный цикл переподключений.
+        const isActive = (ws) => ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+
+        if (hasLinear && !isActive(this.connections['bybit:linear'])) {
             console.log('🔌 Подключение Bybit Linear (появилась подписка/алерт)');
             this._connectBybitLinear();
         }
-        if (hasSpot && (!this.connections['bybit:spot'] || this.connections['bybit:spot'].readyState !== WebSocket.OPEN)) {
+        if (hasSpot && !isActive(this.connections['bybit:spot'])) {
             console.log('🔌 Подключение Bybit Spot (появилась подписка/алерт)');
             this._connectBybitSpot();
         }
@@ -137,6 +146,7 @@ class PriceManager {
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
     _connectBinanceFutures() {
+        if (this._destroyed) return; // ✅ ФИКС
         const key = 'binance:futures';
         const url = 'wss://fstream.binance.com/market/ws/!ticker@arr';
         
@@ -160,6 +170,7 @@ class PriceManager {
     }
     
     _connectBinanceSpot() {
+        if (this._destroyed) return; // ✅ ФИКС
         const key = 'binance:spot';
         const url = 'wss://stream.binance.com/ws/!ticker@arr';
         
@@ -183,12 +194,22 @@ class PriceManager {
     }
     
     _connectBinance(key, url, onMessageHandler) {
+        if (this._destroyed) return; // ✅ ФИКС
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
             this.reconnectTimers.delete(key);
         }
         if (this.connections[key]) {
-            try { this.connections[key].close(1000); } catch(e) {}
+            // ✅ ФИКС: обнуляем обработчики СТАРОГО сокета ДО close().
+            // Иначе, если старый сокет ещё OPEN/CONNECTING, его "родной" onclose
+            // сработает и запланирует свой собственный отложенный реконнект —
+            // тот, что через 15-100с внезапно оборвёт уже нормально работающее
+            // новое соединение и запустит бесконечный паразитный цикл реконнектов.
+            const oldWs = this.connections[key];
+            oldWs.onclose = null;
+            oldWs.onerror = null;
+            oldWs.onmessage = null;
+            try { oldWs.close(1000); } catch(e) {}
             this.connections[key] = null;
         }
         
@@ -205,7 +226,6 @@ class PriceManager {
         };
         
         ws.onmessage = (event) => {
-            // ✅ Обновляем пульс МГНОВЕННО, до тяжелого парсинга JSON
             this._lastWsMessage[key] = Date.now();
             
             try {
@@ -217,6 +237,7 @@ class PriceManager {
         ws.onclose = (event) => {
             this._connectionState[key] = 'closed';
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
+            if (this._destroyed) return; // ✅ ФИКС: после close() менеджера не планируем реконнект
             
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
@@ -237,20 +258,29 @@ class PriceManager {
     
     // ========== ПОДКЛЮЧЕНИЯ К BYBIT ==========
     _connectBybitLinear() {
+        if (this._destroyed) return; // ✅ ФИКС
         this._connectBybit('bybit:linear', 'wss://stream.bybit.com/v5/public/linear', 'linear', 'futures');
     }
     
     _connectBybitSpot() {
+        if (this._destroyed) return; // ✅ ФИКС
         this._connectBybit('bybit:spot', 'wss://stream.bybit.com/v5/public/spot', 'spot', 'spot');
     }
     
     _connectBybit(key, url, marketKey, marketType) {
+        if (this._destroyed) return; // ✅ ФИКС
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
             this.reconnectTimers.delete(key);
         }
         if (this.connections[key]) {
-            try { this.connections[key].close(1000); } catch(e) {}
+            // ✅ ФИКС: та же причина, что и в _connectBinance — обнуляем обработчики
+            // старого сокета перед close(), чтобы не наплодить призрачные реконнекты.
+            const oldWs = this.connections[key];
+            oldWs.onclose = null;
+            oldWs.onerror = null;
+            oldWs.onmessage = null;
+            try { oldWs.close(1000); } catch(e) {}
             this.connections[key] = null;
         }
         
@@ -291,6 +321,7 @@ class PriceManager {
             this._connectionState[key] = 'closed';
             this._stopPing(key);
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
+            if (this._destroyed) return; // ✅ ФИКС
             
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
@@ -351,9 +382,26 @@ class PriceManager {
             ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${clean}`] }));
         }
     }
+
+    // ✅ НОВОЕ: обратная операция к subscribeBybitSymbol.
+    // Раньше её не было вообще — набор подписок Bybit только рос,
+    // сокет продолжал получать и парсить тикеры, на которые никто не подписан.
+    unsubscribeBybitSymbol(symbol, marketType) {
+        const marketKey = marketType === 'futures' ? 'linear' : 'spot';
+        const clean = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!this._bybitSubscriptions[marketKey].has(clean)) return;
+        
+        this._bybitSubscriptions[marketKey].delete(clean);
+        
+        const ws = this.connections[marketKey === 'linear' ? 'bybit:linear' : 'bybit:spot'];
+        if (ws?.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ op: 'unsubscribe', args: [`tickers.${clean}`] })); } catch(e) {}
+        }
+    }
     
     // ========== REST (главный источник цен для алертов) ==========
     async _pollAlertPricesViaRest() {
+        if (this._destroyed) return; // ✅ ФИКС
         if (!window.alertLineManager) return;
         
         const activeAlerts = window.alertLineManager._alerts.filter(item => {
@@ -471,8 +519,12 @@ class PriceManager {
         const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
         const change = isObject ? parseFloat(priceData.change) : undefined;
         
-        const volume = isObject ? parseFloat(priceData.volume) : undefined;
-        const trades = isObject ? parseInt(priceData.trades) : undefined;
+        // ✅ ФИКС: раньше parseFloat(undefined) давал NaN вместо undefined,
+        // и проверка "volume === undefined" в дедупликации ниже никогда не срабатывала —
+        // из-за этого REST-обновления цены (без volume/trades) всегда считались
+        // "изменившимися" и лишний раз дёргали всех подписчиков.
+        const volume = (isObject && priceData.volume !== undefined) ? parseFloat(priceData.volume) : undefined;
+        const trades = (isObject && priceData.trades !== undefined) ? parseInt(priceData.trades) : undefined;
 
         if (isNaN(price) || price <= 0) return;
         
@@ -493,7 +545,6 @@ class PriceManager {
         this.prices.set(key, { price, change, volume: newVolume, trades: newTrades, time: Date.now() });
         this._pendingUpdates.set(key, { price, change, volume: newVolume, trades: newTrades, symbol, exchange, marketType });
         
-        // ✅ Используем setTimeout вместо requestAnimationFrame, чтобы вкладка не умирала в фоне
         if (this._flushTimerId === null) {
             this._flushTimerId = setTimeout(() => {
                 this._flushTimerId = null;
@@ -518,7 +569,7 @@ class PriceManager {
                         });
                     }
                 }
-            }, 100); // Батчинг каждые 100мс
+            }, 100);
         }
     }
     
@@ -545,7 +596,16 @@ class PriceManager {
         const list = this.subscribers.get(key);
         const idx = list.indexOf(callback);
         if (idx !== -1) list.splice(idx, 1);
-        if (list.length === 0) this.subscribers.delete(key);
+        if (list.length === 0) {
+            this.subscribers.delete(key);
+            
+            // ✅ НОВОЕ: если это была Bybit-подписка и других подписчиков на неё
+            // не осталось — отписываемся от сокета, чтобы не копить лишний трафик.
+            const parts = key.split(':');
+            if (parts.length === 3 && parts[1] === 'bybit') {
+                this.unsubscribeBybitSymbol(parts[0], parts[2]);
+            }
+        }
     }
     
     getPrice(symbol, exchange = null, marketType = null) {
@@ -609,6 +669,8 @@ class PriceManager {
     }
     
     close() {
+        this._destroyed = true; // ✅ НОВОЕ: блокирует любые дальнейшие реконнекты/таймеры
+        
         if (this._restPollInterval) {
             clearInterval(this._restPollInterval);
             this._restPollInterval = null;
@@ -619,10 +681,14 @@ class PriceManager {
             this._heartbeatInterval = null;
         }
 
-        // ✅ Удаляем слушатель пробуждения вкладки для предотвращения утечек памяти
         if (this._visibilityHandler && typeof document !== 'undefined') {
             document.removeEventListener('visibilitychange', this._visibilityHandler);
             this._visibilityHandler = null;
+        }
+        
+        if (this._wakeCheckTimerId) {           // ✅ ФИКС: чистим "призрачный" таймер пробуждения
+            clearTimeout(this._wakeCheckTimerId);
+            this._wakeCheckTimerId = null;
         }
         
         if (this._flushTimerId) {
@@ -639,6 +705,7 @@ class PriceManager {
             if (ws) {
                 ws.onclose = null; 
                 ws.onerror = null;
+                ws.onmessage = null;
                 try { ws.close(1000); } catch(e) {} 
             }
         }
@@ -652,9 +719,14 @@ class PriceManager {
 
 if (typeof window !== 'undefined') {
     window.PriceManager = PriceManager;
-    if (!window.priceManagerInstance) {
-        window.priceManagerInstance = new PriceManager();
+    
+    // ✅ ФИКС: защита от дублирования синглтона (например, при hot-reload скрипта).
+    // Раньше старый инстанс со всеми его WS/таймерами мог остаться жить
+    // параллельно новому, удваивая соединения и трафик.
+    if (window.priceManagerInstance && typeof window.priceManagerInstance.close === 'function') {
+        try { window.priceManagerInstance.close(); } catch(e) {}
     }
+    window.priceManagerInstance = new PriceManager();
     
     window.checkWS = function() {
         const pm = window.priceManagerInstance;
