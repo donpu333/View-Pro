@@ -17,6 +17,25 @@ class ChartManager {
         this.indicatorManager = new IndicatorManager(this);
         this.chartContainer = document.getElementById('chart-container');
 
+        // ============ ЗАТЕМНЕНИЕ ПРИ ПЕРЕКЛЮЧЕНИИ ТИКЕРА (вместо спиннера) ============
+        this._symbolSwitchOverlay = document.createElement('div');
+        this._symbolSwitchOverlay.className = 'chart-symbol-switch-overlay';
+        this._symbolSwitchOverlay.style.cssText = [
+            'position:absolute',
+            'inset:0',
+            'background:rgba(0,0,0,0.35)',
+            'opacity:0',
+            'pointer-events:none',
+            'transition:opacity 0.15s ease',
+            'z-index:5'
+        ].join(';');
+        if (this.chartContainer) {
+            if (getComputedStyle(this.chartContainer).position === 'static') {
+                this.chartContainer.style.position = 'relative';
+            }
+            this.chartContainer.appendChild(this._symbolSwitchOverlay);
+        }
+
         // ============ НАСТРОЙКИ ============
         const savedChartType = localStorage.getItem('chartType') || 'candle';
         this.currentChartType = savedChartType;
@@ -427,6 +446,20 @@ class ChartManager {
                this.barSeries &&
                this.chartContainer &&
                document.contains(this.chartContainer);
+    }
+
+    // Лёгкое затемнение графика на время переключения тикера (аналог TradingView),
+    // вместо спиннера/полной перерисовки.
+    _showSymbolSwitchOverlay() {
+        if (this._symbolSwitchOverlay) {
+            this._symbolSwitchOverlay.style.opacity = '1';
+        }
+    }
+
+    _hideSymbolSwitchOverlay() {
+        if (this._symbolSwitchOverlay) {
+            this._symbolSwitchOverlay.style.opacity = '0';
+        }
     }
 
     onWebSocketConnected() {
@@ -917,6 +950,11 @@ class ChartManager {
             this.chart.remove();
             this.chart = null;
         }
+
+        if (this._symbolSwitchOverlay && this._symbolSwitchOverlay.parentNode) {
+            this._symbolSwitchOverlay.parentNode.removeChild(this._symbolSwitchOverlay);
+        }
+        this._symbolSwitchOverlay = null;
 
         this.chartData = [];
         this._candleTimeMap.clear();
@@ -1588,14 +1626,18 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false) {
+    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) {
                 console.error('❌ setDataQuick: chart не инициализирован');
+                if (onReady) onReady();
                 return;
             }
 
-            if (!data || data.length === 0) return;
+            if (!data || data.length === 0) {
+                if (onReady) onReady();
+                return;
+            }
 
             const currentScale = this._captureScale();
             const isNewSymbol = forceNewSymbol;
@@ -1631,6 +1673,7 @@ class ChartManager {
             if (data.length === 0) {
                 console.warn('⚠️ Все свечи отфильтрованы как невалидные');
                 this.chart.applyOptions({ handleScroll: true, handleScale: true });
+                if (onReady) onReady();
                 return;
             }
 
@@ -1702,10 +1745,10 @@ class ChartManager {
 
             if (currentScale && !isNewSymbol) {
                 this._restoreScale(currentScale);
-                this.autoScale();
+                this.autoScale(onReady);
             } else {
                 this.scrollToLast();
-                this.autoScale();
+                this.autoScale(onReady);
             }
 
             this.scheduleUpdatePosition();
@@ -1757,6 +1800,7 @@ class ChartManager {
             if (this.chart) {
                 this.chart.applyOptions({ handleScroll: true, handleScale: true });
             }
+            if (onReady) onReady();
         }
     }
 
@@ -1822,6 +1866,7 @@ class ChartManager {
             return;
         }
         this._switchingSymbol = true;
+        this._showSymbolSwitchOverlay();
 
         if (this.timerManager) {
             this.timerManager.stop();
@@ -1832,6 +1877,33 @@ class ChartManager {
 
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
+
+        // ВАЖНО: этот колбэк — единственное место, где переключение считается
+        // "завершённым" (снимается _switchingSymbol/_updatesSuspended и прячется
+        // затемнение). Он вызывается ТОЛЬКО после того, как setDataQuick() и его
+        // внутренний autoScale() полностью осядут (см. autoScale()).
+        //
+        // БАГ, который это чинит: раньше _switchingSymbol/_updatesSuspended
+        // сбрасывались в finally сразу после (синхронного) вызова setDataQuick,
+        // а сам autoScale внутри него ещё ~50мс держал priceScale.autoScale=true
+        // асинхронно через setTimeout. В эти 50мс уже могли прийти живые
+        // websocket-тики цены (_syncPriceLine/updateLastCandle) — а поскольку
+        // autoScale ещё был включён, каждый такой тик пересчитывал видимый
+        // диапазон цен по вертикали, из-за чего визуально "дёргались" (меняли
+        // высоту) уже закрытые свечи, хотя их данные не менялись. Теперь live-апдейты
+        // остаются заблокированы до полного оседания шкалы.
+        const finishSwitch = () => {
+            if (this._activeGeneration !== generationId) return;
+            this._switchingSymbol = false;
+            this._resumeAllUpdates(generationId);
+            this._hideSymbolSwitchOverlay();
+
+            if (this._pendingSymbolSwitch) {
+                const next = this._pendingSymbolSwitch;
+                this._pendingSymbolSwitch = null;
+                this.switchSymbol(next.symbol, next.exchange, next.marketType);
+            }
+        };
 
         try {
             this._abortAllProcesses();
@@ -1873,7 +1945,9 @@ class ChartManager {
             }
 
             if (this._isChartValid()) {
-                this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true);
+                this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, finishSwitch);
+            } else {
+                finishSwitch();
             }
 
             if (!isFromCache) {
@@ -1894,17 +1968,7 @@ class ChartManager {
 
         } catch (error) {
             console.error('❌ Ошибка переключения:', error);
-        } finally {
-            if (this._activeGeneration === generationId) {
-                this._switchingSymbol = false;
-                this._resumeAllUpdates(generationId);
-
-                if (this._pendingSymbolSwitch) {
-                    const next = this._pendingSymbolSwitch;
-                    this._pendingSymbolSwitch = null;
-                    this.switchSymbol(next.symbol, next.exchange, next.marketType);
-                }
-            }
+            finishSwitch();
         }
     }
 
@@ -2149,11 +2213,22 @@ class ChartManager {
         if (priceScale) priceScale.applyOptions({ autoScale: true });
     }
 
-    autoScale() {
-        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
+    autoScale(onComplete) {
+        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) {
+            if (onComplete) onComplete();
+            return;
+        }
         const priceScale = this.chart.priceScale('right');
-        if (!priceScale) return;
-        if (this._autoScalePending) return;
+        if (!priceScale) {
+            if (onComplete) onComplete();
+            return;
+        }
+        if (this._autoScalePending) {
+            // Уже идёт settle предыдущего autoScale — не запускаем гонку повторно,
+            // просто подождём, пока текущий процесс закончится.
+            if (onComplete) onComplete();
+            return;
+        }
 
         this._autoScalePending = true;
         const genId = this._activeGeneration;
@@ -2163,6 +2238,12 @@ class ChartManager {
             scaleMargins: { top: 0.1, bottom: 0.1 }
         });
 
+        // ВАЖНО: пока autoScale:true активен, любое живое обновление цены
+        // (websocket-тик по текущей открытой свече) пересчитывает видимый
+        // диапазон цен и визуально "дёргает" уже закрытые свечи — это и есть
+        // причина эффекта "дорисовки" при переключении тикера. Поэтому вызывающий
+        // код (setDataQuick/switchSymbol) обязан держать обновления в свече
+        // (_updatesSuspended/_switchingSymbol) выключенными до вызова onComplete.
         setTimeout(() => {
             if (this._activeGeneration === genId && this._autoScalePending && this._isChartValid()) {
                 const ps = this.chart?.priceScale('right');
@@ -2174,6 +2255,7 @@ class ChartManager {
                     this.timerManager._primitive.requestRedraw();
                 }
             }
+            if (onComplete) onComplete();
         }, 50);
     }
 
