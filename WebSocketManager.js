@@ -6,7 +6,7 @@ class WebSocketManager {
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
-        this.isConnecting = false;  // флаг активного подключения (информационный, не блокирующий)
+        this.isConnecting = false;  // ✅ НОВОЕ: флаг активного подключения
         
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
@@ -26,9 +26,6 @@ class WebSocketManager {
             }
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
-        
-        // ✅ фоновая проверка здоровья соединения (не зависит от visibilitychange)
-        this._statusCheckInterval = setInterval(() => this._checkHealth(), 15000);
         
         setTimeout(() => this._autoConnect(), 1000);
     }
@@ -85,13 +82,14 @@ class WebSocketManager {
     }
 
     _doConnect() {
-        // ✅ ФИКС: guard на isConnecting убран — он мог "залипать" в true навсегда
-        // (например, если new WebSocket() бросал исключение) и блокировать
-        // все последующие попытки подключения, включая переключение символа.
-        // _closeSocket() безопасно закрывает сокет в любом состоянии, включая CONNECTING,
-        // так что повторный вызов _doConnect() всегда корректно "перебивает" предыдущий.
+        // ✅ ЗАЩИТА: не запускаем параллельные подключения
+        if (this.isConnecting) {
+            console.log('⏳ Подключение уже идёт, пропускаем');
+            return;
+        }
+        
         this._closeSocket();
-        this.isConnecting = true;
+        this.isConnecting = true;  // ✅ Устанавливаем флаг
         
         const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
         
@@ -118,12 +116,11 @@ class WebSocketManager {
             ws = new WebSocket(url);
         } catch (e) {
             console.error(`❌ Ошибка создания ${type} WebSocket:`, e);
-            this.isConnecting = false;  // ✅ ФИКС: иначе флаг зависал в true навсегда
             this._scheduleReconnect(3000);
             return null;
         }
         
-        // Сохраняем тип для логирования
+        // ✅ Сохраняем тип для логирования
         ws._type = type;
         
         ws.onopen = () => {
@@ -150,7 +147,7 @@ class WebSocketManager {
             
             if (klineOk && tradeOk && !this.isConnected) {
                 this.isConnected = true;
-                this.isConnecting = false;
+                this.isConnecting = false;  // ✅ Сбрасываем флаг
                 this.retryCount = 0;
                 console.log('✅ Оба WebSocket подключены');
                 
@@ -167,20 +164,14 @@ class WebSocketManager {
         
         ws.onclose = (event) => {
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
+            this.isConnected = false;
+            this.isConnecting = false;  // ✅ Сбрасываем флаг
             
-            if (ws._pingInterval) {
-                clearInterval(ws._pingInterval);
-                ws._pingInterval = null;
+            // 1005 и 1006 — нормальное закрытие при быстром переподключении
+            if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
+                return;
             }
             
-            this.isConnected = false;
-            this.isConnecting = false;
-            
-            // ✅ ФИКС: раз этот обработчик вообще сработал — закрытие НЕ было намеренным.
-            // При намеренном закрытии (_closeSocket) обработчики обнуляются ДО close(),
-            // так что onclose сюда попасть не может. Значит любое срабатывание —
-            // это реальный обрыв связи (в т.ч. код 1006, самый частый при потере сети),
-            // и его нужно чинить реконнектом, а не молча игнорировать.
             if (event.code === 1008) {
                 if (this.currentExchange === 'binance' && 
                     this.currentMarketType === 'futures' && 
@@ -195,6 +186,7 @@ class WebSocketManager {
         };
         
         ws.onerror = (error) => {
+            // ✅ Не логируем ошибки для закрытых сокетов (это нормально)
             if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
                 console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
             }
@@ -207,10 +199,7 @@ class WebSocketManager {
         try {
             const raw = JSON.parse(rawData);
             
-            // ✅ ФИКС: bybit присылает op:"ping" в ответ на пинг (ret_msg:"pong"),
-            // а не op:"pong". Добавлена проверка на op:"ping", чтобы не логировать
-            // такие служебные сообщения как ошибку парсинга ниже по коду.
-            if (raw.op === 'pong' || raw.op === 'ping' || raw.op === 'subscribe') return;
+            if (raw.op === 'pong' || raw.op === 'subscribe') return;
             
             if (this.currentExchange === 'binance') {
                 if (raw.e === 'kline' && raw.k) {
@@ -294,6 +283,7 @@ class WebSocketManager {
         }, delay);
     }
 
+    // ✅ ИСПРАВЛЕННЫЙ метод закрытия сокетов
     _closeSocket() {
         const closeWs = (ws) => {
             if (!ws) return;
@@ -304,17 +294,19 @@ class WebSocketManager {
                 ws._pingInterval = null;
             }
             
-            // 2. Сначала убираем обработчики, чтобы не было лишних onclose
+            // 2. ✅ ВАЖНО: сначала убираем обработчики, чтобы не было лишних onclose
             ws.onopen = null;
             ws.onclose = null;
             ws.onerror = null;
             ws.onmessage = null;
             
-            // 3. Безопасное закрытие в зависимости от readyState
+            // 3. ✅ Безопасное закрытие в зависимости от readyState
             try {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.close(1000, 'User disconnect');
                 } else if (ws.readyState === WebSocket.CONNECTING) {
+                    // ✅ Для CONNECTING просто abort — это вызовет onclose с кодом 1006
+                    // Но так как мы убрали onclose выше, ошибки не будет
                     ws.close();
                 }
                 // CLOSING и CLOSED — ничего не делаем
@@ -329,7 +321,7 @@ class WebSocketManager {
         this.wsKline = null;
         this.wsTrade = null;
         this.isConnected = false;
-        this.isConnecting = false;
+        this.isConnecting = false;  // ✅ Сбрасываем флаг
     }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
@@ -351,6 +343,7 @@ class WebSocketManager {
     }
     
     ensureConnected() {
+        // ✅ Проверяем состояние более аккуратно
         const klineState = this.wsKline?.readyState;
         const tradeState = this.wsTrade?.readyState;
         
@@ -371,23 +364,9 @@ class WebSocketManager {
         }, 300);
     }
 
-    // ✅ НОВОЕ: фоновая проверка здоровья соединения, не зависящая от visibilitychange.
-    // Раньше зависшее соединение на активной вкладке никак не диагностировалось,
-    // потому что _statusCheckInterval объявлялся, но никогда не запускался.
-    _checkHealth() {
-        if (document.hidden) return; // для скрытой вкладки есть отдельная логика через _onTabVisible
-        const now = Date.now();
-        if (this._lastMessageTime && (now - this._lastMessageTime > 20000)) {
-            console.log('⚠️ Нет данных >20с на активной вкладке — принудительный реконнект');
-            this.forceReconnect();
-        } else if (!this.isConnected && !this.isConnecting) {
-            this.ensureConnected();
-        }
-    }
-
     _onTabVisible() {
         const now = Date.now();
-        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {
+        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {  // ✅ 10 сек вместо 5
             console.log('🔄 Нет данных > 10 сек, переподключаемся');
             this.forceReconnect();
         } else {
@@ -411,4 +390,4 @@ class WebSocketManager {
 
 if (typeof window !== 'undefined') {
     window.WebSocketManager = WebSocketManager;
-}
+} 
