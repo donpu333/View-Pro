@@ -59,6 +59,7 @@ class ChartManager {
         this._periodicSyncInterval = null;
         this._quarantineTimeout = null;
         this._lastKlineEventTime = 0;
+        this._verticalZoomTimeout = null;
 
         // ============ ВРЕМЕННЫЕ ОБЪЕКТЫ ============
         this._candleTimeMap = new Map();
@@ -354,7 +355,6 @@ class ChartManager {
                 this._resizeObserver.observe(panelsContainer);
             }
 
-            // ✅ ИСПРАВЛЕНО: Убран двойной вызов _updateMainChartHeight и _resizeIndicatorPanels
             this._chartContainerResizeObserver = new ResizeObserver(() => {
                 clearTimeout(this._containerResizeTimeout);
                 this._containerResizeTimeout = setTimeout(() => {
@@ -845,6 +845,7 @@ class ChartManager {
         if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
         if (this._drawingsFinalUpdateTimeout) clearTimeout(this._drawingsFinalUpdateTimeout);
         if (this._scrollStopTimeout) clearTimeout(this._scrollStopTimeout);
+        if (this._verticalZoomTimeout) clearTimeout(this._verticalZoomTimeout);
 
         if (this._globalMouseUpHandler) {
             window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
@@ -1016,6 +1017,8 @@ class ChartManager {
                     this._pendingDrawingsRedraw = false;
                     this.requestDrawingsRedraw();
                 }
+                
+                this.scheduleUpdatePosition();
             }, 150);
 
             if (this.timerManager) {
@@ -1024,6 +1027,8 @@ class ChartManager {
                     this.timerManager.updatePosition(price);
                 }
             }
+            
+            this.scheduleUpdatePosition();
 
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
                 if (!this._panelsSyncRafId) {
@@ -1043,6 +1048,23 @@ class ChartManager {
                 }
             }
         });
+
+        const priceScale = this.chart.priceScale('right');
+        if (priceScale) {
+            priceScale.subscribeVisibleLogicalRangeChange(() => {
+                this._isVerticalZooming = true;
+                
+                clearTimeout(this._verticalZoomTimeout);
+                this._verticalZoomTimeout = setTimeout(() => {
+                    this._isVerticalZooming = false;
+                    this.scheduleUpdatePosition();
+                    setTimeout(() => this.scheduleUpdatePosition(), 50);
+                    setTimeout(() => this.scheduleUpdatePosition(), 150);
+                }, 100);
+                
+                this.scheduleUpdatePosition();
+            });
+        }
 
         this.chartContainer.addEventListener('wheel', () => {}, { passive: true });
     }
@@ -1227,25 +1249,23 @@ class ChartManager {
             this._lastUpdateTime = Date.now();
         });
     }
-   scheduleUpdatePosition() {
+
+    scheduleUpdatePosition() {
         if (this._updatePositionRafId === null) {
             this._updatePositionRafId = requestAnimationFrame(() => {
                 this.updatePriceLineTimerPosition();
                 this._updatePositionRafId = null;
                 
-                // ✅ ФИКС: дополнительный вызов через микро-задержку для страховки
-                if (this._isScrolling || this._isVerticalZooming) {
-                    setTimeout(() => {
-                        if (this._isChartValid()) {
-                            this.updatePriceLineTimerPosition();
-                        }
-                    }, 16);
-                }
+                setTimeout(() => {
+                    if (this._isChartValid()) {
+                        this.updatePriceLineTimerPosition();
+                    }
+                }, 16);
             });
         }
     }
 
-      updatePriceLineTimerPosition() {
+    updatePriceLineTimerPosition() {
         if (!this.priceLineTimer) {
             this.priceLineTimer = document.getElementById('priceLineTimer');
             if (!this.priceLineTimer) return;
@@ -1258,7 +1278,13 @@ class ChartManager {
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!activeSeries) return;
 
-        const coordinate = activeSeries.priceToCoordinate(price);
+        let coordinate = null;
+        try {
+            coordinate = activeSeries.priceToCoordinate(price);
+        } catch (e) {
+            coordinate = null;
+        }
+        
         if (coordinate !== null && !isNaN(coordinate)) {
             const containerRect = this.chartContainer.getBoundingClientRect();
             let topPosition = coordinate + containerRect.top;
@@ -1271,15 +1297,36 @@ class ChartManager {
             this.priceLineTimer.classList.remove('bullish', 'bearish');
             this.priceLineTimer.classList.add(isBullish ? 'bullish' : 'bearish');
         } else {
-            // ✅ ФИКС: если координата null (график ещё не готов), пробуем ещё раз
-            setTimeout(() => {
-                if (this._isChartValid()) {
-                    this.scheduleUpdatePosition();
+            try {
+                const priceScale = this.chart.priceScale('right');
+                const priceRange = priceScale.getVisiblePriceRange();
+                
+                if (priceRange && priceRange.from && priceRange.to) {
+                    const chartHeight = this.chartContainer.clientHeight;
+                    const priceDiff = priceRange.to - priceRange.from;
+                    const pricePosition = (priceRange.to - price) / priceDiff;
+                    const containerRect = this.chartContainer.getBoundingClientRect();
+                    
+                    let topPosition = containerRect.top + (pricePosition * chartHeight);
+                    const timerHeight = this.priceLineTimer.offsetHeight || 30;
+                    topPosition = Math.max(5, Math.min(window.innerHeight - timerHeight - 5, topPosition));
+                    
+                    this.priceLineTimer.style.top = topPosition + 'px';
+                    this.priceLineTimer.style.right = '10px';
+                    
+                    const isBullish = this.lastCandle ? (this.lastCandle.close >= this.lastCandle.open) : true;
+                    this.priceLineTimer.classList.remove('bullish', 'bearish');
+                    this.priceLineTimer.classList.add(isBullish ? 'bullish' : 'bearish');
                 }
-            }, 50);
+            } catch (e) {
+                setTimeout(() => {
+                    if (this._isChartValid()) {
+                        this.scheduleUpdatePosition();
+                    }
+                }, 50);
+            }
         }
     }
-
 
     _performUpdate() {
         if (!this.chartData.length || this._updatesSuspended || !this._isChartValid()) return;
@@ -2210,7 +2257,6 @@ class ChartManager {
             }
         }
         
-        // ✅ ФИКС: множественные отложенные вызовы для гарантированного обновления позиции
         this.scheduleUpdatePosition();
         setTimeout(() => this.scheduleUpdatePosition(), 50);
         setTimeout(() => this.scheduleUpdatePosition(), 150);
@@ -2760,6 +2806,7 @@ class ChartManager {
                 .catch(() => {});
         }
     }
+
     forceRedraw() {
         if (!this._isChartValid() || !this.chartData.length) return;
         const width = this.chartContainer.clientWidth;
@@ -2768,7 +2815,6 @@ class ChartManager {
         this.chart.resize(width, height);
         if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
         
-        // ✅ ФИКС: гарантированное обновление позиции таймера после forceRedraw
         this.scheduleUpdatePosition();
         setTimeout(() => this.scheduleUpdatePosition(), 50);
         setTimeout(() => this.scheduleUpdatePosition(), 150);
