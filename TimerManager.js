@@ -19,15 +19,26 @@ class TimerManager {
         this._showTimerRow = true;
         this._initRetryCount = 0;
 
+        // ✅ ФИКС: защита от "отлипания" плашки во время активного ресайза контейнера.
+        // Пока размер меняется, chart.resize() у LightweightCharts может на мгновение
+        // отставать от CSS-размера контейнера (даже с синхронизированным resize в
+        // ChartManager это подстраховка) — в этот момент priceToCoordinate() отдаёт
+        // координаты по старому canvas, а clamp по containerHeight уже новый.
+        // Поэтому на время ресайза просто прячем плашку и показываем её обратно
+        // через короткую паузу после того, как размер стабилизировался.
+        this._containerGuardObserver = null;
+        this._resizeSettleTimeout = null;
+        this._isResizing = false;
+
         if (chartManager.timerManager) {
             chartManager.timerManager.destroy();
         }
         chartManager.timerManager = this;
-        
+
         this._init();
     }
 
-         _init() {
+    _init() {
         if (this._disabled || !this._chartManager?.chart) {
             if (this._initRetryCount < 15) {
                 this._initRetryCount++;
@@ -35,13 +46,13 @@ class TimerManager {
             }
             return;
         }
-        
+
         this._initRetryCount = 0;
         document.querySelectorAll('#price-timer-label').forEach(el => el.remove());
 
         this._labelElement = document.createElement('div');
         this._labelElement.id = 'price-timer-label';
-        
+
         const initColor = this._getCurrentColor();
         this._lastColor = initColor;
         const initWidth = 90;
@@ -68,7 +79,7 @@ class TimerManager {
             line-height: 1.2;
         `;
 
-        // ✅ ЖЕЛЕЗОБЕТОННЫЙ ФИКС: Жестко перебивает любой CSS с !important
+        // Жестко перебивает любой CSS с !important
         this._labelElement.style.setProperty('transition', 'opacity 0.15s ease', 'important');
 
         this._priceRow = document.createElement('div');
@@ -117,10 +128,12 @@ class TimerManager {
         this._initialized = true;
 
         this._attachScaleObserver();
+        this._attachContainerResizeGuard(); // ✅ ФИКС: подписка на защиту от ресайза
         this._updateTimerState();
         this._startTracking();
         this._forceUpdate();
     }
+
     _attachScaleObserver() {
         const cm = this._chartManager;
         if (!cm?.chartContainer) return;
@@ -130,12 +143,12 @@ class TimerManager {
             requestAnimationFrame(() => this._attachScaleObserver());
             return;
         }
-        
+
         const scaleCanvas = canvases[canvases.length - 1];
         if (this._lastScaleCanvas === scaleCanvas) return;
-        
+
         this._lastScaleCanvas = scaleCanvas;
-        
+
         if (this._scaleObserver) {
             this._scaleObserver.disconnect();
             this._scaleObserver = null;
@@ -152,9 +165,9 @@ class TimerManager {
                 }
             }
         });
-        
+
         this._scaleObserver.observe(scaleCanvas);
-        
+
         const rect = scaleCanvas.getBoundingClientRect();
         if (rect.width > 30) {
             this._lastWidth = Math.round(rect.width);
@@ -164,14 +177,46 @@ class TimerManager {
         }
     }
 
+    // ✅ НОВЫЙ МЕТОД: следит за самим контейнером графика. Во время активного
+    // ресайза (тянут край окна/панели) сразу прячет плашку, чтобы она не
+    // "плавала" в неверных координатах, а через короткую паузу после того,
+    // как размер стабилизировался — пересчитывает позицию и показывает снова.
+    _attachContainerResizeGuard() {
+        const cm = this._chartManager;
+        if (!cm?.chartContainer) return;
+
+        if (this._containerGuardObserver) {
+            this._containerGuardObserver.disconnect();
+            this._containerGuardObserver = null;
+        }
+
+        this._containerGuardObserver = new ResizeObserver(() => {
+            if (!this._isResizing) {
+                this._isResizing = true;
+                this._hideLabel();
+            }
+
+            clearTimeout(this._resizeSettleTimeout);
+            // 80мс — чуть больше debounce'а тяжёлых операций в ChartManager (50мс),
+            // чтобы дождаться, пока сам chart.resize() и все размеры точно устаканятся
+            this._resizeSettleTimeout = setTimeout(() => {
+                this._isResizing = false;
+                this._lastTop = null; // сбрасываем кэш позиции, чтобы точно пересчитать
+                this._forceUpdate();
+            }, 80);
+        });
+
+        this._containerGuardObserver.observe(cm.chartContainer);
+    }
+
     _getCurrentColor() {
         const cm = this._chartManager;
         if (cm?._lastAppliedColor) return cm._lastAppliedColor;
         if (cm?.lastCandle) {
             const price = cm.currentRealPrice || cm.lastCandle.close;
             const isBullish = price >= cm.lastCandle.open;
-            return isBullish 
-                ? (cm.bullishColor || CONFIG.colors.bullish || '#26a69a') 
+            return isBullish
+                ? (cm.bullishColor || CONFIG.colors.bullish || '#26a69a')
                 : (cm.bearishColor || CONFIG.colors.bearish || '#ef5350');
         }
         return cm?.bullishColor || CONFIG.colors.bullish || '#26a69a';
@@ -179,7 +224,7 @@ class TimerManager {
 
     _getContrastTextColor(bgColor) {
         if (!bgColor) return '#000000';
-        
+
         let r, g, b;
         if (bgColor.startsWith('#')) {
             let hex = bgColor.slice(1);
@@ -197,9 +242,9 @@ class TimerManager {
                 b = parseInt(match[2]);
             }
         }
-        
+
         if (isNaN(r) || isNaN(g) || isNaN(b)) return '#000000';
-        
+
         const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
         return luminance > 0.55 ? '#000000' : '#ffffff';
     }
@@ -207,7 +252,7 @@ class TimerManager {
     _getPriceScaleWidth() {
         const cm = this._chartManager;
         if (!cm?.chartContainer) return this._lastWidth || 90;
-        
+
         const canvases = cm.chartContainer.querySelectorAll('canvas');
         if (canvases.length >= 2) {
             const lastCanvas = canvases[canvases.length - 1];
@@ -217,12 +262,12 @@ class TimerManager {
         return this._lastWidth || 90;
     }
 
- _startTracking() {
+    _startTracking() {
         if (this._rafId) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
         }
-        
+
         const track = () => {
             if (!this._labelElement || this._disabled) {
                 this._rafId = null;
@@ -233,35 +278,35 @@ class TimerManager {
                 this._rafId = requestAnimationFrame(track);
                 return;
             }
-            
+
             const cm = this._chartManager;
-            const price = this._currentPrice || 
-                         cm?.currentRealPrice || 
+            const price = this._currentPrice ||
+                         cm?.currentRealPrice ||
                          cm?.lastCandle?.close;
-                         
+
             if (price != null && !isNaN(price) && price > 0) {
-                // ✅ ФИКС: Обновляем позицию только если график не масштабируется и не переключает тикер
-                if (!cm._switchingSymbol && !cm._updatesSuspended && !cm._autoScalePending) {
+                // ✅ ФИКС: добавлена проверка this._isResizing — во время активного
+                // ресайза координаты не пересчитываем (плашка спрятана _attachContainerResizeGuard)
+                if (!cm._switchingSymbol && !cm._updatesSuspended && !cm._autoScalePending && !this._isResizing) {
                     this._updatePosition(price);
                 }
             }
-            
+
             this._updateColor();
             this._rafId = requestAnimationFrame(track);
         };
-        
+
         track();
     }
-
 
     _updateColor() {
         if (!this._labelElement || !this._priceRow || !this._timerRow) return;
         const targetColor = this._getCurrentColor();
-        
+
         if (targetColor !== this._lastColor) {
             this._lastColor = targetColor;
             this._labelElement.style.backgroundColor = targetColor;
-            
+
             const textColor = this._getContrastTextColor(targetColor);
             this._priceRow.style.color = textColor;
             this._timerRow.style.color = textColor;
@@ -270,7 +315,7 @@ class TimerManager {
 
     _updateTimerState() {
         if (!this._labelElement) return;
-        
+
         if (['1d','1w','1M'].includes(this._currentTf)) {
             this._showTimerRow = false;
             if (this._timerRow) this._timerRow.style.display = 'none';
@@ -287,7 +332,7 @@ class TimerManager {
     updatePrice(price) {
         if (this._disabled || !this._labelElement) return;
         this._currentPrice = price;
-        
+
         if (price != null && !isNaN(price)) {
             this._updatePriceText(price);
         }
@@ -306,6 +351,7 @@ class TimerManager {
 
     _showLabel() {
         if (!this._labelElement) return;
+        if (this._isResizing) return; // ✅ ФИКС: не показываем плашку, пока идёт ресайз
         if (!this._isVisible) {
             this._isVisible = true;
             this._labelElement.style.visibility = 'visible';
@@ -322,25 +368,24 @@ class TimerManager {
         }
     }
 
-      
     _updatePosition(price) {
         if (!this._labelElement) return false;
-        
+
         if (price == null || isNaN(price) || price <= 0) {
             return false;
         }
-        
+
         const cm = this._chartManager;
         if (!cm || !cm.chartContainer || !cm.chartData?.length) {
             return false;
         }
 
-        // ✅ ФИКС: Замораживаем плашку, пока график масштабируется.
-        // В это время priceToCoordinate возвращает мусорные координаты (3px или 849px).
-        if (cm._switchingSymbol || cm._updatesSuspended || cm._autoScalePending || cm._isTrimming) {
-            return false; 
+        // Замораживаем плашку, пока график масштабируется/переключается/ресайзится.
+        // В это время priceToCoordinate может возвращать мусорные координаты.
+        if (cm._switchingSymbol || cm._updatesSuspended || cm._autoScalePending || cm._isTrimming || this._isResizing) {
+            return false;
         }
-        
+
         const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
         if (!activeSeries) return false;
 
@@ -350,57 +395,56 @@ class TimerManager {
         } catch (e) {
             return false;
         }
-        
+
         if (yCoord == null || isNaN(yCoord)) {
-            return false; 
+            return false;
         }
 
         const containerHeight = cm.chartContainer.clientHeight;
         const labelHeight = this._labelElement.offsetHeight || 20;
-        
+
         const scaleWidth = this._getPriceScaleWidth();
         if (Math.abs(this._lastWidth - scaleWidth) > 2) {
             this._lastWidth = scaleWidth;
             this._labelElement.style.width = scaleWidth + 'px';
         }
-        
+
         const priceRowHeight = this._priceRow.offsetHeight || 17;
         const priceRowCenter = priceRowHeight / 2;
-        
+
         let top = yCoord - priceRowCenter;
-        
+
         const maxTop = containerHeight - labelHeight - 3;
         if (top > maxTop) top = maxTop;
         if (top < 3) top = 3;
-        
+
         const finalTop = Math.round(top);
         if (finalTop !== this._lastTop) {
             this._lastTop = finalTop;
             this._labelElement.style.top = finalTop + 'px';
         }
-        
+
         this._showLabel();
         return true;
     }
+
     updatePosition(price) {
         this.updatePrice(price);
         this._updatePosition(price);
     }
 
-  
-
     start(interval) {
         if (this._disabled) return;
         this._currentTf = interval;
-        
+
         if (!this._initialized) {
             this._init();
         }
-        
+
         if (!this._labelElement) return;
         this.stop();
         this._updateTimerState();
-        
+
         this._lastWidth = null;
         this._lastTop = null;
         this._lastColor = null;
@@ -436,13 +480,13 @@ class TimerManager {
         }
     }
 
-     reset() {
+    reset() {
         this.stop();
         this._currentPrice = null;
         this._lastTop = null;
         this._lastColor = null;
         this._lastWidth = null;
-        
+
         if (this._labelElement) {
             this._labelElement.style.visibility = 'hidden';
             this._labelElement.style.opacity = '0';
@@ -452,32 +496,33 @@ class TimerManager {
         }
     }
 
-       _forceUpdate() {
+    _forceUpdate() {
         if (!this._labelElement) return;
-        
+        if (this._isResizing) return; // ✅ ФИКС: не форсим обновление во время активного ресайза
+
         const scaleWidth = this._getPriceScaleWidth();
         if (scaleWidth > 30) {
             this._lastWidth = scaleWidth;
             this._labelElement.style.width = scaleWidth + 'px';
         }
-        
+
         this._lastTop = null;
         this._lastColor = null;
-        
-        const price = this._currentPrice || 
-                     this._chartManager?.currentRealPrice || 
+
+        const price = this._currentPrice ||
+                     this._chartManager?.currentRealPrice ||
                      this._chartManager?.lastCandle?.close;
-        
+
         if (price != null && !isNaN(price) && price > 0) {
             this._updatePriceText(price);
-            
-            // ✅ ФИКС: Показываем плашку ТОЛЬКО если позиция успешно посчитана!
+
+            // Показываем плашку ТОЛЬКО если позиция успешно посчитана!
             const isPositioned = this._updatePosition(price);
             if (isPositioned && !this._isVisible) {
                 this._showLabel();
             }
         }
-        
+
         this._updateColor();
     }
 
@@ -495,6 +540,14 @@ class TimerManager {
             this._scaleObserver.disconnect();
             this._scaleObserver = null;
         }
+        if (this._containerGuardObserver) { // ✅ ФИКС: снимаем новый observer, чтобы не текла память
+            this._containerGuardObserver.disconnect();
+            this._containerGuardObserver = null;
+        }
+        if (this._resizeSettleTimeout) {
+            clearTimeout(this._resizeSettleTimeout);
+            this._resizeSettleTimeout = null;
+        }
         this._lastScaleCanvas = null;
         if (this._labelElement && this._labelElement.parentNode) {
             this._labelElement.parentNode.removeChild(this._labelElement);
@@ -504,6 +557,7 @@ class TimerManager {
         this._timerRow = null;
         this._initialized = false;
         this._isVisible = false;
+        this._isResizing = false;
         this._initRetryCount = 0;
     }
 }
