@@ -35,8 +35,8 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
 
+            // Берем цену. Приоритет: реальная цена с WS -> закрытие последней свечи
             let price = chartManager.currentRealPrice;
-            
             if (price == null || isNaN(price) || price <= 0) {
                 const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
                 if (lastCandle?.close != null) price = lastCandle.close;
@@ -45,16 +45,12 @@ class TimerRenderer {
             if (price == null || isNaN(price) || price <= 0) return;
 
             let yCoord = null;
-            
-            // 🛡️ ИСПРАВЛЕНИЕ ДЕСИНХРОНА: Используем ТОЛЬКО серию, к которой привязан примитив.
-            // Запрос через chart.priceScale() дает погрешность из-за внутренних отступов графика.
             const primitiveSeries = this._timerManager._primitive?._series;
+            
             if (primitiveSeries) {
                 try {
-                    const coordinate = primitiveSeries.priceToCoordinate(price);
-                    if (coordinate != null && !isNaN(coordinate)) {
-                        yCoord = coordinate;
-                    }
+                    // Это самый точный способ получить Y-координату, синхронизированный с движком графика
+                    yCoord = primitiveSeries.priceToCoordinate(price);
                 } catch(e) {}
             }
             
@@ -68,16 +64,16 @@ class TimerRenderer {
             ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
             const textWidth = ctx.measureText(timerText).width;
             
-            const rectWidth = Math.ceil(textWidth + 8 * hpr);
+            const rectWidth = Math.ceil(textWidth + 10 * hpr);
             const rectHeight = Math.ceil(fontSize + 6 * vpr);
 
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
             let rectY = Math.round(bitmapY - rectHeight / 2);
+            // Ограничиваем, чтобы не вылезало за границы canvas
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // Упрощенная логика цвета
+            // Определяем цвет фона (зеленый/красный)
             let bgColor = this._cachedColor;
-
             if (this._colorDirty || !bgColor) {
                 if (typeof chartManager.getCurrentPriceColor === 'function') {
                     bgColor = chartManager.getCurrentPriceColor();
@@ -100,17 +96,19 @@ class TimerRenderer {
             if (!bgColor) bgColor = '#26a69a';
 
             ctx.save();
-            ctx.fillStyle = bgColor + 'DD'; 
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
-            ctx.shadowBlur = 3 * hpr;
-            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 2 * hpr);
+            // 'CC' добавляет небольшую прозрачность (80%), чтобы выглядело современно
+            ctx.fillStyle = bgColor + 'CC'; 
+            ctx.shadowColor = 'rgba(0,0,0,0.4)';
+            ctx.shadowBlur = 4 * hpr;
+            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 3 * hpr);
             ctx.fill();
             
             ctx.shadowBlur = 0;
-            ctx.fillStyle = '#fff';
+            ctx.fillStyle = '#ffffff'; // Белый текст для максимального контраста
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2);
+            // Микро-сдвиг +1*vpr для идеального визуального центрирования в canvas
+            ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2 + (1 * vpr));
             ctx.restore();
         });
     }
@@ -158,13 +156,21 @@ class TimerPrimitive {
 
     detached() { 
         this._dataReady = false;
-        this._series = null; // 🛡️ Очищаем серию, чтобы рендерер не использовал старые координаты
+        this._series = null;
     }
     
-    updateAllViews() {}
+    // Вызывается движком графика автоматически при скролле/зуме
+    updateAllViews() {
+        if (this._paneView?._renderer) {
+            this._paneView._renderer.invalidateColor();
+        }
+    }
 
+    // 🛡️ ПРЯМОЙ ВЫЗОВ БЕЗ ЗАДЕРЖЕК. Гарантирует синхронизацию кадр в кадр.
     requestRedraw() {
-        if (this._requestUpdate) this._requestUpdate();
+        if (this._requestUpdate) {
+            this._requestUpdate();
+        }
     }
 
     setEnabled(enabled) {
@@ -180,6 +186,8 @@ class TimerPrimitive {
     
     updatePrice(price) {
         if (price != null && !isNaN(price) && this.isEnabled()) {
+            this._chartManager.currentRealPrice = price;
+            this._paneView._renderer.invalidateColor(); // Цвет мог измениться при пересечении open
             this.requestRedraw();
         }
     }
@@ -197,7 +205,7 @@ class TimerManager {
     constructor(chartManager) {
         this._chartManager = chartManager;
         this._interval = null;
-        this._currentTf = CONFIG.defaultInterval || '1h';
+        this._currentTf = (typeof CONFIG !== 'undefined' && CONFIG.defaultInterval) ? CONFIG.defaultInterval : '1h';
         this._primitive = null;
         this._timerElement = { textContent: '' };
         this._disabled = false;
@@ -208,8 +216,8 @@ class TimerManager {
         this._colorChangeHandler = null;
         this._initialized = false;
         
-        // Защита от утечки памяти
         this._dataChangedUnsubscribe = null; 
+        this._scrollHandler = null; // 🛡️ Для принудительной синхронизации при скролле
 
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 300);
@@ -225,8 +233,7 @@ class TimerManager {
     }
     
     _attachToSeries(series) {
-        this._detachPrimitive(); // Безопасно отпишем старое
-        
+        this._detachPrimitive();
         if (!series) return;
 
         this._primitive = new TimerPrimitive(this, this._chartManager);
@@ -234,7 +241,6 @@ class TimerManager {
             series.attachPrimitive(this._primitive);
             this._primitive.setEnabled(false);
 
-            // Сохраняем функцию отписки!
             this._dataChangedUnsubscribe = series.subscribeDataChanged(() => {
                 if (this._primitive && this._chartManager.chartData?.length > 0) {
                     if (!this._primitive.isDataReady()) {
@@ -247,6 +253,19 @@ class TimerManager {
                     }
                 }
             });
+
+            // 🛡️ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ "ОТЛИПАНИЯ":
+            // Принудительно запрашиваем перерисовку примитива на каждом кадре изменения масштаба/скролла.
+            // Это гарантирует, что таймер пересчитает свою Y-координату синхронно с движением графика.
+            if (this._chartManager?.chart?.timeScale()) {
+                this._scrollHandler = () => {
+                    if (this._primitive?.isEnabled()) {
+                        this._primitive.requestRedraw();
+                    }
+                };
+                this._chartManager.chart.timeScale().subscribeVisibleLogicalRangeChange(this._scrollHandler);
+            }
+
         } catch(e) {
             console.error('TimerManager: Failed to attach primitive', e);
         }
@@ -258,10 +277,15 @@ class TimerManager {
     }
 
     _detachPrimitive() {
-        // ВАЖНО: Вызываем отписку ПЕРЕД удалением примитива
         if (this._dataChangedUnsubscribe) {
             this._dataChangedUnsubscribe();
             this._dataChangedUnsubscribe = null;
+        }
+        
+        // 🛡️ Обязательно отписываемся от скролла, чтобы не было утечек памяти и двойных вызовов
+        if (this._scrollHandler && this._chartManager?.chart?.timeScale()) {
+            this._chartManager.chart.timeScale().unsubscribeVisibleLogicalRangeChange(this._scrollHandler);
+            this._scrollHandler = null;
         }
         
         if (this._primitive) {
@@ -305,6 +329,7 @@ class TimerManager {
         
         this._priceHandler = (price) => {
             if (document.hidden || !this._primitive?.isEnabled()) return;
+            
             this._chartManager.currentRealPrice = price;
             this._primitive.updatePrice(price);
         };
@@ -363,6 +388,8 @@ class TimerManager {
             this.stop();
             return;
         }
+
+        if (typeof TF_DURATIONS === 'undefined' || typeof Utils === 'undefined') return;
 
         const dur = TF_DURATIONS[this._currentTf];
         if (!dur) return;
