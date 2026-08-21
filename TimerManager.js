@@ -35,11 +35,13 @@ class TimerRenderer {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
 
-            // Берем цену. Приоритет: реальная цена с WS -> закрытие последней свечи
-            let price = chartManager.currentRealPrice;
+            // Берем цену закрытия последней свечи для идеальной синхронизации тик-в-тик
+            const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
+            let price = lastCandle?.close;
+            
+            // Фолбэк, если вдруг данных нет
             if (price == null || isNaN(price) || price <= 0) {
-                const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
-                if (lastCandle?.close != null) price = lastCandle.close;
+                price = chartManager.currentRealPrice;
             }
             
             if (price == null || isNaN(price) || price <= 0) return;
@@ -49,7 +51,6 @@ class TimerRenderer {
             
             if (primitiveSeries) {
                 try {
-                    // Это самый точный способ получить Y-координату, синхронизированный с движком графика
                     yCoord = primitiveSeries.priceToCoordinate(price);
                 } catch(e) {}
             }
@@ -69,16 +70,13 @@ class TimerRenderer {
 
             const rectX = bitmapWidth - rectWidth - 4 * hpr;
             let rectY = Math.round(bitmapY - rectHeight / 2);
-            // Ограничиваем, чтобы не вылезало за границы canvas
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // Определяем цвет фона (зеленый/красный)
             let bgColor = this._cachedColor;
             if (this._colorDirty || !bgColor) {
                 if (typeof chartManager.getCurrentPriceColor === 'function') {
                     bgColor = chartManager.getCurrentPriceColor();
                 } else {
-                    const lastCandle = chartManager.chartData[chartManager.chartData.length - 1];
                     if (lastCandle?.close != null && lastCandle?.open != null) {
                         bgColor = lastCandle.close >= lastCandle.open 
                             ? (chartManager.bullishColor || '#26a69a')
@@ -96,18 +94,17 @@ class TimerRenderer {
             if (!bgColor) bgColor = '#26a69a';
 
             ctx.save();
-            // 'CC' добавляет небольшую прозрачность (80%), чтобы выглядело современно
-            ctx.fillStyle = bgColor + 'CC'; 
+            // Убрана прозрачность ('CC'), теперь плашка полностью непрозрачная
+            ctx.fillStyle = bgColor; 
             ctx.shadowColor = 'rgba(0,0,0,0.4)';
             ctx.shadowBlur = 4 * hpr;
             this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 3 * hpr);
             ctx.fill();
             
             ctx.shadowBlur = 0;
-            ctx.fillStyle = '#ffffff'; // Белый текст для максимального контраста
+            ctx.fillStyle = '#ffffff';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            // Микро-сдвиг +1*vpr для идеального визуального центрирования в canvas
             ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2 + (1 * vpr));
             ctx.restore();
         });
@@ -159,14 +156,12 @@ class TimerPrimitive {
         this._series = null;
     }
     
-    // Вызывается движком графика автоматически при скролле/зуме
     updateAllViews() {
         if (this._paneView?._renderer) {
             this._paneView._renderer.invalidateColor();
         }
     }
 
-    // 🛡️ ПРЯМОЙ ВЫЗОВ БЕЗ ЗАДЕРЖЕК. Гарантирует синхронизацию кадр в кадр.
     requestRedraw() {
         if (this._requestUpdate) {
             this._requestUpdate();
@@ -187,7 +182,7 @@ class TimerPrimitive {
     updatePrice(price) {
         if (price != null && !isNaN(price) && this.isEnabled()) {
             this._chartManager.currentRealPrice = price;
-            this._paneView._renderer.invalidateColor(); // Цвет мог измениться при пересечении open
+            this._paneView._renderer.invalidateColor();
             this.requestRedraw();
         }
     }
@@ -217,7 +212,7 @@ class TimerManager {
         this._initialized = false;
         
         this._dataChangedUnsubscribe = null; 
-        this._scrollHandler = null; // 🛡️ Для принудительной синхронизации при скролле
+        this._scrollHandler = null;
 
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 300);
@@ -254,9 +249,6 @@ class TimerManager {
                 }
             });
 
-            // 🛡️ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ "ОТЛИПАНИЯ":
-            // Принудительно запрашиваем перерисовку примитива на каждом кадре изменения масштаба/скролла.
-            // Это гарантирует, что таймер пересчитает свою Y-координату синхронно с движением графика.
             if (this._chartManager?.chart?.timeScale()) {
                 this._scrollHandler = () => {
                     if (this._primitive?.isEnabled()) {
@@ -282,7 +274,6 @@ class TimerManager {
             this._dataChangedUnsubscribe = null;
         }
         
-        // 🛡️ Обязательно отписываемся от скролла, чтобы не было утечек памяти и двойных вызовов
         if (this._scrollHandler && this._chartManager?.chart?.timeScale()) {
             this._chartManager.chart.timeScale().unsubscribeVisibleLogicalRangeChange(this._scrollHandler);
             this._scrollHandler = null;
