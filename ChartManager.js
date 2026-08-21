@@ -360,18 +360,19 @@ class ChartManager {
             }
 
             // ✅ НОВОЕ: Следим за изменением размера самого контейнера графика
-            this._chartContainerResizeObserver = new ResizeObserver(() => {
-                clearTimeout(this._containerResizeTimeout);
-                this._containerResizeTimeout = setTimeout(() => {
-                    if (this._isChartValid()) {
-                        this._updateMainChartHeight();
-                        if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                        this.forceRedraw();
-                        this.scheduleUpdatePosition(); // ✅ ФИКС: та же причина, что и в _resizeHandler —
-                        // без этого плашка цены "отлипает" при сужении/расширении контейнера графика.
-                    }
-                }, 50);
-            });
+         this._chartContainerResizeObserver = new ResizeObserver(() => {
+    if (this._isChartValid()) {
+        this._updateMainChartHeight();
+
+        clearTimeout(this._containerResizeTimeout);
+        this._containerResizeTimeout = setTimeout(() => {
+            if (this._isChartValid()) {
+                if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
+                this.forceRedraw();
+            }
+        }, 50);
+    }
+});
             this._chartContainerResizeObserver.observe(this.chartContainer);
         })();
 
