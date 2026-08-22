@@ -30,11 +30,12 @@ class AppCoordinator {
         this.wsManager = new window.WebSocketManager(this.chartManager);
         window.wsManager = this.wsManager;
         
-        // ✅ Безопасное создание TimerManager
-        if (typeof TimerManager !== 'undefined') {
+        // ✅ ЕДИНСТВЕННОЕ место создания TimerManager
+        if (!this.chartManager.timerManager) {
             this.timerManager = new TimerManager(this.chartManager);
+            this.chartManager.timerManager = this.timerManager;
         } else {
-            console.error('❌ TimerManager не загружен!');
+            this.timerManager = this.chartManager.timerManager;
         }
         
         // ✅ Безопасное создание TimeframeManager
