@@ -700,8 +700,17 @@ class ChartManager {
     }
 
     async refreshCandlesAfterTabHidden() {
-        if (!this._isChartValid()) {
-            console.warn('⚠️ График не инициализирован, откладываем синхронизацию');
+        // ПАТЧ 3: не запускаем синхронизацию "после скрытия вкладки", если прямо
+        // сейчас идёт переключение тикера. Раньше, если пользователь сворачивал/
+        // разворачивал вкладку ровно во время switchSymbol (когда chartData уже
+        // очищен, а fetch ещё не завершился), здесь срабатывала ветка
+        // "currentData.length === 0" и запускался ВТОРОЙ параллельный
+        // setDataQuick()/autoScale() с другим generationId. Это и есть один из
+        // источников редких "иногда криво отрисовывает свечи после переключения".
+        if (!this._isChartValid() || this._switchingSymbol) {
+            if (!this._isChartValid()) {
+                console.warn('⚠️ График не инициализирован, откладываем синхронизацию');
+            }
             return;
         }
 
@@ -726,7 +735,9 @@ class ChartManager {
                 null, 'background'
             );
 
-            if (!this._isChartValid() || this._activeGeneration !== genId) {
+            // ПАТЧ 3 (продолжение): дополнительно перепроверяем _switchingSymbol
+            // после await — свитч тикера мог начаться, пока шёл этот fetch.
+            if (!this._isChartValid() || this._activeGeneration !== genId || this._switchingSymbol) {
                 console.warn('⚠️ График был уничтожен/сменился во время загрузки данных');
                 return;
             }
@@ -1920,6 +1931,15 @@ class ChartManager {
             this._resumeAllUpdates(generationId);
             this._hideSymbolSwitchOverlay();
 
+            // ПАТЧ 2: единственная REST-загрузка в начале switchSymbol не покрывает
+            // сделки/kline, произошедшие НА БИРЖЕ, пока апдейты были заморожены
+            // (_switchingSymbol/_updatesSuspended = true — весь этот интервал
+            // updateLastCandle() их молча отбрасывает). Раньше следующая
+            // возможность досинхронизироваться была только через 30 секунд
+            // (_periodicSyncInterval) — расхождение с биржей "иногда" оставалось
+            // видно на графике до полминуты. Досинхронизируемся сразу же.
+            this._syncRecentCandles().catch(() => {});
+
             if (this._pendingSymbolSwitch) {
                 const next = this._pendingSymbolSwitch;
                 this._pendingSymbolSwitch = null;
@@ -1933,6 +1953,14 @@ class ChartManager {
 
             this.chartData = [];
             this._candleTimeMap.clear();
+            // ПАТЧ 4: сбрасываем "антидубликатор" kline-событий и отложенную
+            // обрезку данных при смене символа — иначеeventTime, накопленный
+            // для СТАРОГО тикера, мог ошибочно отбросить легитимные ранние
+            // kline-события НОВОГО тикера (см. проверку в начале updateLastCandle),
+            // а устаревшие _pendingTrimParams могли применить обрезку по индексам,
+            // посчитанным для другого набора данных.
+            this._lastKlineEventTime = 0;
+            this._pendingTrimParams = null;
             this.currentSymbol = symbol;
             this.currentExchange = exchange;
             this.currentMarketType = marketType;
@@ -2267,15 +2295,29 @@ class ChartManager {
         // код (setDataQuick/switchSymbol) обязан держать обновления в свече
         // (_updatesSuspended/_switchingSymbol) выключенными до вызова onComplete.
         setTimeout(() => {
-            if (this._activeGeneration === genId && this._autoScalePending && this._isChartValid()) {
+            // ПАТЧ 1: раньше autoScale:false применялось ТОЛЬКО если
+            // this._activeGeneration === genId. Если поколение успевало
+            // смениться (например, случился ещё один параллельный вызов
+            // setDataQuick/autoScale, см. ПАТЧ 3), это условие никогда не
+            // выполнялось — priceScale навсегда оставался в autoScale:true,
+            // и _autoScalePending навсегда оставался true (что также
+            // блокировало все последующие вызовы autoScale() — они сразу
+            // выходили по проверке "_autoScalePending" выше). Результат —
+            // случайное, зависящее от тайминга "дёргание" уже отрисованных
+            // свечей при каждом следующем живом тике цены. Теперь сброс
+            // делаем безусловно, независимо от того, какое поколение активно
+            // сейчас — это гарантированно снимает автомасштаб и разблокирует
+            // будущие вызовы autoScale().
+            if (this._isChartValid()) {
                 const ps = this.chart?.priceScale('right');
                 if (ps) {
                     ps.applyOptions({ autoScale: false });
                 }
-                this._autoScalePending = false;
-                if (this.timerManager?._primitive?.isEnabled()) {
-                    this.timerManager._primitive.requestRedraw();
-                }
+            }
+            this._autoScalePending = false;
+
+            if (this._activeGeneration === genId && this.timerManager?._primitive?.isEnabled()) {
+                this.timerManager._primitive.requestRedraw();
             }
             if (onComplete) onComplete();
         }, 50);
@@ -2839,6 +2881,10 @@ class ChartManager {
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
         this._isTrimming = false;
+        // ПАТЧ 4 (доп.): сбрасываем отложенную обрезку данных при любой полной
+        // остановке процессов — она могла быть посчитана для уже неактуального
+        // набора данных (например, до переключения тикера).
+        this._pendingTrimParams = null;
     }
 
     saveCurrentTimePosition() {
