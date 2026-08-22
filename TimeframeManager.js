@@ -305,19 +305,18 @@ class TimeframeManager {
             
             // ✅ ИСПРАВЛЕНО: явно обновляем позицию таймера
             // setDataQuick() сбрасывает данные, таймер нужно синхронизировать
-            requestAnimationFrame(() => {
-                if (this.timerManager) {
-                    const price = this.chartManager.currentRealPrice 
-                        ?? this.chartManager.lastCandle?.close;
-                    if (price != null) {
-                        this.timerManager.updatePosition(price);
-                    }
-                    // Обновить ширину ценовой шкалы под новую цену
-                    if (this.chartManager._applyPriceScaleWidth) {
-                        this.chartManager._applyPriceScaleWidth();
-                    }
-                }
-            });
+           requestAnimationFrame(() => {
+    if (this.timerManager) {
+        const price = this.chartManager.currentRealPrice 
+            ?? this.chartManager.lastCandle?.close;
+        if (price != null) {
+            this.timerManager.updatePrice(price);   // ← вот эта строка изменена
+        }
+        if (this.chartManager._applyPriceScaleWidth) {
+            this.chartManager._applyPriceScaleWidth();
+        }
+    }
+});
             
             this.chartManager.autoScale();
             this.restorePosition();
