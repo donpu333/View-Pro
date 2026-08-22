@@ -78,6 +78,11 @@ class ChartManager {
         this._periodicSyncInterval = null;
         this._quarantineTimeout = null;
         this._lastKlineEventTime = 0;
+        
+        // ============ НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ THROTTLE ============
+        this._lastVolumeUpdateTime = 0;
+        this._pendingVolumeUpdate = false;
+        this._throttleMap = new Map();
 
         // ============ ВРЕМЕННЫЕ ОБЪЕКТЫ ============
         this._candleTimeMap = new Map();
@@ -192,72 +197,73 @@ class ChartManager {
         this._lastCrosshairColor = null;
 
         // ============ СОЗДАНИЕ ГРАФИКА ============
-      this.chart = LightweightCharts.createChart(container, {
-    layout: {
-        background: { color: '#000000' },
-        textColor: '#808080'
-    },
-    grid: {
-        vertLines: { visible: false },
-        horzLines: { visible: false }
-    },
-    crosshair: {
-        mode: LightweightCharts.CrosshairMode.Normal
-    },
-    handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: true
-    },
-    handleScale: {
-        axisPressedMouseMove: true,
-        mouseWheel: true,
-        pinch: true
-    },
-    animation: {
-        duration: 0
-    },
-    timeScale: {
-        timeVisible: true,
-        secondsVisible: false,
-        borderColor: '#333333',
-        barSpacing: 12,
-        minBarSpacing: 1,
-        fixLeftEdge: false,
-        fixRightEdge: false,
-        rightOffset: 10,
-        // ✅ ИСПРАВЛЕНО: убран ручной сдвиг + (3 * 3600)
-        tickMarkFormatter: (time) => {
-            const date = new Date(time * 1000);
-            return date.toLocaleTimeString('ru-RU', { 
-                timeZone: 'Europe/Moscow', 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
-        }
-    },
-    rightPriceScale: {
-        borderColor: '#333333',
-        borderVisible: true,
-        scaleMargins: { top: 0.1, bottom: 0.1 },
-        autoScale: false,
-        entireTextOnly: true,
-    },
-    localization: {
-        // ✅ ИСПРАВЛЕНО: убран ручной сдвиг + (3 * 3600)
-        timeFormatter: (time) => {
-            return new Date(time * 1000).toLocaleString('ru-RU', {
-                timeZone: 'Europe/Moscow',
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        }
-    }
-});
+        this.chart = LightweightCharts.createChart(container, {
+            layout: {
+                background: { color: '#000000' },
+                textColor: '#808080'
+            },
+            grid: {
+                vertLines: { visible: false },
+                horzLines: { visible: false }
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal
+            },
+            handleScroll: {
+                mouseWheel: true,
+                pressedMouseMove: true,
+                horzTouchDrag: true,
+                vertTouchDrag: true
+            },
+            handleScale: {
+                axisPressedMouseMove: true,
+                mouseWheel: true,
+                pinch: true
+            },
+            animation: {
+                duration: 0
+            },
+            timeScale: {
+                timeVisible: true,
+                secondsVisible: false,
+                borderColor: '#333333',
+                barSpacing: 12,
+                minBarSpacing: 1,
+                fixLeftEdge: false,
+                fixRightEdge: false,
+                rightOffset: 10,
+                // ✅ ИСПРАВЛЕНО: убран ручной сдвиг + (3 * 3600)
+                tickMarkFormatter: (time) => {
+                    const date = new Date(time * 1000);
+                    return date.toLocaleTimeString('ru-RU', { 
+                        timeZone: 'Europe/Moscow', 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                }
+            },
+            rightPriceScale: {
+                borderColor: '#333333',
+                borderVisible: true,
+                scaleMargins: { top: 0.1, bottom: 0.1 },
+                autoScale: false,
+                entireTextOnly: true,
+            },
+            localization: {
+                // ✅ ИСПРАВЛЕНО: убран ручной сдвиг + (3 * 3600)
+                timeFormatter: (time) => {
+                    return new Date(time * 1000).toLocaleString('ru-RU', {
+                        timeZone: 'Europe/Moscow',
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                }
+            }
+        });
+
         // ============ СЕРИИ ДАННЫХ ============
         this.candleSeries = this.chart.addSeries(LightweightCharts.CandlestickSeries, {
             upColor: CONFIG.colors.bullish,
@@ -280,13 +286,13 @@ class ChartManager {
         [this.candleSeries, this.barSeries].forEach(series => {
             series.applyOptions({
                 priceLineVisible: true,
-                lastValueVisible: true, // <--- ИЗМЕНЕНО НА true
+                lastValueVisible: true,
                 priceLineColor: '#00bcd4',
                 priceLineWidth: 1,
                 priceLineStyle: LightweightCharts.LineStyle.Dashed,
-                lastValueLabelBackgroundColor: '#00bcd4', // Цвет фона плашки
-                lastValueLabelTextColor: '#ffffff',       // Цвет текста в плашке
-                priceLineTitle: ''                        // Убирает лишний текст слева от цены
+                lastValueLabelBackgroundColor: '#00bcd4',
+                lastValueLabelTextColor: '#ffffff',
+                priceLineTitle: ''
             });
         });
 
@@ -341,8 +347,8 @@ class ChartManager {
         }
 
         // ============ СОЗДАНИЕ TIMER MANAGER ============
-       this.timerManager = null;
-       
+        this.timerManager = null;
+        
         const isCandle = this.currentChartType === 'candle';
         this.candleSeries.applyOptions({ visible: isCandle });
         this.barSeries.applyOptions({ visible: !isCandle });
@@ -412,6 +418,15 @@ class ChartManager {
         }, 1000);
     }
 
+    // ============ НОВЫЙ МЕТОД: THROTTLE ============
+    _throttle(key, delay) {
+        const now = Date.now();
+        const lastTime = this._throttleMap.get(key) || 0;
+        if (now - lastTime < delay) return false;
+        this._throttleMap.set(key, now);
+        return true;
+    }
+
     // ============ МЕТОДЫ ЦВЕТА ============
     getCurrentPriceColor() {
         if (!this.chartData || this.chartData.length === 0) {
@@ -448,8 +463,6 @@ class ChartManager {
                document.contains(this.chartContainer);
     }
 
-    // Лёгкое затемнение графика на время переключения тикера (аналог TradingView),
-    // вместо спиннера/полной перерисовки.
     _showSymbolSwitchOverlay() {
         if (this._symbolSwitchOverlay) {
             this._symbolSwitchOverlay.style.opacity = '1';
@@ -487,16 +500,6 @@ class ChartManager {
         this._candleTimeMap.set(time, index);
     }
 
-    // ============ ПАТЧ 5: DATA FRESHNESS TAG (как в TradingView) ============
-    // Каждая свеча помечается _source ('rest' | 'ws' | 'cache') и _receivedAt
-    // (epoch ms — "насколько свежа информация, которой мы располагаем").
-    // Любой код, который хочет ПЕРЕЗАПИСАТЬ уже существующую свечу другим
-    // источником, обязан сначала спросить _isFresherUpdate(). Это заменяет
-    // разрозненные ad-hoc проверки (типа старого глобального
-    // _lastKlineEventTime) единым, применимым везде правилом: "побеждает тот,
-    // чьи данные объективно новее, а не тот, кто пришёл последним по времени
-    // выполнения кода". Именно это не даёт "вчерашнему REST-отчёту"
-    // перезаписывать "сегодняшний звонок от WS".
     _stampCandle(candle, source, receivedAt) {
         if (!candle) return candle;
         candle._source = source;
@@ -506,18 +509,12 @@ class ChartManager {
         return candle;
     }
 
-    // Возвращает true, если обновление с меткой (receivedAt, source) имеет
-    // право перезаписать existingCandle. Если у существующей свечи ещё нет
-    // метки (данные до внедрения этого патча, либо только что созданная
-    // свеча) — разрешаем запись безусловно.
     _isFresherUpdate(existingCandle, receivedAt, source) {
         if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) {
             return true;
         }
         if (receivedAt > existingCandle._receivedAt) return true;
         if (receivedAt === existingCandle._receivedAt) {
-            // Тай-брейк: живой WS-фид считается более авторитетным источником,
-            // чем REST/кэш при точном совпадении временной метки.
             return source === 'ws' && existingCandle._source !== 'ws';
         }
         return false;
@@ -555,7 +552,6 @@ class ChartManager {
             priceLineTitle: ''
         });
         
-        // Обновляем цвет таймера
         if (this.timerManager) {
             this.timerManager.forceColorUpdate();
         }
@@ -589,120 +585,87 @@ class ChartManager {
         }, 30000);
     }
 
-   async _syncRecentCandles() {
-    const genId = this._activeGeneration;
-    try {
-        const fresh = await this.fetchKlines(
-            this.currentSymbol,
-            this.currentExchange,
-            this.currentMarketType,
-            this.currentInterval,
-            3,
-            null,
-            'background'
-        );
-        if (!fresh || fresh.length === 0) return;
+    async _syncRecentCandles() {
+        // ✅ ДОБАВЛЕНО: проверка что не происходит переключение
+        if (this._switchingSymbol || this._isApplyingData) {
+            return;
+        }
+        
+        const genId = this._activeGeneration;
+        try {
+            const fresh = await this.fetchKlines(
+                this.currentSymbol,
+                this.currentExchange,
+                this.currentMarketType,
+                this.currentInterval,
+                3,
+                null,
+                'background'
+            );
+            if (!fresh || fresh.length === 0) return;
 
-        if (this._updatesSuspended || this._switchingSymbol || this._activeGeneration !== genId) return;
+            // ✅ ДОБАВЛЕНО: проверка что символ не изменился за время загрузки
+            if (this._updatesSuspended || this._switchingSymbol || this._activeGeneration !== genId) return;
 
-        const currentData = this.chartData;
-        if (!currentData || currentData.length === 0) return;
+            const currentData = this.chartData;
+            if (!currentData || currentData.length === 0) return;
 
-        const freshMap = new Map(fresh.map(c => [c.time, c]));
-        let changed = false;
-        let olderCandlesChanged = false;
+            const freshMap = new Map(fresh.map(c => [c.time, c]));
+            let changed = false;
+            let olderCandlesChanged = false;
 
-        for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 3); i--) {
-            const cur = currentData[i];
-            const freshCandle = freshMap.get(cur.time);
-            if (freshCandle) {
-                // ПАТЧ 5: это и есть "аудитор, который переписывает вчерашный
-                // отчёт поверх сегодняшних звонков" — если WS уже обновил
-                // именно эту свечу ПОЗЖЕ, чем был отправлен этот REST-запрос,
-                // REST проигрывает сравнение и не перезаписывает её.
-                if (!this._isFresherUpdate(cur, freshCandle._receivedAt, freshCandle._source)) {
-                    freshMap.delete(cur.time);
-                    continue;
-                }
-                this._stampCandle(cur, freshCandle._source, freshCandle._receivedAt);
-                cur.open = freshCandle.open;
-                cur.close = freshCandle.close;
-                cur.high = freshCandle.high;
-                cur.low = freshCandle.low;
-                cur.volume = freshCandle.volume;
-                cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
-
-                const safeTime = Number(cur.time);
-                if (isNaN(safeTime) || safeTime <= 0) {
-                    console.warn('⚠️ Пропуск обновления свечи: некорректное время', cur.time);
-                    continue;
-                }
-
-                if (i === currentData.length - 1) {
-                    const updateData = {
-                        time: safeTime,
-                        open: cur.open,
-                        high: cur.high,
-                        low: cur.low,
-                        close: cur.close
-                    };
-
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
-
-                    if (this.volumeSeries) {
-                        const isBullish = cur.close >= cur.open;
-                        this.volumeSeries.update({
-                            time: safeTime,
-                            value: cur.quoteVolume || cur.volume || 0,
-                            color: isBullish ? this.bullishColor : this.bearishColor
-                        });
+            for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 3); i--) {
+                const cur = currentData[i];
+                const freshCandle = freshMap.get(cur.time);
+                if (freshCandle) {
+                    if (!this._isFresherUpdate(cur, freshCandle._receivedAt, freshCandle._source)) {
+                        freshMap.delete(cur.time);
+                        continue;
                     }
-                } else {
-                    olderCandlesChanged = true;
+                    this._stampCandle(cur, freshCandle._source, freshCandle._receivedAt);
+                    cur.open = freshCandle.open;
+                    cur.close = freshCandle.close;
+                    cur.high = freshCandle.high;
+                    cur.low = freshCandle.low;
+                    cur.volume = freshCandle.volume;
+                    cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
+
+                    const safeTime = Number(cur.time);
+                    if (isNaN(safeTime) || safeTime <= 0) {
+                        console.warn('⚠️ Пропуск обновления свечи: некорректное время', cur.time);
+                        continue;
+                    }
+
+                    if (i === currentData.length - 1) {
+                        const updateData = {
+                            time: safeTime,
+                            open: cur.open,
+                            high: cur.high,
+                            low: cur.low,
+                            close: cur.close
+                        };
+
+                        if (this.candleSeries) this.candleSeries.update(updateData);
+                        if (this.barSeries) this.barSeries.update(updateData);
+
+                        if (this.volumeSeries) {
+                            const isBullish = cur.close >= cur.open;
+                            this.volumeSeries.update({
+                                time: safeTime,
+                                value: cur.quoteVolume || cur.volume || 0,
+                                color: isBullish ? this.bullishColor : this.bearishColor
+                            });
+                        }
+                    } else {
+                        olderCandlesChanged = true;
+                    }
+
+                    changed = true;
+                    freshMap.delete(cur.time);
                 }
-
-                changed = true;
-                freshMap.delete(cur.time);
-            }
-        }
-
-        if (olderCandlesChanged && this._isChartValid()) {
-            if (this.candleSeries) this.candleSeries.setData(currentData);
-            if (this.barSeries) this.barSeries.setData(currentData);
-            if (this.volumeSeries) {
-                this._volumeDataCache = null;
-                this._volumeDataDirty = true;
-                this._updateVolumeOptimized();
-            }
-        }
-
-        if (freshMap.size > 0) {
-            const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
-            let needsFullRedraw = false;
-
-            for (const candle of missing) {
-                candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
-                const safeTime = Number(candle.time);
-                if (isNaN(safeTime) || safeTime <= 0) continue;
-
-                // 🛡️ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
-                // Если время свечи <= времени последней свечи в массиве, 
-                // мы НЕ добавляем её через push. Это предотвращает создание 
-                // дубликатов или "фантомных" новых свечей.
-                if (currentData.length > 0 && safeTime <= currentData[currentData.length - 1].time) {
-                    needsFullRedraw = true;
-                    continue; // <--- ПРОПУСКАЕМ, НЕ ПУШИМ В МАССИВ!
-                }
-
-                currentData.push(candle);
-                this._addToTimeMap(safeTime, currentData.length - 1);
             }
 
-            if (needsFullRedraw && this._isChartValid()) {
-                currentData.sort((a, b) => a.time - b.time);
-                this._rebuildTimeMap();
-
+            if (olderCandlesChanged && this._isChartValid()) {
                 if (this.candleSeries) this.candleSeries.setData(currentData);
                 if (this.barSeries) this.barSeries.setData(currentData);
                 if (this.volumeSeries) {
@@ -710,52 +673,76 @@ class ChartManager {
                     this._volumeDataDirty = true;
                     this._updateVolumeOptimized();
                 }
-            } else {
-                for (const candle of missing) {
-                    const updateData = {
-                        time: candle.time,
-                        open: candle.open,
-                        high: candle.high,
-                        low: candle.low,
-                        close: candle.close
-                    };
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
-
-                    if (this.volumeSeries) {
-                        const isBullish = candle.close >= candle.open;
-                        this.volumeSeries.update({
-                            time: candle.time,
-                            value: candle.quoteVolume || candle.volume || 0,
-                            color: isBullish ? this.bullishColor : this.bearishColor
-                        });
-                    }
-                }
             }
 
-            this.lastCandle = currentData[currentData.length - 1];
-            changed = true;
-        }
+            if (freshMap.size > 0) {
+                const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
+                let needsFullRedraw = false;
 
-        if (changed) {
-            this._volumeDataDirty = true;
-            this._syncLineColor();
-            if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            if (this.timerManager) this.timerManager.updatePrice(this.lastCandle.close);
+                for (const candle of missing) {
+                    candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
+                    const safeTime = Number(candle.time);
+                    if (isNaN(safeTime) || safeTime <= 0) continue;
+
+                    if (currentData.length > 0 && safeTime <= currentData[currentData.length - 1].time) {
+                        needsFullRedraw = true;
+                        continue;
+                    }
+
+                    currentData.push(candle);
+                    this._addToTimeMap(safeTime, currentData.length - 1);
+                }
+
+                if (needsFullRedraw && this._isChartValid()) {
+                    currentData.sort((a, b) => a.time - b.time);
+                    this._rebuildTimeMap();
+
+                    if (this.candleSeries) this.candleSeries.setData(currentData);
+                    if (this.barSeries) this.barSeries.setData(currentData);
+                    if (this.volumeSeries) {
+                        this._volumeDataCache = null;
+                        this._volumeDataDirty = true;
+                        this._updateVolumeOptimized();
+                    }
+                } else {
+                    for (const candle of missing) {
+                        const updateData = {
+                            time: candle.time,
+                            open: candle.open,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close
+                        };
+                        if (this.candleSeries) this.candleSeries.update(updateData);
+                        if (this.barSeries) this.barSeries.update(updateData);
+
+                        if (this.volumeSeries) {
+                            const isBullish = candle.close >= candle.open;
+                            this.volumeSeries.update({
+                                time: candle.time,
+                                value: candle.quoteVolume || candle.volume || 0,
+                                color: isBullish ? this.bullishColor : this.bearishColor
+                            });
+                        }
+                    }
+                }
+
+                this.lastCandle = currentData[currentData.length - 1];
+                changed = true;
+            }
+
+            if (changed) {
+                this._volumeDataDirty = true;
+                this._syncLineColor();
+                if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+                if (this.timerManager) this.timerManager.updatePrice(this.lastCandle.close);
+            }
+        } catch (e) {
+            console.warn('⚠️ Ошибка периодической синхронизации:', e);
         }
-    } catch (e) {
-        console.warn('⚠️ Ошибка периодической синхронизации:', e);
     }
-}
 
     async refreshCandlesAfterTabHidden() {
-        // ПАТЧ 3: не запускаем синхронизацию "после скрытия вкладки", если прямо
-        // сейчас идёт переключение тикера. Раньше, если пользователь сворачивал/
-        // разворачивал вкладку ровно во время switchSymbol (когда chartData уже
-        // очищен, а fetch ещё не завершился), здесь срабатывала ветка
-        // "currentData.length === 0" и запускался ВТОРОЙ параллельный
-        // setDataQuick()/autoScale() с другим generationId. Это и есть один из
-        // источников редких "иногда криво отрисовывает свечи после переключения".
         if (!this._isChartValid() || this._switchingSymbol) {
             if (!this._isChartValid()) {
                 console.warn('⚠️ График не инициализирован, откладываем синхронизацию');
@@ -784,8 +771,6 @@ class ChartManager {
                 null, 'background'
             );
 
-            // ПАТЧ 3 (продолжение): дополнительно перепроверяем _switchingSymbol
-            // после await — свитч тикера мог начаться, пока шёл этот fetch.
             if (!this._isChartValid() || this._activeGeneration !== genId || this._switchingSymbol) {
                 console.warn('⚠️ График был уничтожен/сменился во время загрузки данных');
                 return;
@@ -825,9 +810,6 @@ class ChartManager {
             for (const freshCandle of freshCandles) {
                 const existing = currentMap.get(freshCandle.time);
                 if (existing) {
-                    // ПАТЧ 5: если локальная (WS) версия этой свечи новее, чем
-                    // момент отправки этого REST-запроса — оставляем локальную,
-                    // REST здесь принципиально не может быть свежее.
                     if (!this._isFresherUpdate(existing, freshCandle._receivedAt, freshCandle._source)) {
                         updatedData.push(existing);
                         continue;
@@ -1028,6 +1010,7 @@ class ChartManager {
         this._formatCache.clear();
         this._symbolChangeCallbacks = [];
         this._colorChangeCallbacks = [];
+        this._throttleMap.clear();
         console.log('✅ ChartManager полностью уничтожен, утечек памяти нет');
     }
 
@@ -1051,16 +1034,6 @@ class ChartManager {
             if (last && aligned > last.time) {
                 const timeSinceNewCandle = nowSec - aligned;
 
-                // ПАТЧ 1.3: НЕ создаём фиктивную (placeholder) свечу.
-                // Единственный легитимный источник новой свечи — kline-сообщение
-                // от биржи (WebSocketManager → updateLastCandle / _createNewCandle).
-                // Раньше здесь рисовалась "придуманная" doji-свеча
-                // (open=high=low=close=цена закрытия предыдущей, volume=0),
-                // которую потом резко заменяло реальное сообщение с биржи —
-                // это и было визуальным "скачком"/"дорисовкой".
-                // Если задержка аномально большая — это сигнал проблемы с
-                // сокетом, чиним подключение, а не рисуем данные, которых
-                // нет на бирже.
                 if (timeSinceNewCandle > 8 && window.wsManager?.ensureConnected) {
                     console.warn('⚠️ Kline задерживается > 8с — проверяем WS-соединение');
                     window.wsManager.ensureConnected();
@@ -1322,20 +1295,19 @@ class ChartManager {
             if (window.textManager) window.textManager.syncWithNewTimeframe();
         }, 50);
 
-        // ✅ ИСПРАВЛЕНИЕ: Добавлены настройки плашки при смене типа графика
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (activeSeries) {
             const lineColor = this._getLineColor();
             activeSeries.applyOptions({
                 priceLineVisible: true,
-                lastValueVisible: true, // <--- ИЗМЕНЕНО НА true
+                lastValueVisible: true,
                 priceLineColor: lineColor,
                 priceLineSource: 'lastBar',
                 priceLineWidth: 1,
                 priceLineStyle: LightweightCharts.LineStyle.Dashed,
-                lastValueLabelBackgroundColor: lineColor, // <--- ДОБАВЛЕНО
-                lastValueLabelTextColor: '#ffffff',       // <--- ДОБАВЛЕНО
-                priceLineTitle: ''                        // <--- ДОБАВЛЕНО
+                lastValueLabelBackgroundColor: lineColor,
+                lastValueLabelTextColor: '#ffffff',
+                priceLineTitle: ''
             });
             this._lastAppliedColor = lineColor;
         }
@@ -1346,7 +1318,6 @@ class ChartManager {
                 this.timerManager.updatePrice(price);
             }
             
-            // Перепривязываем примитив к новой серии
             this.timerManager.reattach();
         }
 
@@ -1382,7 +1353,6 @@ class ChartManager {
     }
 
     updatePriceLineTimerPosition() {
-        // Примитив сам позиционируется на canvas
         if (this.timerManager?._primitive?.isEnabled()) {
             this.timerManager._primitive.requestRedraw();
         }
@@ -1484,20 +1454,7 @@ class ChartManager {
             return;
         }
 
-        // ПАТЧ 1.1: high/low строятся ТОЛЬКО из kline-потока биржи (см.
-        // updateLastCandle). Trade/ticker-цена (этот метод) обновляет
-        // исключительно close — визуальное "живое" тело свечи и ценник.
-        // Если разрешить трейдам двигать high/low, значения расходятся
-        // с официальным kline биржи (разные алгоритмы агрегации/округления
-        // на стороне биржи и клиента) — это и была причина несовпадающих
-        // фитилей.
         lastCandle.close = price;
-
-        // ПАТЧ 5: без этого штампа между двумя kline-сообщениями (раз в
-        // несколько секунд) свеча оставалась бы помечена старым receivedAt,
-        // и фоновый REST-sync мог бы её перезаписать, "откатив" close назад
-        // к значению из своего снепшота, хотя локально уже известна более
-        // свежая цена (тик пришёл только что).
         this._stampCandle(lastCandle, 'ws', Date.now());
 
         this.currentRealPrice = price;
@@ -1563,23 +1520,21 @@ class ChartManager {
             this._lastKlineEventTime = eventTime;
         }
 
-        // ПАТЧ 1.5: если последняя свеча в массиве уже финализирована биржей
-        // (candle.isClosed === true пришло ранее) и текущее сообщение относится
-        // к тому же времени, но НЕ является финализирующим — это, скорее всего,
-        // запоздавший дубль после реконнекта. Игнорируем, чтобы не откатить
-        // уже правильные (закрытые) данные обратно на промежуточные.
         const _lcCheck = this.chartData?.[this.chartData.length - 1];
         if (_lcCheck && _lcCheck._closed === true && candle.time === _lcCheck.time && candle.isClosed !== true) {
             return;
         }
 
-        // ПАТЧ 5: receivedAt для WS-обновления — это серверная метка события
-        // биржи (eventTime, напр. Binance 'E'), если она передана вызывающим
-        // кодом. Это точнее локального Date.now(), так как не зависит от
-        // задержки доставки сообщения по сети/event loop.
         const receivedAt = (eventTime !== null && eventTime !== undefined && !isNaN(eventTime))
             ? eventTime
             : Date.now();
+
+        // ✅ ДОБАВЛЕНО: Throttle для высокочастотных таймфреймов
+        if (this.currentInterval === '1m' || this.currentInterval === '3m') {
+            if (!this._throttle('candle_update', 100)) {
+                return; // Пропускаем слишком частое обновление
+            }
+        }
 
         try {
             if (!this._isValidCandle(candle)) {
@@ -1608,9 +1563,6 @@ class ChartManager {
             };
 
             if (isLastCandle) {
-                // ПАТЧ 5: не даём заведомо более старому WS-сообщению (например,
-                // запоздавшему дублю после реконнекта) откатить данные, которые
-                // уже были уточнены более свежим источником (фоновым REST-syncом).
                 if (!this._isFresherUpdate(currentLastCandle, receivedAt, 'ws')) {
                     return;
                 }
@@ -1624,8 +1576,6 @@ class ChartManager {
                     currentLastCandle.quoteVolume = currentLastCandle.volume;
                 }
                 currentLastCandle._isPlaceholder = false;
-                // ПАТЧ 1.5: помечаем свечу финализированной, когда биржа
-                // прислала isClosed === true (Binance k.x / Bybit k.confirm).
                 currentLastCandle._closed = candle.isClosed === true;
                 this._stampCandle(currentLastCandle, 'ws', receivedAt);
                 this.lastCandle = currentLastCandle;
@@ -1644,18 +1594,10 @@ class ChartManager {
             } else if (existingIndex !== undefined && existingIndex >= 0) {
                 const existingCandle = this.chartData[existingIndex];
 
-                // ПАТЧ 5: та же freshness-проверка для правки уже не-последней
-                // свечи — сюда может прилететь запоздавшее WS-сообщение уже
-                // ПОСЛЕ того, как эту же свечу уточнил фоновый REST-sync.
                 if (!this._isFresherUpdate(existingCandle, receivedAt, 'ws')) {
                     return;
                 }
 
-                // ПАТЧ 1.2: не блендим (Math.max/min), а перезаписываем полностью
-                // значениями из kline-сообщения биржи. Блендинг не даёт
-                // неверному фитилю уменьшиться обратно — свеча могла только
-                // "распухать", что и вызывало эффект "дорисовки" уже закрытых
-                // свечей.
                 existingCandle.open = candle.open;
                 existingCandle.close = candle.close;
                 existingCandle.high = candle.high;
@@ -1749,6 +1691,16 @@ class ChartManager {
 
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
+            // ✅ ДОБАВЛЕНО: очистка throttle и pending при смене данных
+            this._lastVolumeUpdateTime = 0;
+            this._pendingVolumeUpdate = false;
+            
+            // ✅ ДОБАВЛЕНО: очистка pending обновлений
+            if (this._updateTimeout) {
+                clearTimeout(this._updateTimeout);
+                this._updateTimeout = null;
+            }
+            
             if (!this._isChartValid()) {
                 console.error('❌ setDataQuick: chart не инициализирован');
                 if (onReady) onReady();
@@ -1981,33 +1933,6 @@ class ChartManager {
         }
     }
 
-    // ============ ПАТЧ 6: ATOMIC SYMBOL SWITCH (как в TradingView) ============
-    // Переключение тикера теперь — явная двухфазная транзакция:
-    //
-    //   STAGE 1 (загрузка): читаем кэш/REST для нового символа. НИЧЕГО из
-    //   видимого/внешнего состояния (currentSymbol, currentExchange,
-    //   currentMarketType, привязка window.wsManager) не меняется. Если здесь
-    //   что-то падает — просто выходим: откатывать нечего, потому что ничего
-    //   не менялось, старый тикер как ни в чём не бывало остаётся активным
-    //   и рабочим (WS всё ещё на нём, цена всё ещё тикает).
-    //
-    //   STAGE 2 (коммит): выполняется одним синхронным блоком, без единого
-    //   await между шагами смены currentSymbol → переподписки WS →
-    //   setDataQuick. Снаружи невозможно "застать" промежуточное состояние
-    //   вида "WS уже слушает новый тикер, а this.currentSymbol/chartData ещё
-    //   старые" — раньше это было возможно, поскольку currentSymbol менялся
-    //   и wsManager.updateSymbolAndTimeframe() вызывался ДО того, как
-    //   REST-данные вообще успевали прийти (то есть ДО await fetchKlines).
-    //
-    // Известное ограничение (осознанный компромисс, не скрытый баг): пока
-    // идёт STAGE 1, входящие WS-события по СТАРОМУ тикеру всё ещё
-    // отбрасываются флагом _switchingSymbol внутри updateLastCandle — чтобы
-    // не отбрасывать их, потребовалось бы модифицировать сам WebSocketManager
-    // (вне этого файла), различая, для какого именно тикера пришло сообщение.
-    // Это не ломает атомарность (видимое состояние по-прежнему меняется одним
-    // цельным шагом), лишь означает, что цена на СТАРОМ тикере может на
-    // короткое время (обычно <1с, время ответа REST) не тикать во время
-    // самого переключения — visually это скрыто под затемнением оверлея.
     async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol) {
             this._pendingSymbolSwitch = { symbol, exchange, marketType };
@@ -2023,20 +1948,12 @@ class ChartManager {
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
 
-        // ВАЖНО: этот колбэк — единственное место, где переключение считается
-        // "завершённым" (снимается _switchingSymbol/_updatesSuspended и прячется
-        // затемнение). Он вызывается ТОЛЬКО после того, как setDataQuick() и его
-        // внутренний autoScale() полностью осядут (см. autoScale()).
         const finishSwitch = () => {
             if (this._activeGeneration !== generationId) return;
             this._switchingSymbol = false;
             this._resumeAllUpdates(generationId);
             this._hideSymbolSwitchOverlay();
 
-            // ПАТЧ 2: единственная REST-загрузка в начале switchSymbol не покрывает
-            // сделки/kline, произошедшие НА БИРЖЕ, пока апдейты были заморожены.
-            // Досинхронизируемся сразу после коммита; Data Freshness Tag (ПАТЧ 5)
-            // гарантирует, что этот sync не откатит уже более свежие WS-данные.
             this._syncRecentCandles().catch(() => {});
 
             if (this._pendingSymbolSwitch) {
@@ -2046,14 +1963,9 @@ class ChartManager {
             }
         };
 
-        // Откат STAGE 1: используется, если загрузка данных для нового тикера
-        // провалилась. currentSymbol/exchange/marketType и WS-подписка ни разу
-        // не менялись на этом этапе — "откатывать" по сути нечего, старый
-        // тикер остаётся полностью рабочим без каких-либо дополнительных
-        // действий с нашей стороны.
         const rollbackSwitch = (error) => {
             console.error('❌ Переключение отменено, остаёмся на предыдущем тикере:', error);
-            if (this._activeGeneration !== generationId) return; // уже перекрыто следующим switchSymbol
+            if (this._activeGeneration !== generationId) return;
             this._switchingSymbol = false;
             this._resumeAllUpdates(generationId);
             this._hideSymbolSwitchOverlay();
@@ -2066,11 +1978,6 @@ class ChartManager {
         };
 
         try {
-            // ============ STAGE 1: ЗАГРУЗКА ============
-            // Единственный побочный эффект здесь — приостановка апдейтов
-            // (_updatesSuspended), чтобы не тратить работу на пересчёт графика
-            // старого тикера, пока идёт транзакция. currentSymbol и WS-подписка
-            // остаются на СТАРОМ тикере до успешного завершения загрузки.
             this._suspendAllUpdates();
 
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
@@ -2081,8 +1988,6 @@ class ChartManager {
             }
 
             if (this._activeGeneration !== generationId) {
-                // Уже перекрыто следующим switchSymbol, пока мы ждали ответ —
-                // тихо выходим, ничего не коммитим поверх более новой транзакции.
                 console.log('🔄 Символ уже переключился, отменяем устаревшую загрузку');
                 return;
             }
@@ -2091,7 +1996,6 @@ class ChartManager {
                 throw new Error('Нет данных для ' + symbol);
             }
 
-            // ============ STAGE 2: КОММИТ (атомарно, без await между шагами) ============
             this.currentRealPrice = null;
             this.lastCandle = null;
 
@@ -2101,15 +2005,9 @@ class ChartManager {
 
             this.chartData = [];
             this._candleTimeMap.clear();
-            // ПАТЧ 4: сбрасываем "антидубликатор" kline-событий и отложенную
-            // обрезку данных при смене символа — иначе eventTime, накопленный
-            // для СТАРОГО тикера, мог ошибочно отбросить легитимные ранние
-            // kline-события НОВОГО тикера.
             this._lastKlineEventTime = 0;
             this._pendingTrimParams = null;
 
-            // С этой строки начинается видимая смена тикера — всё ниже до
-            // setDataQuick выполняется синхронно, одним тиком event loop.
             this.currentSymbol = symbol;
             this.currentExchange = exchange;
             this.currentMarketType = marketType;
@@ -2402,8 +2300,6 @@ class ChartManager {
             return;
         }
         if (this._autoScalePending) {
-            // Уже идёт settle предыдущего autoScale — не запускаем гонку повторно,
-            // просто подождём, пока текущий процесс закончится.
             if (onComplete) onComplete();
             return;
         }
@@ -2416,26 +2312,7 @@ class ChartManager {
             scaleMargins: { top: 0.1, bottom: 0.1 }
         });
 
-        // ВАЖНО: пока autoScale:true активен, любое живое обновление цены
-        // (websocket-тик по текущей открытой свече) пересчитывает видимый
-        // диапазон цен и визуально "дёргает" уже закрытые свечи — это и есть
-        // причина эффекта "дорисовки" при переключении тикера. Поэтому вызывающий
-        // код (setDataQuick/switchSymbol) обязан держать обновления в свече
-        // (_updatesSuspended/_switchingSymbol) выключенными до вызова onComplete.
         setTimeout(() => {
-            // ПАТЧ 1: раньше autoScale:false применялось ТОЛЬКО если
-            // this._activeGeneration === genId. Если поколение успевало
-            // смениться (например, случился ещё один параллельный вызов
-            // setDataQuick/autoScale, см. ПАТЧ 3), это условие никогда не
-            // выполнялось — priceScale навсегда оставался в autoScale:true,
-            // и _autoScalePending навсегда оставался true (что также
-            // блокировало все последующие вызовы autoScale() — они сразу
-            // выходили по проверке "_autoScalePending" выше). Результат —
-            // случайное, зависящее от тайминга "дёргание" уже отрисованных
-            // свечей при каждом следующем живом тике цены. Теперь сброс
-            // делаем безусловно, независимо от того, какое поколение активно
-            // сейчас — это гарантированно снимает автомасштаб и разблокирует
-            // будущие вызовы autoScale().
             if (this._isChartValid()) {
                 const ps = this.chart?.priceScale('right');
                 if (ps) {
@@ -2652,8 +2529,6 @@ class ChartManager {
             candle.quoteVolume = candle.volume;
         }
 
-        // ПАТЧ 5: штампуем и эту (альтернативный путь создания новой свечи)
-        // как источник 'ws' для единообразия freshness-тегов по всему коду.
         this._stampCandle(candle, 'ws', (eventTime !== null && eventTime !== undefined) ? eventTime : Date.now());
 
         this.chartData.push(candle);
@@ -2754,12 +2629,6 @@ class ChartManager {
     }
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
-        // ПАТЧ 5: фиксируем момент СТАРТА запроса, а не момент получения ответа.
-        // Это сознательно консервативная метка: данные в ответе не могут быть
-        // "свежее", чем состояние рынка на момент, когда мы вообще спросили
-        // биржу. Если использовать время ПОЛУЧЕНИЯ ответа, долгий REST-запрос
-        // мог бы задним числом "перебить" WS-тик, пришедший, пока запрос ещё
-        // летел по сети — хотя по факту WS-тик объективно новее.
         const requestStartedAt = Date.now();
         let controller;
         if (requestType === 'history') {
@@ -2865,11 +2734,6 @@ class ChartManager {
             const validCandles = noDupes.filter(c => this._isValidCandle(c));
             validCandles.sort((a, b) => a.time - b.time);
 
-            // ПАТЧ 5: штампуем весь батч меткой источника 'rest' и временем
-            // старта запроса — единая точка, откуда freshness-теги расходятся
-            // по всему коду (setDataQuick, _syncRecentCandles,
-            // refreshCandlesAfterTabHidden, refreshCandlesInBackground и т.д.
-            // получают уже помеченные свечи и просто сравнивают метки).
             for (const c of validCandles) {
                 this._stampCandle(c, 'rest', requestStartedAt);
             }
@@ -3029,10 +2893,11 @@ class ChartManager {
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
         this._isTrimming = false;
-        // ПАТЧ 4 (доп.): сбрасываем отложенную обрезку данных при любой полной
-        // остановке процессов — она могла быть посчитана для уже неактуального
-        // набора данных (например, до переключения тикера).
         this._pendingTrimParams = null;
+        // ✅ ДОБАВЛЕНО: очистка throttle
+        this._throttleMap.clear();
+        this._lastVolumeUpdateTime = 0;
+        this._pendingVolumeUpdate = false;
     }
 
     saveCurrentTimePosition() {
@@ -3140,10 +3005,6 @@ class ChartManager {
             const CACHE_DURATION = 5 * 60 * 1000;
             if (Date.now() - cached.lastUpdate > CACHE_DURATION) return null;
 
-            // ПАТЧ 5: свечи из кэша получают метку 'cache' с временем самой
-            // записи в кэш — это гарантирует, что любые более свежие REST/WS
-            // данные, применённые позже, корректно выиграют сравнение
-            // freshness, а не будут молча перезаписаны устаревшим кэшем.
             for (const c of cached.data) {
                 this._stampCandle(c, 'cache', cached.lastUpdate);
             }
@@ -3417,14 +3278,6 @@ class ChartManager {
         }
     }
 
-    // ПАТЧ 1.4: полностью переписан на инкрементальную логику.
-    // Раньше метод делал activeSeries.setData(this.chartData) на весь
-    // массив + безусловный scrollToLast() — это вызывало резкую
-    // перерисовку/рывок при переключении тикера (свечи "перескакивали").
-    // Теперь: точечно поправляем последнюю кэшированную свечу (если
-    // сервер уточнил данные) и добавляем новые свечи через .update(),
-    // без полного setData. scrollToLast() вызывается только если
-    // пользователь не листает историю и реально появились новые свечи.
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         const genId = this._activeGeneration;
         try {
@@ -3438,12 +3291,7 @@ class ChartManager {
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             const lastCachedTime = this.chartData[this.chartData.length - 1].time;
 
-            // 1) точечно поправить последнюю кэшированную свечу, если сервер
-            // прислал более точные данные (без setData всего массива)
             const matchLast = freshCandles.find(c => c.time === lastCachedTime);
-            // ПАТЧ 5: тот же принцип — не даём фоновому REST-обновлению (после
-            // отображения данных из кэша) откатить свечу, которую уже успел
-            // уточнить живой WS.
             if (matchLast && this._isFresherUpdate(this.chartData[this.chartData.length - 1], matchLast._receivedAt, matchLast._source)) {
                 const lc = this.chartData[this.chartData.length - 1];
                 lc.open = matchLast.open;
@@ -3458,8 +3306,6 @@ class ChartManager {
                 }
             }
 
-            // 2) добавить новые свечи инкрементально через .update(), НЕ через
-            // setData() на весь массив — это и вызывало рывок при смене тикера
             const newCandles = freshCandles.filter(c => c.time > lastCachedTime);
             if (newCandles.length > 0) {
                 this.chartData.push(...newCandles);
@@ -3481,7 +3327,6 @@ class ChartManager {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             }
 
-            // Не выдёргиваем пользователя из истории, которую он листает
             if (!this._isViewingHistory && newCandles.length > 0) {
                 this.scrollToLast();
             }
