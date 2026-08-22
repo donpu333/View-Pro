@@ -6,7 +6,7 @@ class WebSocketManager {
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
-        this.isConnecting = false;  // ✅ НОВОЕ: флаг активного подключения
+        this.isConnecting = false;  // ✅ флаг активного подключения
         
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
@@ -89,7 +89,7 @@ class WebSocketManager {
         }
         
         this._closeSocket();
-        this.isConnecting = true;  // ✅ Устанавливаем флаг
+        this.isConnecting = true;
         
         const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
         
@@ -120,7 +120,6 @@ class WebSocketManager {
             return null;
         }
         
-        // ✅ Сохраняем тип для логирования
         ws._type = type;
         
         ws.onopen = () => {
@@ -147,7 +146,7 @@ class WebSocketManager {
             
             if (klineOk && tradeOk && !this.isConnected) {
                 this.isConnected = true;
-                this.isConnecting = false;  // ✅ Сбрасываем флаг
+                this.isConnecting = false;
                 this.retryCount = 0;
                 console.log('✅ Оба WebSocket подключены');
                 
@@ -165,9 +164,8 @@ class WebSocketManager {
         ws.onclose = (event) => {
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
             this.isConnected = false;
-            this.isConnecting = false;  // ✅ Сбрасываем флаг
+            this.isConnecting = false;
             
-            // 1005 и 1006 — нормальное закрытие при быстром переподключении
             if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
                 return;
             }
@@ -186,7 +184,6 @@ class WebSocketManager {
         };
         
         ws.onerror = (error) => {
-            // ✅ Не логируем ошибки для закрытых сокетов (это нормально)
             if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
                 console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
             }
@@ -209,6 +206,8 @@ class WebSocketManager {
                     
                     this._lastKlineTime = Math.floor(k.t / 1000);
                     
+                    // ✅ ПАТЧ 2.1: передаём eventTime (raw.E) для активации защиты
+                    // от out-of-order сообщений в ChartManager.updateLastCandle
                     this.chartManager.updateLastCandle({
                         time: Math.floor(k.t / 1000),
                         open: parseFloat(k.o),
@@ -218,7 +217,7 @@ class WebSocketManager {
                         volume: parseFloat(k.v),
                         quoteVolume: parseFloat(k.q || 0),
                         isClosed: k.x === true
-                    });
+                    }, raw.E || Date.now());
                 }
                 
                 if (raw.e === 'aggTrade') {
@@ -245,6 +244,8 @@ class WebSocketManager {
                 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
                     const k = raw.data[0];
+                    // ✅ ПАТЧ 2.1: передаём eventTime (raw.ts) для активации защиты
+                    // от out-of-order сообщений в ChartManager.updateLastCandle
                     this.chartManager.updateLastCandle({
                         time: Math.floor(k.start / 1000),
                         open: parseFloat(k.open),
@@ -254,7 +255,7 @@ class WebSocketManager {
                         volume: parseFloat(k.volume),
                         quoteVolume: parseFloat(k.turnover || 0),
                         isClosed: k.confirm === true
-                    });
+                    }, raw.ts || Date.now());
                 } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
                     const price = parseFloat(raw.data[0].p);
                     if (!isNaN(price) && price > 0) {
@@ -283,36 +284,27 @@ class WebSocketManager {
         }, delay);
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ метод закрытия сокетов
     _closeSocket() {
         const closeWs = (ws) => {
             if (!ws) return;
             
-            // 1. Очищаем пинг-интервал
             if (ws._pingInterval) {
                 clearInterval(ws._pingInterval);
                 ws._pingInterval = null;
             }
             
-            // 2. ✅ ВАЖНО: сначала убираем обработчики, чтобы не было лишних onclose
             ws.onopen = null;
             ws.onclose = null;
             ws.onerror = null;
             ws.onmessage = null;
             
-            // 3. ✅ Безопасное закрытие в зависимости от readyState
             try {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.close(1000, 'User disconnect');
                 } else if (ws.readyState === WebSocket.CONNECTING) {
-                    // ✅ Для CONNECTING просто abort — это вызовет onclose с кодом 1006
-                    // Но так как мы убрали onclose выше, ошибки не будет
                     ws.close();
                 }
-                // CLOSING и CLOSED — ничего не делаем
-            } catch (e) {
-                // Игнорируем ошибки закрытия
-            }
+            } catch (e) {}
         };
         
         closeWs(this.wsKline);
@@ -321,7 +313,7 @@ class WebSocketManager {
         this.wsKline = null;
         this.wsTrade = null;
         this.isConnected = false;
-        this.isConnecting = false;  // ✅ Сбрасываем флаг
+        this.isConnecting = false;
     }
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
@@ -343,7 +335,6 @@ class WebSocketManager {
     }
     
     ensureConnected() {
-        // ✅ Проверяем состояние более аккуратно
         const klineState = this.wsKline?.readyState;
         const tradeState = this.wsTrade?.readyState;
         
@@ -366,7 +357,7 @@ class WebSocketManager {
 
     _onTabVisible() {
         const now = Date.now();
-        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {  // ✅ 10 сек вместо 5
+        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {
             console.log('🔄 Нет данных > 10 сек, переподключаемся');
             this.forceReconnect();
         } else {
@@ -390,4 +381,4 @@ class WebSocketManager {
 
 if (typeof window !== 'undefined') {
     window.WebSocketManager = WebSocketManager;
-} 
+}
