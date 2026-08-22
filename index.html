@@ -1920,44 +1920,67 @@ applyColorsToChart(bgColor, bullishColor, bearishColor);
 }
 
 function applyColorsToChart(bg, bullish, bearish) {
-if (window.chartManagerInstance) {
-window.chartManagerInstance.chart.applyOptions({
-layout: { background: { color: bg } }
-});
-if (window.chartManagerInstance.candleSeries) {
-window.chartManagerInstance.candleSeries.applyOptions({
-upColor: bullish, downColor: bearish, wickUpColor: bullish, wickDownColor: bearish
-});
-}
-if (window.chartManagerInstance.barSeries) {
-window.chartManagerInstance.barSeries.applyOptions({ upColor: bullish, downColor: bearish });
-}
-const cm = window.chartManagerInstance;
-const lastCandle = cm.chartData?.[cm.chartData.length - 1];
-const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
-const lineColor = isBullish ? bullish : bearish;
-const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
-if (series && cm.currentRealPrice) series.applyOptions({ priceLineColor: lineColor });
-if (window.chartManagerInstance.volumeSeries) {
-const currentData = window.chartManagerInstance.chartData;
-if (currentData && currentData.length > 0) {
-const volumeData = currentData.map(candle => ({
-time: candle.time, value: candle.volume,
-color: candle.close >= candle.open ? bullish : bearish
-}));
-window.chartManagerInstance.volumeSeries.setData(volumeData);
-}
-}
-window.chartManagerInstance.bullishColor = bullish;
-window.chartManagerInstance.bearishColor = bearish;
-if (window.rulerLineManager) {
-window.rulerLineManager._rulers.forEach(item => {
-if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
-});
-}
-}
-}
+    if (!window.chartManagerInstance) return;
+    const cm = window.chartManagerInstance;
+    
+    // 1. Обновляем фон
+    cm.chart.applyOptions({ layout: { background: { color: bg } } });
+    
+    // 2. 🔥 СОХРАНЯЕМ ПОЗИЦИЮ СКРОЛЛА, чтобы масштаб не скакал
+    let savedRange = null;
+    try {
+        savedRange = cm.chart.timeScale().getVisibleLogicalRange();
+    } catch(e) {}
 
+    // 3. Обновляем цвета свечей/баров/линии цены
+    cm.bullishColor = bullish;
+    cm.bearishColor = bearish;
+    if (window.CONFIG) {
+        CONFIG.colors.bullish = bullish;
+        CONFIG.colors.bearish = bearish;
+    }
+    
+    if (cm.candleSeries) {
+        cm.candleSeries.applyOptions({
+            upColor: bullish, downColor: bearish,
+            wickUpColor: bullish, wickDownColor: bearish
+        });
+    }
+    if (cm.barSeries) {
+        cm.barSeries.applyOptions({ upColor: bullish, downColor: bearish });
+    }
+    
+    const lastCandle = cm.chartData?.[cm.chartData.length - 1];
+    const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
+    const lineColor = isBullish ? bullish : bearish;
+    const activeSeries = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+    if (activeSeries) {
+        activeSeries.applyOptions({ priceLineColor: lineColor });
+    }
+
+    // 4. 🔥 ПЕРЕРИСОВЫВАЕМ ВСЕ ОБЪЕМЫ С НОВЫМИ ЦВЕТАМИ
+    if (cm.volumeSeries && cm.chartData.length > 0) {
+        // Сбрасываем индекс, чтобы метод сделал setData (все свечи), 
+        // а не update (только последняя свеча)
+        cm._lastVolumeUpdateIndex = -1; 
+        cm._volumeDataDirty = true;
+        cm._updateVolumeOptimized();
+    }
+
+    // 5. 🔥 ВОССТАНАВЛИВАЕМ ПОЗИЦИЮ СКРОЛЛА
+    if (savedRange) {
+        try {
+            cm.chart.timeScale().setVisibleLogicalRange(savedRange);
+        } catch(e) {}
+    }
+
+    // 6. Обновляем линейки
+    if (window.rulerLineManager) {
+        window.rulerLineManager._rulers.forEach(item => {
+            if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+        });
+    }
+}
 function rgbToHex(rgb) {
 if (!rgb) return '#000000';
 if (rgb.startsWith('#')) return rgb;
