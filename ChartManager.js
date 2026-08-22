@@ -984,23 +984,20 @@ class ChartManager {
             if (last && aligned > last.time) {
                 const timeSinceNewCandle = nowSec - aligned;
 
-                if (timeSinceNewCandle < 5) {
-                    this._candleCheckerTimeout = setTimeout(check, 250);
-                    return;
+                // ПАТЧ 1.3: НЕ создаём фиктивную (placeholder) свечу.
+                // Единственный легитимный источник новой свечи — kline-сообщение
+                // от биржи (WebSocketManager → updateLastCandle / _createNewCandle).
+                // Раньше здесь рисовалась "придуманная" doji-свеча
+                // (open=high=low=close=цена закрытия предыдущей, volume=0),
+                // которую потом резко заменяло реальное сообщение с биржи —
+                // это и было визуальным "скачком"/"дорисовкой".
+                // Если задержка аномально большая — это сигнал проблемы с
+                // сокетом, чиним подключение, а не рисуем данные, которых
+                // нет на бирже.
+                if (timeSinceNewCandle > 8 && window.wsManager?.ensureConnected) {
+                    console.warn('⚠️ Kline задерживается > 8с — проверяем WS-соединение');
+                    window.wsManager.ensureConnected();
                 }
-
-                console.warn('⚠️ Kline задерживается > 5 сек, создаём временную свечу');
-                const newCandle = {
-                    time: aligned,
-                    open: last.close,
-                    high: last.close,
-                    low: last.close,
-                    close: last.close,
-                    volume: 0,
-                    quoteVolume: 0,
-                    _isPlaceholder: true
-                };
-                this._createNewCandle(newCandle);
             }
 
             this._candleCheckerTimeout = setTimeout(check, 250);
@@ -1420,9 +1417,14 @@ class ChartManager {
             return;
         }
 
+        // ПАТЧ 1.1: high/low строятся ТОЛЬКО из kline-потока биржи (см.
+        // updateLastCandle). Trade/ticker-цена (этот метод) обновляет
+        // исключительно close — визуальное "живое" тело свечи и ценник.
+        // Если разрешить трейдам двигать high/low, значения расходятся
+        // с официальным kline биржи (разные алгоритмы агрегации/округления
+        // на стороне биржи и клиента) — это и была причина несовпадающих
+        // фитилей.
         lastCandle.close = price;
-        lastCandle.high = Math.max(lastCandle.high, price);
-        lastCandle.low = Math.min(lastCandle.low, price);
 
         this.currentRealPrice = price;
         this.lastCandle = lastCandle;
@@ -1487,6 +1489,16 @@ class ChartManager {
             this._lastKlineEventTime = eventTime;
         }
 
+        // ПАТЧ 1.5: если последняя свеча в массиве уже финализирована биржей
+        // (candle.isClosed === true пришло ранее) и текущее сообщение относится
+        // к тому же времени, но НЕ является финализирующим — это, скорее всего,
+        // запоздавший дубль после реконнекта. Игнорируем, чтобы не откатить
+        // уже правильные (закрытые) данные обратно на промежуточные.
+        const _lcCheck = this.chartData?.[this.chartData.length - 1];
+        if (_lcCheck && _lcCheck._closed === true && candle.time === _lcCheck.time && candle.isClosed !== true) {
+            return;
+        }
+
         try {
             if (!this._isValidCandle(candle)) {
                 const sanitized = this._sanitizeCandle(candle);
@@ -1524,6 +1536,9 @@ class ChartManager {
                     currentLastCandle.quoteVolume = currentLastCandle.volume;
                 }
                 currentLastCandle._isPlaceholder = false;
+                // ПАТЧ 1.5: помечаем свечу финализированной, когда биржа
+                // прислала isClosed === true (Binance k.x / Bybit k.confirm).
+                currentLastCandle._closed = candle.isClosed === true;
                 this.lastCandle = currentLastCandle;
 
                 if (this.candleSeries) this.candleSeries.update(updateData);
@@ -1539,15 +1554,22 @@ class ChartManager {
                 }
             } else if (existingIndex !== undefined && existingIndex >= 0) {
                 const existingCandle = this.chartData[existingIndex];
+                // ПАТЧ 1.2: не блендим (Math.max/min), а перезаписываем полностью
+                // значениями из kline-сообщения биржи. Блендинг не даёт
+                // неверному фитилю уменьшиться обратно — свеча могла только
+                // "распухать", что и вызывало эффект "дорисовки" уже закрытых
+                // свечей.
+                existingCandle.open = candle.open;
                 existingCandle.close = candle.close;
-                existingCandle.high = Math.max(existingCandle.high, candle.high);
-                existingCandle.low = Math.min(existingCandle.low, candle.low);
+                existingCandle.high = candle.high;
+                existingCandle.low = candle.low;
                 existingCandle.volume = candle.volume;
                 existingCandle.quoteVolume = candle.quoteVolume;
                 if (!existingCandle.quoteVolume && existingCandle.volume) {
                     existingCandle.quoteVolume = existingCandle.volume;
                 }
                 existingCandle._isPlaceholder = false;
+                existingCandle._closed = candle.isClosed === true;
 
                 if (this._isChartValid()) {
                     if (this.candleSeries) this.candleSeries.setData(this.chartData);
@@ -3193,35 +3215,73 @@ class ChartManager {
         }
     }
 
+    // ПАТЧ 1.4: полностью переписан на инкрементальную логику.
+    // Раньше метод делал activeSeries.setData(this.chartData) на весь
+    // массив + безусловный scrollToLast() — это вызывало резкую
+    // перерисовку/рывок при переключении тикера (свечи "перескакивали").
+    // Теперь: точечно поправляем последнюю кэшированную свечу (если
+    // сервер уточнил данные) и добавляем новые свечи через .update(),
+    // без полного setData. scrollToLast() вызывается только если
+    // пользователь не листает историю и реально появились новые свечи.
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
         const genId = this._activeGeneration;
         try {
             if (symbol !== this.currentSymbol || exchange !== this.currentExchange || !this._isChartValid()) return;
-            const freshCandles = await this.fetchKlines(
-                symbol, exchange, marketType, interval, 100,
-                null,
-                'background'
-            );
+
+            const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, 100, null, 'background');
             if (!freshCandles || freshCandles.length === 0 || !this._isChartValid()) return;
             if (symbol !== this.currentSymbol || this._activeGeneration !== genId) return;
+            if (!this.chartData.length) return;
 
-            const lastCachedTime = this.chartData.length > 0 ? this.chartData[this.chartData.length - 1].time : 0;
-            const lastFreshTime = freshCandles[freshCandles.length - 1].time;
+            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            const lastCachedTime = this.chartData[this.chartData.length - 1].time;
 
-            if (lastFreshTime > lastCachedTime) {
-                const newCandles = freshCandles.filter(c => c.time > lastCachedTime);
+            // 1) точечно поправить последнюю кэшированную свечу, если сервер
+            // прислал более точные данные (без setData всего массива)
+            const matchLast = freshCandles.find(c => c.time === lastCachedTime);
+            if (matchLast) {
+                const lc = this.chartData[this.chartData.length - 1];
+                lc.open = matchLast.open;
+                lc.high = matchLast.high;
+                lc.low = matchLast.low;
+                lc.close = matchLast.close;
+                lc.volume = matchLast.volume;
+                lc.quoteVolume = matchLast.quoteVolume;
+                if (activeSeries) {
+                    activeSeries.update({ time: lc.time, open: lc.open, high: lc.high, low: lc.low, close: lc.close });
+                }
+            }
+
+            // 2) добавить новые свечи инкрементально через .update(), НЕ через
+            // setData() на весь массив — это и вызывало рывок при смене тикера
+            const newCandles = freshCandles.filter(c => c.time > lastCachedTime);
+            if (newCandles.length > 0) {
                 this.chartData.push(...newCandles);
                 this._rebuildTimeMap();
                 this._volumeDataDirty = true;
                 this._lastVolumeUpdateIndex = -1;
-                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                if (activeSeries) activeSeries.setData(this.chartData);
+
+                for (const c of newCandles) {
+                    if (activeSeries) {
+                        activeSeries.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+                    }
+                }
                 this._updateVolumeOptimized();
+            }
+
+            if (matchLast || newCandles.length > 0) {
+                this.lastCandle = this.chartData[this.chartData.length - 1];
                 this._syncLineColor();
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+            }
+
+            // Не выдёргиваем пользователя из истории, которую он листает
+            if (!this._isViewingHistory && newCandles.length > 0) {
                 this.scrollToLast();
             }
-        } catch (error) { console.warn('⚠️ Ошибка фонового обновления:', error); }
+        } catch (error) {
+            console.warn('⚠️ Ошибка фонового обновления:', error);
+        }
     }
 
     scheduleDrawingsUpdate(forceHighPriority = false) {
