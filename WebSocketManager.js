@@ -6,10 +6,36 @@ class WebSocketManager {
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
-        this.isConnecting = false;  // ✅ флаг активного подключения
-        
+        this.isConnecting = false;  // теперь чисто информационный флаг (для UI/логов),
+                                     // больше НЕ блокирует новые попытки подключения —
+                                     // см. ПАТЧ WS-1 в _doConnect()
+
+        // ПАТЧ WS-1: счётчик поколений подключения. Каждая реальная попытка
+        // подключения (_doConnect) получает свой уникальный id. Все хендлеры
+        // сокетов (onopen/onmessage/onclose) проверяют, что их поколение всё
+        // ещё активно, прежде чем что-либо делать. Это заменяет собой
+        // блокирующий флаг isConnecting, который раньше мог залипнуть в true
+        // навсегда (если предыдущие сокеты застряли в состоянии CONNECTING) и
+        // молча отменять все последующие попытки переподключиться на новый
+        // тикер — доступа к живым данным по новому тикеру не было НИКОГДА,
+        // пока не помогала перезагрузка страницы. Теперь новая попытка
+        // подключения ВСЕГДА выигрывает и всегда корректно закрывает/
+        // нейтрализует предыдущую, независимо от того, в каком состоянии та
+        // находилась.
+        this._connectGeneration = 0;
+
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
+        // ПАТЧ WS-2: отдельная метка времени "последнего РЕЛЕВАНТНОГО
+        // сообщения" — то есть сообщения, которое реально относилось к
+        // ТЕКУЩЕМУ символу и было обработано, а не просто пришло на сокет и
+        // было отфильтровано по символу. _lastMessageTime раньше обновлялась
+        // от любого сообщения на любом сокете (включая сообщения "старого"
+        // тикера, отброшенные фильтром символа сразу после переключения) —
+        // из-за этого _onTabVisible() считал соединение живым и НЕ
+        // переподключался, даже если по факту текущий тикер уже давно не
+        // получает никаких данных.
+        this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
         
@@ -82,14 +108,20 @@ class WebSocketManager {
     }
 
     _doConnect() {
-        // ✅ ЗАЩИТА: не запускаем параллельные подключения
-        if (this.isConnecting) {
-            console.log('⏳ Подключение уже идёт, пропускаем');
-            return;
-        }
-        
-        this._closeSocket();
+        // ПАТЧ WS-1: раньше здесь была проверка `if (this.isConnecting) return;`,
+        // которая могла залипнуть навсегда (см. комментарий в конструкторе) и
+        // молча отменять попытку подключиться к новому тикеру. Теперь любая
+        // попытка ВСЕГДА проходит: получает новое поколение и безусловно
+        // закрывает/нейтрализует всё, что было раньше, в каком бы состоянии
+        // (OPEN/CONNECTING) оно ни находилось — _closeSocket() умеет закрывать
+        // сокеты в обоих состояниях и предварительно обнуляет их обработчики,
+        // так что никакие "запоздалые" события от старых сокетов до чарта не
+        // дойдут в принципе, независимо от generation-проверки ниже (которая
+        // работает как дополнительный defense-in-depth слой).
+        const generation = ++this._connectGeneration;
         this.isConnecting = true;
+
+        this._closeSocket();
         
         const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
         
@@ -100,29 +132,41 @@ class WebSocketManager {
             console.log('🔌 KLINE:', klineUrl);
             console.log('🔌 TRADE:', tradeUrl);
             
-            this.wsKline = this._createWebSocket(klineUrl, 'kline');
-            this.wsTrade = this._createWebSocket(tradeUrl, 'trade');
+            this.wsKline = this._createWebSocket(klineUrl, 'kline', generation);
+            this.wsTrade = this._createWebSocket(tradeUrl, 'trade', generation);
         } else if (this.currentExchange === 'bybit') {
             const wsUrl = 'wss://stream.bybit.com/v5/public/' + (this.currentMarketType === 'spot' ? 'spot' : 'linear');
             console.log('🔌 Bybit:', wsUrl);
-            this.wsKline = this._createWebSocket(wsUrl, 'bybit');
+            this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation);
             this.wsTrade = this.wsKline;
         }
     }
 
-    _createWebSocket(url, type) {
+    _createWebSocket(url, type, generation) {
         let ws;
         try {
             ws = new WebSocket(url);
         } catch (e) {
             console.error(`❌ Ошибка создания ${type} WebSocket:`, e);
+            // ПАТЧ WS-1: сбрасываем isConnecting и здесь — раньше при синхронном
+            // исключении в конструкторе WebSocket флаг isConnecting оставался
+            // true навсегда (сейчас это уже не критично, так как isConnecting
+            // больше ничего не блокирует, но держим состояние консистентным
+            // для UI/логов).
+            if (generation === this._connectGeneration) this.isConnecting = false;
             this._scheduleReconnect(3000);
             return null;
         }
         
         ws._type = type;
+        ws._generation = generation;
         
         ws.onopen = () => {
+            // ПАТЧ WS-1: если за время хендшейка успела прийти ещё более новая
+            // попытка подключения — этот сокет уже устарел, игнорируем событие
+            // (сам сокет будет/уже закрыт последующим _closeSocket()).
+            if (generation !== this._connectGeneration) return;
+
             console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
             
             if (type === 'bybit') {
@@ -135,6 +179,10 @@ class WebSocketManager {
                 
                 clearInterval(ws._pingInterval);
                 ws._pingInterval = setInterval(() => {
+                    if (generation !== this._connectGeneration) {
+                        clearInterval(ws._pingInterval);
+                        return;
+                    }
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}
                     }
@@ -157,11 +205,22 @@ class WebSocketManager {
         };
         
         ws.onmessage = (event) => {
+            // ПАТЧ WS-1: сообщения устаревшего поколения полностью
+            // игнорируются на входе — они не должны влиять даже на грубую
+            // метку "сокет вообще что-то присылает".
+            if (generation !== this._connectGeneration) return;
             this._lastMessageTime = Date.now();
             this._handleMessage(event.data, type);
         };
         
         ws.onclose = (event) => {
+            // ПАТЧ WS-1: если это поколение уже неактуально (заменено более
+            // новой попыткой через _closeSocket()/новый _doConnect()) — не
+            // считаем это "обрывом текущего соединения" и не планируем
+            // реконнект от его имени; актуальное поколение само управляет
+            // своим жизненным циклом.
+            if (generation !== this._connectGeneration) return;
+
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
             this.isConnected = false;
             this.isConnecting = false;
@@ -184,6 +243,7 @@ class WebSocketManager {
         };
         
         ws.onerror = (error) => {
+            if (generation !== this._connectGeneration) return;
             if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
                 console.error(`❌ ${type.toUpperCase()} WebSocket ошибка:`, error);
             }
@@ -203,6 +263,12 @@ class WebSocketManager {
                     const k = raw.k;
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
                     if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
+
+                    // ПАТЧ WS-2: обновляем метку "релевантного" сообщения только
+                    // после того, как символ подтверждён совпадающим с текущим —
+                    // именно эта метка используется для решения "надо ли
+                    // переподключаться" в _onTabVisible().
+                    this._lastRelevantMessageTime = Date.now();
                     
                     this._lastKlineTime = Math.floor(k.t / 1000);
                     
@@ -223,6 +289,8 @@ class WebSocketManager {
                 if (raw.e === 'aggTrade') {
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
                     if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
+
+                    this._lastRelevantMessageTime = Date.now();
                     
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
@@ -241,6 +309,8 @@ class WebSocketManager {
                 }
                 
                 if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
+
+                this._lastRelevantMessageTime = Date.now();
                 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
                     const k = raw.data[0];
@@ -331,6 +401,10 @@ class WebSocketManager {
             clearTimeout(this._connectDebounceTimer); 
             this._connectDebounceTimer = null; 
         }
+        // ПАТЧ WS-1: явное закрытие "снаружи" тоже должно инвалидировать
+        // текущее поколение, чтобы никакой уже летящий onopen/onmessage от
+        // закрываемых сокетов не смог проскочить проверку generation.
+        this._connectGeneration++;
         this._closeSocket();
     }
     
@@ -357,8 +431,11 @@ class WebSocketManager {
 
     _onTabVisible() {
         const now = Date.now();
-        if (this._lastMessageTime && (now - this._lastMessageTime > 10000)) {
-            console.log('🔄 Нет данных > 10 сек, переподключаемся');
+        // ПАТЧ WS-2: используем _lastRelevantMessageTime вместо _lastMessageTime —
+        // иначе трафик от уже отфильтрованного (неверного) символа маскировал
+        // реальное отсутствие данных по текущему тикеру.
+        if (this._lastRelevantMessageTime && (now - this._lastRelevantMessageTime > 10000)) {
+            console.log('🔄 Нет данных по текущему тикеру > 10 сек, переподключаемся');
             this.forceReconnect();
         } else {
             this.ensureConnected();
