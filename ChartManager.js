@@ -1545,13 +1545,9 @@ class ChartManager {
         const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
         const existingIndex = this._candleTimeMap.get(candle.time);
 
-        // ✅ ИСПРАВЛЕНО: Throttle ТОЛЬКО для обновления текущей свечи
-        // Новая свеча ВСЕГДА проходит без задержки
-        if (isLastCandle && !isNewCandle && (this.currentInterval === '1m' || this.currentInterval === '3m')) {
-            if (!this._throttle('candle_update_' + candle.time, 100)) {
-                return; // Блокируем только частое обновление текущей свечи
-            }
-        }
+        // ✅ Throttle убран: .update() последнего бара — дешёвая операция,
+        // рассчитанная библиотекой именно на частые тики реального времени.
+        // Искусственная задержка тут только вредила синхронности с биржей.
 
         const updateData = {
             time: candle.time,
