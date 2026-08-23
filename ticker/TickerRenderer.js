@@ -11,6 +11,7 @@ class TickerRenderer {
         this._renderRafId = null;
         this._firstRender = true;
         this._updatePriceRaf = null;
+        this._pendingTrailingUpdate = false; // ✅ НОВОЕ: флаг "есть отложенный вызов updatePriceElements"
         this._escapeDiv = document.createElement('div');
 
         this._lastUpdateTime = 0;
@@ -18,6 +19,8 @@ class TickerRenderer {
 
         this.SCROLL_BUFFER = 10;
         this._formatCache = new Map();
+        
+        this._keyIndexMap = new Map(); // ✅ НОВОЕ: key -> индекс в текущем displayedTickers, для прунинга DOM
 
         this._injectFlashCSS();
     }
@@ -55,16 +58,38 @@ class TickerRenderer {
         document.head.appendChild(style);
     }
 
+    // ✅ ФИКС: раньше вызов, попавший в окно троттлинга (66мс), просто отбрасывался
+    // без какого-либо trailing-вызова. Если следующий "естественный" вызов
+    // updatePriceElements() приходил нескоро (метод вызывается сравнительно редко —
+    // после REST-батчей), UI мог остаться не обновлённым дольше, чем нужно.
+    // Теперь отброшенный вызов помечается флагом и гарантированно перезапускается
+    // сразу после завершения текущего цикла.
     updatePriceElements() {
-        const now = performance.now();
-        if (now - this._lastUpdateTime < this._updateInterval) return;
-        this._lastUpdateTime = now;
+        if (this._updatePriceRaf) {
+            this._pendingTrailingUpdate = true;
+            return;
+        }
 
-        if (this._updatePriceRaf) return;
-        this._updatePriceRaf = requestAnimationFrame(() => {
+        const now = performance.now();
+        const elapsed = now - this._lastUpdateTime;
+        const run = () => {
             this._updatePriceRaf = null;
+            this._lastUpdateTime = performance.now();
             this._doUpdatePriceElements();
-        });
+            if (this._pendingTrailingUpdate) {
+                this._pendingTrailingUpdate = false;
+                this.updatePriceElements();
+            }
+        };
+
+        if (elapsed >= this._updateInterval) {
+            this._updatePriceRaf = requestAnimationFrame(run);
+        } else {
+            const delay = this._updateInterval - elapsed;
+            this._updatePriceRaf = setTimeout(() => {
+                requestAnimationFrame(run);
+            }, delay);
+        }
     }
 
     _doUpdatePriceElements() {
@@ -141,7 +166,7 @@ class TickerRenderer {
         }
     }
 
-           updatePriceForSymbol(key, price, change, volume, trades) {
+    updatePriceForSymbol(key, price, change, volume, trades) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
 
@@ -176,30 +201,26 @@ class TickerRenderer {
             }
         }
 
-        // ✅ --- ТЕСТ: Объем (Volume) --- //
-        if (volume !== undefined && volume !== null) {
-            const volEl = els.volume || el.querySelector('.ticker-volume'); 
-            if (volEl) {
-                // Убрали проверку и добавили красный цвет
-                volEl.textContent = this.formatVolume(volume);
-                volEl.style.color = 'red'; 
-            } else {
-                console.warn(`❌ Не найден DOM элемент объема для ${key}. Класс .ticker-volume неверный!`);
+        // ✅ ФИКС: убраны отладочные вставки (принудительная покраска в
+        // red/aqua инлайн-стилями и console.warn на каждый апдейт). Это был
+        // забытый тестовый код — он перекрывал любую нормальную стилизацию
+        // колонок объёма и сделок при каждом live-обновлении цены.
+        // Логика приведена к тому же простому виду, что и в _doUpdatePriceElements.
+        if (els.volume && volume !== undefined && volume !== null) {
+            const newVolume = this.formatVolume(volume);
+            if (els.volume.textContent !== newVolume) {
+                els.volume.textContent = newVolume;
             }
         }
 
-        // ✅ --- ТЕСТ: Количество сделок (Trades) --- //
-        if (trades !== undefined && trades !== null) {
-            const tradesEl = els.trades || el.querySelector('.ticker-trades');
-            if (tradesEl) {
-                // Убрали проверку и добавили голубой цвет
-                tradesEl.textContent = this.formatTrades(trades);
-                tradesEl.style.color = 'aqua';
-            } else {
-                console.warn(`❌ Не найден DOM элемент сделок для ${key}. Класс .ticker-trades неверный!`);
+        if (els.trades && trades !== undefined && trades !== null) {
+            const newTrades = this.formatTrades(trades);
+            if (els.trades.textContent !== newTrades) {
+                els.trades.textContent = newTrades;
             }
         }
     }
+
     sortTickers(tickers) {
         const arrayToSort = tickers || this.parent?.tickers;
         if (!arrayToSort || !Array.isArray(arrayToSort)) return [];
@@ -309,6 +330,15 @@ class TickerRenderer {
         const displayed = this.getFilteredTickers();
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
+
+        // ✅ НОВОЕ: строим индекс key -> позиция для текущего отфильтрованного списка.
+        // Используется в renderVisibleTickers для прунинга давно ушедших за пределы
+        // экрана элементов (см. фикс утечки DOM-узлов ниже).
+        this._keyIndexMap = new Map();
+        for (let i = 0; i < displayed.length; i++) {
+            const t = displayed[i];
+            this._keyIndexMap.set(`${t.symbol}:${t.exchange}:${t.marketType}`, i);
+        }
 
         if (this._scrollHandler) {
             container.removeEventListener('scroll', this._scrollHandler);
@@ -449,12 +479,31 @@ class TickerRenderer {
             itemsContainer.appendChild(fragment);
         }
 
+        // ✅ ФИКС: раньше элементы, ушедшие за пределы видимой области, только
+        // скрывались (display:none) и оставались в DOM и в this.tickerElements
+        // НАВСЕГДА. При скролле большого списка (сотни/тысячи тикеров) это давало
+        // неограниченный рост числа DOM-узлов и размера Map — реальная утечка
+        // памяти и постепенная деградация производительности при долгой сессии.
+        // Теперь элементы, ушедшие далеко за пределы видимой зоны (с запасом
+        // PRUNE_MARGIN, чтобы не пересоздавать их при небольшом дрожании скролла),
+        // полностью удаляются из DOM и из Map — при возврате к ним они будут
+        // просто пересозданы через createTickerElement, это дёшево.
+        const PRUNE_MARGIN = this.visibleCount + this.SCROLL_BUFFER * 3;
         for (const [key, el] of this.tickerElements.entries()) {
-            if (!visibleKeys.has(key) && el.style.display !== 'none') {
+            if (visibleKeys.has(key)) continue;
+
+            const idx = this._keyIndexMap.get(key);
+            const outOfKeepZone = idx === undefined || idx < startIndex - PRUNE_MARGIN || idx >= endIndex + PRUNE_MARGIN;
+
+            if (outOfKeepZone) {
+                el.remove();
+                this.tickerElements.delete(key);
+                if (this.parent?._rowDomCache) this.parent._rowDomCache.delete(key);
+            } else if (el.style.display !== 'none') {
                 el.style.display = 'none';
             }
         }
-    } // <--- ВОТ ЭТА СКОБКА БЫЛА ПОТЕРЯНА
+    }
 
     createTickerElement(ticker, index) {
         const div = document.createElement('div');
@@ -589,96 +638,100 @@ class TickerRenderer {
         return result;
     }
 
-  setupHeaderSorting() {
-    const parent = this.parent;
-    if (!parent) return;
+    setupHeaderSorting() {
+        const parent = this.parent;
+        if (!parent) return;
 
-    if (parent._sortClickHandler) {
-        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-            header.removeEventListener('click', parent._sortClickHandler);
-        });
-    }
+        if (parent._sortClickHandler) {
+            document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+                header.removeEventListener('click', parent._sortClickHandler);
+            });
+        }
 
-    const savedSortBy = localStorage.getItem('tickerSortBy');
-    const savedSortDir = localStorage.getItem('tickerSortDir');
-    const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
-    
-    // ✅ ИЗМЕНЕНО: Разрешаем null, чтобы сортировку можно было отключить
-    // Если в localStorage пусто, sortBy и sortDirection будут null
-    parent.state.sortBy = VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null;
-    parent.state.sortDirection = (savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null;
+        const savedSortBy = localStorage.getItem('tickerSortBy');
+        const savedSortDir = localStorage.getItem('tickerSortDir');
+        const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
+        
+        // ✅ ФИКС: раньше здесь была логика "нет валидного значения в localStorage
+        // → null", которая ПОСЛЕ конструктора TickerPanel (где явно задумано
+        // "ключа нет вообще → дефолт volume/desc для нового пользователя")
+        // тут же перезатирала этот дефолт обратно на null. В итоге у новых
+        // пользователей список при первой загрузке оставался вообще без
+        // сортировки, хотя по коду это явно не задумывалось.
+        // Теперь здесь та же трёхсостояниевая логика, что и в конструкторе:
+        // ключа нет (null) → дефолт volume/desc; ключ есть, но пустая строка
+        // (пользователь явно отключил сортировку) → null; валидное значение → оно.
+        parent.state.sortBy = savedSortBy === null
+            ? 'volume'
+            : (VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null);
+        parent.state.sortDirection = savedSortDir === null
+            ? 'desc'
+            : ((savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null);
 
-    parent._sortClickHandler = (e) => {
-        e.stopPropagation();
-        const header = e.currentTarget;
-        const sortBy = header.dataset.sort;
+        parent._sortClickHandler = (e) => {
+            e.stopPropagation();
+            const header = e.currentTarget;
+            const sortBy = header.dataset.sort;
 
-        // ✅ Логика трех состояний: desc -> asc -> отключено
-        if (parent.state.sortBy === sortBy) {
-            if (parent.state.sortDirection === 'desc') {
-                parent.state.sortDirection = 'asc';
-            } else if (parent.state.sortDirection === 'asc') {
-                // Третье нажатие отключает сортировку
-                parent.state.sortBy = null;
-                parent.state.sortDirection = null;
+            if (parent.state.sortBy === sortBy) {
+                if (parent.state.sortDirection === 'desc') {
+                    parent.state.sortDirection = 'asc';
+                } else if (parent.state.sortDirection === 'asc') {
+                    parent.state.sortBy = null;
+                    parent.state.sortDirection = null;
+                }
+            } else {
+                parent.state.sortBy = sortBy;
+                parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
             }
-        } else {
-            // Если кликаем по новой колонке, включаем с дефолтным направлением
-            parent.state.sortBy = sortBy;
-            parent.state.sortDirection = sortBy === 'flag' ? 'asc' : 'desc';
-        }
 
-        // ✅ ИЗМЕНЕНО: Сохраняем пустую строку вместо null, чтобы localStorage не превращал null в строку "null"
-        localStorage.setItem('tickerSortBy', parent.state.sortBy || '');
-        localStorage.setItem('tickerSortDir', parent.state.sortDirection || '');
+            localStorage.setItem('tickerSortBy', parent.state.sortBy || '');
+            localStorage.setItem('tickerSortDir', parent.state.sortDirection || '');
 
-        if (parent.watchlistManager?._saveSortForList) {
-            parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
-        }
+            if (parent.watchlistManager?._saveSortForList) {
+                parent.watchlistManager._saveSortForList(parent.watchlistManager.activeListId);
+            }
 
-        // 1. Сбрасываем все иконки к виду "неактивно"
-        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-            icon.className = 'fas fa-sort'; 
-            icon.style.display = '';        
+            document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+                icon.className = 'fas fa-sort'; 
+                icon.style.display = '';        
+            });
+
+            if (parent.state.sortBy) {
+                const icon = header.querySelector('i');
+                if (icon) {
+                    if (parent.state.sortBy === 'flag') {
+                        icon.style.display = 'none';
+                    } else {
+                        icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                    }
+                }
+            }
+
+            parent.filterCache = null;
+            parent.renderTickerList();
+        };
+
+        document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
+            header.addEventListener('click', parent._sortClickHandler);
+            if (header.dataset.sort === 'flag') {
+                const icon = header.querySelector('i');
+                if (icon) icon.style.display = 'none';
+            }
         });
 
-        // 2. Если сортировка активна, подсвечиваем нужную иконку
         if (parent.state.sortBy) {
-            const icon = header.querySelector('i');
-            if (icon) {
-                if (parent.state.sortBy === 'flag') {
-                    icon.style.display = 'none';
-                } else {
+            const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
+            if (activeHeader) {
+                const icon = activeHeader.querySelector('i');
+                if (icon) {
                     icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                    if (parent.state.sortBy === 'flag') icon.style.display = 'none';
                 }
             }
         }
-
-        parent.filterCache = null;
-        parent.renderTickerList();
-    };
-
-    document.querySelectorAll('.table-header span[data-sort]').forEach(header => {
-        header.addEventListener('click', parent._sortClickHandler);
-        if (header.dataset.sort === 'flag') {
-            const icon = header.querySelector('i');
-            if (icon) icon.style.display = 'none';
-        }
-    });
-
-    // ✅ ИЗМЕНЕНО: Восстановление состояния при загрузке
-    // Если state.sortBy пуст, то ни одна стрелка не будет подсвечена
-    if (parent.state.sortBy) {
-        const activeHeader = document.querySelector(`.table-header span[data-sort="${parent.state.sortBy}"]`);
-        if (activeHeader) {
-            const icon = activeHeader.querySelector('i');
-            if (icon) {
-                icon.className = parent.state.sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                if (parent.state.sortBy === 'flag') icon.style.display = 'none';
-            }
-        }
     }
-}
+
     destroy() {
         if (this._scrollHandler) {
             const container = document.getElementById('tickerListContainer');
@@ -689,7 +742,13 @@ class TickerRenderer {
         if (this.parent?._rowDomCache) {
             this.parent._rowDomCache.clear();
         }
-        if (this._updatePriceRaf) cancelAnimationFrame(this._updatePriceRaf);
+        this._keyIndexMap.clear(); // ✅ НОВОЕ: чистим индекс вместе с остальным состоянием
+        if (this._updatePriceRaf) {
+            // ✅ ФИКС: _updatePriceRaf теперь может быть либо requestAnimationFrame id,
+            // либо setTimeout id (см. новую updatePriceElements) — отменяем оба варианта безопасно
+            cancelAnimationFrame(this._updatePriceRaf);
+            clearTimeout(this._updatePriceRaf);
+        }
         if (this._renderRafId) cancelAnimationFrame(this._renderRafId);
     }
 }
