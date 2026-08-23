@@ -21,6 +21,25 @@ class TimerRenderer {
         this._cachedColor = null;
     }
 
+    // ✅ Определяем, тёмный ли цвет (по яркости) - идентично ChartManager
+    _isDarkColor(hexColor) {
+        if (!hexColor || typeof hexColor !== 'string') return false;
+        let hex = hexColor.replace('#', '');
+        if (hex.length === 3) {
+            hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        }
+        if (hex.length !== 6) return false;
+        const r = parseInt(hex.substring(0, 2), 16);
+        const g = parseInt(hex.substring(2, 4), 16);
+        const b = parseInt(hex.substring(4, 6), 16);
+        return ((r * 299) + (g * 587) + (b * 114)) / 1000 < 150;
+    }
+
+    // ✅ Получаем цвет текста для плашки - идентично ChartManager
+    _getTextColorForBackground(bgColor) {
+        return this._isDarkColor(bgColor) ? '#ffffff' : '#000000';
+    }
+
     draw(target) {
         if (!this.enabled) return;
         
@@ -70,26 +89,31 @@ class TimerRenderer {
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            let bgColor = this._cachedColor;
-            if (this._colorDirty || !bgColor) {
-                if (typeof chartManager.getCurrentPriceColor === 'function') {
+            // ✅ ИСПРАВЛЕНИЕ: Получаем цвет ТОЧНО так же, как это делает ChartManager для плашки цены
+            let bgColor = '#26a69a'; // дефолт
+            
+            if (this._colorDirty || !this._cachedColor) {
+                // 1. Приоритет: родной метод ChartManager, который использует сама плашка цены
+                if (typeof chartManager._getLineColor === 'function') {
+                    bgColor = chartManager._getLineColor();
+                } 
+                // 2. Альтернативный родной метод
+                else if (typeof chartManager.getCurrentPriceColor === 'function') {
                     bgColor = chartManager.getCurrentPriceColor();
-                } else {
-                    if (lastCandle?.close != null && lastCandle?.open != null) {
-                        bgColor = lastCandle.close >= lastCandle.open 
-                            ? (chartManager.bullishColor || '#26a69a')
-                            : (chartManager.bearishColor || '#ef5350');
-                    } else {
-                        bgColor = chartManager._lastAppliedColor || '#26a69a';
-                    }
+                } 
+                // 3. Фолбэк: идентичная логика вычисления, если методы вдруг недоступны
+                else {
+                    const isBullish = lastCandle.close >= lastCandle.open;
+                    bgColor = isBullish 
+                        ? (chartManager.bullishColor || '#26a69a') 
+                        : (chartManager.bearishColor || '#ef5350');
                 }
-                if (bgColor) {
-                    this._cachedColor = bgColor;
-                    this._colorDirty = false;
-                }
+                
+                this._cachedColor = bgColor;
+                this._colorDirty = false;
+            } else {
+                bgColor = this._cachedColor;
             }
-
-            if (!bgColor) bgColor = '#26a69a';
 
             ctx.save();
             ctx.fillStyle = bgColor; 
@@ -99,7 +123,10 @@ class TimerRenderer {
             ctx.fill();
             
             ctx.shadowBlur = 0;
-            ctx.fillStyle = '#ffffff';
+    
+            // ✅ Цвет текста автоматически подстраивается под фон (белый на тёмном, чёрный на светлом)
+            const textColor = this._getTextColorForBackground(bgColor);
+            ctx.fillStyle = textColor;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(timerText, rectX + rectWidth / 2, rectY + rectHeight / 2 + (1 * vpr));
@@ -179,6 +206,8 @@ class TimerPrimitive {
     updatePrice(price) {
         if (price != null && !isNaN(price) && this.isEnabled()) {
             this._chartManager.currentRealPrice = price;
+            // ✅ Принудительно сбрасываем кэш цвета при обновлении цены, 
+            // так как свеча могла сменить направление (бычья/медвежья)
             this._paneView._renderer.invalidateColor();
             this.requestRedraw();
         }
@@ -332,7 +361,9 @@ class TimerManager {
     _subscribeToColorChanges() {
         if (this._colorChangeHandler) return;
         if (typeof this._chartManager.onColorChange === 'function') {
-            this._colorChangeHandler = () => this._primitive?.invalidateColor();
+            this._colorChangeHandler = () => {
+                this._primitive?.invalidateColor();
+            };
             this._chartManager.onColorChange(this._colorChangeHandler);
         }
     }
@@ -405,12 +436,10 @@ class TimerManager {
         this._primitive?.invalidateColor();
     }
 
-    // ✅ ДОБАВЛЕННЫЙ МЕТОД: делегирует вызов к primitive, предотвращая ошибку "is not a function"
     updatePrice(price) {
         if (this._primitive) {
             this._primitive.updatePrice(price);
         } else {
-            // Фолбэк, если primitive ещё не инициализирован
             if (this._chartManager) {
                 this._chartManager.currentRealPrice = price;
             }
