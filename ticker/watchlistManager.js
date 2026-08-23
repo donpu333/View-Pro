@@ -16,17 +16,22 @@ class WatchlistManager {
         this._destroyed = false;
         this._outsideClickListener = null;
         this._escapeDiv = document.createElement('div');
+        this._activateToken = 0; // ✅ НОВОЕ: токен поколения для activateList (защита от гонки быстрых переключений)
     }
 
     async _waitForDBAndLoad() {
         if (!window.db || !window.dbReady) {
             console.log('⏳ WatchlistManager: жду IndexedDB...');
             await new Promise((resolve) => {
+                // ✅ ФИКС: сохраняем id внешнего таймаута и чистим его в обоих путях
+                // завершения (успех через интервал / истечение времени). Раньше при
+                // быстром успехе interval сам себя чистил и резолвил промис, но
+                // внешний 10-секундный setTimeout продолжал висеть впустую до срабатывания.
                 const check = setInterval(() => {
-                    if (this._destroyed) { clearInterval(check); resolve(); return; }
-                    if (window.db && window.dbReady) { clearInterval(check); resolve(); }
+                    if (this._destroyed) { clearInterval(check); clearTimeout(fallback); resolve(); return; }
+                    if (window.db && window.dbReady) { clearInterval(check); clearTimeout(fallback); resolve(); }
                 }, 100);
-                setTimeout(() => { clearInterval(check); resolve(); }, 10000);
+                const fallback = setTimeout(() => { clearInterval(check); resolve(); }, 10000);
             });
         }
         this._dbReady = !!(window.db && window.dbReady);
@@ -214,6 +219,13 @@ class WatchlistManager {
         if (!this.lists.has(listId)) return;
         if (this.activeListId === listId) { this.closeDropdown(); return; }
 
+        // ✅ ФИКС: токен поколения. Если пользователь успевает кликнуть по второму
+        // списку до того, как обработка первого клика полностью завершится, старый
+        // (обогнанный) вызов обнаружит несовпадение токена и прекратит работу, не
+        // трогая состояние — иначе он мог дописать в НОВЫЙ активный список данные,
+        // относящиеся к промежуточному/старому состоянию tickerPanel, испортив его.
+        const myToken = ++this._activateToken;
+
         if (this.activeListId) {
             this._saveSortForList(this.activeListId);
         }
@@ -236,7 +248,10 @@ class WatchlistManager {
             this.tickerPanel.state.favorites = [...(newList.favorites || [])];
         }
 
-        await this.loadSymbolsFromList(listId);
+        this.loadSymbolsFromList(listId);
+        
+        if (this._activateToken !== myToken) return; // ✅ обогнан более новым переключением — молча выходим
+
         this._restoreSortForList(listId);
 
         this.tickerPanel.updateModalCount();
@@ -256,12 +271,12 @@ class WatchlistManager {
                     this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
                 }
                 setTimeout(() => {
+                    if (this._activateToken !== myToken) return; // ✅ на случай, если переключение произошло за эти 100мс
                     this.tickerPanel.focusOnSymbol?.(symbol, exchange, marketType);
                 }, 100);
             }
         }
 
-        // ✅ Запускаем немедленную загрузку цен для нового списка
         this.fetchPricesForActiveList();
     }
 
@@ -273,68 +288,58 @@ class WatchlistManager {
         });
     }
 
-  _restoreSortForList(listId) {
-    if (!this._listSorts) this._listSorts = new Map();
-    const saved = this._listSorts.get(listId);
-    
-    // ✅ Если у списка есть сохраненная сортировка — применяем её
-    if (saved && saved.sortBy) {
-        this.tickerPanel.state.sortBy = saved.sortBy;
-        this.tickerPanel.state.sortDirection = saved.sortDirection;
-    } else {
-        // ✅ Если списка нет в памяти (старый список, дефолтный или сброс) 
-        // — по умолчанию ставим сортировку по объему!
-        this.tickerPanel.state.sortBy = 'volume';
-        this.tickerPanel.state.sortDirection = 'desc';
+    _restoreSortForList(listId) {
+        if (!this._listSorts) this._listSorts = new Map();
+        const saved = this._listSorts.get(listId);
         
-        // Сохраняем эти настройки для списка, чтобы они там остались
-        this._listSorts.set(listId, { sortBy: 'volume', sortDirection: 'desc' });
+        if (saved && saved.sortBy) {
+            this.tickerPanel.state.sortBy = saved.sortBy;
+            this.tickerPanel.state.sortDirection = saved.sortDirection;
+        } else {
+            this.tickerPanel.state.sortBy = 'volume';
+            this.tickerPanel.state.sortDirection = 'desc';
+            this._listSorts.set(listId, { sortBy: 'volume', sortDirection: 'desc' });
+        }
+        
+        this.tickerPanel.filterCache = null;
+        this._updateHeaderIcons();
+        
+        if (this.tickerPanel._scheduleRender) {
+            this.tickerPanel._scheduleRender();
+        } else {
+            this.tickerPanel.renderTickerList();
+        }
     }
-    
-    this.tickerPanel.filterCache = null;
-    this._updateHeaderIcons();
-    
-    // 🚀 ИСПОЛЬЗУЕМ БАТЧИНГ для перерисовки
-    if (this.tickerPanel._scheduleRender) {
-        this.tickerPanel._scheduleRender();
-    } else {
-        this.tickerPanel.renderTickerList();
-    }
-}
-   _updateHeaderIcons() {
-    const sortBy = this.tickerPanel.state.sortBy;
-    const sortDirection = this.tickerPanel.state.sortDirection;
-    
-    // 1. Сбрасываем все иконки к виду "неактивно"
-    document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-        icon.className = 'fas fa-sort';
-        icon.style.display = 'inline-block';
-    });
-    
-    // 2. ✅ ДОБАВЛЕНО: Если сортировка отключена (null), выходим, оставляя все стрелки серыми
-    if (!sortBy) return;
-    
-    // 3. Подсвечиваем нужную иконку
-    const activeHeader = document.querySelector(`.table-header span[data-sort="${sortBy}"]`);
-    if (activeHeader) {
-        const icon = activeHeader.querySelector('i');
-        if (icon) {
-            icon.className = sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-            if (sortBy === 'flag') {
-                icon.style.display = 'none';
+
+    _updateHeaderIcons() {
+        const sortBy = this.tickerPanel.state.sortBy;
+        const sortDirection = this.tickerPanel.state.sortDirection;
+        
+        document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
+            icon.className = 'fas fa-sort';
+            icon.style.display = 'inline-block';
+        });
+        
+        if (!sortBy) return;
+        
+        const activeHeader = document.querySelector(`.table-header span[data-sort="${sortBy}"]`);
+        if (activeHeader) {
+            const icon = activeHeader.querySelector('i');
+            if (icon) {
+                icon.className = sortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                if (sortBy === 'flag') {
+                    icon.style.display = 'none';
+                }
             }
         }
     }
-}
 
-    // ✅ Ускорено: таймер уменьшен до 500 мс и убран renderTickerList
     _schedulePriceLoadForList(symbols) {
         if (!symbols || symbols.length === 0) return;
         if (this._priceLoadTimer) clearTimeout(this._priceLoadTimer);
         this._priceLoadTimer = setTimeout(async () => {
             this._priceLoadTimer = null;
             await this.fetchPricesForActiveList();
-            // renderTickerList убран — цены обновятся через updatePriceElements
         }, 500);
     }
 
@@ -343,49 +348,77 @@ class WatchlistManager {
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
         
-        // ✅ Запускаем REST немедленно
         if (this.tickerPanel?.pollRestData) {
             this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
         }
         return true;
     }
-loadSymbolsFromList(listId) {
-    const list = this.lists.get(listId);
-    if (!list) return;
 
-    this.tickerPanel.tickers = [];
-    this.tickerPanel.tickersMap.clear();
-    this.tickerPanel.tickerElements?.clear();
-    
-    // ✅ ДОБАВЛЕНО: Очистка кэша DOM-элементов, чтобы избежать артефактов при смене списка
-    this.tickerPanel._rowDomCache?.clear(); 
-    
-    this.tickerPanel.renderer.displayedTickers = [];
-    this.tickerPanel.renderer.totalItems = list.symbols.length;
-    this.tickerPanel.filterCache = null;
-    this.tickerPanel.state.customSymbols = [...list.symbols];
-    this.tickerPanel.state.flags = { ...(list.flags || {}) };
-    this.tickerPanel.state.favorites = [...(list.favorites || [])];
+    loadSymbolsFromList(listId) {
+        const list = this.lists.get(listId);
+        if (!list) return;
 
-    const container = document.getElementById('tickerListContainer');
-    if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+        // ✅ ФИКС: отписываемся от PriceManager для ВСЕХ ранее подписанных символов
+        // ДО очистки tickersMap. Раньше этого не делалось вообще — старые подписки
+        // навсегда оставались висеть внутри PriceManager.subscribers (утечка),
+        // продолжая молча получать и отбрасывать обновления для уже не отображаемых
+        // тикеров (см. ранний return в TickerPanel._onPriceUpdate по "!ticker").
+        if (window.priceManagerInstance && this.tickerPanel._pmPriceHandler) {
+            for (const key of this.tickerPanel._subscribedSymbols) {
+                window.priceManagerInstance.unsubscribe(key, this.tickerPanel._pmPriceHandler);
+            }
+        }
+        this.tickerPanel._subscribedSymbols.clear();
 
-    for (const symbolKey of list.symbols) {
-        const parts = symbolKey.split(':');
-        if (parts.length !== 3) continue;
-        const [symbol, exchange, marketType] = parts;
-        const flag = this.tickerPanel.state.flags[symbolKey] || null;
-        const t = {
-            symbol, price: 0, change: 0, volume: 0,
-            trades: null, custom: true, prevPrice: 0,
-            exchange, marketType, flag
-        };
-        this.tickerPanel.tickers.push(t);
-        this.tickerPanel.tickersMap.set(symbolKey, t);
+        // ✅ ФИКС: мутируем массив на месте вместо this.tickerPanel.tickers = [].
+        // Переприсваивание рвёт общую ссылку с storage.tickers (см. предыдущий аудит TickerPanel).
+        this.tickerPanel.tickers.length = 0;
+        this.tickerPanel.tickersMap.clear();
+        this.tickerPanel.tickerElements?.clear();
+        
+        this.tickerPanel._rowDomCache?.clear(); 
+        
+        this.tickerPanel.renderer.displayedTickers = [];
+        this.tickerPanel.renderer.totalItems = list.symbols.length;
+        this.tickerPanel.filterCache = null;
+        this.tickerPanel.state.customSymbols = [...list.symbols];
+        this.tickerPanel.state.flags = { ...(list.flags || {}) };
+        this.tickerPanel.state.favorites = [...(list.favorites || [])];
+
+        const container = document.getElementById('tickerListContainer');
+        if (container) { container.innerHTML = ''; container.scrollTop = 0; }
+
+        for (const symbolKey of list.symbols) {
+            const parts = symbolKey.split(':');
+            if (parts.length !== 3) continue;
+            const [symbol, exchange, marketType] = parts;
+            const flag = this.tickerPanel.state.flags[symbolKey] || null;
+            const t = {
+                symbol, price: 0, change: 0, volume: 0,
+                trades: null, custom: true, prevPrice: 0,
+                exchange, marketType, flag
+            };
+            this.tickerPanel.tickers.push(t);
+            this.tickerPanel.tickersMap.set(symbolKey, t);
+
+            // ✅ ГЛАВНЫЙ ФИКС: подписываем каждый новый тикер на PriceManager.
+            // Раньше loadSymbolsFromList создавал тикеры напрямую в обход
+            // addSymbol()/addSymbolsBatch() — единственных мест, где реально вызывался
+            // priceManagerInstance.subscribe(). А глобальная разовая подписка
+            // _syncToPriceManager() срабатывает только один раз при самом первом
+            // запуске startTickerPanelPriceEngine(). В итоге любой список, загруженный
+            // через переключение вотчлиста, НАВСЕГДА оставался без живых WS-обновлений
+            // цен — только редкий часовой REST-поллинг. Баг был полностью незаметен
+            // внешне (цены всё равно менялись, просто с огромной задержкой).
+            if (window.priceManagerInstance) {
+                window.priceManagerInstance.subscribe(symbolKey, this.tickerPanel._pmPriceHandler);
+                this.tickerPanel._subscribedSymbols.add(symbolKey);
+            }
+        }
+
+        this.tickerPanel.updateModalCount();
     }
 
-    this.tickerPanel.updateModalCount();
-}
     async addSymbolToList(listId, symbol, exchange, marketType) {
         await this._initPromise;
         const list = this.lists.get(listId);
