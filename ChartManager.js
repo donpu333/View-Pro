@@ -22,8 +22,8 @@ class ChartManager {
         this._symbolSwitchOverlay = document.createElement('div');
         this._symbolSwitchOverlay.className = 'chart-symbol-switch-overlay';
         this._symbolSwitchOverlay.style.cssText = [
-            'position:absolute', 'inset:0', 'background:rgba(0,0,0,0.85)', // Усилил фон для гарантии перекрытия
-            'opacity:0', 'pointer-events:none', 'transition:opacity 0.15s ease', 'z-index:10'
+            'position:absolute', 'inset:0', 'background:rgba(0,0,0,0.35)',
+            'opacity:0', 'pointer-events:none', 'transition:opacity 0.15s ease', 'z-index:5'
         ].join(';');
         if (this.chartContainer) {
             if (getComputedStyle(this.chartContainer).position === 'static') {
@@ -353,19 +353,8 @@ class ChartManager {
         return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
     }
 
-    // === ИСПРАВЛЕНИЕ 1: Мгновенное появление оверлея, плавное исчезновение ===
-    _showSymbolSwitchOverlay() { 
-        if (this._symbolSwitchOverlay) {
-            this._symbolSwitchOverlay.style.transition = 'none'; // Убираем анимацию
-            this._symbolSwitchOverlay.style.opacity = '1';       // Делаем полностью непрозрачным
-            void this._symbolSwitchOverlay.offsetHeight;         // Форсируем reflow браузера
-            this._symbolSwitchOverlay.style.transition = 'opacity 0.15s ease'; // Возвращаем анимацию для исчезновения
-        }
-    }
-
-    _hideSymbolSwitchOverlay() { 
-        if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '0'; 
-    }
+    _showSymbolSwitchOverlay() { if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '1'; }
+    _hideSymbolSwitchOverlay() { if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '0'; }
 
     onWebSocketConnected() { this._syncRecentCandles().catch(() => {}); }
 
@@ -1187,49 +1176,117 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
-        try {
-            if (!this._isChartValid()) { if (onReady) onReady(); return; }
-            if (!data || data.length === 0) { if (onReady) onReady(); return; }
-            const currentScale = this._captureScale();
-            const isNewSymbol = forceNewSymbol;
-            this.chart.applyOptions({ handleScroll: false, handleScale: false });
-            if (this.candleSeries) this.candleSeries.setData([]);
-            if (this.barSeries) this.barSeries.setData([]);
-            if (this.volumeSeries) this.volumeSeries.setData([]);
-            this.chartData = []; this.lastCandle = null; this._candleTimeMap.clear();
-            this._volumeDataCache = null; this._volumeDataDirty = true; this._lastVolumeUpdateIndex = -1; this._isTrimming = false;
+ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
+    try {
+        if (!this._isChartValid()) { if (onReady) onReady(); return; }
+        if (!data || data.length === 0) { if (onReady) onReady(); return; }
+        
+        // Сохраняем текущий масштаб
+        const currentScale = this._captureScale();
+        const isNewSymbol = forceNewSymbol;
+        
+        // Отключаем обработку прокрутки и масштабирования
+        this.chart.applyOptions({ 
+            handleScroll: false, 
+            handleScale: false,
+            animation: { duration: 0 } // Явно отключаем анимацию
+        });
+        
+        // ============ ВАЖНОЕ ИЗМЕНЕНИЕ: Очищаем с задержкой ============
+        // Немедленно скрываем текущие серии для предотвращения "просвечивания"
+        if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
+        if (this.barSeries) this.barSeries.applyOptions({ visible: false });
+        if (this.volumeSeries) this.volumeSeries.applyOptions({ visible: false });
+        
+        // Очищаем данные
+        if (this.candleSeries) this.candleSeries.setData([]);
+        if (this.barSeries) this.barSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
+        
+        // Сбрасываем данные
+        this.chartData = []; 
+        this.lastCandle = null; 
+        this._candleTimeMap.clear();
+        this._volumeDataCache = null; 
+        this._volumeDataDirty = true; 
+        this._lastVolumeUpdateIndex = -1; 
+        this._isTrimming = false;
+        
+        // ============ ИЗМЕНЕНИЕ: Ждем следующий кадр для очистки ============
+        requestAnimationFrame(() => {
+            if (!this._isChartValid()) { 
+                if (onReady) onReady(); 
+                return; 
+            }
+            
+            // Убираем дубликаты и валидируем
             const seenTimes = new Set();
             let noDupes = data.filter(c => {
                 if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
                 if (seenTimes.has(c.time)) return false;
-                seenTimes.add(c.time); return true;
+                seenTimes.add(c.time); 
+                return true;
             });
             noDupes = noDupes.filter(c => this._isValidCandle(c));
             data = noDupes;
+            
             if (data.length === 0) {
                 this.chart.applyOptions({ handleScroll: true, handleScale: true });
-                if (onReady) onReady(); return;
+                // Восстанавливаем видимость серий
+                const isCandle = this.currentChartType === 'candle';
+                if (this.candleSeries) this.candleSeries.applyOptions({ visible: isCandle });
+                if (this.barSeries) this.barSeries.applyOptions({ visible: !isCandle });
+                if (this.volumeSeries) this.volumeSeries.applyOptions({ visible: true });
+                if (onReady) onReady(); 
+                return;
             }
+            
+            // Сортируем данные
             data.sort((a, b) => a.time - b.time);
+            
+            // Устанавливаем новые данные
             this.chartData = data;
             this._candleTimeMap.clear();
-            for (let i = 0; i < data.length; i++) this._candleTimeMap.set(data[i].time, i);
-            this.currentInterval = interval; this.currentSymbol = symbol; this.currentExchange = exchange; this.currentMarketType = marketType;
-            this.hasMoreData = true; this._historyEndTime = data[0].time; this.lastCandle = data[data.length - 1];
+            for (let i = 0; i < data.length; i++) {
+                this._candleTimeMap.set(data[i].time, i);
+            }
+            
+            this.currentInterval = interval; 
+            this.currentSymbol = symbol; 
+            this.currentExchange = exchange; 
+            this.currentMarketType = marketType;
+            this.hasMoreData = true; 
+            this._historyEndTime = data[0].time; 
+            this.lastCandle = data[data.length - 1];
+            
+            // Устанавливаем данные в серии
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
+            
             if (this.volumeSeries && this.chartData.length > 0) {
                 const volumeData = this._buildVolumeData(this.chartData);
                 this.volumeSeries.setData(volumeData);
-                this._volumeDataDirty = false; this._lastVolumeUpdateIndex = this.chartData.length - 1;
+                this._volumeDataDirty = false; 
+                this._lastVolumeUpdateIndex = this.chartData.length - 1;
             }
-            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            
+            // Восстанавливаем видимость серий с новыми данными
+            const isCandle = this.currentChartType === 'candle';
+            if (this.candleSeries) this.candleSeries.applyOptions({ visible: isCandle });
+            if (this.barSeries) this.barSeries.applyOptions({ visible: !isCandle });
+            if (this.volumeSeries) this.volumeSeries.applyOptions({ visible: true });
+            
+            // Включаем обработку событий
             this.chart.applyOptions({ handleScroll: true, handleScale: true });
+            
+            // Применяем цвета
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (series) {
                 const lineColor = this._getLineColor();
                 this._applyPriceLineColor(series, lineColor);
             }
+            
+            // Применяем точность
             const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
             const inferredPrecision = this._inferPrecisionFromData();
             if (cachedPrecision) {
@@ -1240,6 +1297,8 @@ class ChartManager {
                 localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
                 this._lastAppliedPrecision = String(inferredPrecision);
             }
+            
+            // Обновляем индикаторы
             setTimeout(() => {
                 if (this.indicatorManager && this._isChartValid()) {
                     this.indicatorManager.restorePendingIndicators();
@@ -1248,8 +1307,8 @@ class ChartManager {
                 }
             }, 0);
             
-            // === ИСПРАВЛЕНИЕ 2: Не восстанавливаем масштаб, если это новый символ ===
-            if (currentScale && !isNewSymbol) {
+            // Восстанавливаем масштаб
+            if (currentScale) {
                 setTimeout(() => {
                     this._restoreScale(currentScale);
                     this.autoScale(onReady);
@@ -1261,10 +1320,12 @@ class ChartManager {
             
             this.scheduleUpdatePosition();
             this._updatePageTitle();
+            
             if (this.timerManager) {
                 this.timerManager.start(this.currentInterval);
                 this.timerManager.updatePrice(this.lastCandle.close);
             }
+            
             if (typeof getPrecisionFromExchange === 'function') {
                 getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
                     if (this.currentSymbol === symbol && this._isChartValid()) {
@@ -1274,20 +1335,31 @@ class ChartManager {
                     }
                 }).catch(() => {});
             }
+            
             setTimeout(() => { if (window.renderDrawings) window.renderDrawings(); }, 0);
+            
             this._lastTimeframe = interval;
+            
             if (!window._dailySeparator && window.DailySeparator) window._dailySeparator = new window.DailySeparator(this);
             if (window._dailySeparator?.redraw) window._dailySeparator.redraw();
             if (!window._sessionHighlighter && window.SessionHighlighter) window._sessionHighlighter = new window.SessionHighlighter(this);
             if (window._sessionHighlighter?.redraw) window._sessionHighlighter.redraw();
-            this.isLoadingMore = false; this._pendingHistoryLoad = false; this._lastHistoryLoadTime = 0;
-        } catch (error) {
-            console.error('❌ Ошибка в setDataQuick:', error);
-            if (this.chart) this.chart.applyOptions({ handleScroll: true, handleScale: true });
-            if (onReady) onReady();
-        }
+            
+            this.isLoadingMore = false; 
+            this._pendingHistoryLoad = false; 
+            this._lastHistoryLoadTime = 0;
+        });
+    } catch (error) {
+        console.error('❌ Ошибка в setDataQuick:', error);
+        if (this.chart) this.chart.applyOptions({ handleScroll: true, handleScale: true });
+        // Восстанавливаем видимость в случае ошибки
+        const isCandle = this.currentChartType === 'candle';
+        if (this.candleSeries) this.candleSeries.applyOptions({ visible: isCandle });
+        if (this.barSeries) this.barSeries.applyOptions({ visible: !isCandle });
+        if (this.volumeSeries) this.volumeSeries.applyOptions({ visible: true });
+        if (onReady) onReady();
     }
-
+}
     _captureScale() {
         if (!this._isChartValid()) return null;
         try {
