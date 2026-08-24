@@ -6,35 +6,10 @@ class WebSocketManager {
         this.reconnectTimer = null;
         this.retryCount = 0;
         this.isConnected = false;
-        this.isConnecting = false;  // теперь чисто информационный флаг (для UI/логов),
-                                     // больше НЕ блокирует новые попытки подключения —
-                                     // см. ПАТЧ WS-1 в _doConnect()
-
-        // ПАТЧ WS-1: счётчик поколений подключения. Каждая реальная попытка
-        // подключения (_doConnect) получает свой уникальный id. Все хендлеры
-        // сокетов (onopen/onmessage/onclose) проверяют, что их поколение всё
-        // ещё активно, прежде чем что-либо делать. Это заменяет собой
-        // блокирующий флаг isConnecting, который раньше мог залипнуть в true
-        // навсегда (если предыдущие сокеты застряли в состоянии CONNECTING) и
-        // молча отменять все последующие попытки переподключиться на новый
-        // тикер — доступа к живым данным по новому тикеру не было НИКОГДА,
-        // пока не помогала перезагрузка страницы. Теперь новая попытка
-        // подключения ВСЕГДА выигрывает и всегда корректно закрывает/
-        // нейтрализует предыдущую, независимо от того, в каком состоянии та
-        // находилась.
+        this.isConnecting = false;
         this._connectGeneration = 0;
-
         this._lastKlineTime = 0;
         this._lastMessageTime = 0;
-        // ПАТЧ WS-2: отдельная метка времени "последнего РЕЛЕВАНТНОГО
-        // сообщения" — то есть сообщения, которое реально относилось к
-        // ТЕКУЩЕМУ символу и было обработано, а не просто пришло на сокет и
-        // было отфильтровано по символу. _lastMessageTime раньше обновлялась
-        // от любого сообщения на любом сокете (включая сообщения "старого"
-        // тикера, отброшенные фильтром символа сразу после переключения) —
-        // из-за этого _onTabVisible() считал соединение живым и НЕ
-        // переподключался, даже если по факту текущий тикер уже давно не
-        // получает никаких данных.
         this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
@@ -52,6 +27,14 @@ class WebSocketManager {
             }
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
+        
+        this._statusCheckInterval = setInterval(() => {
+            if (this.isConnected && this._lastRelevantMessageTime && 
+                (Date.now() - this._lastRelevantMessageTime > 30000)) {
+                console.warn('⚠️ Нет данных 30 сек, проверяем соединение');
+                this.ensureConnected();
+            }
+        }, 15000);
         
         setTimeout(() => this._autoConnect(), 1000);
     }
@@ -108,16 +91,6 @@ class WebSocketManager {
     }
 
     _doConnect() {
-        // ПАТЧ WS-1: раньше здесь была проверка `if (this.isConnecting) return;`,
-        // которая могла залипнуть навсегда (см. комментарий в конструкторе) и
-        // молча отменять попытку подключиться к новому тикеру. Теперь любая
-        // попытка ВСЕГДА проходит: получает новое поколение и безусловно
-        // закрывает/нейтрализует всё, что было раньше, в каком бы состоянии
-        // (OPEN/CONNECTING) оно ни находилось — _closeSocket() умеет закрывать
-        // сокеты в обоих состояниях и предварительно обнуляет их обработчики,
-        // так что никакие "запоздалые" события от старых сокетов до чарта не
-        // дойдут в принципе, независимо от generation-проверки ниже (которая
-        // работает как дополнительный defense-in-depth слой).
         const generation = ++this._connectGeneration;
         this.isConnecting = true;
 
@@ -148,11 +121,6 @@ class WebSocketManager {
             ws = new WebSocket(url);
         } catch (e) {
             console.error(`❌ Ошибка создания ${type} WebSocket:`, e);
-            // ПАТЧ WS-1: сбрасываем isConnecting и здесь — раньше при синхронном
-            // исключении в конструкторе WebSocket флаг isConnecting оставался
-            // true навсегда (сейчас это уже не критично, так как isConnecting
-            // больше ничего не блокирует, но держим состояние консистентным
-            // для UI/логов).
             if (generation === this._connectGeneration) this.isConnecting = false;
             this._scheduleReconnect(3000);
             return null;
@@ -162,9 +130,6 @@ class WebSocketManager {
         ws._generation = generation;
         
         ws.onopen = () => {
-            // ПАТЧ WS-1: если за время хендшейка успела прийти ещё более новая
-            // попытка подключения — этот сокет уже устарел, игнорируем событие
-            // (сам сокет будет/уже закрыт последующим _closeSocket()).
             if (generation !== this._connectGeneration) return;
 
             console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
@@ -205,20 +170,12 @@ class WebSocketManager {
         };
         
         ws.onmessage = (event) => {
-            // ПАТЧ WS-1: сообщения устаревшего поколения полностью
-            // игнорируются на входе — они не должны влиять даже на грубую
-            // метку "сокет вообще что-то присылает".
             if (generation !== this._connectGeneration) return;
             this._lastMessageTime = Date.now();
             this._handleMessage(event.data, type);
         };
         
         ws.onclose = (event) => {
-            // ПАТЧ WS-1: если это поколение уже неактуально (заменено более
-            // новой попыткой через _closeSocket()/новый _doConnect()) — не
-            // считаем это "обрывом текущего соединения" и не планируем
-            // реконнект от его имени; актуальное поколение само управляет
-            // своим жизненным циклом.
             if (generation !== this._connectGeneration) return;
 
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
@@ -258,32 +215,46 @@ class WebSocketManager {
             
             if (raw.op === 'pong' || raw.op === 'subscribe') return;
             
+            const chartManager = this.chartManager || window.chartManager;
+            
+            if (!chartManager) {
+                console.warn('⚠️ chartManager не найден');
+                return;
+            }
+            
             if (this.currentExchange === 'binance') {
                 if (raw.e === 'kline' && raw.k) {
                     const k = raw.k;
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
                     if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
-                    // ПАТЧ WS-2: обновляем метку "релевантного" сообщения только
-                    // после того, как символ подтверждён совпадающим с текущим —
-                    // именно эта метка используется для решения "надо ли
-                    // переподключаться" в _onTabVisible().
                     this._lastRelevantMessageTime = Date.now();
                     
-                    this._lastKlineTime = Math.floor(k.t / 1000);
+                    let candleTime = Math.floor(k.t / 1000);
                     
-                    // ✅ ПАТЧ 2.1: передаём eventTime (raw.E) для активации защиты
-                    // от out-of-order сообщений в ChartManager.updateLastCandle
-                    this.chartManager.updateLastCandle({
-                        time: Math.floor(k.t / 1000),
-                        open: parseFloat(k.o),
-                        high: parseFloat(k.h),
-                        low: parseFloat(k.l),
-                        close: parseFloat(k.c),
-                        volume: parseFloat(k.v),
-                        quoteVolume: parseFloat(k.q || 0),
-                        isClosed: k.x === true
-                    }, raw.E || Date.now());
+                    // Проверка выравнивания
+                    const intervalSeconds = this._getIntervalSeconds(k.i);
+                    const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                    
+                    if (candleTime !== expectedTime) {
+                        console.warn(`🛑 WS невыровненное время: ${candleTime} → ${expectedTime}`);
+                        candleTime = expectedTime;
+                    }
+                    
+                    this._lastKlineTime = candleTime;
+                    
+                    if (typeof chartManager.updateLastCandle === 'function') {
+                        chartManager.updateLastCandle({
+                            time: candleTime,
+                            open: parseFloat(k.o),
+                            high: parseFloat(k.h),
+                            low: parseFloat(k.l),
+                            close: parseFloat(k.c),
+                            volume: parseFloat(k.v),
+                            quoteVolume: parseFloat(k.q || 0),
+                            isClosed: k.x === true
+                        }, raw.E || Date.now());
+                    }
                 }
                 
                 if (raw.e === 'aggTrade') {
@@ -294,7 +265,9 @@ class WebSocketManager {
                     
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
-                        this.chartManager._syncPriceLine(price);
+                        if (typeof chartManager._syncPriceLine === 'function') {
+                            chartManager._syncPriceLine(price);
+                        }
                     }
                 }
             }
@@ -314,28 +287,61 @@ class WebSocketManager {
                 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
                     const k = raw.data[0];
-                    // ✅ ПАТЧ 2.1: передаём eventTime (raw.ts) для активации защиты
-                    // от out-of-order сообщений в ChartManager.updateLastCandle
-                    this.chartManager.updateLastCandle({
-                        time: Math.floor(k.start / 1000),
-                        open: parseFloat(k.open),
-                        high: parseFloat(k.high),
-                        low: parseFloat(k.low),
-                        close: parseFloat(k.close),
-                        volume: parseFloat(k.volume),
-                        quoteVolume: parseFloat(k.turnover || 0),
-                        isClosed: k.confirm === true
-                    }, raw.ts || Date.now());
+                    
+                    let candleTime = Math.floor(k.start / 1000);
+                    
+                    if (parts.length >= 2) {
+                        const intervalStr = parts[1];
+                        const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
+                        const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                        
+                        if (candleTime !== expectedTime) {
+                            candleTime = expectedTime;
+                        }
+                    }
+                    
+                    if (typeof chartManager.updateLastCandle === 'function') {
+                        chartManager.updateLastCandle({
+                            time: candleTime,
+                            open: parseFloat(k.open),
+                            high: parseFloat(k.high),
+                            low: parseFloat(k.low),
+                            close: parseFloat(k.close),
+                            volume: parseFloat(k.volume),
+                            quoteVolume: parseFloat(k.turnover || 0),
+                            isClosed: k.confirm === true
+                        }, raw.ts || Date.now());
+                    }
                 } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
                     const price = parseFloat(raw.data[0].p);
                     if (!isNaN(price) && price > 0) {
-                        this.chartManager._syncPriceLine(price);
+                        if (typeof chartManager._syncPriceLine === 'function') {
+                            chartManager._syncPriceLine(price);
+                        }
                     }
                 }
             }
         } catch (e) {
             console.error('❌ Ошибка парсинга:', e);
         }
+    }
+
+    _getIntervalSeconds(interval) {
+        const map = {
+            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+            '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+            '1d': 86400, '1w': 604800, '1M': 2592000
+        };
+        return map[interval] || 3600;
+    }
+
+    _getIntervalSecondsFromBybit(intervalStr) {
+        const map = {
+            '1': 60, '3': 180, '5': 300, '15': 900, '30': 1800,
+            '60': 3600, '240': 14400, '360': 21600, '720': 43200,
+            'D': 86400, 'W': 604800, 'M': 2592000
+        };
+        return map[intervalStr] || 3600;
     }
 
     _scheduleReconnect(delay = null) {
@@ -401,9 +407,6 @@ class WebSocketManager {
             clearTimeout(this._connectDebounceTimer); 
             this._connectDebounceTimer = null; 
         }
-        // ПАТЧ WS-1: явное закрытие "снаружи" тоже должно инвалидировать
-        // текущее поколение, чтобы никакой уже летящий onopen/onmessage от
-        // закрываемых сокетов не смог проскочить проверку generation.
         this._connectGeneration++;
         this._closeSocket();
     }
@@ -423,20 +426,14 @@ class WebSocketManager {
 
     forceReconnect() {
         console.log('🔄 Принудительное переподключение...');
-        this.closeAll();
-        setTimeout(() => {
-            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
-        }, 300);
+        this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
 
     _onTabVisible() {
         const now = Date.now();
-        // ПАТЧ WS-2: используем _lastRelevantMessageTime вместо _lastMessageTime —
-        // иначе трафик от уже отфильтрованного (неверного) символа маскировал
-        // реальное отсутствие данных по текущему тикеру.
         if (this._lastRelevantMessageTime && (now - this._lastRelevantMessageTime > 10000)) {
-            console.log('🔄 Нет данных по текущему тикеру > 10 сек, переподключаемся');
-            this.forceReconnect();
+            console.log('🔄 Нет данных, переподключаемся');
+            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
         } else {
             this.ensureConnected();
         }
