@@ -1380,10 +1380,16 @@ class ChartManager {
         } catch (e) {}
     }
 
-    setChartType(type) {
+      setChartType(type) {
         if (!this._isChartValid()) return;
 
         this._isSwitchingChartType = true;
+
+        // ✅ ЗАЩИТА: очищаем предыдущий таймаут, если пользователь быстро кликнул снова
+        if (this._chartTypeSwitchTimeout) {
+            clearTimeout(this._chartTypeSwitchTimeout);
+            this._chartTypeSwitchTimeout = null;
+        }
 
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
@@ -1460,11 +1466,12 @@ class ChartManager {
             window._sessionHighlighter.reattach();
         }
 
-        setTimeout(() => {
+        // ✅ ИСПРАВЛЕНИЕ: сохраняем ID таймаута в переменную, чтобы его можно было отменить
+        this._chartTypeSwitchTimeout = setTimeout(() => {
             this._isSwitchingChartType = false;
+            this._chartTypeSwitchTimeout = null;
         }, 300);
     }
-
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended || !this._isChartValid()) return;
         this._updateScheduled = true;
