@@ -585,20 +585,20 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const lastIdx = ranges.length - 1;
             const lastCandle = data[lastIdx];
             
-            // ✅ ФИКС: Используем ATR предыдущей закрытой свечи как базу
+            // ✅ БАЗА ATR: ATR предыдущей закрытой свечи (стабильный базис)
             const baselineATR = lastIdx > 0 ? atrArray[lastIdx - 1] : atrArray[lastIdx];
             
-            // ✅ ФИКС: Для формирующейся свечи считаем расстояние по ТЕЛУ (close - open), 
-            // чтобы длинные фитили не уводили остаток в минус и не ломали логику.
-            const dist = Math.abs(lastCandle.close - lastCandle.open);
+            // ✅ ПРОГРЕСС: Полный размах High-Low (как в классическом ATR)
+            const dist = lastCandle.high - lastCandle.low;
             const prog = baselineATR > 0 ? (dist / baselineATR) * 100 : 0;
 
             return {
                 atr: baselineATR,
                 natr: lastCandle.close > 0 ? (baselineATR / lastCandle.close) * 100 : 0,
                 progress: prog,
-                remaining: Math.max(0, 100 - prog), // ✅ ФИКС: Остаток не может быть < 0
-                remainingPoints: Math.max(0, baselineATR - dist), // ✅ ФИКС: Точки не могут быть < 0
+                // ✅ ОСТАТОК: Может быть отрицательным (свеча пробила ATR)
+                remaining: 100 - prog,
+                remainingPoints: baselineATR - dist,
                 trueRange: ranges[lastIdx],
                 rangeRatio: baselineATR > 0 ? (ranges[lastIdx] / baselineATR) * 100 : 0,
                 upperBound: 0,
@@ -662,16 +662,17 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
 
         const isCurrentlyAnomaly = lastRange > upperBound || lastRange < lowerBound;
         
-        // ✅ ФИКС: То же самое для ветки с фильтром: считаем по телу свечи
-        const distFromOpen = Math.abs(lastCandle.close - lastCandle.open);
+        // ✅ Полный размах High-Low
+        const distFromOpen = lastCandle.high - lastCandle.low;
         const progress = baselineATR > 0 ? (distFromOpen / baselineATR) * 100 : 0;
 
         return {
             atr: baselineATR,
             natr: lastCandle.close > 0 ? (baselineATR / lastCandle.close) * 100 : 0,
             progress,
-            remaining: Math.max(0, 100 - progress), // ✅ ФИКС: Остаток не может быть < 0
-            remainingPoints: Math.max(0, baselineATR - distFromOpen), // ✅ ФИКС: Точки не могут быть < 0
+            // ✅ ОСТАТОК: Может быть отрицательным
+            remaining: 100 - progress,
+            remainingPoints: baselineATR - distFromOpen,
             trueRange: lastRange,
             rangeRatio: baselineATR > 0 ? (lastRange / baselineATR) * 100 : 0,
             upperBound,
@@ -719,8 +720,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             atr,
             natr: last.close > 0 ? (atr / last.close) * 100 : 0,
             progress,
-            remaining: Math.max(0, 100 - progress),
-            remainingPoints: Math.max(0, atr - lastRange),
+            remaining: 100 - progress,
+            remainingPoints: atr - lastRange,
             trueRange: lastRange,
             rangeRatio: atr > 0 ? (lastRange / atr) * 100 : 0,
             upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null,
@@ -917,8 +918,19 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             return v.toFixed(decimals);
         };
 
-        // ✅ ФИКС: Убрано условие < 0, так как remaining теперь математически не может быть отрицательным
-        const remColor = m.remaining < 20 ? '#FF4444' : m.remaining < 50 ? '#FFA500' : '#FFFFFF';
+        const formatNATR = (v) => {
+            if (v === 0) return '0.00';
+            return v.toFixed(2);
+        };
+
+        // ✅ ЦВЕТА: Фиолетовый для отрицательного остатка (пробой ATR)
+        const remColor = m.remaining < 0
+            ? '#FF00FF'
+            : m.remaining < 20
+            ? '#FF4444'
+            : m.remaining < 50
+            ? '#FFA500'
+            : '#FFFFFF';
 
         wrapper.innerHTML = `
             <span style="color:#AAA">${isManual ? '✋' : '⭐'}</span>
@@ -926,6 +938,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             <span style="color:#444; margin: 0 4px;">|</span>
             <span style="color:#AAA">ATR:</span>
             <span id="matr-val" style="color:#FFFFFF; font-weight:600; transition: color 0.2s;">${formatATR(m.atr)}</span>
+            <span style="color:#444; margin: 0 4px;">|</span>
+            <span style="color:#AAA">NATR:</span>
+            <span style="color:#4FC3F7; font-weight:600;">${formatNATR(m.natr)}%</span>
             <span style="color:#444; margin: 0 4px;">|</span>
             <span style="color:#AAA">Ост:</span>
             <span style="color:${remColor}; font-weight:600;">${m.remaining.toFixed(1)}%</span>
