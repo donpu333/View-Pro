@@ -1236,7 +1236,7 @@ class ChartManager {
                     this.indicatorManager.loadIndicators();
                 }
             }, 0);
-            if (currentScale) {
+            if (currentScale && !isNewSymbol) {
                 setTimeout(() => {
                     this._restoreScale(currentScale);
                     this.autoScale(onReady);
@@ -1275,13 +1275,8 @@ class ChartManager {
         if (!this._isChartValid()) return null;
         try {
             const timeScale = this.chart.timeScale();
-            const barSpacing = timeScale.options().barSpacing;
-            const visibleRange = timeScale.getVisibleRange();
-            return {
-                barSpacing: barSpacing,
-                centerTime: visibleRange ? (visibleRange.from + visibleRange.to) / 2 : null,
-                wasAtRealtime: !this._isViewingHistory
-            };
+            const logicalRange = timeScale.getVisibleLogicalRange();
+            if (logicalRange) return { logical: { from: logicalRange.from, to: logicalRange.to }, width: logicalRange.to - logicalRange.from };
         } catch (e) {}
         return null;
     }
@@ -1291,19 +1286,12 @@ class ChartManager {
         this._isRestoringZoom = true;
         try {
             const timeScale = this.chart.timeScale();
-            if (scale.barSpacing) timeScale.applyOptions({ barSpacing: scale.barSpacing });
-            if (scale.wasAtRealtime || scale.centerTime == null) {
-                this.scrollToLast();
-            } else {
-                const data = this.chartData;
-                if (!data || data.length === 0) { this.scrollToLast(); return; }
-                let idx = data.findIndex(c => c.time >= scale.centerTime);
-                if (idx === -1) idx = data.length - 1;
-                const spacing = scale.barSpacing || timeScale.options().barSpacing || 12;
-                const visibleBars = Math.max(1, this.chartContainer.clientWidth / spacing);
-                const from = Math.max(0, idx - visibleBars / 2);
-                const to = from + visibleBars;
-                timeScale.setVisibleLogicalRange({ from, to });
+            if (scale.logical) {
+                const currentDataLength = this.chartData.length;
+                let from = Math.min(scale.logical.from, currentDataLength - 1);
+                let to = Math.min(scale.logical.to, currentDataLength);
+                if (scale.width) from = Math.max(0, to - scale.width);
+                if (from < to) timeScale.setVisibleLogicalRange({ from, to });
             }
         } catch (e) { this.scrollToLast(); }
         finally {
