@@ -22,8 +22,8 @@ class ChartManager {
         this._symbolSwitchOverlay = document.createElement('div');
         this._symbolSwitchOverlay.className = 'chart-symbol-switch-overlay';
         this._symbolSwitchOverlay.style.cssText = [
-            'position:absolute', 'inset:0', 'background:rgba(0,0,0,0.35)',
-            'opacity:0', 'pointer-events:none', 'transition:opacity 0.15s ease', 'z-index:5'
+            'position:absolute', 'inset:0', 'background:rgba(0,0,0,0.85)', // Усилил фон для гарантии перекрытия
+            'opacity:0', 'pointer-events:none', 'transition:opacity 0.15s ease', 'z-index:10'
         ].join(';');
         if (this.chartContainer) {
             if (getComputedStyle(this.chartContainer).position === 'static') {
@@ -353,8 +353,19 @@ class ChartManager {
         return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
     }
 
-    _showSymbolSwitchOverlay() { if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '1'; }
-    _hideSymbolSwitchOverlay() { if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '0'; }
+    // === ИСПРАВЛЕНИЕ 1: Мгновенное появление оверлея, плавное исчезновение ===
+    _showSymbolSwitchOverlay() { 
+        if (this._symbolSwitchOverlay) {
+            this._symbolSwitchOverlay.style.transition = 'none'; // Убираем анимацию
+            this._symbolSwitchOverlay.style.opacity = '1';       // Делаем полностью непрозрачным
+            void this._symbolSwitchOverlay.offsetHeight;         // Форсируем reflow браузера
+            this._symbolSwitchOverlay.style.transition = 'opacity 0.15s ease'; // Возвращаем анимацию для исчезновения
+        }
+    }
+
+    _hideSymbolSwitchOverlay() { 
+        if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '0'; 
+    }
 
     onWebSocketConnected() { this._syncRecentCandles().catch(() => {}); }
 
@@ -1236,12 +1247,18 @@ class ChartManager {
                     this.indicatorManager.loadIndicators();
                 }
             }, 0);
-            if (currentScale) {
+            
+            // === ИСПРАВЛЕНИЕ 2: Не восстанавливаем масштаб, если это новый символ ===
+            if (currentScale && !isNewSymbol) {
                 setTimeout(() => {
                     this._restoreScale(currentScale);
                     this.autoScale(onReady);
                 }, 50);
-            } else { this.scrollToLast(); this.autoScale(onReady); }
+            } else { 
+                this.scrollToLast(); 
+                this.autoScale(onReady); 
+            }
+            
             this.scheduleUpdatePosition();
             this._updatePageTitle();
             if (this.timerManager) {
