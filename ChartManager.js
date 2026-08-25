@@ -1373,6 +1373,105 @@ class ChartManager {
         } catch (error) { rollbackSwitch(error); }
     }
 
+
+    async switchInterval(newInterval) {
+    if (this._isSwitchingInterval || this._switchingSymbol) return;
+    if (this.currentInterval === newInterval) return;
+    
+    this._isSwitchingInterval = true;
+    this._showSymbolSwitchOverlay();
+    
+    // ✅ Инвалидируем все асинхронные операции
+    const generationId = ++this._generationCounter;
+    this._activeGeneration = generationId;
+    
+    // Останавливаем фоновые таймеры
+    if (this._periodicSyncInterval) { clearInterval(this._periodicSyncInterval); this._periodicSyncInterval = null; }
+    if (this._candleCheckerTimeout) { clearTimeout(this._candleCheckerTimeout); this._candleCheckerTimeout = null; }
+    
+    // Отменяем fetch-запросы
+    if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
+    if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
+    if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
+    
+    // Сбрасываем фильтры WebSocket
+    this._lastKlineEventTime = 0;
+    this._catchingUpMissed = false;
+    this._lastCatchUpAttempt = 0;
+    
+    const savedTime = this.saveCurrentTimePosition();
+    
+    try {
+        this._suspendAllUpdates();
+        
+        this.currentInterval = newInterval;
+        localStorage.setItem('lastTimeframe', newInterval);
+        
+        // Переподключаем WebSocket
+        if (window.wsManager?.updateSymbolAndTimeframe) {
+            window.wsManager.updateSymbolAndTimeframe(
+                this.currentSymbol,
+                this.currentInterval,
+                this.currentExchange,
+                this.currentMarketType
+            );
+        }
+        
+        // Загружаем данные
+        let candles = await this.loadCandlesFromCache(
+            this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+        );
+        let isFromCache = !!candles;
+        
+        if (!isFromCache) {
+            candles = await this.fetchKlines(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 1000
+            );
+        }
+        
+        // Проверяем, не отменили ли
+        if (this._activeGeneration !== generationId) return;
+        if (!candles || candles.length === 0) throw new Error('Нет данных');
+        
+        // Применяем данные
+        this.setDataQuick(
+            candles, 
+            this.currentInterval, 
+            this.currentSymbol, 
+            this.currentExchange, 
+            this.currentMarketType, 
+            true,
+            () => {
+                if (savedTime) this.scrollToTime(savedTime);
+            }
+        );
+        
+        // Сохраняем в кэш
+        if (!isFromCache) {
+            this.saveCandlesToCache(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles
+            ).catch(() => {});
+        }
+        
+        // Фоновая догрузка
+        if (isFromCache) {
+            this.refreshCandlesInBackground(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+            ).catch(() => {});
+        }
+        
+    } catch (error) {
+        console.error('❌ Ошибка переключения таймфрейма:', error);
+    } finally {
+        if (this._activeGeneration === generationId) {
+            this._isSwitchingInterval = false;
+            this._resumeAllUpdates(generationId);
+            this._hideSymbolSwitchOverlay();
+            this._startPeriodicSync();
+            this._startNewCandleChecker();
+        }
+    }
+}
     loadDrawingsForCurrentSymbol() {
         Promise.allSettled([
             window.rayManager?.loadRays?.(), window.trendLineManager?.loadTrendLines?.(),
