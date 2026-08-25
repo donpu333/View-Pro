@@ -1206,6 +1206,8 @@ class ChartManager {
             for (let i = 0; i < data.length; i++) this._candleTimeMap.set(data[i].time, i);
             this.currentInterval = interval; this.currentSymbol = symbol; this.currentExchange = exchange; this.currentMarketType = marketType;
             this.hasMoreData = true; this._historyEndTime = data[0].time; this.lastCandle = data[data.length - 1];
+            const priceScaleForFit = this.chart.priceScale('right');
+            if (priceScaleForFit) { try { priceScaleForFit.applyOptions({ autoScale: true }); } catch (e) {} }
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
             if (this.volumeSeries && this.chartData.length > 0) {
@@ -1236,18 +1238,21 @@ class ChartManager {
                     this.indicatorManager.loadIndicators();
                 }
             }, 0);
-            if (currentScale && !isNewSymbol) {
+            const finalizeVisuals = () => {
+                this.scheduleUpdatePosition();
+                if (this.timerManager && this.lastCandle) {
+                    this.timerManager.start(this.currentInterval);
+                    this.timerManager.updatePrice(this.lastCandle.close);
+                }
+                if (onReady) onReady();
+            };
+            if (currentScale) {
                 setTimeout(() => {
                     this._restoreScale(currentScale);
-                    this.autoScale(onReady);
+                    this.autoScale(finalizeVisuals);
                 }, 50);
-            } else { this.scrollToLast(); this.autoScale(onReady); }
-            this.scheduleUpdatePosition();
+            } else { this.scrollToLast(); this.autoScale(finalizeVisuals); }
             this._updatePageTitle();
-            if (this.timerManager) {
-                this.timerManager.start(this.currentInterval);
-                this.timerManager.updatePrice(this.lastCandle.close);
-            }
             if (typeof getPrecisionFromExchange === 'function') {
                 getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
                     if (this.currentSymbol === symbol && this._isChartValid()) {
@@ -1275,28 +1280,22 @@ class ChartManager {
         if (!this._isChartValid()) return null;
         try {
             const timeScale = this.chart.timeScale();
-            const logicalRange = timeScale.getVisibleLogicalRange();
-            if (logicalRange) return { logical: { from: logicalRange.from, to: logicalRange.to }, width: logicalRange.to - logicalRange.from };
+            const barSpacing = timeScale.options().barSpacing;
+            if (!barSpacing || isNaN(barSpacing) || barSpacing <= 0) return null;
+            return { barSpacing: barSpacing };
         } catch (e) {}
         return null;
     }
 
     _restoreScale(scale) {
         if (!scale || !this._isChartValid()) return;
-        this._isRestoringZoom = true;
         try {
             const timeScale = this.chart.timeScale();
-            if (scale.logical) {
-                const currentDataLength = this.chartData.length;
-                let from = Math.min(scale.logical.from, currentDataLength - 1);
-                let to = Math.min(scale.logical.to, currentDataLength);
-                if (scale.width) from = Math.max(0, to - scale.width);
-                if (from < to) timeScale.setVisibleLogicalRange({ from, to });
+            if (scale.barSpacing && !isNaN(scale.barSpacing) && scale.barSpacing > 0) {
+                timeScale.applyOptions({ barSpacing: scale.barSpacing });
             }
-        } catch (e) { this.scrollToLast(); }
-        finally {
-            setTimeout(() => { this._isRestoringZoom = false; }, 100);
-        }
+        } catch (e) {}
+        this.scrollToLast();
     }
 
     _suspendAllUpdates() {
