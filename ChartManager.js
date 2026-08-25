@@ -387,12 +387,24 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         return candle;
     }
 
-    _isFresherUpdate(existingCandle, receivedAt, source) {
-        if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
-        if (receivedAt > existingCandle._receivedAt) return true;
-        if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
-        return false;
-    }
+   	_isFresherUpdate(existingCandle, receivedAt, source) {
+		if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
+		
+		// 🔥 ИСПРАВЛЕНИЕ МЕРЦАНИЯ:
+		// Если свеча недавно обновлялась через WebSocket (менее 15 секунд назад), 
+		// ЗАПРЕЩАЕМ REST перезаписывать её. REST-запрос имеет timestamp начала запроса, 
+		// который ВСЕГДА больше времени события WS, что ложно делает его "свежее" 
+		// и вызывает ненужную перерисовку (setData).
+		if (existingCandle._source === 'ws' && source !== 'ws') {
+			if (receivedAt - existingCandle._receivedAt < 15000) {
+				return false; 
+			}
+		}
+		
+		if (receivedAt > existingCandle._receivedAt) return true;
+		if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
+		return false;
+	}
 
     _getLineColor() {
         if (!this.chartData || this.chartData.length === 0) return this.bullishColor || CONFIG.colors.bullish || '#26a69a';
