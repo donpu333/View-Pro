@@ -98,47 +98,73 @@ class TimeframeManager {
         }
     }
 
-    restorePosition() {
-        if (!this.savedCenterTime || !this.chartManager.chartData?.length) {
-            this.chartManager.scrollToLast();
-            return;
-        }
-        
-        const data = this.chartManager.chartData;
-        const timeScale = this.chartManager.chart.timeScale();
-        const latestTime = data[data.length - 1].time;
-        
-        if (latestTime <= this.savedCenterTime + (this.savedTimeSpan || 0)) {
-            this.chartManager.scrollToLast();
-            return;
-        }
-
-        let left = 0, right = data.length - 1, centerIndex = -1;
-        while (left <= right) {
-            const mid = Math.floor((left + right) / 2);
-            if (data[mid].time === this.savedCenterTime) { centerIndex = mid; break; }
-            data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
-        }
-        if (centerIndex === -1) centerIndex = left;
-        centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
-
-        let radius = 40;
-        if (this.savedTimeSpan > 0 && data.length > 1) {
-            const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
-            if (avg > 0) {
-                radius = Math.round((this.savedTimeSpan / 2) / avg);
-                radius = Math.max(15, Math.min(radius, 250));
-            }
-        }
-        
-        const padding = Math.max(3, Math.floor(radius * 0.15));
-        let from = Math.max(0, centerIndex - radius - padding);
-        let to = Math.min(data.length - 1, centerIndex + radius + padding);
-        
-        if (to - from < radius * 1.5) from = Math.max(0, to - radius * 1.5);
-
-        from < to ? timeScale.setVisibleLogicalRange({ from, to }) : this.chartManager.scrollToLast();
+   restorePosition() {
+    // 1. Базовые проверки
+    if (!this.chartManager || !this.chartManager._isChartValid()) return;
+    if (!this.savedCenterTime || !this.chartManager.chartData?.length) {
+        // Если нет сохраненной позиции, просто ничего не делаем. 
+        // График сам останется там, где был, или покажет последние данные по умолчанию.
+        return;
     }
+    
+    const data = this.chartManager.chartData;
+    const timeScale = this.chartManager.chart.timeScale();
+    
+    // 2. ✅ ПРИОРИТЕТ: Используем нативное сохранение позиции из ChartManager
+    // (оно сохраняется в _visibilityHandler при уходе с вкладки)
+    if (this.chartManager._savedWasViewingHistory && this.chartManager._savedLogicalRange) {
+        try {
+            timeScale.setVisibleLogicalRange(this.chartManager._savedLogicalRange);
+            return; // Успешно восстановили позицию, дальше считать не нужно
+        } catch (e) {
+            console.warn('⚠️ Не удалось восстановить логический диапазон, используем расчетный');
+        }
+    }
+
+    // 3. Расчетный метод (резервный, если savedLogicalRange недоступен)
+    let left = 0, right = data.length - 1, centerIndex = -1;
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        if (data[mid].time === this.savedCenterTime) { 
+            centerIndex = mid; 
+            break; 
+        }
+        data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
+    }
+    
+    if (centerIndex === -1) centerIndex = left;
+    centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
+
+    let radius = 40;
+    if (this.savedTimeSpan > 0 && data.length > 1) {
+        const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
+        if (avg > 0) {
+            radius = Math.round((this.savedTimeSpan / 2) / avg);
+            radius = Math.max(15, Math.min(radius, 250));
+        }
+    }
+    
+    const padding = Math.max(3, Math.floor(radius * 0.15));
+    let from = Math.max(0, centerIndex - radius - padding);
+    let to = Math.min(data.length - 1, centerIndex + radius + padding);
+    
+    if (to - from < radius * 1.5) {
+        from = Math.max(0, to - radius * 1.5);
+    }
+
+    // 4. ✅ БЕЗОПАСНОЕ ПРИМЕНЕНИЕ ДИАПАЗОНА (БЕЗ scrollToLast!)
+    if (from < to) {
+        try {
+            timeScale.setVisibleLogicalRange({ from, to });
+        } catch (e) {
+            console.warn('⚠️ Ошибка при установке видимого диапазона:', e);
+            // В случае ошибки просто ничего не делаем, график не прыгнет
+        }
+    }
+    // ❌ УДАЛЕНО: : this.chartManager.scrollToLast();
+    // Если условие from < to не выполнилось (например, из-за некорректных данных), 
+    // лучше оставить график как есть, чем принудительно дергать его в конец.
+}
 
     // ==================== ОБРАБОТЧИКИ ====================
     setupEventListeners() {
@@ -218,134 +244,106 @@ class TimeframeManager {
     }
 
     // ==================== ПЕРЕКЛЮЧЕНИЕ (ИСПРАВЛЕНО) ====================
-    async switchToTimeframe(tf) {
-        // 1. Валидация
-        if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
+  async switchToTimeframe(tf) {
+    // 1. Валидация
+    if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
 
-        // 2. Отменяем предыдущее переключение
-        if (this._abortController) {
-            this._abortController.abort();
-            console.log('🛑 Предыдущее переключение таймфрейма отменено');
+    // 2. Отменяем предыдущее переключение
+    if (this._abortController) {
+        this._abortController.abort();
+        console.log('🛑 Предыдущее переключение таймфрейма отменено');
+    }
+
+    // 3. ✅ ИСПРАВЛЕНО: Вызываем chartManager.switchInterval()
+    // Он сам инвалидирует все асинхронные операции через _activeGeneration
+    this._abortController = new AbortController();
+    const { signal } = this._abortController;
+
+    console.log('🔄 Переключение на таймфрейм:', tf);
+
+    // 4. Сохраняем позицию ДО переключения
+    this.saveCurrentPosition();
+
+    // 5. UI обновляем СРАЗУ
+    document.querySelectorAll('.timeframe-item').forEach(i => {
+        i.classList.toggle('active', i.dataset.tf === tf);
+    });
+    document.getElementById('timeframePanel')?.classList.remove('expanded');
+    this._updateCurrentTfBadge(tf);
+
+    const previousInterval = this.currentInterval;
+
+    try {
+        // 6. ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: Используем switchInterval из ChartManager
+        // Вместо прямого fetchKlines и setDataQuick
+        await this.chartManager.switchInterval(tf);
+
+        // 7. Проверка отмены после await
+        if (signal.aborted) {
+            console.log('🛑 Переключение отменено после switchInterval');
+            return;
         }
 
-        // 3. ✅ Также прерываем текущий запрос в ChartManager
-        // (чтобы старый fetch не перезаписал новые данные)
-        if (this.chartManager._currentFetchController) {
-            this.chartManager._currentFetchController.abort();
-        }
+        // 8. Обновляем текущий интервал
+        this.currentInterval = tf;
+        localStorage.setItem('lastTimeframe', tf);
+        this.chartManager.setCurrentInterval(tf);
 
-        // 4. Создаём новый AbortController
-        this._abortController = new AbortController();
-        const { signal } = this._abortController;
-
-        console.log('🔄 Переключение на таймфрейм:', tf);
-
-        // 5. Сохраняем позицию ДО переключения
-        this.saveCurrentPosition();
-
-        // 6. UI обновляем СРАЗУ
-        document.querySelectorAll('.timeframe-item').forEach(i => {
-            i.classList.toggle('active', i.dataset.tf === tf);
-        });
-        document.getElementById('timeframePanel')?.classList.remove('expanded');
-        this._updateCurrentTfBadge(tf);
-
-        const previousInterval = this.currentInterval;
-
-        try {
-            // 7. ✅ ИСПРАВЛЕНО: НЕ передаём signal в fetchKlines
-            // ChartManager сам создаёт AbortController внутри (requestType='user')
-            // Прерывание сделано выше через chartManager._currentFetchController.abort()
-            const candles = await this.chartManager.fetchKlines(
-                this.chartManager.currentSymbol,
-                this.chartManager.currentExchange,
-                this.chartManager.currentMarketType,
-                tf,
-                1000,
-                null,
-                'user'
-            );
-
-            // 8. Проверка отмены после await
-            if (signal.aborted) {
-                console.log('🛑 Переключение отменено после fetch');
-                return;
-            }
-
-            // 9. Пустые данные — откатываемся
-            if (!candles || candles.length === 0) {
-                console.warn('⚠️ Пустые данные для', tf, '— откат на', previousInterval);
-                this._rollbackTimeframe(previousInterval);
-                return;
-            }
-
-            if (signal.aborted) return;
-
-            // 10. Применяем новые данные
-            this.currentInterval = tf;
-            localStorage.setItem('lastTimeframe', tf);
-            this.chartManager.setCurrentInterval(tf);
-
-            this.chartManager.setDataQuick(
-                candles, tf,
-                this.chartManager.currentSymbol,
+        // 9. Обновляем WebSocket
+        if (this.wsManager?.updateSymbolAndTimeframe) {
+            this.wsManager.updateSymbolAndTimeframe(
+                this.chartManager.currentSymbol, tf,
                 this.chartManager.currentExchange,
                 this.chartManager.currentMarketType
             );
+        }
 
-            if (this.wsManager?.updateSymbolAndTimeframe) {
-                this.wsManager.updateSymbolAndTimeframe(
-                    this.chartManager.currentSymbol, tf,
-                    this.chartManager.currentExchange,
-                    this.chartManager.currentMarketType
-                );
+        // 10. Таймер
+        this.timerManager.start(tf);
+        
+        requestAnimationFrame(() => {
+            if (this.timerManager) {
+                const price = this.chartManager.currentRealPrice 
+                    ?? this.chartManager.lastCandle?.close;
+                if (price != null) {
+                    this.timerManager.updatePrice(price);
+                }
+                if (this.chartManager._applyPriceScaleWidth) {
+                    this.chartManager._applyPriceScaleWidth();
+                }
             }
+        });
+        
+        // 11. Автоскейл и восстановление позиции
+        this.chartManager.autoScale();
+        this.restorePosition();
 
-            this.timerManager.start(tf);
-            
-            // ✅ ИСПРАВЛЕНО: явно обновляем позицию таймера
-            // setDataQuick() сбрасывает данные, таймер нужно синхронизировать
-           requestAnimationFrame(() => {
-    if (this.timerManager) {
-        const price = this.chartManager.currentRealPrice 
-            ?? this.chartManager.lastCandle?.close;
-        if (price != null) {
-            this.timerManager.updatePrice(price);   // ← вот эта строка изменена
+        // 12. Синхронизация рисовалок
+        requestAnimationFrame(() => {
+            window.rayManager?.syncWithNewTimeframe();
+            window.trendLineManager?.syncWithNewTimeframe();
+            window.rulerLineManager?.syncWithNewTimeframe();
+            window.alertLineManager?.syncWithNewTimeframe();
+            window.textManager?.syncWithNewTimeframe();
+        });
+
+        console.log('✅ Таймфрейм переключен:', tf);
+
+    } catch (error) {
+        if (error.name === 'AbortError' || signal?.aborted) {
+            console.log('🛑 Переключение отменено (AbortError)');
+            return;
         }
-        if (this.chartManager._applyPriceScaleWidth) {
-            this.chartManager._applyPriceScaleWidth();
+        console.error('❌ Ошибка при переключении:', error);
+        this._rollbackTimeframe(previousInterval);
+    } finally {
+        if (this._abortController?.signal === signal) {
+            this._abortController = null;
         }
+        this.updateInstrumentInfo();
+        this.loadStarredTimeframes();
     }
-});
-            
-            this.chartManager.autoScale();
-            this.restorePosition();
-
-            requestAnimationFrame(() => {
-                window.rayManager?.syncWithNewTimeframe();
-                window.trendLineManager?.syncWithNewTimeframe();
-                window.rulerLineManager?.syncWithNewTimeframe();
-                window.alertLineManager?.syncWithNewTimeframe();
-                window.textManager?.syncWithNewTimeframe();
-            });
-
-            console.log('✅ Таймфрейм переключен:', tf);
-
-        } catch (error) {
-            if (error.name === 'AbortError' || signal?.aborted) {
-                console.log('🛑 Переключение отменено (AbortError)');
-                return;
-            }
-            console.error('❌ Ошибка при переключении:', error);
-            this._rollbackTimeframe(previousInterval);
-        } finally {
-            if (this._abortController?.signal === signal) {
-                this._abortController = null;
-            }
-            this.updateInstrumentInfo();
-            this.loadStarredTimeframes();
-        }
-    }
+}
 
     // ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
     _rollbackTimeframe(previousInterval) {
