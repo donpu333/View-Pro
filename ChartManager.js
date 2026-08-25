@@ -553,56 +553,71 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         console.warn('⚠️ Ошибка периодической синхронизации:', e);
     }
 }
-   async refreshCandlesAfterTabHidden() {
+  async refreshCandlesAfterTabHidden() {
     if (!this._isChartValid() || this._switchingSymbol) return;
     if (this._refreshingAfterHidden) return;
     this._refreshingAfterHidden = true;
     const wasSuspended = this._updatesSuspended;
     this._updatesSuspended = true;
     const genId = this._activeGeneration;
+    
     try {
-        const symbol = this.currentSymbol; const exchange = this.currentExchange;
-        const marketType = this.currentMarketType; const interval = this.currentInterval;
+        const symbol = this.currentSymbol; 
+        const exchange = this.currentExchange;
+        const marketType = this.currentMarketType; 
+        const interval = this.currentInterval;
         const limit = 500;
+        
         const freshCandles = await this.fetchKlines(symbol, exchange, marketType, interval, limit, null, 'background');
+        
         if (!this._isChartValid() || this._activeGeneration !== genId || this._switchingSymbol) return;
+        
         if (!freshCandles || freshCandles.length === 0) {
             this._forceRedrawAll();
+            // ✅ УДАЛЕНО: this.scrollToLast()
             if (this._savedWasViewingHistory && this._savedLogicalRange) {
                 try { this.chart.timeScale().setVisibleLogicalRange(this._savedLogicalRange); } catch (e) {}
-            } else {
-                this.scrollToLast();
             }
             return;
         }
+        
         const currentData = this.chartData;
         if (!currentData || currentData.length === 0) {
             if (!this._isChartValid()) return;
             this.setDataQuick(freshCandles, interval, symbol, exchange, marketType, true);
             return;
         }
+        
         const currentMap = new Map();
         for (const candle of currentData) currentMap.set(candle.time, candle);
+        
         const oldLastCandle = currentData[currentData.length - 1];
         const oldLastTime = oldLastCandle.time;
+        
         let hasStructuralChange = false;
         let lastCandleFresh = null;
         const newCandles = [];
+        
         for (const freshCandle of freshCandles) {
             const existing = currentMap.get(freshCandle.time);
             if (existing) {
                 if (!this._isFresherUpdate(existing, freshCandle._receivedAt, freshCandle._source)) continue;
                 const differs = (existing.open !== freshCandle.open || existing.high !== freshCandle.high || existing.low !== freshCandle.low ||
-                    existing.close !== freshCandle.close || existing.volume !== freshCandle.volume || existing.quoteVolume !== freshCandle.quoteVolume);
+                                 existing.close !== freshCandle.close || existing.volume !== freshCandle.volume || existing.quoteVolume !== freshCandle.quoteVolume);
                 if (differs) {
                     if (freshCandle.time === oldLastTime) lastCandleFresh = freshCandle;
                     else hasStructuralChange = true;
                 }
-            } else if (freshCandle.time > oldLastTime) newCandles.push(freshCandle);
-            else hasStructuralChange = true;
+            } else if (freshCandle.time > oldLastTime) {
+                newCandles.push(freshCandle);
+            } else {
+                hasStructuralChange = true;
+            }
         }
+        
         newCandles.sort((a, b) => a.time - b.time);
         let dataChanged = false;
+        
         if (!hasStructuralChange) {
             if (lastCandleFresh) {
                 let fresh = lastCandleFresh;
@@ -620,6 +635,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 }
                 dataChanged = true;
             }
+            
             for (const nc of newCandles) {
                 let candle = nc;
                 if (!this._isValidCandle(candle)) { const sanitized = this._sanitizeCandle(candle); if (!sanitized) continue; candle = sanitized; }
@@ -635,6 +651,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 }
                 dataChanged = true;
             }
+            
             if (dataChanged) {
                 this.lastCandle = currentData[currentData.length - 1];
                 this._volumeDataCache = null; this._volumeDataDirty = true;
@@ -655,6 +672,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
             const freshTimes = new Set(freshCandles.map(c => c.time));
             for (const candle of currentData) { if (!freshTimes.has(candle.time)) updatedData.push(candle); }
             updatedData.sort((a, b) => a.time - b.time);
+            
             if (dataChanged && this._isChartValid()) {
                 this.chartData = updatedData; this._rebuildTimeMap();
                 this.lastCandle = this.chartData[this.chartData.length - 1];
@@ -668,7 +686,9 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 this.volumeSeries.setData(volumeData);
             }
         }
+        
         if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+        
         const lastCandle = this.lastCandle;
         if (lastCandle && this._isChartValid()) {
             const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -678,12 +698,13 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 this.currentRealPrice = lastCandle.close;
             }
         }
+        
         if (this.timerManager) {
             this.timerManager.start(this.currentInterval);
             this.timerManager.updatePrice(this.lastCandle.close);
         }
         
-        // ✅ ИСПРАВЛЕНО: Восстановление позиции на основе сохранённого флага
+        // ✅ ИСПРАВЛЕНО: Полное удаление принудительной прокрутки при возврате
         if (this._savedWasViewingHistory) {
             if (this._savedLogicalRange && this._isChartValid()) {
                 try {
@@ -693,19 +714,23 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                     });
                     this._isViewingHistory = true;
                 } catch (e) {
-                    console.warn('⚠️ Не удалось восстановить позицию, прокручиваем к последней свече');
-                    this.scrollToLast();
+                    console.warn('⚠️ Не удалось восстановить позицию');
                     this._isViewingHistory = false;
                 }
             }
         } else {
-            this.scrollToLast();
+            // ✅ УДАЛЕНО: this.scrollToLast();
+            // График lightweight-charts автоматически остаётся на месте при точечных обновлениях (.update).
+            // Принудительная прокрутка здесь вызывает неприятный "скачок" графика, особенно на 1d.
             this._isViewingHistory = false;
         }
         
     } catch (error) {
         console.error('❌ Ошибка синхронизации после возврата:', error);
-        if (this._isChartValid()) { this._forceRedrawAll(); this.scrollToLast(); }
+        if (this._isChartValid()) { 
+            this._forceRedrawAll(); 
+            // ✅ УДАЛЕНО: this.scrollToLast() из блока catch
+        }
     } finally {
         this._refreshingAfterHidden = false;
         if (this._quarantineTimeout) clearTimeout(this._quarantineTimeout);
