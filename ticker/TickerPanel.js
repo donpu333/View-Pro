@@ -2,15 +2,16 @@ const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
     CACHE_REFRESH_INTERVAL: 4 * 60 * 60 * 1000,
     HEALTH_CHECK_INTERVAL: 30 * 1000,
-    REST_POLL_INTERVAL: 60 * 60 * 1000, 
+    REST_POLL_INTERVAL: 30 * 60 * 1000, // ✅ Раз в 30 минут
     FINAL_RERENDER_DELAY: 3000,
     WS_RECONNECT_DELAY: 5000,
     FETCH_TIMEOUT: 15000,
     BATCH_DELAY: 800,
     FLASH_DURATION: 400,
     MAX_WS_MESSAGE_SIZE: 1024 * 1024,
-    REST_QUEUE_DELAY: 300,
+    REST_QUEUE_DELAY: 200, // ✅ Задержка между REST-запросами 200мс
     BINANCE_BATCH_SIZE: 100,
+    UI_UPDATE_THROTTLE: 5000, // ✅ Обновление UI не чаще 2 раз в секунду
 };
 const QUOTE_ASSETS = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH'];
 
@@ -37,6 +38,7 @@ class TickerPanel {
         this._pendingPriceUpdates = new Map();
         this._priceUpdateRaf = null;
         this._isDestroyed = false;
+        this._lastUiUpdateMap = new Map(); // ✅ НОВОЕ: для троттлинга обновлений
 
         this.state = this.storage.state;
         this.tickers = this.storage.tickers;
@@ -339,49 +341,71 @@ class TickerPanel {
         }
     }
 
-    _onPriceUpdate(symbol, data, exchange, marketType) {
-        if (this._isDestroyed) return;
-        const compositeKey = `${symbol}:${exchange}:${marketType}`;
-        const ticker = this.tickersMap.get(compositeKey);
-        if (!ticker) return;
+    // ✅ ОПТИМИЗИРОВАНО: Добавлен троттлинг обновлений UI
+   _onPriceUpdate(symbol, data, exchange, marketType) {
+    if (this._isDestroyed) return;
+    const compositeKey = `${symbol}:${exchange}:${marketType}`;
+    const ticker = this.tickersMap.get(compositeKey);
+    if (!ticker) return;
 
-        const newPrice = typeof data === 'object' && data !== null ? parseFloat(data.price) : parseFloat(data);
-        if (isNaN(newPrice)) return;
+    const newPrice = typeof data === 'object' && data !== null ? parseFloat(data.price) : parseFloat(data);
+    if (isNaN(newPrice)) return;
 
-        let newChange = typeof data === 'object' && data !== null ? parseFloat(data.change) : undefined;
-        if (isNaN(newChange)) newChange = ticker.change || 0;
+    let newChange = typeof data === 'object' && data !== null ? parseFloat(data.change) : undefined;
+    if (isNaN(newChange)) newChange = ticker.change || 0;
 
-        let newVolume = typeof data === 'object' && data !== null ? parseFloat(data.volume) : undefined;
-        if (isNaN(newVolume)) newVolume = ticker.volume;
+    let newVolume = typeof data === 'object' && data !== null ? parseFloat(data.volume) : undefined;
+    if (isNaN(newVolume)) newVolume = ticker.volume;
 
-        let newTrades = typeof data === 'object' && data !== null ? parseInt(data.trades) : undefined;
-        if (isNaN(newTrades)) newTrades = ticker.trades;
+    let newTrades = typeof data === 'object' && data !== null ? parseInt(data.trades) : undefined;
+    if (isNaN(newTrades)) newTrades = ticker.trades;
 
-        if (ticker.price === newPrice && ticker.change === newChange && ticker.volume === newVolume && ticker.trades === newTrades) return;
-
+    // ✅ ТРОТТЛИНГ: Проверяем ДО обновления данных
+    const now = Date.now();
+    const lastUpdate = this._lastUiUpdateMap.get(compositeKey) || 0;
+    
+    // ✅ Если прошло меньше 500мс — обновляем только данные, но не UI
+    if (now - lastUpdate < TICKER_TIMINGS.UI_UPDATE_THROTTLE) {
+        // Обновляем данные в памяти, но НЕ трогаем DOM
         ticker.prevPrice = ticker.price > 0 ? ticker.price : newPrice;
         ticker.price = newPrice;
         ticker.change = newChange;
         ticker.volume = newVolume;
         ticker.trades = newTrades;
-        ticker._lastUpdateTime = Date.now();
+        ticker._lastUpdateTime = now;
+        return;
+    }
+    
+    // ✅ Прошло больше 500мс — обновляем и UI
+    this._lastUiUpdateMap.set(compositeKey, now);
 
-        if (!this._blockDOMUpdates && this.renderer) {
-            this._pendingPriceUpdates.set(compositeKey, { price: ticker.price, change: newChange, volume: newVolume, trades: newTrades });
-            
-            if (!this._priceUpdateRaf) {
-                this._priceUpdateRaf = requestAnimationFrame(() => {
-                    this._priceUpdateRaf = null;
-                    const batch = this._pendingPriceUpdates;
-                    this._pendingPriceUpdates = new Map(); 
-                    for (const [key, val] of batch.entries()) {
-                        this.renderer.updatePriceForSymbol(key, val.price, val.change, val.volume, val.trades);
-                    }
-                });
-            }
+    ticker.prevPrice = ticker.price > 0 ? ticker.price : newPrice;
+    ticker.price = newPrice;
+    ticker.change = newChange;
+    ticker.volume = newVolume;
+    ticker.trades = newTrades;
+    ticker._lastUpdateTime = now;
+
+    if (!this._blockDOMUpdates && this.renderer) {
+        this._pendingPriceUpdates.set(compositeKey, { 
+            price: ticker.price, 
+            change: newChange, 
+            volume: newVolume, 
+            trades: newTrades 
+        });
+        
+        if (!this._priceUpdateRaf) {
+            this._priceUpdateRaf = requestAnimationFrame(() => {
+                this._priceUpdateRaf = null;
+                const batch = this._pendingPriceUpdates;
+                this._pendingPriceUpdates = new Map(); 
+                for (const [key, val] of batch.entries()) {
+                    this.renderer.updatePriceForSymbol(key, val.price, val.change, val.volume, val.trades);
+                }
+            });
         }
     }
-
+}
     processParallelData(results, updateOnly = false) {
         const MAX_SYMBOLS = 4000;
         let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
@@ -645,6 +669,7 @@ class TickerPanel {
         this._subscribedSymbols.clear();
         this._rowDomCache.clear();
         this._pendingPriceUpdates.clear();
+        this._lastUiUpdateMap.clear();
         
         console.log('✅ TickerPanel полностью уничтожен');
     }
@@ -670,6 +695,7 @@ class TickerPanel {
         this.tickerElements.clear();
         this._rowDomCache.clear();
         this._subscribedSymbols.clear();
+        this._lastUiUpdateMap.clear();
         
         if (this.renderer) {
             this.renderer._displayedTickers = [];
@@ -860,7 +886,7 @@ class TickerPanel {
                     try {
                         const url = marketType === 'futures' ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbols=[${symbolsParam}]` : `https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbolsParam}]`;
                         const response = await fetch(url);
-                        if (!response.ok) continue; // ✅ ФИКС: проверка ответа
+                        if (!response.ok) continue;
                         const data = await response.json();
                         if (Array.isArray(data)) data.forEach(t => this._updateTickerFromBinance(t, marketType));
                     } catch (e) {}
@@ -874,7 +900,7 @@ class TickerPanel {
                     const category = marketType === 'futures' ? 'linear' : 'spot';
                     const url = `https://api.bybit.com/v5/market/tickers?category=${category}`;
                     const response = await fetch(url);
-                    if (!response.ok) return; // ✅ ФИКС: проверка ответа
+                    if (!response.ok) return;
                     const data = await response.json();
                     if (data.retCode === 0 && data.result?.list) {
                         const symbolSet = new Set(symbolList.map(s => s.symbol));
@@ -938,7 +964,7 @@ class TickerPanel {
                 : `https://api.bybit.com/v5/market/tickers?category=${marketType === 'futures' ? 'linear' : 'spot'}&symbol=${symbol}`;
             
             const response = await fetch(url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`); // ✅ ФИКС: валидация ответа
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
             const data = await response.json();
             const ticker = this.tickersMap.get(`${symbol}:${exchange}:${marketType}`);
@@ -968,7 +994,7 @@ class TickerPanel {
                 fetch('https://api.bybit.com/v5/market/tickers?category=spot')
             ]);
             
-            if (!futRes.ok || !spotRes.ok) throw new Error('Bybit API error'); // ✅ ФИКС: валидация ответа
+            if (!futRes.ok || !spotRes.ok) throw new Error('Bybit API error');
 
             const futData = await futRes.json(); 
             const spotData = await spotRes.json();
@@ -1031,6 +1057,7 @@ class TickerPanel {
         this.tickersMap.delete(key);
         this._rowDomCache.delete(key);
         this._subscribedSymbols.delete(key);
+        this._lastUiUpdateMap.delete(key);
         this.state.customSymbols = this.state.customSymbols.filter(s => s !== key);
         this.state.favorites = this.state.favorites.filter(s => s !== symbol);
         
