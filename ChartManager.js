@@ -1266,9 +1266,9 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             }
         }, 0);
         
-        // ✅ ИСПРАВЛЕНО: ОДНА прокрутка + автоскейл
-        if (isNewSymbol) {
-            // Для нового символа/таймфрейма — прокручиваем к последней свече
+        // ✅ ЕДИНАЯ ЛОГИКА ПРОКРУТКИ
+        if (isNewSymbol || !currentScale) {
+            // Новый символ/таймфрейм или нет масштаба → прокручиваем к последней
             setTimeout(() => {
                 if (this._isChartValid()) {
                     this.scrollToLast();
@@ -1276,20 +1276,11 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
                 }
                 if (onReady) onReady();
             }, 100);
-        } else if (currentScale) {
-            // Для того же символа — восстанавливаем масштаб
+        } else {
+            // Тот же символ с масштабом → восстанавливаем позицию
             setTimeout(() => {
                 if (this._isChartValid()) {
                     this._restoreScale(currentScale);
-                    this.autoScale();
-                }
-                if (onReady) onReady();
-            }, 50);
-        } else {
-            // Нет масштаба — прокручиваем к последней
-            setTimeout(() => {
-                if (this._isChartValid()) {
-                    this.scrollToLast();
                     this.autoScale();
                 }
                 if (onReady) onReady();
@@ -1326,7 +1317,6 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         if (onReady) onReady();
     }
 }
-
     _captureScale() {
         if (!this._isChartValid()) return null;
         try {
@@ -1435,140 +1425,99 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         } catch (error) { rollbackSwitch(error); }
     }
 
-setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
+async switchInterval(newInterval) {
+    if (this._isSwitchingInterval || this._switchingSymbol) return;
+    if (this.currentInterval === newInterval) return;
+    
+    this._isSwitchingInterval = true;
+    this._showSymbolSwitchOverlay();
+    
+    const generationId = ++this._generationCounter;
+    this._activeGeneration = generationId;
+    
+    this._stopPeriodicSync();
+    this._stopCandleChecker();
+    
+    if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
+    if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
+    if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
+    
+    this._lastKlineEventTime = 0;
+    this._catchingUpMissed = false;
+    this._lastCatchUpAttempt = 0;
+    if (window.wsManager?.clearKlineQueue) {
+        window.wsManager.clearKlineQueue();
+    }
+    
     try {
-        if (!this._isChartValid()) { if (onReady) onReady(); return; }
-        if (!data || data.length === 0) { if (onReady) onReady(); return; }
-        const currentScale = this._captureScale();
-        const isNewSymbol = forceNewSymbol;
-        this.chart.applyOptions({ handleScroll: false, handleScale: false });
+        this._suspendAllUpdates();
         
-        this.chartData = []; 
-        this.lastCandle = null; 
-        this._candleTimeMap.clear();
-        this._volumeDataCache = null; 
-        this._volumeDataDirty = true; 
-        this._lastVolumeUpdateIndex = -1; 
-        this._isTrimming = false;
+        this.currentInterval = newInterval;
+        localStorage.setItem('lastTimeframe', newInterval);
         
-        const seenTimes = new Set();
-        let noDupes = data.filter(c => {
-            if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
-            if (seenTimes.has(c.time)) return false;
-            seenTimes.add(c.time); 
-            return true;
-        });
-        noDupes = noDupes.filter(c => this._isValidCandle(c));
-        data = noDupes;
-        
-        if (data.length === 0) {
-            this.chart.applyOptions({ handleScroll: true, handleScale: true });
-            if (onReady) onReady(); 
-            return;
+        if (window.wsManager?.updateSymbolAndTimeframe) {
+            window.wsManager.updateSymbolAndTimeframe(
+                this.currentSymbol,
+                this.currentInterval,
+                this.currentExchange,
+                this.currentMarketType
+            );
         }
         
-        data.sort((a, b) => a.time - b.time);
-        this.chartData = data;
-        this._candleTimeMap.clear();
-        for (let i = 0; i < data.length; i++) this._candleTimeMap.set(data[i].time, i);
+        let candles = await this.loadCandlesFromCache(
+            this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+        );
+        let isFromCache = !!candles;
         
-        this.currentInterval = interval; 
-        this.currentSymbol = symbol; 
-        this.currentExchange = exchange; 
-        this.currentMarketType = marketType;
-        this.hasMoreData = true; 
-        this._historyEndTime = data[0].time; 
-        this.lastCandle = data[data.length - 1];
-        
-        if (this.candleSeries) this.candleSeries.setData(this.chartData);
-        if (this.barSeries) this.barSeries.setData(this.chartData);
-        
-        if (this.volumeSeries && this.chartData.length > 0) {
-            const volumeData = this._buildVolumeData(this.chartData);
-            this.volumeSeries.setData(volumeData);
-            this._volumeDataDirty = false; 
-            this._lastVolumeUpdateIndex = this.chartData.length - 1;
+        if (!isFromCache) {
+            candles = await this.fetchKlines(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 1000
+            );
         }
         
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        this.chart.applyOptions({ handleScroll: true, handleScale: true });
+        if (this._activeGeneration !== generationId) return;
+        if (!candles || candles.length === 0) throw new Error('Нет данных');
         
-        if (series) {
-            const lineColor = this._getLineColor();
-            this._applyPriceLineColor(series, lineColor);
-        }
+        // ✅ setDataQuick сам прокрутит к последней свече и сделает autoScale
+        this.setDataQuick(
+            candles, 
+            this.currentInterval, 
+            this.currentSymbol, 
+            this.currentExchange, 
+            this.currentMarketType, 
+            true
+        );
         
-        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
-        const inferredPrecision = this._inferPrecisionFromData();
-        if (cachedPrecision) {
-            this.applyPriceFormat(parseInt(cachedPrecision));
-            this._lastAppliedPrecision = cachedPrecision;
-        } else {
-            this.applyPriceFormat(inferredPrecision);
-            localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
-            this._lastAppliedPrecision = String(inferredPrecision);
-        }
-        
-        setTimeout(() => {
-            if (this.indicatorManager && this._isChartValid()) {
-                this.indicatorManager.restorePendingIndicators();
-                this.indicatorManager.updateAllIndicators();
-                this.indicatorManager.loadIndicators();
-            }
-        }, 0);
-        
-        // ✅ ЕДИНАЯ ЛОГИКА ПРОКРУТКИ
-        if (isNewSymbol || !currentScale) {
-            // Новый символ/таймфрейм или нет масштаба → прокручиваем к последней
-            setTimeout(() => {
-                if (this._isChartValid()) {
-                    this.scrollToLast();
-                    this.autoScale();
-                }
-                if (onReady) onReady();
-            }, 100);
-        } else {
-            // Тот же символ с масштабом → восстанавливаем позицию
-            setTimeout(() => {
-                if (this._isChartValid()) {
-                    this._restoreScale(currentScale);
-                    this.autoScale();
-                }
-                if (onReady) onReady();
-            }, 50);
-        }
-        
-        this.scheduleUpdatePosition();
-        this._updatePageTitle();
-        if (this.timerManager) {
+        // ✅ Перезапускаем TimerManager
+        if (this.timerManager && this.lastCandle) {
             this.timerManager.start(this.currentInterval);
             this.timerManager.updatePrice(this.lastCandle.close);
         }
-        if (typeof getPrecisionFromExchange === 'function') {
-            getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
-                if (this.currentSymbol === symbol && this._isChartValid()) {
-                    localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
-                    this.applyPriceFormat(precision);
-                    this._lastAppliedPrecision = String(precision);
-                }
-            }).catch(() => {});
+        
+        if (!isFromCache) {
+            this.saveCandlesToCache(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles
+            ).catch(() => {});
         }
-        setTimeout(() => { if (window.renderDrawings) window.renderDrawings(); }, 0);
-        this._lastTimeframe = interval;
-        if (!window._dailySeparator && window.DailySeparator) window._dailySeparator = new window.DailySeparator(this);
-        if (window._dailySeparator?.redraw) window._dailySeparator.redraw();
-        if (!window._sessionHighlighter && window.SessionHighlighter) window._sessionHighlighter = new window.SessionHighlighter(this);
-        if (window._sessionHighlighter?.redraw) window._sessionHighlighter.redraw();
-        this.isLoadingMore = false; 
-        this._pendingHistoryLoad = false; 
-        this._lastHistoryLoadTime = 0;
+        
+        if (isFromCache) {
+            this.refreshCandlesInBackground(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+            ).catch(() => {});
+        }
+        
     } catch (error) {
-        console.error('❌ Ошибка в setDataQuick:', error);
-        if (this.chart) this.chart.applyOptions({ handleScroll: true, handleScale: true });
-        if (onReady) onReady();
+        console.error('❌ Ошибка переключения таймфрейма:', error);
+    } finally {
+        if (this._activeGeneration === generationId) {
+            this._isSwitchingInterval = false;
+            this._resumeAllUpdates(generationId);
+            this._hideSymbolSwitchOverlay();
+            this._startPeriodicSync();
+            this._startNewCandleChecker();
+        }
     }
 }
-
     loadDrawingsForCurrentSymbol() {
         Promise.allSettled([
             window.rayManager?.loadRays?.(), window.trendLineManager?.loadTrendLines?.(),
