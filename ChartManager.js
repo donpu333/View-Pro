@@ -1675,29 +1675,59 @@ async switchInterval(newInterval) {
         if (priceScale) priceScale.applyOptions({ autoScale: true });
     }
 
-    autoScale(onComplete) {
-        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) { if (onComplete) onComplete(); return; }
-        const priceScale = this.chart.priceScale('right');
-        if (!priceScale) { if (onComplete) onComplete(); return; }
-        if (this._autoScalePending) { if (onComplete) onComplete(); return; }
-        this._autoScalePending = true;
-        const genId = this._activeGeneration;
-        priceScale.applyOptions({ autoScale: true, scaleMargins: { top: 0.1, bottom: 0.1 } });
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                if (this._activeGeneration !== genId || !this._isChartValid()) {
-                    this._autoScalePending = false;
-                    if (onComplete) onComplete();
-                    return;
-                }
-                try { priceScale.applyOptions({ autoScale: false }); } catch (e) {}
-                this._autoScalePending = false;
-                if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
-                if (onComplete) onComplete();
-            });
-        });
+ autoScale(onComplete) {
+    if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) { 
+        if (onComplete) onComplete(); 
+        return; 
     }
-
+    if (this._autoScalePending) { 
+        if (onComplete) onComplete(); 
+        return; 
+    }
+    this._autoScalePending = true;
+    const genId = this._activeGeneration;
+    
+    // ✅ Ждём отрисовку данных
+    setTimeout(() => {
+        if (this._activeGeneration !== genId || !this._isChartValid()) {
+            this._autoScalePending = false;
+            if (onComplete) onComplete();
+            return;
+        }
+        
+        try {
+            const priceScale = this.chart.priceScale('right');
+            if (priceScale) {
+                // ✅ Включаем автоскейл
+                priceScale.applyOptions({ 
+                    autoScale: true, 
+                    scaleMargins: { top: 0.1, bottom: 0.1 } 
+                });
+                
+                // ✅ Ждём применение автоскейла
+                setTimeout(() => {
+                    if (this._activeGeneration !== genId || !this._isChartValid()) {
+                        this._autoScalePending = false;
+                        if (onComplete) onComplete();
+                        return;
+                    }
+                    
+                    // ✅ Выключаем автоскейл, оставляя вычисленный масштаб
+                    try { priceScale.applyOptions({ autoScale: false }); } catch (e) {}
+                    
+                    this._autoScalePending = false;
+                    if (this.timerManager?._primitive?.isEnabled()) {
+                        this.timerManager._primitive.requestRedraw();
+                    }
+                    if (onComplete) onComplete();
+                }, 100);
+            }
+        } catch (e) {
+            this._autoScalePending = false;
+            if (onComplete) onComplete();
+        }
+    }, 100); // ✅ Ждём 100мс для отрисовки данных
+}
     _finishAutoScale(genId, onComplete) {
         if (this._isChartValid()) {
             const ps = this.chart?.priceScale('right');
