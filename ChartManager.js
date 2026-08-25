@@ -193,9 +193,16 @@ class ChartManager {
             handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
             animation: { duration: 0 },
             timeScale: {
-                timeVisible: true, secondsVisible: false, borderColor: '#333333', 
+                timeVisible: true, 
+                secondsVisible: false, 
+                borderColor: '#333333', 
                 barSpacing: this._savedBarSpacing || 18,
-                minBarSpacing: 1, fixLeftEdge: false, fixRightEdge: false, rightOffset: 12,
+                minBarSpacing: 1, 
+                fixLeftEdge: false, 
+                fixRightEdge: false, 
+                rightOffset: 12,
+                // ✅ ФИКС: Явно включаем автоматический сдвиг при появлении новой свечи
+                shiftVisibleRangeOnNewBar: true,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
                     return date.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
@@ -1197,12 +1204,15 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
+    // ✅ ИСПРАВЛЕННЫЙ МЕТОД setDataQuick
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
             if (!data || data.length === 0) { if (onReady) onReady(); return; }
+            
             const currentScale = this._captureScale();
             const isNewSymbol = forceNewSymbol;
+            
             this.chart.applyOptions({ handleScroll: false, handleScale: false });
             
             this.chartData = []; 
@@ -1279,73 +1289,45 @@ class ChartManager {
                 }
             }, 0);
             
-            // ✅ ЗУМ КАК В TRADINGVIEW
-            if (isNewSymbol) {
-                setTimeout(() => {
-                    if (!this._isChartValid()) return;
-                    
-                    const timeScale = this.chart.timeScale();
-                    const lastIndex = this.chartData.length - 1;
-                    
-                    // ✅ Восстанавливаем сохранённый зум
-                    const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
-                    timeScale.applyOptions({ barSpacing: savedBarSpacing });
-                    
-                    // ✅ Вычисляем видимый диапазон с сохранённым зумом
-                    const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
-                    const from = Math.max(0, lastIndex - visibleBars + 10);
-                    const to = lastIndex + 10;
-                    
-                    timeScale.setVisibleLogicalRange({ from, to });
-                    
-                    // ✅ Автоскейл цены
-                    const priceScale = this.chart.priceScale('right');
-                    if (priceScale) {
-                        priceScale.applyOptions({ autoScale: true });
-                        setTimeout(() => {
-                            priceScale.applyOptions({ autoScale: false });
-                        }, 50);
-                    }
-                    
+            // ✅ ИСПРАВЛЕНИЕ: ЕДИНАЯ ЛОГИКА ДЛЯ ВСЕХ СЛУЧАЕВ
+            setTimeout(() => {
+                if (!this._isChartValid()) {
                     if (onReady) onReady();
-                }, 200);
-            } else if (currentScale) {
-                setTimeout(() => {
-                    if (this._isChartValid()) {
-                        this._restoreScale(currentScale);
-                        const priceScale = this.chart.priceScale('right');
-                        if (priceScale) {
-                            priceScale.applyOptions({ autoScale: true });
-                            setTimeout(() => {
-                                priceScale.applyOptions({ autoScale: false });
-                            }, 50);
+                    return;
+                }
+                
+                const timeScale = this.chart.timeScale();
+                
+                // Восстанавливаем сохранённый barSpacing (зум пользователя)
+                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+                timeScale.applyOptions({ barSpacing: savedBarSpacing });
+                
+                // ✅ ИСПОЛЬЗУЕМ scrollToRealTime() ВМЕСТО РУЧНОГО РАСЧЁТА
+                // Это гарантирует единое поведение на всех таймфреймах и тикерах
+                if (isNewSymbol) {
+                    // При смене символа/интервала прокручиваем к последней свече
+                    timeScale.scrollToRealTime();
+                } else if (currentScale) {
+                    // При обновлении данных восстанавливаем позицию
+                    this._restoreScale(currentScale);
+                } else {
+                    // Если нет сохранённой позиции - прокручиваем к последней свече
+                    timeScale.scrollToRealTime();
+                }
+                
+                // Автоскейл цены
+                const priceScale = this.chart.priceScale('right');
+                if (priceScale) {
+                    priceScale.applyOptions({ autoScale: true });
+                    setTimeout(() => {
+                        if (this._isChartValid()) {
+                            try { priceScale.applyOptions({ autoScale: false }); } catch(e) {}
                         }
-                    }
-                    if (onReady) onReady();
-                }, 100);
-            } else {
-                setTimeout(() => {
-                    if (this._isChartValid()) {
-                        const timeScale = this.chart.timeScale();
-                        const lastIndex = this.chartData.length - 1;
-                        const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
-                        timeScale.applyOptions({ barSpacing: savedBarSpacing });
-                        const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
-                        const from = Math.max(0, lastIndex - visibleBars + 10);
-                        const to = lastIndex + 10;
-                        timeScale.setVisibleLogicalRange({ from, to });
-                        
-                        const priceScale = this.chart.priceScale('right');
-                        if (priceScale) {
-                            priceScale.applyOptions({ autoScale: true });
-                            setTimeout(() => {
-                                priceScale.applyOptions({ autoScale: false });
-                            }, 50);
-                        }
-                    }
-                    if (onReady) onReady();
-                }, 100);
-            }
+                    }, 50);
+                }
+                
+                if (onReady) onReady();
+            }, 200);
             
             this.scheduleUpdatePosition();
             this._updatePageTitle();
@@ -1486,6 +1468,7 @@ class ChartManager {
         } catch (error) { rollbackSwitch(error); }
     }
 
+    // ✅ ИСПРАВЛЕННЫЙ МЕТОД switchInterval
     async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) return;
         if (this.currentInterval === newInterval) return;
@@ -1698,6 +1681,7 @@ class ChartManager {
 
     updateRealPrice(price) { this._syncPriceLine(price); }
 
+    // ✅ ИСПРАВЛЕННЫЙ МЕТОД scrollToLast
     scrollToLast(enableRealTime = true) {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return false;
         if (this._isRestoringZoom) return false;
@@ -1707,14 +1691,16 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
             
+            // ✅ Восстанавливаем сохранённый barSpacing
+            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+            timeScale.applyOptions({ barSpacing: savedBarSpacing });
+            
             if (enableRealTime) {
-                // ✅ ЗУМ КАК В TRADINGVIEW: сохраняем barSpacing
-                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
-                timeScale.applyOptions({ barSpacing: savedBarSpacing, rightOffset: 12 });
+                // ✅ Используем scrollToRealTime() - единое поведение для всех
                 timeScale.scrollToRealTime();
             } else {
+                // Ручной расчёт для случаев, когда не нужно "прилипать" к реальному времени
                 const lastIndex = this.chartData.length - 1;
-                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
                 const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
                 const from = Math.max(0, lastIndex - visibleBars + 10);
                 const to = lastIndex + 10;
