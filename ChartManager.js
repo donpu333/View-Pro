@@ -1374,32 +1374,26 @@ class ChartManager {
     }
 
 
-    async switchInterval(newInterval) {
+  async switchInterval(newInterval) {
     if (this._isSwitchingInterval || this._switchingSymbol) return;
     if (this.currentInterval === newInterval) return;
     
     this._isSwitchingInterval = true;
     this._showSymbolSwitchOverlay();
     
-    // ✅ Инвалидируем все асинхронные операции
     const generationId = ++this._generationCounter;
     this._activeGeneration = generationId;
     
-    // Останавливаем фоновые таймеры
     if (this._periodicSyncInterval) { clearInterval(this._periodicSyncInterval); this._periodicSyncInterval = null; }
     if (this._candleCheckerTimeout) { clearTimeout(this._candleCheckerTimeout); this._candleCheckerTimeout = null; }
     
-    // Отменяем fetch-запросы
     if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
     if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
     if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
     
-    // Сбрасываем фильтры WebSocket
     this._lastKlineEventTime = 0;
     this._catchingUpMissed = false;
     this._lastCatchUpAttempt = 0;
-    
-    const savedTime = this.saveCurrentTimePosition();
     
     try {
         this._suspendAllUpdates();
@@ -1407,7 +1401,6 @@ class ChartManager {
         this.currentInterval = newInterval;
         localStorage.setItem('lastTimeframe', newInterval);
         
-        // Переподключаем WebSocket
         if (window.wsManager?.updateSymbolAndTimeframe) {
             window.wsManager.updateSymbolAndTimeframe(
                 this.currentSymbol,
@@ -1417,7 +1410,6 @@ class ChartManager {
             );
         }
         
-        // Загружаем данные
         let candles = await this.loadCandlesFromCache(
             this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
         );
@@ -1429,31 +1421,33 @@ class ChartManager {
             );
         }
         
-        // Проверяем, не отменили ли
         if (this._activeGeneration !== generationId) return;
         if (!candles || candles.length === 0) throw new Error('Нет данных');
         
-        // Применяем данные
+        // ✅ Вызываем setDataQuick
         this.setDataQuick(
             candles, 
             this.currentInterval, 
             this.currentSymbol, 
             this.currentExchange, 
             this.currentMarketType, 
-            true,
-            () => {
-                if (savedTime) this.scrollToTime(savedTime);
-            }
+            true
         );
         
-        // Сохраняем в кэш
+        // ✅ Принудительно прокручиваем к последней свече
+        requestAnimationFrame(() => {
+            if (this._isChartValid() && this._activeGeneration === generationId) {
+                this.scrollToLast();
+                this.autoScale();
+            }
+        });
+        
         if (!isFromCache) {
             this.saveCandlesToCache(
                 this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles
             ).catch(() => {});
         }
         
-        // Фоновая догрузка
         if (isFromCache) {
             this.refreshCandlesInBackground(
                 this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
