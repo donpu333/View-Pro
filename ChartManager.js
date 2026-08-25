@@ -387,13 +387,25 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         return candle;
     }
 
-    _isFresherUpdate(existingCandle, receivedAt, source) {
-        if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
-        if (receivedAt > existingCandle._receivedAt) return true;
-        if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
-        return false;
+   _isFresherUpdate(existingCandle, receivedAt, source) {
+    if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
+    
+    // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Защита от перезаписи свежих WS-данных устаревшими REST-данными.
+    // REST-запрос инициируется позже, поэтому его `receivedAt` всегда больше, но это не делает 
+    // его данные содержательно "свежее" для открытой свечи (из-за сетевых задержек REST).
+    if (existingCandle._source === 'ws' && source === 'rest') {
+        // Если WebSocket обновлял эту свечу менее 15 секунд назад, считаем его данные приоритетными.
+        // Это предотвращает "мерцание" при периодическом REST-синке.
+        // Если WS отвалится, через 15 секунд REST сможет актуализировать данные, что безопасно.
+        if (receivedAt - existingCandle._receivedAt < 15000) {
+            return false;
+        }
     }
-
+    
+    if (receivedAt > existingCandle._receivedAt) return true;
+    if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
+    return false;
+}
     _getLineColor() {
         if (!this.chartData || this.chartData.length === 0) return this.bullishColor || CONFIG.colors.bullish || '#26a69a';
         const lastCandle = this.chartData[this.chartData.length - 1];
