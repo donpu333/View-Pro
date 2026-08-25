@@ -21,6 +21,7 @@ class TimerRenderer {
         this._cachedColor = null;
     }
 
+    // ✅ Определяем, тёмный ли цвет (по яркости) - идентично ChartManager
     _isDarkColor(hexColor) {
         if (!hexColor || typeof hexColor !== 'string') return false;
         let hex = hexColor.replace('#', '');
@@ -34,6 +35,7 @@ class TimerRenderer {
         return ((r * 299) + (g * 587) + (b * 114)) / 1000 < 150;
     }
 
+    // ✅ Получаем цвет текста для плашки - идентично ChartManager
     _getTextColorForBackground(bgColor) {
         return this._isDarkColor(bgColor) ? '#ffffff' : '#000000';
     }
@@ -87,15 +89,20 @@ class TimerRenderer {
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // ✅ ВСЕГДА получаем актуальный цвет (без кэширования при _colorDirty)
-            let bgColor;
+            // ✅ ИСПРАВЛЕНИЕ: Получаем цвет ТОЧНО так же, как это делает ChartManager для плашки цены
+            let bgColor = '#26a69a'; // дефолт
             
             if (this._colorDirty || !this._cachedColor) {
+                // 1. Приоритет: родной метод ChartManager, который использует сама плашка цены
                 if (typeof chartManager._getLineColor === 'function') {
                     bgColor = chartManager._getLineColor();
-                } else if (typeof chartManager.getCurrentPriceColor === 'function') {
+                } 
+                // 2. Альтернативный родной метод
+                else if (typeof chartManager.getCurrentPriceColor === 'function') {
                     bgColor = chartManager.getCurrentPriceColor();
-                } else {
+                } 
+                // 3. Фолбэк: идентичная логика вычисления, если методы вдруг недоступны
+                else {
                     const isBullish = lastCandle.close >= lastCandle.open;
                     bgColor = isBullish 
                         ? (chartManager.bullishColor || '#26a69a') 
@@ -117,6 +124,7 @@ class TimerRenderer {
             
             ctx.shadowBlur = 0;
     
+            // ✅ Цвет текста автоматически подстраивается под фон (белый на тёмном, чёрный на светлом)
             const textColor = this._getTextColorForBackground(bgColor);
             ctx.fillStyle = textColor;
             ctx.textAlign = 'center';
@@ -198,7 +206,8 @@ class TimerPrimitive {
     updatePrice(price) {
         if (price != null && !isNaN(price) && this.isEnabled()) {
             this._chartManager.currentRealPrice = price;
-            // ✅ ВСЕГДА инвалидируем цвет при обновлении цены
+            // ✅ Принудительно сбрасываем кэш цвета при обновлении цены, 
+            // так как свеча могла сменить направление (бычья/медвежья)
             this._paneView._renderer.invalidateColor();
             this.requestRedraw();
         }
@@ -260,7 +269,6 @@ class TimerManager {
                         this._updateTimerState();
                     }
                     if (this._primitive.isEnabled()) {
-                        // ✅ ВСЕГДА инвалидируем при изменении данных
                         this._primitive.invalidateColor();
                         this._primitive.requestRedraw();
                     }
@@ -340,8 +348,6 @@ class TimerManager {
             if (document.hidden || !this._primitive?.isEnabled()) return;
             
             this._chartManager.currentRealPrice = price;
-            // ✅ ВСЕГДА инвалидируем цвет при новой цене
-            this._primitive.invalidateColor();
             this._primitive.updatePrice(price);
         };
         
@@ -432,8 +438,6 @@ class TimerManager {
 
     updatePrice(price) {
         if (this._primitive) {
-            // ✅ ВСЕГДА инвалидируем цвет
-            this._primitive.invalidateColor();
             this._primitive.updatePrice(price);
         } else {
             if (this._chartManager) {
