@@ -190,7 +190,7 @@ class ChartManager {
             animation: { duration: 0 },
             timeScale: {
                 timeVisible: true, secondsVisible: false, borderColor: '#333333', barSpacing: 12,
-                minBarSpacing: 1, fixLeftEdge: false, fixRightEdge: false, rightOffset: 10,
+                minBarSpacing: 1, fixLeftEdge: false, fixRightEdge: false, rightOffset: 12,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
                     return date.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
@@ -1183,7 +1183,6 @@ class ChartManager {
         });
         await new Promise(r => setTimeout(r, 50));
     }
-
 setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
     try {
         if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1266,25 +1265,70 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             }
         }, 0);
         
-        // ✅ ЕДИНАЯ ЛОГИКА ПРОКРУТКИ
-        if (isNewSymbol || !currentScale) {
-            // Новый символ/таймфрейм или нет масштаба → прокручиваем к последней
+        // ✅ ГАРАНТИРОВАННАЯ ПРОКРУТКА И ВЫРАВНИВАНИЕ
+        if (isNewSymbol) {
+            // ✅ Новый символ/таймфрейм — принудительно прокручиваем
+            setTimeout(() => {
+                if (!this._isChartValid()) return;
+                
+                const timeScale = this.chart.timeScale();
+                const lastIndex = this.chartData.length - 1;
+                
+                // ✅ Вычисляем видимый диапазон: последние N свечей + отступ 10
+                const barSpacing = timeScale.options().barSpacing || 12;
+                const visibleBars = Math.floor(this.chartContainer.clientWidth / barSpacing);
+                const from = Math.max(0, lastIndex - visibleBars + 10);
+                const to = lastIndex + 10; // 10 пустых свечей справа
+                
+                // ✅ Принудительно устанавливаем диапазон
+                timeScale.setVisibleLogicalRange({ from, to });
+                
+                // ✅ Автоскейл цены
+                const priceScale = this.chart.priceScale('right');
+                if (priceScale) {
+                    priceScale.applyOptions({ autoScale: true });
+                    setTimeout(() => {
+                        priceScale.applyOptions({ autoScale: false });
+                    }, 50);
+                }
+                
+                if (onReady) onReady();
+            }, 200); // ✅ Увеличиваем до 200мс для гарантированной отрисовки
+        } else if (currentScale) {
             setTimeout(() => {
                 if (this._isChartValid()) {
-                    this.scrollToLast();
-                    this.autoScale();
+                    this._restoreScale(currentScale);
+                    const priceScale = this.chart.priceScale('right');
+                    if (priceScale) {
+                        priceScale.applyOptions({ autoScale: true });
+                        setTimeout(() => {
+                            priceScale.applyOptions({ autoScale: false });
+                        }, 50);
+                    }
                 }
                 if (onReady) onReady();
             }, 100);
         } else {
-            // Тот же символ с масштабом → восстанавливаем позицию
             setTimeout(() => {
                 if (this._isChartValid()) {
-                    this._restoreScale(currentScale);
-                    this.autoScale();
+                    const timeScale = this.chart.timeScale();
+                    const lastIndex = this.chartData.length - 1;
+                    const barSpacing = timeScale.options().barSpacing || 12;
+                    const visibleBars = Math.floor(this.chartContainer.clientWidth / barSpacing);
+                    const from = Math.max(0, lastIndex - visibleBars + 10);
+                    const to = lastIndex + 10;
+                    timeScale.setVisibleLogicalRange({ from, to });
+                    
+                    const priceScale = this.chart.priceScale('right');
+                    if (priceScale) {
+                        priceScale.applyOptions({ autoScale: true });
+                        setTimeout(() => {
+                            priceScale.applyOptions({ autoScale: false });
+                        }, 50);
+                    }
                 }
                 if (onReady) onReady();
-            }, 50);
+            }, 100);
         }
         
         this.scheduleUpdatePosition();
@@ -1639,31 +1683,35 @@ async switchInterval(newInterval) {
     updateRealPrice(price) { this._syncPriceLine(price); }
 
     scrollToLast(enableRealTime = true) {
-        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return false;
-        if (this._isRestoringZoom) return false;
-        try {
-            this._isViewingHistory = false;
-            this.lastCandle = this.chartData[this.chartData.length - 1];
-            const timeScale = this.chart.timeScale();
-            if (!timeScale) return false;
-            if (enableRealTime) timeScale.scrollToRealTime();
-            else {
-                const currentRange = timeScale.getVisibleLogicalRange();
-                if (currentRange) {
-                    const visibleBars = currentRange.to - currentRange.from;
-                    const lastIndex = this.chartData.length - 1;
-                    timeScale.setVisibleLogicalRange({ from: Math.max(0, lastIndex - visibleBars + 1), to: lastIndex + 1 });
-                }
-            }
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (activeSeries && this.lastCandle) {
-                activeSeries.update({ time: this.lastCandle.time, open: this.lastCandle.open, high: this.lastCandle.high, low: this.lastCandle.low, close: this.lastCandle.close });
-            }
-            if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
-            return true;
-        } catch (e) { return false; }
-    }
-
+    if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return false;
+    if (this._isRestoringZoom) return false;
+    try {
+        this._isViewingHistory = false;
+        this.lastCandle = this.chartData[this.chartData.length - 1];
+        const timeScale = this.chart.timeScale();
+        if (!timeScale) return false;
+        
+        if (enableRealTime) {
+            // ✅ Устанавливаем отступ 10 свечей
+            timeScale.applyOptions({ rightOffset: 12 });
+            timeScale.scrollToRealTime();
+        } else {
+            // ✅ Точный отступ 10 свечей
+            const lastIndex = this.chartData.length - 1;
+            const visibleBars = Math.floor(this.chartContainer.clientWidth / 12);
+            const from = Math.max(0, lastIndex - visibleBars + 10);
+            const to = lastIndex + 10;
+            timeScale.setVisibleLogicalRange({ from, to });
+        }
+        
+        const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (activeSeries && this.lastCandle) {
+            activeSeries.update({ time: this.lastCandle.time, open: this.lastCandle.open, high: this.lastCandle.high, low: this.lastCandle.low, close: this.lastCandle.close });
+        }
+        if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
+        return true;
+    } catch (e) { return false; }
+}
     clearChart() {
         if (!this._isChartValid()) return;
         if (this.candleSeries) this.candleSeries.setData([]);
