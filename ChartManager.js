@@ -446,12 +446,16 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
             if (!document.hidden && !this._switchingSymbol && !this._updatesSuspended && this._isChartValid()) this._syncRecentCandles();
         }, 10000);
     }
-
- async _syncRecentCandles() {
+async _syncRecentCandles() {
     const genId = this._activeGeneration;
     try {
         const fresh = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 20, null, 'background');
         if (!fresh || fresh.length === 0) return;
+        
+        // ✅ ФИЛЬТРАЦИЯ: отбрасываем свечи, не выровненные по текущему интервалу
+        const validFresh = fresh.filter(c => this._isCandleAlignedToInterval(c.time));
+        if (validFresh.length === 0) return;
+        
         if (this._updatesSuspended || this._switchingSymbol || this._activeGeneration !== genId) return;
         
         const currentData = this.chartData;
@@ -460,23 +464,13 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         let changed = false;
         let olderCandlesChanged = false;
         
-        // ✅ 1. Обновляем существующие свечи в памяти (последние 20)
         for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 20); i--) {
             const cur = currentData[i];
-            const freshCandle = fresh.find(f => f.time === cur.time);
+            const freshCandle = validFresh.find(f => f.time === cur.time);
             
             if (freshCandle) {
-                if (!this._isFresherUpdate(cur, freshCandle._receivedAt, freshCandle._source)) {
-                    continue;
-                }
+                if (!this._isFresherUpdate(cur, freshCandle._receivedAt, freshCandle._source)) continue;
                 
-                // ✅ ФИКС "мигания" графика: _isFresherUpdate почти ВСЕГДА возвращает true,
-                // т.к. сравнивает время ПОЛУЧЕНИЯ данных (Date.now()), а не сами данные —
-                // при каждом фоновом опросе (раз в 10 сек) новый Date.now() больше старого.
-                // Из-за этого код считал свечу "изменившейся" даже когда OHLCV не поменялись
-                // ни на йоту, ниже выставлялся olderCandlesChanged=true -> setData() ->
-                // ПОЛНАЯ перерисовка графика сразу после того как он уже отрисовался.
-                // Именно это и есть "свеча появилась, а потом перерисовалась".
                 const valuesDiffer = (
                     cur.open !== freshCandle.open ||
                     cur.high !== freshCandle.high ||
@@ -486,12 +480,9 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                     (cur.quoteVolume || cur.volume || 0) !== (freshCandle.quoteVolume || freshCandle.volume || 0)
                 );
                 
-                // Штамп свежести обновляем всегда - на отрисовку это не влияет
                 this._stampCandle(cur, freshCandle._source, freshCandle._receivedAt);
                 
-                if (!valuesDiffer) {
-                    continue; // данные реально не изменились - график не трогаем
-                }
+                if (!valuesDiffer) continue;
                 
                 cur.open = freshCandle.open;
                 cur.close = freshCandle.close;
@@ -500,61 +491,41 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 cur.volume = freshCandle.volume;
                 cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
                 
-                // ⚠️ Если индекс меньше последнего, значит мы меняем ИСТОРИЮ
-                if (i < currentData.length - 1) {
-                    olderCandlesChanged = true;
-                }
+                if (i < currentData.length - 1) olderCandlesChanged = true;
                 changed = true;
             }
         }
         
-        // ✅ 2. Добавляем отсутствующие свечи (например, пропущенные в середине или новые в конце)
         const currentTimes = new Set(currentData.map(c => c.time));
-        const missingCandles = fresh.filter(f => !currentTimes.has(f.time)).sort((a, b) => a.time - b.time);
+        const missingCandles = validFresh.filter(f => !currentTimes.has(f.time)).sort((a, b) => a.time - b.time);
         
         if (missingCandles.length > 0) {
             for (const candle of missingCandles) {
                 candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
-                
-                // Находим правильную позицию для вставки, чтобы сохранить сортировку по времени
                 const insertIndex = currentData.findIndex(c => c.time > candle.time);
                 if (insertIndex !== -1) {
                     currentData.splice(insertIndex, 0, candle);
-                    // Если вставили не в самый конец, это изменение истории
-                    if (insertIndex < currentData.length - 1) {
-                        olderCandlesChanged = true;
-                    }
+                    if (insertIndex < currentData.length - 1) olderCandlesChanged = true;
                 } else {
                     currentData.push(candle);
                 }
             }
-            
-            // Перестраиваем карту времени, так как индексы могли сдвинуться из-за splice
             this._rebuildTimeMap();
-            
             this.lastCandle = currentData[currentData.length - 1];
             changed = true;
         }
         
-        // ✅ 3. Обновляем график
         if (changed && this._isChartValid()) {
             if (olderCandlesChanged) {
-                // ⚠️ КРИТИЧЕСКИ ВАЖНО: lightweight-charts НЕ ПОЗВОЛЯЕТ использовать update() для старых свечей.
-                // Если изменилась хотя бы одна историческая свеча, мы ОБЯЗАНЫ использовать setData().
                 if (this.candleSeries) this.candleSeries.setData(this.chartData);
                 if (this.barSeries) this.barSeries.setData(this.chartData);
-                if (this.volumeSeries) {
-                    this.volumeSeries.setData(this._buildVolumeData(this.chartData));
-                }
+                if (this.volumeSeries) this.volumeSeries.setData(this._buildVolumeData(this.chartData));
             } else {
-                // ✅ Если менялась ТОЛЬКО последняя свеча или добавились новые в конец, используем быстрый update()
                 const lastCandle = currentData[currentData.length - 1];
                 const safeTime = Number(lastCandle.time);
                 const updateData = { time: safeTime, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close };
-                
                 if (this.candleSeries) this.candleSeries.update(updateData);
                 if (this.barSeries) this.barSeries.update(updateData);
-                
                 if (this.volumeSeries) {
                     const isBullish = lastCandle.close >= lastCandle.open;
                     this.volumeSeries.update({
@@ -564,16 +535,46 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                     });
                 }
             }
-            
             this._volumeDataDirty = true;
             this._syncLineColor();
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             if (this.timerManager) this.timerManager.updatePrice(this.lastCandle.close);
         }
-        
     } catch (e) {
         console.warn('⚠️ Ошибка периодической синхронизации:', e);
     }
+}
+/**
+ * Проверяет, выровнено ли время свечи по текущему интервалу.
+ * @param {number} time - время в секундах (Unix timestamp)
+ * @returns {boolean}
+ */
+_isCandleAlignedToInterval(time) {
+    if (typeof time !== 'number' || isNaN(time) || time <= 0) return false;
+
+    const interval = this.currentInterval;
+
+    // Для недельных свечей — понедельник 00:00 UTC
+    if (interval === '1w') {
+        const date = new Date(time * 1000);
+        return date.getUTCDay() === 1 &&
+               date.getUTCHours() === 0 &&
+               date.getUTCMinutes() === 0 &&
+               date.getUTCSeconds() === 0;
+    }
+
+    // Для месячных свечей — 1-е число 00:00 UTC
+    if (interval === '1M') {
+        const date = new Date(time * 1000);
+        return date.getUTCDate() === 1 &&
+               date.getUTCHours() === 0 &&
+               date.getUTCMinutes() === 0 &&
+               date.getUTCSeconds() === 0;
+    }
+
+    // Для остальных интервалов — кратность шагу (в секундах)
+    const stepSeconds = this._getIntervalSeconds();
+    return time % stepSeconds === 0;
 }
   async refreshCandlesAfterTabHidden() {
     if (!this._isChartValid() || this._switchingSymbol) return;
@@ -1276,11 +1277,23 @@ _syncPriceLine(price) {
             return Math.floor(nowSec / step) * step;
         }
     }
+/**
+ * Проверяет, выровнено ли время свечи по текущему интервалу.
+ * @param {number} time - время в секундах (Unix timestamp)
+ * @returns {boolean}
+ */
 
   updateLastCandle(candle, eventTime = null) {
     if (this._switchingSymbol || this._updatesSuspended || !this._isChartValid()) return;
     if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
     
+// ✅ Фильтр невыровненных свечей (например, сообщения от старого таймфрейма)
+if (!this._isCandleAlignedToInterval(candle.time)) {
+    console.warn(`🛑 Отклонена свеча с невыровненным временем: ${candle.time}, интервал=${this.currentInterval}`);
+    return;
+}
+
+
     const intervalSeconds = this._getIntervalSeconds();
     
     // ✅ 1. СНАЧАЛА проверяем будущее, ПОТОМ выравниваем
@@ -2162,6 +2175,11 @@ _syncPriceLine(price) {
 
     _createNewCandle(candle, eventTime = null) {
         if (!candle || !candle.time || !this._isChartValid()) return;
+        // ✅ Отклоняем свечи, не соответствующие текущему интервалу
+if (!this._isCandleAlignedToInterval(candle.time)) {
+    console.warn(`🛑 _createNewCandle: отклонена свеча с невыровненным временем: ${candle.time}`);
+    return;
+}
         if (this._candleTimeMap.has(candle.time)) return;
         const intervalSeconds = this._getIntervalSeconds();
         const expectedTime = Math.floor(candle.time / intervalSeconds) * intervalSeconds;
