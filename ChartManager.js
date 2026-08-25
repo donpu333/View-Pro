@@ -387,24 +387,12 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         return candle;
     }
 
-   	_isFresherUpdate(existingCandle, receivedAt, source) {
-		if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
-		
-		// 🔥 ИСПРАВЛЕНИЕ МЕРЦАНИЯ:
-		// Если свеча недавно обновлялась через WebSocket (менее 15 секунд назад), 
-		// ЗАПРЕЩАЕМ REST перезаписывать её. REST-запрос имеет timestamp начала запроса, 
-		// который ВСЕГДА больше времени события WS, что ложно делает его "свежее" 
-		// и вызывает ненужную перерисовку (setData).
-		if (existingCandle._source === 'ws' && source !== 'ws') {
-			if (receivedAt - existingCandle._receivedAt < 15000) {
-				return false; 
-			}
-		}
-		
-		if (receivedAt > existingCandle._receivedAt) return true;
-		if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
-		return false;
-	}
+    _isFresherUpdate(existingCandle, receivedAt, source) {
+        if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
+        if (receivedAt > existingCandle._receivedAt) return true;
+        if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
+        return false;
+    }
 
     _getLineColor() {
         if (!this.chartData || this.chartData.length === 0) return this.bullishColor || CONFIG.colors.bullish || '#26a69a';
@@ -482,7 +470,29 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                     continue;
                 }
                 
+                // ✅ ФИКС "мигания" графика: _isFresherUpdate почти ВСЕГДА возвращает true,
+                // т.к. сравнивает время ПОЛУЧЕНИЯ данных (Date.now()), а не сами данные —
+                // при каждом фоновом опросе (раз в 10 сек) новый Date.now() больше старого.
+                // Из-за этого код считал свечу "изменившейся" даже когда OHLCV не поменялись
+                // ни на йоту, ниже выставлялся olderCandlesChanged=true -> setData() ->
+                // ПОЛНАЯ перерисовка графика сразу после того как он уже отрисовался.
+                // Именно это и есть "свеча появилась, а потом перерисовалась".
+                const valuesDiffer = (
+                    cur.open !== freshCandle.open ||
+                    cur.high !== freshCandle.high ||
+                    cur.low !== freshCandle.low ||
+                    cur.close !== freshCandle.close ||
+                    cur.volume !== freshCandle.volume ||
+                    (cur.quoteVolume || cur.volume || 0) !== (freshCandle.quoteVolume || freshCandle.volume || 0)
+                );
+                
+                // Штамп свежести обновляем всегда - на отрисовку это не влияет
                 this._stampCandle(cur, freshCandle._source, freshCandle._receivedAt);
+                
+                if (!valuesDiffer) {
+                    continue; // данные реально не изменились - график не трогаем
+                }
+                
                 cur.open = freshCandle.open;
                 cur.close = freshCandle.close;
                 cur.high = freshCandle.high;
@@ -854,6 +864,28 @@ async _catchUpMissedCandles() {
             const fresh = freshMap.get(local.time);
             
             if (fresh && this._isFresherUpdate(local, fresh._receivedAt, fresh._source)) {
+                // ✅ ФИКС "мигания": тот же баг, что и в _syncRecentCandles - _isFresherUpdate
+                // сравнивает только время ПОЛУЧЕНИЯ данных, а не сами значения, поэтому почти
+                // всегда возвращает true. Раньше это заставляло график считать историческую
+                // свечу "изменившейся" и вызывать setData() (полную перерисовку) даже когда
+                // OHLCV совпадали 1-в-1 с уже отображёнными данными.
+                const valuesDiffer = (
+                    local.open !== fresh.open ||
+                    local.high !== fresh.high ||
+                    local.low !== fresh.low ||
+                    local.close !== fresh.close ||
+                    local.volume !== fresh.volume ||
+                    (local.quoteVolume || local.volume || 0) !== (fresh.quoteVolume || fresh.volume || 0) ||
+                    local._closed !== (fresh.isClosed === true)
+                );
+                
+                this._stampCandle(local, fresh._source, fresh._receivedAt);
+                
+                if (!valuesDiffer) {
+                    freshMap.delete(local.time);
+                    continue; // ничего реально не изменилось - график не трогаем
+                }
+                
                 local.open = fresh.open;
                 local.high = fresh.high;
                 local.low = fresh.low;
@@ -861,7 +893,6 @@ async _catchUpMissedCandles() {
                 local.volume = fresh.volume;
                 local.quoteVolume = fresh.quoteVolume;
                 local._closed = fresh.isClosed === true;
-                this._stampCandle(local, fresh._source, fresh._receivedAt);
                 updatedCandles.push(local);
                 changed = true;
                 
