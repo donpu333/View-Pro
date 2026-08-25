@@ -15,15 +15,7 @@ class ChartManager {
         this._isRestoringZoom = false;
         this._isSwitchingInterval = false;
 
-        // ============ НАСТРОЙКИ ЗУМА ============
-        this._zoomSettings = {
-            visibleCandles: parseInt(localStorage.getItem('chartVisibleCandles')) || 60,
-            rightOffset: 5,
-            minBarSpacing: 1,
-            maxBarSpacing: 50
-        };
-        
-        // Для обратной совместимости
+        // ============ ЗУМ КАК В TRADINGVIEW ============
         this._savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || null;
         this._lastSavedBarSpacing = this._savedBarSpacing;
 
@@ -203,7 +195,7 @@ class ChartManager {
             timeScale: {
                 timeVisible: true, secondsVisible: false, borderColor: '#333333', 
                 barSpacing: this._savedBarSpacing || 18,
-                minBarSpacing: 1, fixLeftEdge: false, fixRightEdge: false, rightOffset: this._zoomSettings.rightOffset,
+                minBarSpacing: 1, fixLeftEdge: false, fixRightEdge: false, rightOffset: 12,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
                     return date.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
@@ -279,7 +271,6 @@ class ChartManager {
         this.chart.subscribeCrosshairMove(this.onCrosshairMove.bind(this));
         this.setupOptimizedSubscriptions();
         this.setupEventListeners();
-        this.setupWheelZoom();
         this.alertTimers = new Map();
         this.currentRealPrice = null;
 
@@ -327,84 +318,6 @@ class ChartManager {
                 window.wsManager.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
             }
         }, 1000);
-    }
-
-    // ============ НОВЫЙ МЕТОД ДЛЯ ЕДИНОГО ЗУМА ============
-    _applyConsistentZoomToLastCandle() {
-        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
-        
-        const timeScale = this.chart.timeScale();
-        if (!timeScale) return;
-        
-        // ✅ ФИКСИРОВАННЫЙ ЗУМ ДЛЯ ВСЕХ ТАЙМФРЕЙМОВ
-        const visibleCandles = this._zoomSettings.visibleCandles;
-        const rightOffset = this._zoomSettings.rightOffset;
-        
-        const lastIndex = this.chartData.length - 1;
-        const from = Math.max(0, lastIndex - visibleCandles);
-        const to = lastIndex + rightOffset;
-        
-        // Вычисляем barSpacing на основе ширины контейнера
-        const containerWidth = this.chartContainer.clientWidth;
-        const calculatedBarSpacing = Math.floor(containerWidth / visibleCandles);
-        const barSpacing = Math.max(
-            this._zoomSettings.minBarSpacing, 
-            Math.min(this._zoomSettings.maxBarSpacing, calculatedBarSpacing)
-        );
-        
-        // Применяем barSpacing и видимый диапазон
-        timeScale.applyOptions({ 
-            barSpacing: barSpacing,
-            rightOffset: rightOffset 
-        });
-        
-        // Устанавливаем видимый диапазон
-        timeScale.setVisibleLogicalRange({ from, to });
-        
-        // Автоскейл цены
-        const priceScale = this.chart.priceScale('right');
-        if (priceScale) {
-            priceScale.applyOptions({ autoScale: true });
-            setTimeout(() => {
-                if (priceScale) {
-                    priceScale.applyOptions({ autoScale: false });
-                }
-            }, 50);
-        }
-        
-        // Сохраняем настройки
-        this._lastSavedBarSpacing = barSpacing;
-        localStorage.setItem('chartBarSpacing', barSpacing);
-        localStorage.setItem('chartVisibleCandles', visibleCandles);
-    }
-
-    // ============ НАСТРОЙКА ЗУМА КОЛЕСОМ ============
-    setupWheelZoom() {
-        if (!this.chartContainer) return;
-        
-        // Удаляем старый обработчик если есть
-        if (this._wheelZoomHandler) {
-            this.chartContainer.removeEventListener('wheel', this._wheelZoomHandler);
-        }
-        
-        this._wheelZoomHandler = (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const delta = e.deltaY > 0 ? 5 : -5;
-                const newVisibleCandles = Math.max(10, Math.min(200, 
-                    this._zoomSettings.visibleCandles + delta
-                ));
-                
-                if (newVisibleCandles !== this._zoomSettings.visibleCandles) {
-                    this._zoomSettings.visibleCandles = newVisibleCandles;
-                    this._applyConsistentZoomToLastCandle();
-                }
-            }
-        };
-        
-        this.chartContainer.addEventListener('wheel', this._wheelZoomHandler, { passive: false });
     }
 
     // ============ МЕТОДЫ ЦВЕТА И УТИЛИТЫ ============
@@ -792,7 +705,6 @@ class ChartManager {
         if (this._blurHandler) window.removeEventListener('blur', this._blurHandler);
         if (this._mouseLeaveHandler && this.chartContainer) this.chartContainer.removeEventListener('mouseleave', this._mouseLeaveHandler);
         if (this._wheelHandler && this.chartContainer) this.chartContainer.removeEventListener('wheel', this._wheelHandler);
-        if (this._wheelZoomHandler && this.chartContainer) this.chartContainer.removeEventListener('wheel', this._wheelZoomHandler);
         document.removeEventListener('visibilitychange', this._visibilityHandler);
         if (this._resizeObserver) this._resizeObserver.disconnect();
         if (this._chartContainerResizeObserver) this._chartContainerResizeObserver.disconnect();
@@ -899,18 +811,11 @@ class ChartManager {
                 this._isViewingHistory = range.to < lastIndex;
             }
             
-            // ✅ СОХРАНЯЕМ НАСТРОЙКИ ЗУМА
+            // ✅ СОХРАНЯЕМ ЗУМ ПРИ ИЗМЕНЕНИИ
             const barSpacing = this.chart.timeScale().options().barSpacing;
             if (barSpacing && barSpacing !== this._lastSavedBarSpacing) {
                 this._lastSavedBarSpacing = barSpacing;
                 localStorage.setItem('chartBarSpacing', barSpacing);
-                // Обновляем visibleCandles на основе barSpacing
-                const containerWidth = this.chartContainer.clientWidth;
-                const newVisibleCandles = Math.floor(containerWidth / barSpacing);
-                if (newVisibleCandles > 0 && Math.abs(newVisibleCandles - this._zoomSettings.visibleCandles) > 2) {
-                    this._zoomSettings.visibleCandles = newVisibleCandles;
-                    localStorage.setItem('chartVisibleCandles', newVisibleCandles);
-                }
             }
             
             clearTimeout(this._scrollStopTimeout);
@@ -1374,12 +1279,73 @@ class ChartManager {
                 }
             }, 0);
             
-            // ✅ ЕДИНЫЙ МЕТОД ЗУМА ДЛЯ ВСЕХ СЛУЧАЕВ
-            setTimeout(() => {
-                if (!this._isChartValid()) return;
-                this._applyConsistentZoomToLastCandle();
-                if (onReady) onReady();
-            }, 200);
+            // ✅ ЗУМ КАК В TRADINGVIEW
+            if (isNewSymbol) {
+                setTimeout(() => {
+                    if (!this._isChartValid()) return;
+                    
+                    const timeScale = this.chart.timeScale();
+                    const lastIndex = this.chartData.length - 1;
+                    
+                    // ✅ Восстанавливаем сохранённый зум
+                    const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+                    timeScale.applyOptions({ barSpacing: savedBarSpacing });
+                    
+                    // ✅ Вычисляем видимый диапазон с сохранённым зумом
+                    const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
+                    const from = Math.max(0, lastIndex - visibleBars + 10);
+                    const to = lastIndex + 10;
+                    
+                    timeScale.setVisibleLogicalRange({ from, to });
+                    
+                    // ✅ Автоскейл цены
+                    const priceScale = this.chart.priceScale('right');
+                    if (priceScale) {
+                        priceScale.applyOptions({ autoScale: true });
+                        setTimeout(() => {
+                            priceScale.applyOptions({ autoScale: false });
+                        }, 50);
+                    }
+                    
+                    if (onReady) onReady();
+                }, 200);
+            } else if (currentScale) {
+                setTimeout(() => {
+                    if (this._isChartValid()) {
+                        this._restoreScale(currentScale);
+                        const priceScale = this.chart.priceScale('right');
+                        if (priceScale) {
+                            priceScale.applyOptions({ autoScale: true });
+                            setTimeout(() => {
+                                priceScale.applyOptions({ autoScale: false });
+                            }, 50);
+                        }
+                    }
+                    if (onReady) onReady();
+                }, 100);
+            } else {
+                setTimeout(() => {
+                    if (this._isChartValid()) {
+                        const timeScale = this.chart.timeScale();
+                        const lastIndex = this.chartData.length - 1;
+                        const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+                        timeScale.applyOptions({ barSpacing: savedBarSpacing });
+                        const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
+                        const from = Math.max(0, lastIndex - visibleBars + 10);
+                        const to = lastIndex + 10;
+                        timeScale.setVisibleLogicalRange({ from, to });
+                        
+                        const priceScale = this.chart.priceScale('right');
+                        if (priceScale) {
+                            priceScale.applyOptions({ autoScale: true });
+                            setTimeout(() => {
+                                priceScale.applyOptions({ autoScale: false });
+                            }, 50);
+                        }
+                    }
+                    if (onReady) onReady();
+                }, 100);
+            }
             
             this.scheduleUpdatePosition();
             this._updatePageTitle();
@@ -1738,17 +1704,20 @@ class ChartManager {
         try {
             this._isViewingHistory = false;
             this.lastCandle = this.chartData[this.chartData.length - 1];
+            const timeScale = this.chart.timeScale();
+            if (!timeScale) return false;
             
             if (enableRealTime) {
-                // ✅ ИСПОЛЬЗУЕМ ЕДИНЫЙ МЕТОД ЗУМА
-                this._applyConsistentZoomToLastCandle();
+                // ✅ ЗУМ КАК В TRADINGVIEW: сохраняем barSpacing
+                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+                timeScale.applyOptions({ barSpacing: savedBarSpacing, rightOffset: 12 });
+                timeScale.scrollToRealTime();
             } else {
-                const timeScale = this.chart.timeScale();
                 const lastIndex = this.chartData.length - 1;
-                const visibleCandles = this._zoomSettings.visibleCandles;
-                const rightOffset = this._zoomSettings.rightOffset;
-                const from = Math.max(0, lastIndex - visibleCandles);
-                const to = lastIndex + rightOffset;
+                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+                const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
+                const from = Math.max(0, lastIndex - visibleBars + 10);
+                const to = lastIndex + 10;
                 timeScale.setVisibleLogicalRange({ from, to });
             }
             
