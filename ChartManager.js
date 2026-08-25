@@ -386,13 +386,31 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         candle._receivedAt = (receivedAt !== null && receivedAt !== undefined && !isNaN(receivedAt)) ? receivedAt : Date.now();
         return candle;
     }
-
-    _isFresherUpdate(existingCandle, receivedAt, source) {
-        if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
-        if (receivedAt > existingCandle._receivedAt) return true;
-        if (receivedAt === existingCandle._receivedAt) return source === 'ws' && existingCandle._source !== 'ws';
-        return false;
+_isFresherUpdate(existingCandle, receivedAt, source) {
+    if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
+    
+    // 🔥 КРИТИЧЕСКИ: WS всегда приоритетнее REST
+    if (existingCandle._source === 'ws' && source !== 'ws') {
+        return false; // REST НИКОГДА не перезаписывает WS
     }
+    // 🔥 Если оба WS, сравниваем eventTime
+    if (existingCandle._source === 'ws' && source === 'ws') {
+        return receivedAt > existingCandle._receivedAt;
+    }
+    // 🔥 Если оба REST, сравниваем время запроса
+    if (existingCandle._source === 'rest' && source === 'rest') {
+        return receivedAt > existingCandle._receivedAt;
+    }
+    // 🔥 Если REST приходит на cache/пустое - разрешаем
+    if (existingCandle._source === 'cache' && source === 'rest') {
+        return true;
+    }
+    // 🔥 Если WS приходит на REST/cache - разрешаем
+    if (source === 'ws' && existingCandle._source !== 'ws') {
+        return true;
+    }
+    return false;
+}
 
     _getLineColor() {
         if (!this.chartData || this.chartData.length === 0) return this.bullishColor || CONFIG.colors.bullish || '#26a69a';
