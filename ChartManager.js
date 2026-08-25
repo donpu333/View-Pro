@@ -457,18 +457,16 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         const currentData = this.chartData;
         if (!currentData || currentData.length === 0) return;
         
-        const freshMap = new Map(fresh.map(c => [c.time, c]));
         let changed = false;
         let olderCandlesChanged = false;
         
-        // ✅ Обновляем существующие свечи (проверяем 20, не 3)
+        // ✅ 1. Обновляем существующие свечи в памяти (последние 20)
         for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 20); i--) {
             const cur = currentData[i];
-            const freshCandle = freshMap.get(cur.time);
+            const freshCandle = fresh.find(f => f.time === cur.time);
             
             if (freshCandle) {
                 if (!this._isFresherUpdate(cur, freshCandle._receivedAt, freshCandle._source)) {
-                    freshMap.delete(cur.time);
                     continue;
                 }
                 
@@ -480,93 +478,71 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 cur.volume = freshCandle.volume;
                 cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
                 
-                const safeTime = Number(cur.time);
-                if (isNaN(safeTime) || safeTime <= 0) continue;
-                
-                if (i === currentData.length - 1) {
-                    // ✅ Последняя свеча — точечное обновление
-                    const updateData = { time: safeTime, open: cur.open, high: cur.high, low: cur.low, close: cur.close };
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
-                    
-                    if (this.volumeSeries) {
-                        const isBullish = cur.close >= cur.open;
-                        this.volumeSeries.update({
-                            time: safeTime,
-                            value: cur.quoteVolume || cur.volume || 0,
-                            color: isBullish ? this.bullishColor : this.bearishColor
-                        });
-                    }
-                } else {
-                    // ✅ Старые свечи — тоже точечное обновление
+                // ⚠️ Если индекс меньше последнего, значит мы меняем ИСТОРИЮ
+                if (i < currentData.length - 1) {
                     olderCandlesChanged = true;
                 }
-                
                 changed = true;
-                freshMap.delete(cur.time);
             }
         }
         
-        // ✅ Обновляем старые свечи точечно (без setData)
-        if (olderCandlesChanged && this._isChartValid()) {
-            for (let i = Math.max(0, currentData.length - 20); i < currentData.length - 1; i++) {
-                const c = currentData[i];
-                const updateData = { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
-                
-                if (this.volumeSeries) {
-                    const isBullish = c.close >= c.open;
-                    this.volumeSeries.update({
-                        time: c.time,
-                        value: c.quoteVolume || c.volume || 0,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
-                }
-            }
-        }
+        // ✅ 2. Добавляем отсутствующие свечи (например, пропущенные в середине или новые в конце)
+        const currentTimes = new Set(currentData.map(c => c.time));
+        const missingCandles = fresh.filter(f => !currentTimes.has(f.time)).sort((a, b) => a.time - b.time);
         
-        // ✅ Добавляем новые свечи
-        if (freshMap.size > 0) {
-            const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
-            
-            for (const candle of missing) {
+        if (missingCandles.length > 0) {
+            for (const candle of missingCandles) {
                 candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
-                const safeTime = Number(candle.time);
-                if (isNaN(safeTime) || safeTime <= 0) continue;
                 
-                if (currentData.length > 0 && safeTime <= currentData[currentData.length - 1].time) {
-                    // ✅ Свеча уже существует (старая) — точечное обновление
-                    const updateData = { time: safeTime, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
-                    continue;
-                }
-                
-                // ✅ Новая свеча — добавляем и обновляем точечно
-                currentData.push(candle);
-                this._addToTimeMap(safeTime, currentData.length - 1);
-                
-                const updateData = { time: safeTime, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
-                
-                if (this.volumeSeries) {
-                    const isBullish = candle.close >= candle.open;
-                    this.volumeSeries.update({
-                        time: safeTime,
-                        value: candle.quoteVolume || candle.volume || 0,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
+                // Находим правильную позицию для вставки, чтобы сохранить сортировку по времени
+                const insertIndex = currentData.findIndex(c => c.time > candle.time);
+                if (insertIndex !== -1) {
+                    currentData.splice(insertIndex, 0, candle);
+                    // Если вставили не в самый конец, это изменение истории
+                    if (insertIndex < currentData.length - 1) {
+                        olderCandlesChanged = true;
+                    }
+                } else {
+                    currentData.push(candle);
                 }
             }
+            
+            // Перестраиваем карту времени, так как индексы могли сдвинуться из-за splice
+            this._rebuildTimeMap();
             
             this.lastCandle = currentData[currentData.length - 1];
             changed = true;
         }
         
-        // ✅ Финальные обновления
-        if (changed) {
+        // ✅ 3. Обновляем график
+        if (changed && this._isChartValid()) {
+            if (olderCandlesChanged) {
+                // ⚠️ КРИТИЧЕСКИ ВАЖНО: lightweight-charts НЕ ПОЗВОЛЯЕТ использовать update() для старых свечей.
+                // Если изменилась хотя бы одна историческая свеча, мы ОБЯЗАНЫ использовать setData().
+                if (this.candleSeries) this.candleSeries.setData(this.chartData);
+                if (this.barSeries) this.barSeries.setData(this.chartData);
+                if (this.volumeSeries) {
+                    this.volumeSeries.setData(this._buildVolumeData(this.chartData));
+                }
+            } else {
+                // ✅ Если менялась ТОЛЬКО последняя свеча или добавились новые в конец, используем быстрый update()
+                const lastCandle = currentData[currentData.length - 1];
+                const safeTime = Number(lastCandle.time);
+                const updateData = { time: safeTime, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close };
+                
+                if (this.candleSeries) this.candleSeries.update(updateData);
+                if (this.barSeries) this.barSeries.update(updateData);
+                
+                if (this.volumeSeries) {
+                    const isBullish = lastCandle.close >= lastCandle.open;
+                    this.volumeSeries.update({
+                        time: safeTime,
+                        value: lastCandle.quoteVolume || lastCandle.volume || 0,
+                        color: isBullish ? this.bullishColor : this.bearishColor
+                    });
+                }
+            }
+            
             this._volumeDataDirty = true;
             this._syncLineColor();
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -577,7 +553,6 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         console.warn('⚠️ Ошибка периодической синхронизации:', e);
     }
 }
-
    async refreshCandlesAfterTabHidden() {
     if (!this._isChartValid() || this._switchingSymbol) return;
     if (this._refreshingAfterHidden) return;
@@ -812,7 +787,6 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         };
         check();
     }
-
 async _catchUpMissedCandles() {
     if (!this._isChartValid() || !this.currentSymbol || !this.currentInterval) return;
     if (this._catchingUpMissed) return;
@@ -834,6 +808,7 @@ async _catchUpMissedCandles() {
         
         const freshMap = new Map(freshCandles.map(c => [c.time, c]));
         let changed = false;
+        let olderCandlesChanged = false; // ⚠️ Новый флаг для отслеживания изменений в истории
         const updatedCandles = [];
         
         // ✅ ОБНОВЛЯЕМ СУЩЕСТВУЮЩИЕ СВЕЧИ
@@ -852,6 +827,12 @@ async _catchUpMissedCandles() {
                 this._stampCandle(local, fresh._source, fresh._receivedAt);
                 updatedCandles.push(local);
                 changed = true;
+                
+                // ⚠️ КРИТИЧЕСКИ ВАЖНО: если индекс меньше последнего, мы меняем ИСТОРИЮ
+                if (i < this.chartData.length - 1) {
+                    olderCandlesChanged = true;
+                }
+                
                 freshMap.delete(local.time);
             }
         }
@@ -872,36 +853,45 @@ async _catchUpMissedCandles() {
             changed = true;
         }
         
-        // ✅ ТОЧЕЧНЫЕ ОБНОВЛЕНИЯ ВМЕСТО setData()
-        if (changed) {
+        // ✅ БЕЗОПАСНОЕ ОБНОВЛЕНИЕ ГРАФИКА
+        if (changed && this._isChartValid()) {
             this._rebuildTimeMap();
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1;
             
-            const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            
-            // ✅ Обновляем только изменённые свечи через update()
-            if (activeSeries) {
-                for (const c of updatedCandles) {
-                    activeSeries.update({
-                        time: c.time,
-                        open: c.open,
-                        high: c.high,
-                        low: c.low,
-                        close: c.close
-                    });
+            // ⚠️ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
+            // Если изменилась хотя бы одна историческая свеча, lightweight-charts ТРЕБУЕТ использования setData.
+            // Попытка использовать update() для старой свечи вызовет фатальную ошибку "Cannot update oldest data".
+            if (olderCandlesChanged) {
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                if (activeSeries) activeSeries.setData(this.chartData);
+                if (this.volumeSeries) {
+                    this.volumeSeries.setData(this._buildVolumeData(this.chartData));
                 }
-            }
-            
-            // ✅ Обновляем объёмы точечно
-            if (this.volumeSeries) {
-                for (const c of updatedCandles) {
-                    const isBullish = c.close >= c.open;
-                    this.volumeSeries.update({
-                        time: c.time,
-                        value: c.quoteVolume || c.volume || 0,
-                        color: isBullish ? this.bullishColor : this.bearishColor
-                    });
+            } else {
+                // ✅ Если менялась ТОЛЬКО последняя свеча или добавились новые в конец, используем быстрый update()
+                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                if (activeSeries) {
+                    for (const c of updatedCandles) {
+                        activeSeries.update({
+                            time: c.time,
+                            open: c.open,
+                            high: c.high,
+                            low: c.low,
+                            close: c.close
+                        });
+                    }
+                }
+                
+                if (this.volumeSeries) {
+                    for (const c of updatedCandles) {
+                        const isBullish = c.close >= c.open;
+                        this.volumeSeries.update({
+                            time: c.time,
+                            value: c.quoteVolume || c.volume || 0,
+                            color: isBullish ? this.bullishColor : this.bearishColor
+                        });
+                    }
                 }
             }
             
@@ -911,10 +901,6 @@ async _catchUpMissedCandles() {
             if (this.indicatorManager) {
                 this.indicatorManager.updateAllIndicators();
             }
-            
-            // ❌ УБРАНО: scrollToLast()
-            // Раньше это вызывало "движение" графика на дневном таймфрейме
-            // Теперь график остаётся на месте, свечи просто обновляются
         }
         
     } catch (error) {
@@ -923,7 +909,6 @@ async _catchUpMissedCandles() {
         this._catchingUpMissed = false;
     }
 }
-
     _setupPanelsSync() {}
 
     setupOptimizedSubscriptions() {
@@ -1240,7 +1225,7 @@ async _catchUpMissedCandles() {
         }
     }
 
-   updateLastCandle(candle, eventTime = null) {
+  updateLastCandle(candle, eventTime = null) {
     if (this._switchingSymbol || this._updatesSuspended || !this._isChartValid()) return;
     if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
     
@@ -1291,14 +1276,12 @@ async _catchUpMissedCandles() {
         }
         
         if (!candle.quoteVolume && candle.volume) candle.quoteVolume = candle.volume;
-        
         if (!this.chartData || this.chartData.length === 0) return;
         
         const currentLastCandle = this.chartData[this.chartData.length - 1];
         const isLastCandle = currentLastCandle && candle.time === currentLastCandle.time;
         const isNewCandle = !currentLastCandle || candle.time > currentLastCandle.time;
         const existingIndex = this._candleTimeMap.get(candle.time);
-        const updateData = { time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
         
         // ============ 1. ОБНОВЛЕНИЕ ПОСЛЕДНЕЙ СВЕЧИ ============
         if (isLastCandle) {
@@ -1318,6 +1301,7 @@ async _catchUpMissedCandles() {
             this._stampCandle(currentLastCandle, 'ws', receivedAt);
             this.lastCandle = currentLastCandle;
             
+            const updateData = { time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
             if (this.candleSeries) this.candleSeries.update(updateData);
             if (this.barSeries) this.barSeries.update(updateData);
             
@@ -1354,17 +1338,15 @@ async _catchUpMissedCandles() {
             existingCandle._closed = candle.isClosed === true;
             this._stampCandle(existingCandle, 'ws', receivedAt);
             
-            // ✅ ТОЧЕЧНОЕ ОБНОВЛЕНИЕ вместо setData()
-            if (this.candleSeries) this.candleSeries.update(updateData);
-            if (this.barSeries) this.barSeries.update(updateData);
+            // ⚠️ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+            // lightweight-charts ЗАПРЕЩАЕТ использовать .update() для исторических свечей.
+            // Попытка сделать это вызовет фатальную ошибку "Cannot update oldest data".
+            // Единственный безопасный способ обновить старую свечу — использовать .setData().
+            if (this.candleSeries) this.candleSeries.setData(this.chartData);
+            if (this.barSeries) this.barSeries.setData(this.chartData);
             
             if (this.volumeSeries) {
-                const isBullish = existingCandle.close >= existingCandle.open;
-                this.volumeSeries.update({
-                    time: existingCandle.time,
-                    value: existingCandle.quoteVolume || existingCandle.volume || 0,
-                    color: isBullish ? this.bullishColor : this.bearishColor
-                });
+                this.volumeSeries.setData(this._buildVolumeData(this.chartData));
             }
             
             this._volumeDataDirty = true;
@@ -1385,6 +1367,7 @@ async _catchUpMissedCandles() {
             this._addToTimeMap(candle.time, this.chartData.length - 1);
             this.lastCandle = candle;
             
+            const updateData = { time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
             if (this.candleSeries) this.candleSeries.update(updateData);
             if (this.barSeries) this.barSeries.update(updateData);
             
@@ -1580,17 +1563,16 @@ async _catchUpMissedCandles() {
         return null;
     }
 
-    _restoreScale(scale) {
-        if (!scale || !this._isChartValid()) return;
-        try {
-            const timeScale = this.chart.timeScale();
-            if (scale.barSpacing && !isNaN(scale.barSpacing) && scale.barSpacing > 0) {
-                timeScale.applyOptions({ barSpacing: scale.barSpacing });
-            }
-        } catch (e) {}
-        this.scrollToLast();
-    }
-
+  _restoreScale(scale) {
+    if (!scale || !this._isChartValid()) return;
+    try {
+        const timeScale = this.chart.timeScale();
+        if (scale.barSpacing && !isNaN(scale.barSpacing) && scale.barSpacing > 0) {
+            timeScale.applyOptions({ barSpacing: scale.barSpacing });
+        }
+    } catch (e) {}
+    // ❌ УБРАНО: this.scrollToLast();
+}
     _suspendAllUpdates() {
         this._updatesSuspended = true;
         if (this.priceManager) this.priceManager.suspend?.();
