@@ -1144,7 +1144,7 @@ async _catchUpMissedCandles() {
         this.scheduleUpdatePosition();
     }
 
- _syncPriceLine(price) {
+_syncPriceLine(price) {
     if (price && typeof price === 'object') {
         if (typeof price.price === 'number') price = price.price;
         else if (typeof price.price === 'string') price = parseFloat(price.price);
@@ -1163,73 +1163,57 @@ async _catchUpMissedCandles() {
     
     const nowSec = Math.floor(Date.now() / 1000);
     const currentCandleStart = this._alignTimeToInterval(nowSec);
-    
-    // ✅ ЕСЛИ ПОСЛЕДНЯЯ СВЕЧА НЕ ТЕКУЩАЯ
-    if (lastCandle.time !== currentCandleStart) {
-        const existingIndex = this._candleTimeMap.get(currentCandleStart);
+
+    // ==========================================================
+    // ✅ СЦЕНАРИЙ 1: Цена пришла для ПОСЛЕДНЕЙ (текущей) свечи
+    // ==========================================================
+    if (lastCandle.time === currentCandleStart) {
+        lastCandle.close = price;
+        lastCandle.high = Math.max(lastCandle.high, price);
+        lastCandle.low = Math.min(lastCandle.low, price);
+        this._stampCandle(lastCandle, 'ws', Date.now());
+        this.currentRealPrice = price;
+        this.lastCandle = lastCandle;
         
-        if (existingIndex !== undefined) {
-            // ✅ Текущая свеча уже существует — обновляем её
-            const currentCandle = this.chartData[existingIndex];
-            currentCandle.close = price;
-            currentCandle.high = Math.max(currentCandle.high, price);
-            currentCandle.low = Math.min(currentCandle.low, price);
-            this._stampCandle(currentCandle, 'ws', Date.now());
-            this.lastCandle = currentCandle;
-            
-            series.update({
-                time: currentCandle.time,
-                open: currentCandle.open,
-                high: currentCandle.high,
-                low: currentCandle.low,
-                close: currentCandle.close
-            });
-            
-            const lineColor = this._getLineColor();
-            this._applyPriceLineColor(series, lineColor);
-            this.currentRealPrice = price;
-            this._updatePageTitle();
-            if (this.timerManager) this.timerManager.updatePrice(price);
-            
-        } else {
-            // ✅ НЕ СОЗДАЁМ СВЕЧУ ИЗ ЦЕНЫ!
-            // Ждём, пока WebSocket пришлёт kline-событие для новой свечи
-            // Просто обновляем цену на таймере
-            const lineColor = this._getLineColor();
-            this._applyPriceLineColor(series, lineColor);
-            this.currentRealPrice = price;
-            this._updatePageTitle();
-            if (this.timerManager) this.timerManager.updatePrice(price);
-            
-            // ✅ Запускаем REST-досверку, чтобы получить новую свечу
-            setTimeout(() => { this._catchUpMissedCandles().catch(() => {}); }, 100);
-        }
+        // Безопасно используем update, так как это ПОСЛЕДНЯЯ свеча
+        series.update({
+            time: lastCandle.time,
+            open: lastCandle.open,
+            high: lastCandle.high,
+            low: lastCandle.low,
+            close: price
+        });
+        
+        const lineColor = this._getLineColor();
+        this._applyPriceLineColor(series, lineColor);
+        this._updatePageTitle();
+        
+        if (!document.hidden) this.scheduleUpdatePosition();
+        this.requestDrawingsRedraw();
+        if (this.timerManager) this.timerManager.updatePrice(price);
         return;
     }
+
+    // ==========================================================
+    // ✅ СЦЕНАРИЙ 2: Последняя свеча в массиве НЕ является текущей
+    // (Мы смотрим историю, или массив данных временно отстал)
+    // ==========================================================
+    // ⚠️ КРИТИЧЕСКИ ВАЖНО: Мы НЕ ИМЕЕМ ПРАВА вызывать series.update() здесь!
+    // Это вызовет ошибку "Cannot update oldest data".
     
-    // ✅ ПОСЛЕДНЯЯ СВЕЧА — ТЕКУЩАЯ, ОБНОВЛЯЕМ ЕЁ
-    lastCandle.close = price;
-    lastCandle.high = Math.max(lastCandle.high, price);
-    lastCandle.low = Math.min(lastCandle.low, price);
-    this._stampCandle(lastCandle, 'ws', Date.now());
+    // Просто обновляем внутреннее состояние цены и UI. 
+    // Актуализацию самих свечей на графике оставим на _syncRecentCandles, 
+    // который корректно использует setData() при необходимости.
     this.currentRealPrice = price;
-    this.lastCandle = lastCandle;
-    
-    const lineColor = this._getLineColor();
-    
-    series.update({
-        time: lastCandle.time,
-        open: lastCandle.open,
-        high: lastCandle.high,
-        low: lastCandle.low,
-        close: price
-    });
-    
-    this._applyPriceLineColor(series, lineColor);
     this._updatePageTitle();
-    if (!document.hidden) this.scheduleUpdatePosition();
-    this.requestDrawingsRedraw();
-    if (this.timerManager) this.timerManager.updatePrice(price);
+    
+    if (this.timerManager) {
+        this.timerManager.updatePrice(price);
+    }
+    
+    // Обновляем цвет линии на основе последней известной свечи, чтобы UI не ломался
+    const lineColor = this._getLineColor();
+    this._applyPriceLineColor(series, lineColor);
 }
 
     _alignTimeToInterval(nowSec) {
@@ -1439,7 +1423,7 @@ async _catchUpMissedCandles() {
         await new Promise(r => setTimeout(r, 50));
     }
 
-   setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
+ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
     try {
         // ✅ СБРОС СОСТОЯНИЯ ПРИ ЗАГРУЗКЕ НОВЫХ ДАННЫХ
         this._lastKlineEventTime = 0;
@@ -1451,31 +1435,45 @@ async _catchUpMissedCandles() {
         
         const currentScale = this._captureScale();
         const isNewSymbol = forceNewSymbol;
+        
+        // Блокируем взаимодействие на момент загрузки
         this.chart.applyOptions({ handleScroll: false, handleScale: false });
-        if (this.candleSeries) this.candleSeries.setData([]);
-        if (this.barSeries) this.barSeries.setData([]);
-        if (this.volumeSeries) this.volumeSeries.setData([]);
-        this.chartData = []; this.lastCandle = null; this._candleTimeMap.clear();
-        this._volumeDataCache = null; this._volumeDataDirty = true; this._lastVolumeUpdateIndex = -1; this._isTrimming = false;
+        
+        // ❌ УДАЛЕНО: Строки с setData([]), которые вызывали мгновенное мигание/очистку графика
+        // if (this.candleSeries) this.candleSeries.setData([]);
+        // if (this.barSeries) this.barSeries.setData([]);
+        // if (this.volumeSeries) this.volumeSeries.setData([]);
+        
+        this.chartData = []; 
+        this.lastCandle = null; 
+        this._candleTimeMap.clear();
+        this._volumeDataCache = null; 
+        this._volumeDataDirty = true; 
+        this._lastVolumeUpdateIndex = -1; 
+        this._isTrimming = false;
         
         const seenTimes = new Set();
         let noDupes = data.filter(c => {
             if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
             if (seenTimes.has(c.time)) return false;
-            seenTimes.add(c.time); return true;
+            seenTimes.add(c.time); 
+            return true;
         });
         noDupes = noDupes.filter(c => this._isValidCandle(c));
         data = noDupes;
         
         if (data.length === 0) {
             this.chart.applyOptions({ handleScroll: true, handleScale: true });
-            if (onReady) onReady(); return;
+            if (onReady) onReady(); 
+            return;
         }
         
         data.sort((a, b) => a.time - b.time);
         this.chartData = data;
         this._candleTimeMap.clear();
-        for (let i = 0; i < data.length; i++) this._candleTimeMap.set(data[i].time, i);
+        for (let i = 0; i < data.length; i++) {
+            this._candleTimeMap.set(data[i].time, i);
+        }
         
         this.currentInterval = interval;
         this.currentSymbol = symbol;
@@ -1486,8 +1484,11 @@ async _catchUpMissedCandles() {
         this.lastCandle = data[data.length - 1];
         
         const priceScaleForFit = this.chart.priceScale('right');
-        if (priceScaleForFit) { try { priceScaleForFit.applyOptions({ autoScale: true }); } catch (e) {} }
+        if (priceScaleForFit) { 
+            try { priceScaleForFit.applyOptions({ autoScale: true }); } catch (e) {} 
+        }
         
+        // Загружаем новые данные. Это мгновенно перезапишет старые без мигания
         if (this.candleSeries) this.candleSeries.setData(this.chartData);
         if (this.barSeries) this.barSeries.setData(this.chartData);
         
@@ -1534,14 +1535,18 @@ async _catchUpMissedCandles() {
             if (onReady) onReady();
         };
         
+        // ✅ ИСПРАВЛЕНО: Убран setTimeout и принудительный scrollToLast, вызывавшие "прыжок" графика.
+        // Используем requestAnimationFrame для плавной синхронизации с циклом отрисовки браузера.
         if (currentScale) {
-            setTimeout(() => {
+            requestAnimationFrame(() => {
                 this._restoreScale(currentScale);
                 this.autoScale(finalizeVisuals);
-            }, 50);
+            });
         } else {
-            this.scrollToLast();
-            this.autoScale(finalizeVisuals);
+            requestAnimationFrame(() => {
+                this.scrollToLast();
+                this.autoScale(finalizeVisuals);
+            });
         }
         
         this._updatePageTitle();
@@ -1576,7 +1581,6 @@ async _catchUpMissedCandles() {
         if (onReady) onReady();
     }
 }
-
     _captureScale() {
         if (!this._isChartValid()) return null;
         try {
