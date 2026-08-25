@@ -201,7 +201,7 @@ class ChartManager {
                 fixLeftEdge: false, 
                 fixRightEdge: false, 
                 rightOffset: 12,
-                // ✅ ФИКС: Явно включаем автоматический сдвиг при появлении новой свечи
+                // ✅ ВКЛЮЧАЕМ АВТОМАТИЧЕСКИЙ СДВИГ
                 shiftVisibleRangeOnNewBar: true,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
@@ -1204,7 +1204,7 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД setDataQuick
+    // ✅ ИСПРАВЛЕННЫЙ setDataQuick - с гарантированным позиционированием
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1289,7 +1289,7 @@ class ChartManager {
                 }
             }, 0);
             
-            // ✅ ИСПРАВЛЕНИЕ: ЕДИНАЯ ЛОГИКА ДЛЯ ВСЕХ СЛУЧАЕВ
+            // ✅ ИСПРАВЛЕНИЕ: ГАРАНТИРОВАННОЕ ПОЗИЦИОНИРОВАНИЕ
             setTimeout(() => {
                 if (!this._isChartValid()) {
                     if (onReady) onReady();
@@ -1298,24 +1298,37 @@ class ChartManager {
                 
                 const timeScale = this.chart.timeScale();
                 
-                // Восстанавливаем сохранённый barSpacing (зум пользователя)
+                // Восстанавливаем сохранённый barSpacing
                 const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
                 timeScale.applyOptions({ barSpacing: savedBarSpacing });
                 
-                // ✅ ИСПОЛЬЗУЕМ scrollToRealTime() ВМЕСТО РУЧНОГО РАСЧЁТА
-                // Это гарантирует единое поведение на всех таймфреймах и тикерах
-                if (isNewSymbol) {
-                    // При смене символа/интервала прокручиваем к последней свече
-                    timeScale.scrollToRealTime();
-                } else if (currentScale) {
-                    // При обновлении данных восстанавливаем позицию
-                    this._restoreScale(currentScale);
-                } else {
-                    // Если нет сохранённой позиции - прокручиваем к последней свече
-                    timeScale.scrollToRealTime();
+                // ✅ РАСЧЁТ НАДЁЖНЫМ СПОСОБОМ
+                const lastIndex = this.chartData.length - 1;
+                
+                // Получаем текущую ширину контейнера
+                const containerWidth = this.chartContainer.clientWidth || 800;
+                const barSpacing = savedBarSpacing;
+                
+                // Рассчитываем сколько свечей помещается
+                const visibleBars = Math.floor(containerWidth / barSpacing);
+                
+                // Отступ справа (можно взять из настроек или задать явно)
+                const rightOffset = 12;
+                
+                // Вычисляем диапазон: последняя свеча + rightOffset справа
+                let from = Math.max(0, lastIndex - visibleBars + rightOffset);
+                let to = lastIndex + rightOffset;
+                
+                // Корректируем, если данных мало
+                if (from >= to) {
+                    from = Math.max(0, lastIndex - Math.floor(visibleBars / 2));
+                    to = lastIndex + Math.floor(visibleBars / 2);
                 }
                 
-                // Автоскейл цены
+                // ✅ Устанавливаем диапазон ПРИНУДИТЕЛЬНО
+                timeScale.setVisibleLogicalRange({ from, to });
+                
+                // ✅ Автоскейл цены
                 const priceScale = this.chart.priceScale('right');
                 if (priceScale) {
                     priceScale.applyOptions({ autoScale: true });
@@ -1326,8 +1339,19 @@ class ChartManager {
                     }, 50);
                 }
                 
+                // ✅ ФИКС: дополнительный вызов scrollToRealTime() как запасной вариант
+                // Но только если график успел отрисоваться
+                setTimeout(() => {
+                    if (this._isChartValid()) {
+                        try {
+                            // Пробуем scrollToRealTime() как дополнительный гарант
+                            this.chart.timeScale().scrollToRealTime();
+                        } catch(e) {}
+                    }
+                }, 50);
+                
                 if (onReady) onReady();
-            }, 200);
+            }, 300); // ← увеличил задержку для гарантии отрисовки
             
             this.scheduleUpdatePosition();
             this._updatePageTitle();
@@ -1468,7 +1492,7 @@ class ChartManager {
         } catch (error) { rollbackSwitch(error); }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД switchInterval
+    // ✅ ИСПРАВЛЕННЫЙ switchInterval
     async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) return;
         if (this.currentInterval === newInterval) return;
@@ -1681,7 +1705,6 @@ class ChartManager {
 
     updateRealPrice(price) { this._syncPriceLine(price); }
 
-    // ✅ ИСПРАВЛЕННЫЙ МЕТОД scrollToLast
     scrollToLast(enableRealTime = true) {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return false;
         if (this._isRestoringZoom) return false;
@@ -1691,16 +1714,13 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
             
-            // ✅ Восстанавливаем сохранённый barSpacing
-            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
-            timeScale.applyOptions({ barSpacing: savedBarSpacing });
-            
             if (enableRealTime) {
-                // ✅ Используем scrollToRealTime() - единое поведение для всех
+                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+                timeScale.applyOptions({ barSpacing: savedBarSpacing, rightOffset: 12 });
                 timeScale.scrollToRealTime();
             } else {
-                // Ручной расчёт для случаев, когда не нужно "прилипать" к реальному времени
                 const lastIndex = this.chartData.length - 1;
+                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
                 const visibleBars = Math.floor(this.chartContainer.clientWidth / savedBarSpacing);
                 const from = Math.max(0, lastIndex - visibleBars + 10);
                 const to = lastIndex + 10;
