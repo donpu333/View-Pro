@@ -813,7 +813,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         check();
     }
 
- async _catchUpMissedCandles() {
+async _catchUpMissedCandles() {
     if (!this._isChartValid() || !this.currentSymbol || !this.currentInterval) return;
     if (this._catchingUpMissed) return;
     this._catchingUpMissed = true;
@@ -834,7 +834,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
         
         const freshMap = new Map(freshCandles.map(c => [c.time, c]));
         let changed = false;
-        const updatedCandles = [];  // ✅ Собираем изменённые свечи
+        const updatedCandles = [];
         
         // ✅ ОБНОВЛЯЕМ СУЩЕСТВУЮЩИЕ СВЕЧИ
         for (let i = this.chartData.length - 1; i >= Math.max(0, this.chartData.length - 20); i--) {
@@ -850,7 +850,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 local.quoteVolume = fresh.quoteVolume;
                 local._closed = fresh.isClosed === true;
                 this._stampCandle(local, fresh._source, fresh._receivedAt);
-                updatedCandles.push(local);  // ✅ Запоминаем для update()
+                updatedCandles.push(local);
                 changed = true;
                 freshMap.delete(local.time);
             }
@@ -867,7 +867,7 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 if (!this._isValidCandle(candle)) continue;
                 this.chartData.push(candle);
                 this._addToTimeMap(candle.time, this.chartData.length - 1);
-                updatedCandles.push(candle);  // ✅ Запоминаем для update()
+                updatedCandles.push(candle);
             }
             changed = true;
         }
@@ -912,9 +912,9 @@ document.addEventListener('visibilitychange', this._visibilityHandler);
                 this.indicatorManager.updateAllIndicators();
             }
             
-            if (!this._isViewingHistory) {
-                this.scrollToLast();
-            }
+            // ❌ УБРАНО: scrollToLast()
+            // Раньше это вызывало "движение" графика на дневном таймфрейме
+            // Теперь график остаётся на месте, свечи просто обновляются
         }
         
     } catch (error) {
