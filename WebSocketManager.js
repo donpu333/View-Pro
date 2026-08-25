@@ -209,122 +209,138 @@ class WebSocketManager {
         return ws;
     }
 
-    _handleMessage(rawData, type) {
-        try {
-            const raw = JSON.parse(rawData);
-            
-            if (raw.op === 'pong' || raw.op === 'subscribe') return;
-            
-            const chartManager = this.chartManager || window.chartManager;
-            
-            if (!chartManager) {
-                console.warn('⚠️ chartManager не найден');
-                return;
-            }
-            
-            if (this.currentExchange === 'binance') {
-                if (raw.e === 'kline' && raw.k) {
-                    const k = raw.k;
-                    const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
+   _handleMessage(rawData, type) {
+    try {
+        const raw = JSON.parse(rawData);
+        
+        if (raw.op === 'pong' || raw.op === 'subscribe') return;
+        
+        const chartManager = this.chartManager || window.chartManager;
+        
+        if (!chartManager) {
+            console.warn('⚠️ chartManager не найден');
+            return;
+        }
+        
+        if (this.currentExchange === 'binance') {
+            if (raw.e === 'kline' && raw.k) {
+                const k = raw.k;
+                const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
+                if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
-                    this._lastRelevantMessageTime = Date.now();
-                    
-                    let candleTime = Math.floor(k.t / 1000);
-                    
-                    // Проверка выравнивания
-                    const intervalSeconds = this._getIntervalSeconds(k.i);
-                    const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
-                    
-                    if (candleTime !== expectedTime) {
-                        console.warn(`🛑 WS невыровненное время: ${candleTime} → ${expectedTime}`);
-                        candleTime = expectedTime;
-                    }
-                    
-                    this._lastKlineTime = candleTime;
-                    
-                    if (typeof chartManager.updateLastCandle === 'function') {
-                        chartManager.updateLastCandle({
-                            time: candleTime,
-                            open: parseFloat(k.o),
-                            high: parseFloat(k.h),
-                            low: parseFloat(k.l),
-                            close: parseFloat(k.c),
-                            volume: parseFloat(k.v),
-                            quoteVolume: parseFloat(k.q || 0),
-                            isClosed: k.x === true
-                        }, raw.E || Date.now());
-                    }
+                // ✅ НОВАЯ ПРОВЕРКА: отбрасываем сообщения с неверным интервалом
+                if (k.i !== this.currentInterval) {
+                    console.warn(`🛑 WS интервал ${k.i} не совпадает с текущим ${this.currentInterval}`);
+                    return;
                 }
-                
-                if (raw.e === 'aggTrade') {
-                    const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
-
-                    this._lastRelevantMessageTime = Date.now();
-                    
-                    const price = parseFloat(raw.p);
-                    if (!isNaN(price) && price > 0) {
-                        if (typeof chartManager._syncPriceLine === 'function') {
-                            chartManager._syncPriceLine(price);
-                        }
-                    }
-                }
-            }
-            else if (this.currentExchange === 'bybit' && raw.topic) {
-                const parts = raw.topic.split('.');
-                let msgSymbol = null;
-                
-                if (raw.topic.startsWith('kline.') && parts.length >= 3) {
-                    msgSymbol = parts[2].toUpperCase();
-                } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
-                    msgSymbol = parts[1].toUpperCase();
-                }
-                
-                if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
                 this._lastRelevantMessageTime = Date.now();
                 
-                if (raw.topic.startsWith('kline.') && raw.data?.length) {
-                    const k = raw.data[0];
-                    
-                    let candleTime = Math.floor(k.start / 1000);
-                    
-                    if (parts.length >= 2) {
-                        const intervalStr = parts[1];
-                        const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
-                        const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
-                        
-                        if (candleTime !== expectedTime) {
-                            candleTime = expectedTime;
-                        }
-                    }
-                    
-                    if (typeof chartManager.updateLastCandle === 'function') {
-                        chartManager.updateLastCandle({
-                            time: candleTime,
-                            open: parseFloat(k.open),
-                            high: parseFloat(k.high),
-                            low: parseFloat(k.low),
-                            close: parseFloat(k.close),
-                            volume: parseFloat(k.volume),
-                            quoteVolume: parseFloat(k.turnover || 0),
-                            isClosed: k.confirm === true
-                        }, raw.ts || Date.now());
-                    }
-                } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
-                    const price = parseFloat(raw.data[0].p);
-                    if (!isNaN(price) && price > 0) {
-                        if (typeof chartManager._syncPriceLine === 'function') {
-                            chartManager._syncPriceLine(price);
-                        }
+                let candleTime = Math.floor(k.t / 1000);
+                
+                // Проверка выравнивания
+                const intervalSeconds = this._getIntervalSeconds(k.i);
+                const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                
+                if (candleTime !== expectedTime) {
+                    console.warn(`🛑 WS невыровненное время: ${candleTime} → ${expectedTime}`);
+                    candleTime = expectedTime;
+                }
+                
+                this._lastKlineTime = candleTime;
+                
+                if (typeof chartManager.updateLastCandle === 'function') {
+                    chartManager.updateLastCandle({
+                        time: candleTime,
+                        open: parseFloat(k.o),
+                        high: parseFloat(k.h),
+                        low: parseFloat(k.l),
+                        close: parseFloat(k.c),
+                        volume: parseFloat(k.v),
+                        quoteVolume: parseFloat(k.q || 0),
+                        isClosed: k.x === true
+                    }, raw.E || Date.now());
+                }
+            }
+            
+            if (raw.e === 'aggTrade') {
+                const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
+                if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
+
+                this._lastRelevantMessageTime = Date.now();
+                
+                const price = parseFloat(raw.p);
+                if (!isNaN(price) && price > 0) {
+                    if (typeof chartManager._syncPriceLine === 'function') {
+                        chartManager._syncPriceLine(price);
                     }
                 }
             }
-        } catch (e) {
-            console.error('❌ Ошибка парсинга:', e);
         }
+        else if (this.currentExchange === 'bybit' && raw.topic) {
+            const parts = raw.topic.split('.');
+            let msgSymbol = null;
+            
+            if (raw.topic.startsWith('kline.') && parts.length >= 3) {
+                msgSymbol = parts[2].toUpperCase();
+            } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
+                msgSymbol = parts[1].toUpperCase();
+            }
+            
+            if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
+
+            this._lastRelevantMessageTime = Date.now();
+            
+            if (raw.topic.startsWith('kline.') && raw.data?.length) {
+                // ✅ НОВАЯ ПРОВЕРКА: отбрасываем сообщения с неверным интервалом для Bybit
+                if (parts.length >= 2) {
+                    const msgInterval = parts[1]; // например '60', 'D', 'W'
+                    const currentBybitInterval = this.getExchangeInterval(this.currentInterval, this.currentExchange);
+                    if (msgInterval !== currentBybitInterval) {
+                        console.warn(`🛑 Bybit WS интервал ${msgInterval} != ${currentBybitInterval}`);
+                        return;
+                    }
+                }
+                
+                const k = raw.data[0];
+                
+                let candleTime = Math.floor(k.start / 1000);
+                
+                if (parts.length >= 2) {
+                    const intervalStr = parts[1];
+                    const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
+                    const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                    
+                    if (candleTime !== expectedTime) {
+                        candleTime = expectedTime;
+                    }
+                }
+                
+                if (typeof chartManager.updateLastCandle === 'function') {
+                    chartManager.updateLastCandle({
+                        time: candleTime,
+                        open: parseFloat(k.open),
+                        high: parseFloat(k.high),
+                        low: parseFloat(k.low),
+                        close: parseFloat(k.close),
+                        volume: parseFloat(k.volume),
+                        quoteVolume: parseFloat(k.turnover || 0),
+                        isClosed: k.confirm === true
+                    }, raw.ts || Date.now());
+                }
+            } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
+                const price = parseFloat(raw.data[0].p);
+                if (!isNaN(price) && price > 0) {
+                    if (typeof chartManager._syncPriceLine === 'function') {
+                        chartManager._syncPriceLine(price);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error('❌ Ошибка парсинга:', e);
     }
+}
 
     _getIntervalSeconds(interval) {
         const map = {
