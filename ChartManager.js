@@ -1373,7 +1373,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
         this._pendingHistoryLoad = false; 
         this._lastHistoryLoadTime = 0;
     } catch (error) {
-        console.error('❌ Ошибка в setDataQuick:', error);
+       
         if (this.chart) this.chart.applyOptions({ handleScroll: true, handleScale: true });
         if (onReady) onReady();
     }
