@@ -21,7 +21,6 @@ class TimerRenderer {
         this._cachedColor = null;
     }
 
-    // ✅ Определяем, тёмный ли цвет (по яркости) - идентично ChartManager
     _isDarkColor(hexColor) {
         if (!hexColor || typeof hexColor !== 'string') return false;
         let hex = hexColor.replace('#', '');
@@ -35,7 +34,6 @@ class TimerRenderer {
         return ((r * 299) + (g * 587) + (b * 114)) / 1000 < 150;
     }
 
-    // ✅ Получаем цвет текста для плашки - идентично ChartManager
     _getTextColorForBackground(bgColor) {
         return this._isDarkColor(bgColor) ? '#ffffff' : '#000000';
     }
@@ -89,26 +87,19 @@ class TimerRenderer {
             let rectY = Math.round(bitmapY - rectHeight / 2);
             rectY = Math.max(2 * vpr, Math.min(rectY, bitmapHeight - rectHeight - 2 * vpr));
 
-            // ✅ ИСПРАВЛЕНИЕ: Получаем цвет ТОЧНО так же, как это делает ChartManager для плашки цены
-            let bgColor = '#26a69a'; // дефолт
+            let bgColor = '#26a69a';
             
             if (this._colorDirty || !this._cachedColor) {
-                // 1. Приоритет: родной метод ChartManager, который использует сама плашка цены
                 if (typeof chartManager._getLineColor === 'function') {
                     bgColor = chartManager._getLineColor();
-                } 
-                // 2. Альтернативный родной метод
-                else if (typeof chartManager.getCurrentPriceColor === 'function') {
+                } else if (typeof chartManager.getCurrentPriceColor === 'function') {
                     bgColor = chartManager.getCurrentPriceColor();
-                } 
-                // 3. Фолбэк: идентичная логика вычисления, если методы вдруг недоступны
-                else {
+                } else {
                     const isBullish = lastCandle.close >= lastCandle.open;
                     bgColor = isBullish 
                         ? (chartManager.bullishColor || '#26a69a') 
                         : (chartManager.bearishColor || '#ef5350');
                 }
-                
                 this._cachedColor = bgColor;
                 this._colorDirty = false;
             } else {
@@ -121,10 +112,8 @@ class TimerRenderer {
             ctx.shadowBlur = 4 * hpr;
             this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 3 * hpr);
             ctx.fill();
-            
             ctx.shadowBlur = 0;
     
-            // ✅ Цвет текста автоматически подстраивается под фон (белый на тёмном, чёрный на светлом)
             const textColor = this._getTextColorForBackground(bgColor);
             ctx.fillStyle = textColor;
             ctx.textAlign = 'center';
@@ -178,6 +167,8 @@ class TimerPrimitive {
     detached() { 
         this._dataReady = false;
         this._series = null;
+        this._chart = null;
+        this._requestUpdate = null;
     }
     
     updateAllViews() {
@@ -206,8 +197,6 @@ class TimerPrimitive {
     updatePrice(price) {
         if (price != null && !isNaN(price) && this.isEnabled()) {
             this._chartManager.currentRealPrice = price;
-            // ✅ Принудительно сбрасываем кэш цвета при обновлении цены, 
-            // так как свеча могла сменить направление (бычья/медвежья)
             this._paneView._renderer.invalidateColor();
             this.requestRedraw();
         }
@@ -220,6 +209,11 @@ class TimerPrimitive {
         this._paneView?._renderer?.invalidateColor();
         if (this.isEnabled()) this.requestRedraw();
     }
+
+    forceRedraw() {
+        this._paneView?._renderer?.invalidateColor();
+        this.requestRedraw();
+    }
 }
 
 class TimerManager {
@@ -230,22 +224,20 @@ class TimerManager {
         this._primitive = null;
         this._timerElement = { textContent: '' };
         this._disabled = false;
-        
         this._priceSubscribed = false;
         this._priceHandler = null;
         this._subscribedSymbolKey = null;
         this._colorChangeHandler = null;
         this._initialized = false;
-        
         this._dataChangedUnsubscribe = null; 
         this._scrollHandler = null;
-
         chartManager.timerManager = this;
         setTimeout(() => this._init(), 300);
     }
 
     _init() {
         if (this._disabled || !this._chartManager?.chart) return;
+        if (this._initialized && this._primitive) return;
         this._attachToSeries(this._chartManager.currentChartType === 'candle' 
             ? this._chartManager.candleSeries : this._chartManager.barSeries);
         this._subscribeToPrice();
@@ -256,39 +248,44 @@ class TimerManager {
     _attachToSeries(series) {
         this._detachPrimitive();
         if (!series) return;
-
+        if (!this._chartManager?.chart) return;
+        
         this._primitive = new TimerPrimitive(this, this._chartManager);
         try {
             series.attachPrimitive(this._primitive);
             this._primitive.setEnabled(false);
 
             this._dataChangedUnsubscribe = series.subscribeDataChanged(() => {
-                if (this._primitive && this._chartManager.chartData?.length > 0) {
-                    if (!this._primitive.isDataReady()) {
-                        this._primitive.setDataReady(true);
-                        this._updateTimerState();
-                    }
-                    if (this._primitive.isEnabled()) {
-                        this._primitive.invalidateColor();
-                        this._primitive.requestRedraw();
-                    }
+                if (!this._primitive || !this._chartManager?.chartData?.length) return;
+                if (!this._primitive.isDataReady()) {
+                    this._primitive.setDataReady(true);
+                    this._updateTimerState();
+                }
+                if (this._primitive.isEnabled()) {
+                    this._primitive.invalidateColor();
+                    this._primitive.requestRedraw();
                 }
             });
 
-            if (this._chartManager?.chart?.timeScale()) {
+            const timeScale = this._chartManager.chart.timeScale();
+            if (timeScale) {
                 this._scrollHandler = () => {
                     if (this._primitive?.isEnabled()) {
                         this._primitive.requestRedraw();
                     }
                 };
-                this._chartManager.chart.timeScale().subscribeVisibleLogicalRangeChange(this._scrollHandler);
+                timeScale.subscribeVisibleLogicalRangeChange(this._scrollHandler);
             }
 
         } catch(e) {
             console.error('TimerManager: Failed to attach primitive', e);
+            this._primitive = null;
+            this._dataChangedUnsubscribe = null;
+            this._scrollHandler = null;
+            return;
         }
         
-        if (this._chartManager.chartData?.length > 0) {
+        if (this._chartManager.chartData?.length > 0 && this._primitive) {
             this._primitive.setDataReady(true);
             this._updateTimerState();
         }
@@ -296,19 +293,17 @@ class TimerManager {
 
     _detachPrimitive() {
         if (this._dataChangedUnsubscribe) {
-            this._dataChangedUnsubscribe();
+            try { this._dataChangedUnsubscribe(); } catch(e) {}
             this._dataChangedUnsubscribe = null;
         }
-        
         if (this._scrollHandler && this._chartManager?.chart?.timeScale()) {
-            this._chartManager.chart.timeScale().unsubscribeVisibleLogicalRangeChange(this._scrollHandler);
+            try { this._chartManager.chart.timeScale().unsubscribeVisibleLogicalRangeChange(this._scrollHandler); } catch(e) {}
             this._scrollHandler = null;
         }
-        
         if (this._primitive) {
             try {
-                const series = this._chartManager.currentChartType === 'candle'
-                    ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                const series = this._chartManager?.currentChartType === 'candle'
+                    ? this._chartManager?.candleSeries : this._chartManager?.barSeries;
                 if (series) series.detachPrimitive(this._primitive);
             } catch(e) {}
             this._primitive = null;
@@ -317,7 +312,6 @@ class TimerManager {
     
     _updateTimerState() {
         if (!this._primitive?.isDataReady()) return;
-        
         if (['1d','1w','1M'].includes(this._currentTf)) {
             this._timerElement.textContent = '';
             this._primitive.setEnabled(false);
@@ -337,25 +331,18 @@ class TimerManager {
             setTimeout(() => this._subscribeToPrice(), 200);
             return;
         }
-        
         const key = this._chartManager.getCurrentSymbolKey();
         if (!key) return;
-        
         this._subscribedSymbolKey = key;
         this._priceSubscribed = true;
-        
         this._priceHandler = (price) => {
             if (document.hidden || !this._primitive?.isEnabled()) return;
-            
             this._chartManager.currentRealPrice = price;
             this._primitive.updatePrice(price);
         };
-        
         try {
             this._chartManager.priceManager.subscribe(key, this._priceHandler, this._chartManager.currentExchange, this._chartManager.currentMarketType);
-        } catch(e) {
-            console.error('TimerManager: Failed to subscribe to price', e);
-        }
+        } catch(e) {}
     }
     
     _subscribeToColorChanges() {
@@ -379,70 +366,69 @@ class TimerManager {
 
     start(interval) {
         if (this._disabled) return;
-        
         const tfChanged = this._currentTf !== interval;
         this._currentTf = interval;
-
         if (!this._initialized) {
             this._init();
             return;
         }
-
         this.stop();
-        
         if (tfChanged) {
-            if (this._primitive) {
-                this._primitive.invalidateColor();
-            }
+            if (this._primitive) this._primitive.invalidateColor();
         }
-        
         this._updateTimerState();
     }
 
     _tick() {
         if (this._disabled || !this._timerElement || !this._chartManager?.chartData?.length) return;
-        
         if (['1d','1w','1M'].includes(this._currentTf)) {
             this._timerElement.textContent = '';
             this.stop();
             return;
         }
-
         if (typeof TF_DURATIONS === 'undefined' || typeof Utils === 'undefined') return;
-
         const dur = TF_DURATIONS[this._currentTf];
         if (!dur) return;
-
         const left = dur - (Utils.toMoscowTime(Date.now()).getTime() % dur);
         const txt = Utils.formatTimeRemaining(left);
-
         if (this._timerElement.textContent !== txt) {
             this._timerElement.textContent = txt;
-            if (this._primitive?.isEnabled()) {
-                this._primitive.requestRedraw();
-            }
+            if (this._primitive?.isEnabled()) this._primitive.requestRedraw();
         }
     }
 
     reattach() {
-        if (this._disabled || !this._initialized) return;
+        if (this._disabled) return;
+        this._detachPrimitive();
+        this._unsubscribeFromPrice();
         const series = this._chartManager.currentChartType === 'candle'
             ? this._chartManager.candleSeries : this._chartManager.barSeries;
         this._attachToSeries(series);
         this._subscribeToPrice();
+        this._initialized = true;
+        if (this._chartManager.chartData?.length > 0) {
+            this.start(this._currentTf);
+        }
     }
 
     forceColorUpdate() {
         this._primitive?.invalidateColor();
     }
 
+    forceUpdate() {
+        if (!this._primitive || !this._chartManager?.chartData?.length) return;
+        this._primitive.setDataReady(true);
+        this._updateTimerState();
+        if (this._primitive.isEnabled()) {
+            this._primitive.forceRedraw();
+        }
+    }
+
     updatePrice(price) {
         if (this._primitive) {
             this._primitive.updatePrice(price);
         } else {
-            if (this._chartManager) {
-                this._chartManager.currentRealPrice = price;
-            }
+            if (this._chartManager) this._chartManager.currentRealPrice = price;
         }
     }
 
@@ -451,6 +437,13 @@ class TimerManager {
             clearInterval(this._interval); 
             this._interval = null; 
         }
+    }
+
+    detach() {
+        this.stop();
+        this._detachPrimitive();
+        this._unsubscribeFromPrice();
+        this._initialized = false;
     }
 
     destroy() {
