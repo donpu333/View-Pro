@@ -1221,7 +1221,7 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ setDataQuick - УСКОРЕННОЕ ПОЗИЦИОНИРОВАНИЕ
+    // ✅ РАБОЧИЙ setDataQuick с оптимальной задержкой
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1271,6 +1271,7 @@ class ChartManager {
             this._historyEndTime = data[0].time; 
             this.lastCandle = data[data.length - 1];
             
+            // Устанавливаем данные
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
             
@@ -1308,7 +1309,7 @@ class ChartManager {
                 }
             }, 0);
             
-            // ✅ УСКОРЕННОЕ ПОЗИЦИОНИРОВАНИЕ ЧЕРЕЗ requestAnimationFrame
+            // ✅ Оптимальная задержка 50мс для гарантированного пересчета шкал
             const finalizePosition = () => {
                 if (!this._isChartValid()) {
                     if (onReady) onReady();
@@ -1334,10 +1335,6 @@ class ChartManager {
                 
                 timeScale.setVisibleLogicalRange({ from, to });
                 
-                try {
-                    timeScale.scrollToRealTime();
-                } catch(e) {}
-                
                 const finalizeAfterRescale = () => {
                     if (this._isChartValid()) {
                         const ps = this.chart.priceScale('right');
@@ -1353,14 +1350,13 @@ class ChartManager {
                 const priceScale = this.chart.priceScale('right');
                 if (priceScale) {
                     priceScale.applyOptions({ autoScale: true });
-                    requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
+                    setTimeout(finalizeAfterRescale, 50);
                 } else {
                     finalizeAfterRescale();
                 }
             };
             
-            // Вызываем через двойной requestAnimationFrame для минимальной задержки
-            requestAnimationFrame(() => requestAnimationFrame(finalizePosition));
+            setTimeout(finalizePosition, 50);
             
             this.scheduleUpdatePosition();
             this._updatePageTitle();
@@ -1446,6 +1442,7 @@ class ChartManager {
         if (this.timerManager) this.timerManager.stop();
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
+        
         const finishSwitch = () => {
             if (this._activeGeneration !== generationId) return;
             this._switchingSymbol = false;
@@ -1460,6 +1457,7 @@ class ChartManager {
                 this.switchSymbol(next.symbol, next.exchange, next.marketType);
             }
         };
+        
         const rollbackSwitch = (error) => {
             console.error(`❌ Не удалось переключиться на ${symbol} (${exchange}/${marketType}):`, error);
             if (this._activeGeneration !== generationId) return;
@@ -1472,10 +1470,11 @@ class ChartManager {
                 this.switchSymbol(next.symbol, next.exchange, next.marketType);
             }
         };
+        
         try {
             this._suspendAllUpdates();
             
-            // ✅ ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА: запускаем сетевой запрос сразу
+            // Параллельная загрузка
             const networkPromise = this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
             
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
@@ -1487,37 +1486,52 @@ class ChartManager {
             
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
-            this.currentRealPrice = null; this.lastCandle = null;
+            
+            this.currentRealPrice = null; 
+            this.lastCandle = null;
             if (this.timerManager) this.timerManager.stop();
             this._abortAllProcesses();
             this._suspendAllUpdates();
-            this.chartData = []; this._candleTimeMap.clear(); this._lastKlineEventTime = 0; this._pendingTrimParams = null;
-            this.currentSymbol = symbol; this.currentExchange = exchange; this.currentMarketType = marketType;
+            this.chartData = []; 
+            this._candleTimeMap.clear(); 
+            this._lastKlineEventTime = 0; 
+            this._pendingTrimParams = null;
+            
+            this.currentSymbol = symbol; 
+            this.currentExchange = exchange; 
+            this.currentMarketType = marketType;
             this._subscribeToPrice();
-            if (window.wsManager?.updateSymbolAndTimeframe) window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
+            
+            if (window.wsManager?.updateSymbolAndTimeframe) {
+                window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
+            }
+            
             const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
             if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision));
+            
             if (!this._isChartValid()) { finishSwitch(); return; }
             
             this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, finishSwitch);
             
-            // ✅ Скрываем оверлей сразу после запуска setDataQuick
-            this._hideSymbolSwitchOverlay();
+            if (!isFromCache) {
+                this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
+            }
             
-            if (!isFromCache) this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
-            
-            // ✅ Загрузка рисунков в фоне
             setTimeout(() => this.loadDrawingsForCurrentSymbol(), 0);
             
             localStorage.setItem('lastSymbol', symbol);
             localStorage.setItem('lastExchange', exchange);
             localStorage.setItem('lastMarketType', marketType);
             this._notifySymbolChange();
-            if (isFromCache) this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
-        } catch (error) { rollbackSwitch(error); }
+            
+            if (isFromCache) {
+                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
+            }
+        } catch (error) { 
+            rollbackSwitch(error); 
+        }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ switchInterval - УСКОРЕННОЕ ПЕРЕКЛЮЧЕНИЕ
     async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) return;
         if (this.currentInterval === newInterval) return;
@@ -1538,6 +1552,7 @@ class ChartManager {
         this._lastKlineEventTime = 0;
         this._catchingUpMissed = false;
         this._lastCatchUpAttempt = 0;
+        
         if (window.wsManager?.clearKlineQueue) {
             window.wsManager.clearKlineQueue();
         }
@@ -1557,7 +1572,7 @@ class ChartManager {
                 );
             }
             
-            // ✅ ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА
+            // Параллельная загрузка
             const networkPromise = this.fetchKlines(
                 this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 1000
             );
@@ -1585,9 +1600,6 @@ class ChartManager {
                     resolve
                 );
             });
-            
-            // ✅ Скрываем оверлей сразу после вызова setDataQuick
-            this._hideSymbolSwitchOverlay();
             
             if (this._activeGeneration !== generationId) return;
             
