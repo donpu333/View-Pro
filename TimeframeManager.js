@@ -102,26 +102,35 @@ class TimeframeManager {
     // 1. Базовые проверки
     if (!this.chartManager || !this.chartManager._isChartValid()) return;
     if (!this.savedCenterTime || !this.chartManager.chartData?.length) {
-        // Если нет сохраненной позиции, просто ничего не делаем. 
-        // График сам останется там, где был, или покажет последние данные по умолчанию.
         return;
     }
     
     const data = this.chartManager.chartData;
     const timeScale = this.chartManager.chart.timeScale();
     
-    // 2. ✅ ПРИОРИТЕТ: Используем нативное сохранение позиции из ChartManager
-    // (оно сохраняется в _visibilityHandler при уходе с вкладки)
+    // ✅ ИСПРАВЛЕНИЕ: НЕ перезаписываем позицию, если это новый символ/интервал
+    // Проверяем, не находится ли график в начале (только что загружен)
+    const currentRange = timeScale.getVisibleLogicalRange();
+    if (currentRange) {
+        const lastIndex = data.length - 1;
+        // Если видна последняя свеча - значит график только что загружен
+        if (currentRange.to >= lastIndex - 2) {
+            // Не восстанавливаем позицию, оставляем как есть
+            return;
+        }
+    }
+    
+    // 2. Приоритет: используем нативное сохранение из ChartManager
     if (this.chartManager._savedWasViewingHistory && this.chartManager._savedLogicalRange) {
         try {
             timeScale.setVisibleLogicalRange(this.chartManager._savedLogicalRange);
-            return; // Успешно восстановили позицию, дальше считать не нужно
+            return;
         } catch (e) {
             console.warn('⚠️ Не удалось восстановить логический диапазон, используем расчетный');
         }
     }
 
-    // 3. Расчетный метод (резервный, если savedLogicalRange недоступен)
+    // 3. Расчетный метод (резервный)
     let left = 0, right = data.length - 1, centerIndex = -1;
     while (left <= right) {
         const mid = Math.floor((left + right) / 2);
@@ -152,18 +161,15 @@ class TimeframeManager {
         from = Math.max(0, to - radius * 1.5);
     }
 
-    // 4. ✅ БЕЗОПАСНОЕ ПРИМЕНЕНИЕ ДИАПАЗОНА (БЕЗ scrollToLast!)
+    // 4. ✅ БЕЗОПАСНОЕ ПРИМЕНЕНИЕ (без scrollToLast!)
     if (from < to) {
         try {
             timeScale.setVisibleLogicalRange({ from, to });
         } catch (e) {
             console.warn('⚠️ Ошибка при установке видимого диапазона:', e);
-            // В случае ошибки просто ничего не делаем, график не прыгнет
         }
     }
-    // ❌ УДАЛЕНО: : this.chartManager.scrollToLast();
-    // Если условие from < to не выполнилось (например, из-за некорректных данных), 
-    // лучше оставить график как есть, чем принудительно дергать его в конец.
+    // ❌ УДАЛЕНО: this.chartManager.scrollToLast();
 }
 
     // ==================== ОБРАБОТЧИКИ ====================
@@ -254,17 +260,15 @@ class TimeframeManager {
         console.log('🛑 Предыдущее переключение таймфрейма отменено');
     }
 
-    // 3. ✅ ИСПРАВЛЕНО: Вызываем chartManager.switchInterval()
-    // Он сам инвалидирует все асинхронные операции через _activeGeneration
     this._abortController = new AbortController();
     const { signal } = this._abortController;
 
     console.log('🔄 Переключение на таймфрейм:', tf);
 
-    // 4. Сохраняем позицию ДО переключения
+    // 3. Сохраняем позицию ДО переключения
     this.saveCurrentPosition();
 
-    // 5. UI обновляем СРАЗУ
+    // 4. UI обновляем СРАЗУ
     document.querySelectorAll('.timeframe-item').forEach(i => {
         i.classList.toggle('active', i.dataset.tf === tf);
     });
@@ -274,22 +278,20 @@ class TimeframeManager {
     const previousInterval = this.currentInterval;
 
     try {
-        // 6. ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: Используем switchInterval из ChartManager
-        // Вместо прямого fetchKlines и setDataQuick
+        // 5. Переключаем интервал через ChartManager
         await this.chartManager.switchInterval(tf);
 
-        // 7. Проверка отмены после await
         if (signal.aborted) {
             console.log('🛑 Переключение отменено после switchInterval');
             return;
         }
 
-        // 8. Обновляем текущий интервал
+        // 6. Обновляем состояние
         this.currentInterval = tf;
         localStorage.setItem('lastTimeframe', tf);
         this.chartManager.setCurrentInterval(tf);
 
-        // 9. Обновляем WebSocket
+        // 7. Обновляем WebSocket
         if (this.wsManager?.updateSymbolAndTimeframe) {
             this.wsManager.updateSymbolAndTimeframe(
                 this.chartManager.currentSymbol, tf,
@@ -298,7 +300,7 @@ class TimeframeManager {
             );
         }
 
-        // 10. Таймер
+        // 8. Таймер
         this.timerManager.start(tf);
         
         requestAnimationFrame(() => {
@@ -314,11 +316,16 @@ class TimeframeManager {
             }
         });
         
-        // 11. Автоскейл и восстановление позиции
+        // 9. ✅ ИСПРАВЛЕНИЕ: Автоскейл, НО НЕ восстанавливаем позицию!
         this.chartManager.autoScale();
-        this.restorePosition();
+        // ❌ УДАЛЕНО: this.restorePosition();  // ← Это перезаписывает позицию!
+        
+        // ✅ Восстанавливаем ТОЛЬКО если пользователь был в истории
+        if (this.chartManager._savedWasViewingHistory) {
+            this.restorePosition();
+        }
 
-        // 12. Синхронизация рисовалок
+        // 10. Синхронизация рисовалок
         requestAnimationFrame(() => {
             window.rayManager?.syncWithNewTimeframe();
             window.trendLineManager?.syncWithNewTimeframe();
