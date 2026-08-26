@@ -1204,7 +1204,7 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-  // ✅ ИСПРАВЛЕННЫЙ setDataQuick - ЕДИНАЯ ПЛАВНАЯ ЛОГИКА
+ // ✅ ИСПРАВЛЕННЫЙ setDataQuick - ГАРАНТИРОВАННОЕ ПОЗИЦИОНИРОВАНИЕ НА ВСЕХ ТФ
 setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
     try {
         if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1289,7 +1289,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             }
         }, 0);
         
-        // ✅ ИСПРАВЛЕНИЕ: ЕДИНАЯ ПЛАВНАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ
+        // ✅ ГАРАНТИРОВАННОЕ ПОЗИЦИОНИРОВАНИЕ ДЛЯ ВСЕХ ТАЙМФРЕЙМОВ
         setTimeout(() => {
             if (!this._isChartValid()) {
                 if (onReady) onReady();
@@ -1297,22 +1297,30 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             }
             
             const timeScale = this.chart.timeScale();
-            
-            // Восстанавливаем сохранённый barSpacing (зум пользователя)
             const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
             
-            // ✅ ЕДИНЫЙ ПОДХОД ДЛЯ ВСЕХ СЛУЧАЕВ
-            if (isNewSymbol) {
-                // При смене символа/интервала - плавно в конец
-                timeScale.scrollToRealTime();
-            } else if (currentScale) {
-                // При обновлении данных - плавно восстанавливаем позицию
-                this._restoreScale(currentScale);
-            } else {
-                // По умолчанию - плавно в конец
-                timeScale.scrollToRealTime();
+            // ✅ ГАРАНТИРОВАННЫЙ СПОСОБ: setVisibleLogicalRange
+            const lastIndex = this.chartData.length - 1;
+            const containerWidth = this.chartContainer.clientWidth || 800;
+            const visibleBars = Math.floor(containerWidth / savedBarSpacing);
+            const rightOffset = 12;
+            
+            let from = Math.max(0, lastIndex - visibleBars + rightOffset);
+            let to = lastIndex + rightOffset;
+            
+            // Корректировка для коротких ТФ
+            if (from >= to || lastIndex < visibleBars) {
+                from = Math.max(0, lastIndex - Math.floor(visibleBars / 2));
+                to = lastIndex + Math.floor(visibleBars / 2);
             }
+            
+            timeScale.setVisibleLogicalRange({ from, to });
+            
+            // ✅ ДОПОЛНИТЕЛЬНО: пробуем scrollToRealTime() для плавности
+            try {
+                timeScale.scrollToRealTime();
+            } catch(e) {}
             
             // Автоскейл цены
             const priceScale = this.chart.priceScale('right');
@@ -1326,7 +1334,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             }
             
             if (onReady) onReady();
-        }, 200);
+        }, isNewSymbol ? 300 : 150);
         
         this.scheduleUpdatePosition();
         this._updatePageTitle();
