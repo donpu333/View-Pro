@@ -24,11 +24,13 @@ class ChartManager {
         this.chartContainer = document.getElementById('chart-container') || container;
 
         // ============ ЗАТЕМНЕНИЕ ПРИ ПЕРЕКЛЮЧЕНИИ ТИКЕРА ============
+        // ✅ ФИКС: оверлей делаем полностью непрозрачным (цвет фона чарта),
+        // чтобы во время смены данных/репозиционирования не было видно "скачков".
         this._symbolSwitchOverlay = document.createElement('div');
         this._symbolSwitchOverlay.className = 'chart-symbol-switch-overlay';
         this._symbolSwitchOverlay.style.cssText = [
-            'position:absolute', 'inset:0', 'background:rgba(0,0,0,0.35)',
-            'opacity:0', 'pointer-events:none', 'transition:opacity 0.15s ease', 'z-index:5'
+            'position:absolute', 'inset:0', 'background:#000000',
+            'opacity:0', 'pointer-events:none', 'transition:opacity 0.25s ease', 'z-index:5'
         ].join(';');
         if (this.chartContainer) {
             if (getComputedStyle(this.chartContainer).position === 'static') {
@@ -368,7 +370,17 @@ if (!localStorage.getItem('chartBarSpacing')) {
         return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
     }
 
-    _showSymbolSwitchOverlay() { if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '1'; }
+    // ✅ ФИКС: перед показом оверлея синхронизируем его цвет с текущим фоном чарта,
+    // чтобы под затемнением не "просвечивал" неправильно отмасштабированный график.
+    _showSymbolSwitchOverlay() {
+        if (this._symbolSwitchOverlay) {
+            try {
+                const bg = this.chart?.options()?.layout?.background?.color;
+                if (bg) this._symbolSwitchOverlay.style.background = bg;
+            } catch (e) {}
+            this._symbolSwitchOverlay.style.opacity = '1';
+        }
+    }
     _hideSymbolSwitchOverlay() { if (this._symbolSwitchOverlay) this._symbolSwitchOverlay.style.opacity = '0'; }
 
     onWebSocketConnected() { this._syncRecentCandles().catch(() => {}); }
@@ -1490,7 +1502,10 @@ _restoreScale(scale) {
         } catch (error) { rollbackSwitch(error); }
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ switchInterval
+    // ✅ ИСПРАВЛЕННЫЙ switchInterval — оверлей теперь скрывается ТОЛЬКО после
+    // того, как setDataQuick реально закончил позиционирование/рескейл
+    // (раньше оверлей прятался сразу, а setDataQuick досчитывал позицию ещё
+    // 150-300мс спустя — из-за этого и был виден "скачок")
     async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) return;
         if (this.currentInterval === newInterval) return;
@@ -1544,18 +1559,20 @@ _restoreScale(scale) {
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных');
             
-            this.setDataQuick(
-                candles, 
-                this.currentInterval, 
-                this.currentSymbol, 
-                this.currentExchange, 
-                this.currentMarketType, 
-                true
-            );
+            // ✅ ждём onReady от setDataQuick, чтобы не скрывать оверлей раньше времени
+            await new Promise((resolve) => {
+                this.setDataQuick(
+                    candles, 
+                    this.currentInterval, 
+                    this.currentSymbol, 
+                    this.currentExchange, 
+                    this.currentMarketType, 
+                    true,
+                    resolve
+                );
+            });
             
-            // ✅ Убран дублирующий вызов timerManager.start()/updatePrice() —
-            // теперь таймер запускается ВНУТРИ setDataQuick, но только после
-            // того как шкала цены пересчитана под новый таймфрейм.
+            if (this._activeGeneration !== generationId) return;
             
             if (!isFromCache) {
                 this.saveCandlesToCache(
