@@ -196,7 +196,7 @@ class ChartManager {
                 timeVisible: true, 
                 secondsVisible: false, 
                 borderColor: '#333333', 
-                barSpacing: this._savedBarSpacing || 18,
+                barSpacing: this._savedBarSpacing || 25,
                 minBarSpacing: 1, 
                 fixLeftEdge: false, 
                 fixRightEdge: false, 
@@ -269,7 +269,9 @@ class ChartManager {
                 this.volumeSeries = null;
             }
         }
-
+if (!localStorage.getItem('chartBarSpacing')) {
+    localStorage.setItem('chartBarSpacing', '25');
+}
         // ============ СОЗДАНИЕ TIMER MANAGER ============
         this.timerManager = null;
         const isCandle = this.currentChartType === 'candle';
@@ -1297,7 +1299,7 @@ setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures
             }
             
             const timeScale = this.chart.timeScale();
-            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
             
             // ✅ ГАРАНТИРОВАННЫЙ СПОСОБ: setVisibleLogicalRange
@@ -1701,7 +1703,7 @@ _restoreScale(scale) {
         const timeScale = this.chart.timeScale();
         if (!timeScale) return false;
         
-        const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 12;
+        const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
         timeScale.applyOptions({ barSpacing: savedBarSpacing });
         
         // ✅ ЕДИНЫЙ МЕТОД
