@@ -1110,8 +1110,16 @@ if (!localStorage.getItem('chartBarSpacing')) {
         }
     }
 
-    updateLastCandle(candle, eventTime = null) {
+    updateLastCandle(candle, eventTime = null, meta = null) {
         if (this._switchingSymbol || this._isSwitchingInterval || this._updatesSuspended || !this._isChartValid()) return;
+        // ⚡ Доп. защита (необязательная, обратно совместимая): если вызывающий код
+        // (например, wsManager) передал { symbol, interval } — сверяем с текущими,
+        // чтобы "опоздавшее" сообщение от предыдущего тикера/таймфрейма не могло
+        // случайно исказить данные уже переключённого графика.
+        if (meta && (
+            (meta.symbol && meta.symbol !== this.currentSymbol) ||
+            (meta.interval && meta.interval !== this.currentInterval)
+        )) return;
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
         const intervalSeconds = this._getIntervalSeconds();
         const expectedTime = Math.floor(candle.time / intervalSeconds) * intervalSeconds;
@@ -2483,8 +2491,18 @@ _restoreScale(scale) {
                 const timeScale = this.chart.timeScale();
                 const currentRange = timeScale.getVisibleLogicalRange();
                 const addedCount = uniqueOlder.length;
-                this.chartData = [...uniqueOlder, ...this.chartData];
-                if (this.chartData.length > this._maxCandlesInMemory + 500) this.chartData = this.chartData.slice(0, this._maxCandlesInMemory);
+                let combined = [...uniqueOlder, ...this.chartData];
+                // ⚡ ФИКС БАГА: раньше здесь было slice(0, max), что обрезало массив
+                // С НАЧАЛА и удаляло САМЫЕ СВЕЖИЕ свечи (вплоть до текущей live-свечи),
+                // если истории накопилось больше лимита — из-за этого могли слетать
+                // live-обновления цены после долгой прокрутки в историю. Теперь режем
+                // строго старые данные (спереди), сохраняя весь "хвост" с недавними свечами.
+                let trimmedFromFront = 0;
+                if (combined.length > this._maxCandlesInMemory + 500) {
+                    trimmedFromFront = combined.length - this._maxCandlesInMemory;
+                    combined = combined.slice(trimmedFromFront);
+                }
+                this.chartData = combined;
                 this._rebuildTimeMap();
                 this.lastCandle = this.chartData[this.chartData.length - 1];
                 this._volumeDataDirty = true;
@@ -2494,12 +2512,20 @@ _restoreScale(scale) {
                 priceScale.applyOptions({ autoScale: false });
                 if (activeSeries) activeSeries.setData(this.chartData);
                 this._updateVolumeOptimized();
-                if (currentRange) timeScale.setVisibleLogicalRange({ from: currentRange.from + addedCount, to: currentRange.to + addedCount });
+                // ⚡ Сдвиг видимого диапазона учитывает и добавленные, и обрезанные
+                // спереди свечи — иначе после обрезки картинка "прыгала" бы вбок.
+                const netShift = addedCount - trimmedFromFront;
+                if (currentRange) timeScale.setVisibleLogicalRange({ from: currentRange.from + netShift, to: currentRange.to + netShift });
                 requestAnimationFrame(() => {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                     this.scheduleDrawingsUpdate(true);
                 });
                 if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
+            } else {
+                // ⚡ ФИКС: если батч пришёл, но все свечи в нём — дубли уже загруженных
+                // (например, достигнут предел глубины истории на бирже), раньше hasMoreData
+                // мог остаться true и подгрузка зацикливалась бы вхолостую при каждом скролле.
+                this.hasMoreData = false;
             }
             if (olderCandles.length < this._batchSize) this.hasMoreData = false;
         } catch (e) { this.hasMoreData = false; }
