@@ -98,79 +98,93 @@ class TimeframeManager {
         }
     }
 
-   restorePosition() {
-    // 1. Базовые проверки
-    if (!this.chartManager || !this.chartManager._isChartValid()) return;
-    if (!this.savedCenterTime || !this.chartManager.chartData?.length) {
-        return;
-    }
-    
-    const data = this.chartManager.chartData;
-    const timeScale = this.chartManager.chart.timeScale();
-    
-    // ✅ ИСПРАВЛЕНИЕ: НЕ перезаписываем позицию, если это новый символ/интервал
-    // Проверяем, не находится ли график в начале (только что загружен)
-    const currentRange = timeScale.getVisibleLogicalRange();
-    if (currentRange) {
-        const lastIndex = data.length - 1;
-        // Если видна последняя свеча - значит график только что загружен
-        if (currentRange.to >= lastIndex - 2) {
-            // Не восстанавливаем позицию, оставляем как есть
+    // ⚡ ФИКС: добавлен параметр forceTimeBased.
+    // Раньше функция полагалась на chartManager._savedWasViewingHistory —
+    // такого свойства в ChartManager нет и не было, поэтому ветка с приоритетным
+    // "сырым" logical range никогда не срабатывала, а срабатывал вместо этого
+    // guard "график только что загружен" (currentRange.to >= lastIndex - 2),
+    // который после смены таймфрейма ИСТИНЕН ВСЕГДА, т.к. ChartManager.setDataQuick
+    // всегда позиционирует новые данные к последним свечам. В итоге восстановление
+    // позиции при просмотре истории не работало ни разу.
+    // Когда forceTimeBased === true (передаётся явно из switchToTimeframe, когда
+    // мы точно знаем, что пользователь листал историю), пропускаем оба этих
+    // некорректных для смены ТФ пути и сразу считаем позицию по сохранённому
+    // времени — это единственный корректный способ, т.к. количество баров/индексы
+    // на разных таймфреймах не совпадают и "сырой" logical range одного ТФ
+    // бессмысленен для другого.
+    restorePosition(forceTimeBased = false) {
+        // 1. Базовые проверки
+        if (!this.chartManager || !this.chartManager._isChartValid()) return;
+        if (!this.savedCenterTime || !this.chartManager.chartData?.length) {
             return;
         }
-    }
-    
-    // 2. Приоритет: используем нативное сохранение из ChartManager
-    if (this.chartManager._savedWasViewingHistory && this.chartManager._savedLogicalRange) {
-        try {
-            timeScale.setVisibleLogicalRange(this.chartManager._savedLogicalRange);
-            return;
-        } catch (e) {
-            console.warn('⚠️ Не удалось восстановить логический диапазон, используем расчетный');
-        }
-    }
+        
+        const data = this.chartManager.chartData;
+        const timeScale = this.chartManager.chart.timeScale();
 
-    // 3. Расчетный метод (резервный)
-    let left = 0, right = data.length - 1, centerIndex = -1;
-    while (left <= right) {
-        const mid = Math.floor((left + right) / 2);
-        if (data[mid].time === this.savedCenterTime) { 
-            centerIndex = mid; 
-            break; 
-        }
-        data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
-    }
-    
-    if (centerIndex === -1) centerIndex = left;
-    centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
+        if (!forceTimeBased) {
+            // Эта ветка предназначена для сценариев ВНУТРИ ОДНОГО таймфрейма
+            // (например, восстановление после возврата из свёрнутой вкладки),
+            // где индексы logical range остаются валидными для того же массива данных.
+            const currentRange = timeScale.getVisibleLogicalRange();
+            if (currentRange) {
+                const lastIndex = data.length - 1;
+                if (currentRange.to >= lastIndex - 2) {
+                    return;
+                }
+            }
 
-    let radius = 40;
-    if (this.savedTimeSpan > 0 && data.length > 1) {
-        const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
-        if (avg > 0) {
-            radius = Math.round((this.savedTimeSpan / 2) / avg);
-            radius = Math.max(15, Math.min(radius, 250));
+            if (this.chartManager._savedWasViewingHistory && this.chartManager._savedLogicalRange) {
+                try {
+                    timeScale.setVisibleLogicalRange(this.chartManager._savedLogicalRange);
+                    return;
+                } catch (e) {
+                    console.warn('⚠️ Не удалось восстановить логический диапазон, используем расчетный');
+                }
+            }
         }
-    }
-    
-    const padding = Math.max(3, Math.floor(radius * 0.15));
-    let from = Math.max(0, centerIndex - radius - padding);
-    let to = Math.min(data.length - 1, centerIndex + radius + padding);
-    
-    if (to - from < radius * 1.5) {
-        from = Math.max(0, to - radius * 1.5);
-    }
 
-    // 4. ✅ БЕЗОПАСНОЕ ПРИМЕНЕНИЕ (без scrollToLast!)
-    if (from < to) {
-        try {
-            timeScale.setVisibleLogicalRange({ from, to });
-        } catch (e) {
-            console.warn('⚠️ Ошибка при установке видимого диапазона:', e);
+        // 3. Расчетный метод — по времени (единственный корректный способ
+        // при смене таймфрейма, т.к. количество/границы баров другие)
+        let left = 0, right = data.length - 1, centerIndex = -1;
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            if (data[mid].time === this.savedCenterTime) { 
+                centerIndex = mid; 
+                break; 
+            }
+            data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
+        }
+        
+        if (centerIndex === -1) centerIndex = left;
+        centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
+
+        let radius = 40;
+        if (this.savedTimeSpan > 0 && data.length > 1) {
+            const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
+            if (avg > 0) {
+                radius = Math.round((this.savedTimeSpan / 2) / avg);
+                radius = Math.max(15, Math.min(radius, 250));
+            }
+        }
+        
+        const padding = Math.max(3, Math.floor(radius * 0.15));
+        let from = Math.max(0, centerIndex - radius - padding);
+        let to = Math.min(data.length - 1, centerIndex + radius + padding);
+        
+        if (to - from < radius * 1.5) {
+            from = Math.max(0, to - radius * 1.5);
+        }
+
+        // 4. ✅ БЕЗОПАСНОЕ ПРИМЕНЕНИЕ (без scrollToLast!)
+        if (from < to) {
+            try {
+                timeScale.setVisibleLogicalRange({ from, to });
+            } catch (e) {
+                console.warn('⚠️ Ошибка при установке видимого диапазона:', e);
+            }
         }
     }
-    // ❌ УДАЛЕНО: this.chartManager.scrollToLast();
-}
 
     // ==================== ОБРАБОТЧИКИ ====================
     setupEventListeners() {
@@ -266,6 +280,12 @@ class TimeframeManager {
     console.log('🔄 Переключение на таймфрейм:', tf);
 
     // 3. Сохраняем позицию ДО переключения
+    // ⚡ ФИКС: реальный признак "пользователь смотрел историю" берём из
+    // chartManager._isViewingHistory (это свойство реально существует и
+    // обновляется при каждом скролле), а не из несуществующего
+    // chartManager._savedWasViewingHistory. Сохраняем локально ДО переключения,
+    // потому что switchInterval полностью сбрасывает/переустанавливает view.
+    const wasViewingHistory = this.chartManager._isViewingHistory === true;
     this.saveCurrentPosition();
 
     // 4. UI обновляем СРАЗУ
@@ -316,13 +336,14 @@ class TimeframeManager {
             }
         });
         
-        // 9. ✅ ИСПРАВЛЕНИЕ: Автоскейл, НО НЕ восстанавливаем позицию!
+        // 9. ✅ ИСПРАВЛЕНИЕ: Автоскейл, НО НЕ восстанавливаем позицию по умолчанию!
         this.chartManager.autoScale();
-        // ❌ УДАЛЕНО: this.restorePosition();  // ← Это перезаписывает позицию!
-        
-        // ✅ Восстанавливаем ТОЛЬКО если пользователь был в истории
-        if (this.chartManager._savedWasViewingHistory) {
-            this.restorePosition();
+
+        // ✅ Восстанавливаем ТОЛЬКО если пользователь реально был в истории.
+        // ⚡ forceTimeBased=true — пропускаем "уже свежий вид"-guard и попытку
+        // переиспользовать чужой logical range (см. комментарий в restorePosition).
+        if (wasViewingHistory) {
+            this.restorePosition(true);
         }
 
         // 10. Синхронизация рисовалок
