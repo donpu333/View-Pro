@@ -1358,7 +1358,12 @@ class ChartManager {
                 const priceScale = this.chart.priceScale('right');
                 if (priceScale) {
                     priceScale.applyOptions({ autoScale: true });
-                    requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
+                    // ✅ Дополнительная задержка для надёжности
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            setTimeout(finalizeAfterRescale, 0);
+                        });
+                    });
                 } else {
                     finalizeAfterRescale();
                 }
@@ -1452,8 +1457,14 @@ class ChartManager {
         if (this.timerManager) this.timerManager.stop();
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
+
         const finishSwitch = () => {
-            if (this._activeGeneration !== generationId) return;
+            if (this._activeGeneration !== generationId) {
+                // Если поколение сменилось, всё равно снимаем паузу, установленную здесь
+                this._updatesSuspended = false;
+                if (this.priceManager) this.priceManager.resume?.();
+                return;
+            }
             this._switchingSymbol = false;
             this._resumeAllUpdates(generationId);
             this._hideSymbolSwitchOverlay();
@@ -1468,7 +1479,11 @@ class ChartManager {
         };
         const rollbackSwitch = (error) => {
             console.error(`❌ Не удалось переключиться на ${symbol} (${exchange}/${marketType}):`, error);
-            if (this._activeGeneration !== generationId) return;
+            if (this._activeGeneration !== generationId) {
+                this._updatesSuspended = false;
+                if (this.priceManager) this.priceManager.resume?.();
+                return;
+            }
             this._switchingSymbol = false;
             this._resumeAllUpdates(generationId);
             this._hideSymbolSwitchOverlay();
@@ -1478,6 +1493,7 @@ class ChartManager {
                 this.switchSymbol(next.symbol, next.exchange, next.marketType);
             }
         };
+
         try {
             this._suspendAllUpdates();
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
@@ -1514,6 +1530,9 @@ class ChartManager {
         this._isSwitchingInterval = true;
         this._showSymbolSwitchOverlay();
 
+        // ✅ Немедленно останавливаем таймер
+        if (this.timerManager) this.timerManager.stop();
+
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
 
@@ -1524,7 +1543,8 @@ class ChartManager {
         if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
         if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
 
-        this._lastKlineEventTime = 0;
+        // ✅ Сбрасываем на текущее время, чтобы отбросить устаревшие WS-сообщения
+        this._lastKlineEventTime = Date.now();
         this._catchingUpMissed = false;
         this._lastCatchUpAttempt = 0;
         if (window.wsManager?.clearKlineQueue) {
@@ -1591,11 +1611,16 @@ class ChartManager {
         } finally {
             this._isSwitchingInterval = false;
             this._hideSymbolSwitchOverlay();
+
+            // ✅ Безусловно снимаем паузу
+            this._updatesSuspended = false;
+            if (this.priceManager) this.priceManager.resume?.();
+
             if (this._activeGeneration === generationId) {
-                this._resumeAllUpdates(generationId);
                 this._startPeriodicSync();
                 this._startNewCandleChecker();
             }
+
             if (this._pendingSymbolSwitch) {
                 const next = this._pendingSymbolSwitch;
                 this._pendingSymbolSwitch = null;
