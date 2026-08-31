@@ -85,6 +85,12 @@ class WebSocketManager {
             clearTimeout(this._connectDebounceTimer);
         }
         
+        // ✅ ФИКС 1: НЕМЕДЛЕННО закрываем старые сокеты ДО debounce.
+        // Раньше старые сокеты жили ещё ~100мс и продолжали слать сообщения
+        // от предыдущего тикера/таймфрейма в ChartManager, пока тот уже
+        // готовился к новым данным — отсюда и "[object Object]" в series.update().
+        this._closeSocket();
+        
         this._connectDebounceTimer = setTimeout(() => {
             this._doConnect();
         }, 100);
@@ -209,6 +215,20 @@ class WebSocketManager {
         return ws;
     }
 
+    // ✅ ФИКС 2: централизованная проверка состояния ChartManager.
+    // Возвращает true, если ChartManager в процессе переключения символа/таймфрейма
+    // или обновления приостановлены — в этом случае WS-сообщения надо игнорировать,
+    // чтобы не писать устаревшие данные в "новый" chartData.
+    _isChartBusy(chartManager) {
+        if (!chartManager) return true;
+        return !!(
+            chartManager._isSwitchingInterval ||
+            chartManager._switchingSymbol ||
+            chartManager._updatesSuspended ||
+            chartManager._isApplyingData
+        );
+    }
+
     _handleMessage(rawData, type) {
         try {
             const raw = JSON.parse(rawData);
@@ -229,6 +249,11 @@ class WebSocketManager {
                     if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
                     this._lastRelevantMessageTime = Date.now();
+                    
+                    // ✅ ФИКС 2: не обновляем свечи, если ChartManager в процессе переключения.
+                    // Раньше "опоздавшее" сообщение от старого тикера могло попасть в updateLastCandle
+                    // после того, как setDataQuick уже обнулил chartData — отсюда и ошибки "[object Object]".
+                    if (this._isChartBusy(chartManager)) return;
                     
                     let candleTime = Math.floor(k.t / 1000);
                     
@@ -263,9 +288,15 @@ class WebSocketManager {
 
                     this._lastRelevantMessageTime = Date.now();
                     
+                    // ✅ ФИКС 2: не обновляем цену во время переключения.
+                    if (this._isChartBusy(chartManager)) return;
+                    
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
                         if (typeof chartManager._syncPriceLine === 'function') {
+                            // ✅ ФИКС 3: передаём ТОЛЬКО число, без обёртки-объекта.
+                            // Раньше _syncPriceLine мог получать объект и некорректно извлекать
+                            // цену, что в связке с гонками приводило к "[object Object]".
                             chartManager._syncPriceLine(price);
                         }
                     }
@@ -284,6 +315,9 @@ class WebSocketManager {
                 if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
                 this._lastRelevantMessageTime = Date.now();
+                
+                // ✅ ФИКС 2: та же защита от гонок для Bybit.
+                if (this._isChartBusy(chartManager)) return;
                 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
                     const k = raw.data[0];
@@ -316,6 +350,7 @@ class WebSocketManager {
                     const price = parseFloat(raw.data[0].p);
                     if (!isNaN(price) && price > 0) {
                         if (typeof chartManager._syncPriceLine === 'function') {
+                            // ✅ ФИКС 3: передаём ТОЛЬКО число.
                             chartManager._syncPriceLine(price);
                         }
                     }
