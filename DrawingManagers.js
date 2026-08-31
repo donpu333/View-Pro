@@ -200,7 +200,7 @@ class HorizontalRayRenderer {
 
             const solidBgColor = parsed ? `rgb(${parsed.r}, ${parsed.g}, ${parsed.b})` : color;
             const brightness = this._getBrightness(solidBgColor);
-            const textColor = brightness < 128 ? '#FFFFFF' : '#000000';
+            const textColor = brightness < 128 ? '#faf3f3' : '#000000';
 
             // Рисуем плашку с хвостиком
             ctx.fillStyle = solidBgColor;
@@ -1472,8 +1472,11 @@ _showSettings(ray) {
         }
     }
     
-    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+
+    wind// ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+if (typeof window.makePanelDraggable === 'function') {
     window.makePanelDraggable(settings);
+}ow.makePanelDraggable(settings);
 }
 
     _renderTimeframeCheckboxes(ray) {
