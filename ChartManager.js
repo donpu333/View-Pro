@@ -1072,63 +1072,68 @@ if (!localStorage.getItem('chartBarSpacing')) {
         this.scheduleUpdatePosition();
     }
 
-    _syncPriceLine(price) {
-        if (price && typeof price === 'object') {
-            if (typeof price.price === 'number') price = price.price;
-            else if (typeof price.price === 'string') price = parseFloat(price.price);
-            else if (typeof price.close === 'number') price = price.close;
-            else if (typeof price.last === 'number') price = price.last;
-            else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
-        }
-        if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
-        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series || !this.chartData || this.chartData.length === 0) return;
-        const lastCandle = this.chartData[this.chartData.length - 1];
-        if (!lastCandle) return;
-        const nowSec = Math.floor(Date.now() / 1000);
-        const currentCandleStart = this._alignTimeToInterval(nowSec);
-        if (lastCandle.time !== currentCandleStart) {
-            const existingIndex = this._candleTimeMap.get(currentCandleStart);
-            if (existingIndex !== undefined) {
-                const currentCandle = this.chartData[existingIndex];
-                currentCandle.close = price;
-                currentCandle.high = Math.max(currentCandle.high, price);
-                currentCandle.low = Math.min(currentCandle.low, price);
-                this._stampCandle(currentCandle, 'ws', Date.now());
-                this.lastCandle = currentCandle;
-                series.update({ time: currentCandle.time, open: currentCandle.open, high: currentCandle.high, low: currentCandle.low, close: currentCandle.close });
-            } else {
-                const newCandle = { time: currentCandleStart, open: price, high: price, low: price, close: price, volume: 0, quoteVolume: 0, _isPlaceholder: true, _closed: false };
-                this._stampCandle(newCandle, 'ws', Date.now());
-                this.chartData.push(newCandle);
-                this._addToTimeMap(newCandle.time, this.chartData.length - 1);
-                this.lastCandle = newCandle;
-                series.update({ time: newCandle.time, open: newCandle.open, high: newCandle.high, low: newCandle.low, close: newCandle.close });
-                setTimeout(() => { this._catchUpMissedCandles().catch(() => {}); }, 100);
-            }
-            const lineColor = this._getLineColor();
-            this._applyPriceLineColor(series, lineColor);
-            this.currentRealPrice = price;
-            this._updatePageTitle();
-            if (this.timerManager) this.timerManager.updatePrice(price);
-            return;
-        }
-        lastCandle.close = price;
-        lastCandle.high = Math.max(lastCandle.high, price);
-        lastCandle.low = Math.min(lastCandle.low, price);
-        this._stampCandle(lastCandle, 'ws', Date.now());
-        this.currentRealPrice = price;
-        this.lastCandle = lastCandle;
-        const lineColor = this._getLineColor();
-        series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
-        this._applyPriceLineColor(series, lineColor);
-        this._updatePageTitle();
-        if (!document.hidden) this.scheduleUpdatePosition();
-        this.requestDrawingsRedraw();
-        if (this.timerManager) this.timerManager.updatePrice(price);
+   _syncPriceLine(price) {
+    if (price && typeof price === 'object') {
+        if (typeof price.price === 'number') price = price.price;
+        else if (typeof price.price === 'string') price = parseFloat(price.price);
+        else if (typeof price.close === 'number') price = price.close;
+        else if (typeof price.last === 'number') price = price.last;
+        else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
     }
+    if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
+    if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
+    const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+    if (!series || !this.chartData || this.chartData.length === 0) return;
+    const lastCandle = this.chartData[this.chartData.length - 1];
+    if (!lastCandle) return;
 
+    // ✅ ЗАЩИТА 1: если time — не число, не трогаем серию
+    if (typeof lastCandle.time !== 'number' || isNaN(lastCandle.time) || lastCandle.time <= 0) return;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const currentCandleStart = this._alignTimeToInterval(nowSec);
+    if (lastCandle.time !== currentCandleStart) {
+        const existingIndex = this._candleTimeMap.get(currentCandleStart);
+        if (existingIndex !== undefined) {
+            const currentCandle = this.chartData[existingIndex];
+            // ✅ ЗАЩИТА 2: пропускаем, если time некорректный
+            if (typeof currentCandle.time !== 'number' || isNaN(currentCandle.time) || currentCandle.time <= 0) return;
+            currentCandle.close = price;
+            currentCandle.high = Math.max(currentCandle.high, price);
+            currentCandle.low = Math.min(currentCandle.low, price);
+            this._stampCandle(currentCandle, 'ws', Date.now());
+            this.lastCandle = currentCandle;
+            series.update({ time: currentCandle.time, open: currentCandle.open, high: currentCandle.high, low: currentCandle.low, close: currentCandle.close });
+        } else {
+            const newCandle = { time: currentCandleStart, open: price, high: price, low: price, close: price, volume: 0, quoteVolume: 0, _isPlaceholder: true, _closed: false };
+            this._stampCandle(newCandle, 'ws', Date.now());
+            this.chartData.push(newCandle);
+            this._addToTimeMap(newCandle.time, this.chartData.length - 1);
+            this.lastCandle = newCandle;
+            series.update({ time: newCandle.time, open: newCandle.open, high: newCandle.high, low: newCandle.low, close: newCandle.close });
+            setTimeout(() => { this._catchUpMissedCandles().catch(() => {}); }, 100);
+        }
+        const lineColor = this._getLineColor();
+        this._applyPriceLineColor(series, lineColor);
+        this.currentRealPrice = price;
+        this._updatePageTitle();
+        if (this.timerManager) this.timerManager.updatePrice(price);
+        return;
+    }
+    lastCandle.close = price;
+    lastCandle.high = Math.max(lastCandle.high, price);
+    lastCandle.low = Math.min(lastCandle.low, price);
+    this._stampCandle(lastCandle, 'ws', Date.now());
+    this.currentRealPrice = price;
+    this.lastCandle = lastCandle;
+    const lineColor = this._getLineColor();
+    series.update({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: price });
+    this._applyPriceLineColor(series, lineColor);
+    this._updatePageTitle();
+    if (!document.hidden) this.scheduleUpdatePosition();
+    this.requestDrawingsRedraw();
+    if (this.timerManager) this.timerManager.updatePrice(price);
+}
     _alignTimeToInterval(nowSec) {
         const stepMap = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000 };
         if (this.currentInterval === '1w') {
@@ -2686,15 +2691,6 @@ _restoreScale(scale) {
         });
     }
 
-    // ✅ ФИКС (ключевая правка): методы рисования — это ГЛОБАЛЬНЫЕ менеджеры
-    // (window.rayManager, window.trendLineManager и т.д.), как и повсюду в
-    // остальной части класса (см. setChartType, loadDrawingsForCurrentSymbol,
-    // _blurHandler). Здесь ошибочно использовалось this.rayManager и т.п. — таких
-    // полей на экземпляре ChartManager НИКОГДА не существовало (они нигде не
-    // присваиваются в конструкторе), поэтому все эти условия молча оставались
-    // falsy и requestDrawingsRedraw() ФАКТИЧЕСКИ НИКОГДА не перерисовывал рисунки
-    // (лучи, трендлинии, линейки, алерт-линии, тексты) — несмотря на то что он
-    // вызывается в десятках мест по всему классу как основной механизм их обновления.
     _performDrawingsRedraw() {
         if (window.rayManager?._applyRedrawIfNeeded) window.rayManager._applyRedrawIfNeeded();
         if (window.trendLineManager?._requestRedraw) window.trendLineManager._requestRedraw();
