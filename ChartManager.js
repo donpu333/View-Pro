@@ -279,7 +279,10 @@ class ChartManager {
                 });
                 const volumeScale = this.chart.priceScale('volume');
                 if (volumeScale) {
-                    volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, visible: true, borderVisible: true });
+                    // autoScale:false обязателен здесь — без него шкала объёмов может
+                    // самостоятельно пересчитать диапазон в обход scaleMargins и "раздуть"
+                    // гистограмму на весь график.
+                    volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, visible: true, borderVisible: true, autoScale: false });
                 }
                 this.bullishColor = this.bullishColor || initialBullish;
                 this.bearishColor = this.bearishColor || initialBearish;
@@ -1921,7 +1924,7 @@ class ChartManager {
         const width = chartContainer.clientWidth;
         this.chart.resize(width, newChartHeight);
         const volumeScale = this.chart.priceScale('volume');
-        if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+        if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, autoScale: false });
         if (this.indicatorManager?.panelManager) {
             const panels = this.indicatorManager.panelManager.panels;
             if (panels && Array.isArray(panels)) {
