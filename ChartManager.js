@@ -279,10 +279,7 @@ class ChartManager {
                 });
                 const volumeScale = this.chart.priceScale('volume');
                 if (volumeScale) {
-                    // autoScale:false обязателен здесь — без него шкала объёмов может
-                    // самостоятельно пересчитать диапазон в обход scaleMargins и "раздуть"
-                    // гистограмму на весь график.
-                    volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, visible: true, borderVisible: true, autoScale: false });
+                    volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, visible: true, borderVisible: true });
                 }
                 this.bullishColor = this.bullishColor || initialBullish;
                 this.bearishColor = this.bearishColor || initialBearish;
