@@ -161,21 +161,23 @@ function calculateATR(data, period = 14) {
 function calculateVolume24H(data, params) {
     if (!data || data.length === 0) return [];
     
-    // Окно берем строго из параметров (например, 288 для 5m)
-    const windowSize = params.windowSize || 288; 
+    const windowSize = params.windowSize || 288;
     if (windowSize <= 0) return [];
     
-    const result = [];
+    const result = new Array(data.length);
+    let rollingSum = 0;
+    
     for (let i = 0; i < data.length; i++) {
-        let volSum = 0;
-        const startIdx = Math.max(0, i - windowSize + 1);
-        for (let j = startIdx; j <= i; j++) {
-            volSum += (data[j].volume || 0);
+        rollingSum += (data[i].volume || 0);
+        
+        if (i >= windowSize) {
+            rollingSum -= (data[i - windowSize].volume || 0);
         }
-        result.push({
+        
+        result[i] = {
             time: data[i].time,
-            value: volSum
-        });
+            value: rollingSum
+        };
     }
     
     return result;
@@ -194,7 +196,6 @@ function smoothArray(arr, period) {
 // ==========================================
 // 🔗 МАРШРУТИЗАТОРЫ (Прямые мостики)
 // ==========================================
-// Универсально: sma, ema подойдут для ЛЮБОГО периода, period берется из params!
 
 function sma(data, p) { return calculateSMA(data, p.period); }
 function ema(data, p) { return calculateEMA(data, p.period); }
