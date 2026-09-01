@@ -10,6 +10,8 @@ class IndicatorManager {
         this._pendingIndicators = null;
         this._currentSettingsIndicator = null;
         this._outsideClickHandler = null;
+        this._pendingIndicatorsUpdate = false;
+        this._pendingIndicatorResults = new Map();
         
         // Привязываем контекст всех методов
         this._handleWorkerMessage = this._handleWorkerMessage.bind(this);
@@ -31,33 +33,50 @@ class IndicatorManager {
         }, 2000);
     }
     
-   _handleWorkerMessage(message) {
-    const processResult = (res) => {
-        const indicator = this.activeIndicators.find(i => i.id == res.indicatorId);
-        if (indicator && res.success) {
-            // ✅ Очищаем и сразу заполняем в одном цикле (без моргания)
-            if (indicator.series) {
-                indicator.series.forEach(s => {
-                    if (s && s.setData) s.setData([]); 
+    _handleWorkerMessage(message) {
+        const processResult = (res) => {
+            const indicator = this.activeIndicators.find(i => i.id == res.indicatorId);
+            if (indicator && res.success) {
+                // Если идёт скролл — откладываем применение результата
+                if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming) {
+                    this._pendingIndicatorResults.set(indicator.id, res);
+                    return;
+                }
+                
+                // Применяем результат сразу (без предварительной очистки)
+                indicator.onCalculateResult({ 
+                    indicatorId: res.indicatorId, 
+                    result: res.result, 
+                    success: true 
                 });
             }
-            indicator.onCalculateResult({ 
-                indicatorId: res.indicatorId, 
-                result: res.result, 
-                success: true 
-            });
-        }
-    };
+        };
 
-    if (message.task === 'result') {
-        processResult(message);
-    }
-    else if (message.task === 'resultMultiple') {
-        for (const res of message.results) {
-            processResult(res);
+        if (message.task === 'result') {
+            processResult(message);
+        }
+        else if (message.task === 'resultMultiple') {
+            for (const res of message.results) {
+                processResult(res);
+            }
         }
     }
-}
+    
+    _flushPendingIndicatorResults() {
+        if (this._pendingIndicatorResults.size === 0) return;
+        
+        for (const [indicatorId, res] of this._pendingIndicatorResults.entries()) {
+            const indicator = this.activeIndicators.find(i => i.id == indicatorId);
+            if (indicator && res.success) {
+                indicator.onCalculateResult({ 
+                    indicatorId: res.indicatorId, 
+                    result: res.result, 
+                    success: true 
+                });
+            }
+        }
+        this._pendingIndicatorResults.clear();
+    }
     
     _filterData(data) {
         if (!data || !Array.isArray(data)) return [];
@@ -122,14 +141,14 @@ class IndicatorManager {
                 this._showPanel(indicator.data.panel);
             }
             
-                      const series = indicator.createSeries();
+            const series = indicator.createSeries();
             if (series) {
                 this.activeIndicators.push(indicator);
                 this._saveIndicators();
                 this._renderUI();
                 this.chartManager?._updateMainChartHeight?.();
                 
-                // ✅ ЗАПУСКАЕМ РАСЧЕТ ДАННЫХ ДЛЯ НОВОГО ИНДИКАТОРА
+                // Запускаем расчёт для нового индикатора
                 this.updateAllIndicators();
                 
                 return true;
@@ -168,6 +187,9 @@ class IndicatorManager {
             }
         }
         
+        // Очищаем отложенные результаты для удалённого индикатора
+        this._pendingIndicatorResults.delete(indicator.id);
+        
         this._saveIndicators();
         this._renderUI();
         this.chartManager?.chart?.timeScale()?.fitContent();
@@ -175,34 +197,48 @@ class IndicatorManager {
         return true;
     }
     
-   updateAllIndicators() {
-    if (!this.worker) return;
-    
-    const calculations = [];
-    this.activeIndicators.forEach(indicator => {
-        const workerType = indicator.getWorkerType();
-        if (!workerType) return; 
+    updateAllIndicators() {
+        if (!this.worker) return;
         
-        const chartData = this.chartManager.chartData;
-        if (chartData && chartData.length > 0) {
-            // ❌ УДАЛИЛИ ОЧИСТКУ СЕРИЙ ОТСЮДА. Они очистятся в момент прихода новых данных.
-            if (indicator.result) {
-                indicator.result = null;
-            }
-            
-            calculations.push({
-                indicatorId: indicator.id,
-                type: workerType,
-                data: [...chartData],
-                params: indicator.getWorkerParams()
-            });
+        // Не запускаем расчёт во время скролла/зума
+        if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming) {
+            this._pendingIndicatorsUpdate = true;
+            return;
         }
-    });
-    
-    if (calculations.length > 0) {
-        this.worker.postMessage({ task: 'calculateMultiple', calculations });
+        
+        const calculations = [];
+        this.activeIndicators.forEach(indicator => {
+            const workerType = indicator.getWorkerType();
+            if (!workerType) return; 
+            
+            const chartData = this.chartManager.chartData;
+            if (chartData && chartData.length > 0) {
+                if (indicator.result) {
+                    indicator.result = null;
+                }
+                
+                calculations.push({
+                    indicatorId: indicator.id,
+                    type: workerType,
+                    data: [...chartData],
+                    params: indicator.getWorkerParams()
+                });
+            }
+        });
+        
+        if (calculations.length > 0) {
+            this.worker.postMessage({ task: 'calculateMultiple', calculations });
+        }
     }
-}
+    
+    flushPendingIndicatorsUpdate() {
+        if (this._pendingIndicatorsUpdate) {
+            this._pendingIndicatorsUpdate = false;
+            this.updateAllIndicators();
+        }
+        this._flushPendingIndicatorResults();
+    }
+    
     showIndicatorSettings(indicator) {
         const panel = document.getElementById('indicatorSettings');
         const content = document.getElementById('indicatorSettingsContent');
@@ -360,10 +396,10 @@ class IndicatorManager {
         this._renderUI();
         this.afterAllIndicatorsLoaded();
     }
+    
     afterAllIndicatorsLoaded() {
-    // ❌ УДАЛИЛИ строку с volumeScale, чтобы не сбивать настройки графика
-    this.chartManager?._updateMainChartHeight?.();
-}
+        this.chartManager?._updateMainChartHeight?.();
+    }
     
     clearAllIndicators() {
         for (let i = this.activeIndicators.length - 1; i >= 0; i--) {
