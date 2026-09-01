@@ -88,6 +88,10 @@ class ChartManager {
         this._wheelHandler = null;
         this._chartTypeSwitchTimeout = null;
 
+        // ============ ТРОТТЛИНГ ЦЕНОВЫХ ТИКОВ (RAF-БАТЧИНГ) ============
+        this._priceUpdateRafId = null;
+        this._pendingPriceValue = null;
+
         // ============ ВРЕМЕННЫЕ ОБЪЕКТЫ ============
         this._candleTimeMap = new Map();
 
@@ -248,6 +252,7 @@ class ChartManager {
                 priceLineStyle: LightweightCharts.LineStyle.Dashed, lastValueLabelBackgroundColor: bgColor,
                 lastValueLabelTextColor: this._getTextColorForBackground(bgColor), priceLineTitle: ''
             });
+            series.__lastLineColor = bgColor;
         });
 
         const savedBg = localStorage.getItem('chartBgColor');
@@ -325,7 +330,7 @@ class ChartManager {
                     if (this._isChartValid()) {
                         this._updateMainChartHeight();
                         if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                        this.forceRedraw();
+                        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                     }
                 }, 50);
             });
@@ -431,6 +436,10 @@ class ChartManager {
 
     _applyPriceLineColor(series, color) {
         if (!series || !color) return;
+        // PERF: пропускаем applyOptions, если цвет для ЭТОЙ конкретной серии не изменился.
+        // Храним последний применённый цвет прямо на объекте серии, а не глобально,
+        // иначе при переключении candle/bar с одинаковым цветом линия не обновится.
+        if (series.__lastLineColor === color) return;
         series.applyOptions({
             priceLineColor: color,
             priceLineSource: 'lastBar',
@@ -439,6 +448,7 @@ class ChartManager {
             lastValueLabelTextColor: this._getTextColorForBackground(color),
             priceLineTitle: ''
         });
+        series.__lastLineColor = color;
         this._lastAppliedColor = color;
     }
 
@@ -737,6 +747,7 @@ class ChartManager {
         if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
         if (this._drawingsFinalUpdateTimeout) clearTimeout(this._drawingsFinalUpdateTimeout);
         if (this._scrollStopTimeout) clearTimeout(this._scrollStopTimeout);
+        if (this._priceUpdateRafId) { cancelAnimationFrame(this._priceUpdateRafId); this._priceUpdateRafId = null; }
         if (this._globalMouseUpHandler) window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
         if (this._resizeHandler) window.removeEventListener('resize', this._resizeHandler);
         if (this._blurHandler) window.removeEventListener('blur', this._blurHandler);
@@ -904,7 +915,7 @@ class ChartManager {
                 if (this._isChartValid()) {
                     this._updateMainChartHeight();
                     if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
-                    this.forceRedraw();
+                    if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                 }
                 this.scheduleDrawingsUpdate(true);
             }, 100);
@@ -1050,6 +1061,12 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
+    // PERF: цена может прилетать по WS десятки раз в секунду. Раньше вся тяжёлая
+    // логика (series.update + applyOptions на price-line + drawings redraw) выполнялась
+    // синхронно на КАЖДЫЙ тик — это и было основным источником подтормаживания.
+    // Теперь тик только запоминается, а реальная обработка батчится через
+    // requestAnimationFrame — максимум 1 раз за кадр (~60 раз/сек), как делает
+    // TradingView и как уже сделано для crosshair в этом же классе.
     _syncPriceLine(price) {
         if (price && typeof price === 'object') {
             if (typeof price.price === 'number') price = price.price;
@@ -1059,6 +1076,19 @@ class ChartManager {
             else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
         }
         if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
+        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
+
+        this._pendingPriceValue = price;
+        if (this._priceUpdateRafId !== null) return;
+        this._priceUpdateRafId = requestAnimationFrame(() => {
+            this._priceUpdateRafId = null;
+            const p = this._pendingPriceValue;
+            this._pendingPriceValue = null;
+            if (p !== null && p !== undefined) this._applyPriceUpdate(p);
+        });
+    }
+
+    _applyPriceUpdate(price) {
         if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series || !this.chartData || this.chartData.length === 0) return;
@@ -2245,6 +2275,8 @@ class ChartManager {
         this._pendingUpdates = false; this._pendingRedraw = false;
         if (this._drawingsUpdateRafId) { cancelAnimationFrame(this._drawingsUpdateRafId); this._drawingsUpdateRafId = null; }
         if (this._updatePositionRafId) { cancelAnimationFrame(this._updatePositionRafId); this._updatePositionRafId = null; }
+        if (this._priceUpdateRafId) { cancelAnimationFrame(this._priceUpdateRafId); this._priceUpdateRafId = null; }
+        this._pendingPriceValue = null;
         if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
         if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
         if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
