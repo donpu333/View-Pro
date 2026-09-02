@@ -132,6 +132,11 @@ class ChartManager {
         this._volumeDataCache = null;
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
+        // Настройки шкалы объёма централизованы здесь, чтобы их можно было
+        // переприменять из ЛЮБОГО места, где меняются данные volumeSeries
+        // (см. _applyVolumeScaleOptions ниже) — это и есть фикс бага
+        // "гистограмма растягивается на весь график".
+        this._volumeScaleMargins = { top: 0.85, bottom: 0 };
 
         // ============ FETCH TIMEOUT ============
         this._fetchTimeoutMs = 15000;
@@ -277,10 +282,12 @@ class ChartManager {
                     priceScaleId: 'volume', priceFormat: { type: 'volume' }, color: '#26a69a', lineWidth: 1,
                     lastValueVisible: false, priceLineVisible: false, title: ''
                 });
-                const volumeScale = this.chart.priceScale('volume');
-                if (volumeScale) {
-                    volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, visible: true, borderVisible: true });
-                }
+                // ФИКС: раньше опции шкалы объёма выставлялись инлайном только здесь.
+                // Теперь это единая точка входа (_applyVolumeScaleOptions), которая
+                // вызывается ПОВСЮДУ, где меняются данные volumeSeries — иначе
+                // после setData/update в других методах autoScale иногда
+                // "раздувал" гистограмму на весь график в обход scaleMargins.
+                this._applyVolumeScaleOptions();
                 this.bullishColor = this.bullishColor || initialBullish;
                 this.bearishColor = this.bearishColor || initialBearish;
             } catch (e) {
@@ -346,6 +353,24 @@ class ChartManager {
                 window.wsManager.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
             }
         }, 1000);
+    }
+
+    // ============ ШКАЛА ОБЪЁМА (ФИКС БАГА "НА ВЕСЬ ЭКРАН") ============
+    // Единая точка применения опций шкалы 'volume'. Вызывать после КАЖДОГО
+    // setData()/update() на volumeSeries, а не только при resize/смене типа
+    // графика — иначе lightweight-charts может проигнорировать scaleMargins
+    // при внутреннем автоскейле и растянуть гистограмму на всю высоту,
+    // перекрыв свечи.
+    _applyVolumeScaleOptions() {
+        if (!this.chart) return;
+        const volumeScale = this.chart.priceScale('volume');
+        if (!volumeScale) return;
+        volumeScale.applyOptions({
+            scaleMargins: this._volumeScaleMargins, // {top:0.85, bottom:0} — объём живёт в нижних ~15%
+            visible: true,
+            borderVisible: true,
+            autoScale: false // обязательно false — см. комментарий выше
+        });
     }
 
     // ============ МЕТОДЫ ЦВЕТА И УТИЛИТЫ ============
@@ -538,7 +563,7 @@ class ChartManager {
             if (olderCandlesChanged && this._isChartValid()) {
                 if (this.candleSeries) this.candleSeries.setData(currentData);
                 if (this.barSeries) this.barSeries.setData(currentData);
-                if (this.volumeSeries) { this._volumeDataCache = null; this._volumeDataDirty = true; this._updateVolumeOptimized(); }
+                if (this.volumeSeries) { this._volumeDataCache = null; this._volumeDataDirty = true; this._updateVolumeOptimized(); this._applyVolumeScaleOptions(); }
             }
             if (freshMap.size > 0) {
                 const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
@@ -556,7 +581,7 @@ class ChartManager {
                     this._rebuildTimeMap();
                     if (this.candleSeries) this.candleSeries.setData(currentData);
                     if (this.barSeries) this.barSeries.setData(currentData);
-                    if (this.volumeSeries) { this._volumeDataCache = null; this._volumeDataDirty = true; this._updateVolumeOptimized(); }
+                    if (this.volumeSeries) { this._volumeDataCache = null; this._volumeDataDirty = true; this._updateVolumeOptimized(); this._applyVolumeScaleOptions(); }
                 } else {
                     for (const candle of missing) {
                         const updateData = { time: candle.time, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
@@ -664,6 +689,7 @@ class ChartManager {
                     this.lastCandle = currentData[currentData.length - 1];
                     this._volumeDataCache = null; this._volumeDataDirty = true;
                     this._lastVolumeUpdateIndex = currentData.length - 1;
+                    this._applyVolumeScaleOptions();
                 }
             } else {
                 const updatedData = [];
@@ -691,6 +717,7 @@ class ChartManager {
                     this._lastVolumeUpdateIndex = this.chartData.length - 1;
                     const volumeData = this._buildVolumeData(this.chartData);
                     this.volumeSeries.setData(volumeData);
+                    this._applyVolumeScaleOptions();
                 }
             }
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -727,6 +754,7 @@ class ChartManager {
             this._volumeDataCache = null; this._volumeDataDirty = false;
             const volumeData = this._buildVolumeData(this.chartData);
             this.volumeSeries.setData(volumeData);
+            this._applyVolumeScaleOptions();
         }
         this._syncLineColor();
         if (this.timerManager) {
@@ -823,6 +851,7 @@ class ChartManager {
                 const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
                 if (activeSeries) activeSeries.setData(this.chartData);
                 this._updateVolumeOptimized();
+                this._applyVolumeScaleOptions();
                 this.lastCandle = this.chartData[this.chartData.length - 1];
                 this._syncLineColor();
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -976,10 +1005,7 @@ class ChartManager {
             if (this.barSeries) this.barSeries.applyOptions({ visible: true });
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
         }
-        if (this.volumeSeries) {
-            const volumeScale = this.chart.priceScale('volume');
-            if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, autoScale: false });
-        }
+        if (this.volumeSeries) this._applyVolumeScaleOptions();
         if (this.barSeries) this.barSeries.applyOptions({ upColor: this.bullishColor || CONFIG?.colors?.bullish || '#26a69a', downColor: this.bearishColor || CONFIG?.colors?.bearish || '#ef5350' });
         if (this.indicatorManager?.activeIndicators) {
             this.indicatorManager.activeIndicators.forEach(indicator => { try { indicator.createSeries(); } catch (e) {} });
@@ -1221,7 +1247,7 @@ class ChartManager {
                 if (this._isChartValid()) {
                     if (this.candleSeries) this.candleSeries.setData(this.chartData);
                     if (this.barSeries) this.barSeries.setData(this.chartData);
-                    if (this.volumeSeries) { this._volumeDataCache = null; this._volumeDataDirty = true; this._updateVolumeOptimized(); }
+                    if (this.volumeSeries) { this._volumeDataCache = null; this._volumeDataDirty = true; this._updateVolumeOptimized(); this._applyVolumeScaleOptions(); }
                 }
                 this._volumeDataDirty = true;
                 return;
@@ -1325,6 +1351,10 @@ class ChartManager {
                 this.volumeSeries.setData(volumeData);
                 this._volumeDataDirty = false; 
                 this._lastVolumeUpdateIndex = this.chartData.length - 1;
+                // ФИКС: переприменяем margins/autoScale сразу после setData —
+                // именно смена символа/интервала (частый setData с новыми
+                // порядками величин объёма) была самым частым триггером бага.
+                this._applyVolumeScaleOptions();
             }
             
             const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -1387,6 +1417,10 @@ class ChartManager {
                     if (this._isChartValid()) {
                         const ps = this.chart.priceScale('right');
                         if (ps) { try { ps.applyOptions({ autoScale: false }); } catch(e) {} }
+                        // ФИКС: правая шкала (свечи) переключает autoScale true→false
+                        // через два кадра — на этом же кадре переутверждаем и шкалу
+                        // объёма, чтобы её margins не "поехали" вслед за этим.
+                        this._applyVolumeScaleOptions();
                     }
                     if (this.timerManager && this._isChartValid() && this.lastCandle) {
                         this.timerManager.start(this.currentInterval);
@@ -1816,7 +1850,7 @@ class ChartManager {
         if (!this._isChartValid()) return;
         if (this.candleSeries) this.candleSeries.setData([]);
         if (this.barSeries) this.barSeries.setData([]);
-        if (this.volumeSeries) this.volumeSeries.setData([]);
+        if (this.volumeSeries) { this.volumeSeries.setData([]); this._applyVolumeScaleOptions(); }
         this.chartData = []; this.lastCandle = null;
         this._volumeDataCache = null; this._volumeDataDirty = true; this._lastVolumeUpdateIndex = -1; this._isTrimming = false;
         const priceScale = this.chart.priceScale('right');
@@ -1858,6 +1892,9 @@ class ChartManager {
                         }
                         
                         try { priceScale.applyOptions({ autoScale: false }); } catch (e) {}
+                        // ФИКС: авто-скейл ЦЕНОВОЙ (right) шкалы иногда триггерит
+                        // побочный пересчёт и у шкалы объёма — переутверждаем её здесь.
+                        this._applyVolumeScaleOptions();
                         
                         this._autoScalePending = false;
                         if (this.timerManager?._primitive?.isEnabled()) {
@@ -1877,6 +1914,7 @@ class ChartManager {
         if (this._isChartValid()) {
             const ps = this.chart?.priceScale('right');
             if (ps) { try { ps.applyOptions({ autoScale: false }); } catch (e) {} }
+            this._applyVolumeScaleOptions();
         }
         this._autoScalePending = false;
         if (this._activeGeneration === genId && this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
@@ -1920,8 +1958,7 @@ class ChartManager {
         }
         const width = chartContainer.clientWidth;
         this.chart.resize(width, newChartHeight);
-        const volumeScale = this.chart.priceScale('volume');
-        if (volumeScale) volumeScale.applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+        this._applyVolumeScaleOptions();
         if (this.indicatorManager?.panelManager) {
             const panels = this.indicatorManager.panelManager.panels;
             if (panels && Array.isArray(panels)) {
@@ -2142,6 +2179,7 @@ class ChartManager {
             this.volumeSeries.setData(volumeData);
             this._volumeDataDirty = false;
             this._lastVolumeUpdateIndex = this.chartData.length - 1;
+            this._applyVolumeScaleOptions();
         }
     }
 
@@ -2485,6 +2523,7 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
             this._updateVolumeOptimized();
+            this._applyVolumeScaleOptions();
             if (currentRange && leftTrim > 0) timeScale.setVisibleLogicalRange({ from: Math.max(0, currentRange.from - leftTrim), to: Math.max(1, currentRange.to - leftTrim) });
             if (leftTrim > 0 || rightTrim > 0) {
                 requestAnimationFrame(() => { if (this.indicatorManager) this.indicatorManager.updateAllIndicators(); });
@@ -2535,6 +2574,7 @@ class ChartManager {
                 priceScale.applyOptions({ autoScale: false });
                 if (activeSeries) activeSeries.setData(this.chartData);
                 this._updateVolumeOptimized();
+                this._applyVolumeScaleOptions();
                 const netShift = addedCount - trimmedFromFront;
                 if (currentRange) timeScale.setVisibleLogicalRange({ from: currentRange.from + netShift, to: currentRange.to + netShift });
                 requestAnimationFrame(() => {
@@ -2578,6 +2618,7 @@ class ChartManager {
                     if (activeSeries) activeSeries.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
                 }
                 this._updateVolumeOptimized();
+                this._applyVolumeScaleOptions();
             }
             if (matchLast || newCandles.length > 0) {
                 this.lastCandle = this.chartData[this.chartData.length - 1];
