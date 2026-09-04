@@ -5216,7 +5216,6 @@ class AlertLinePrimitive {
         }
     }
 }
-
 class AlertLineManager {
     constructor(chartManager) {
         this._pixelRatio = window.devicePixelRatio || 1;
@@ -5245,25 +5244,12 @@ class AlertLineManager {
         this._subscriptions = new Map();
         this._subCheckInterval = null;
 
-        // ✅ ИСПРАВЛЕНО (главный баг): раньше вместо этого флага использовалась проверка
-        // "if (this._alerts.length > 0) return;" в setTimeout ниже. Она ЛОЖНО считала,
-        // что все алерты уже загружены, если к моменту срабатывания таймера (150мс) уже
-        // успели подгрузиться алерты ТОЛЬКО текущего открытого графика (это делает
-        // window.drawingLoaderCoordinator параллельно, ещё до этого таймера).
-        // Из-за этого loadAllAlertsFromDB() — единственный метод, который тянет алерты
-        // ВСЕХ монет, а не только текущей, — вообще никогда не вызывался. В результате
-        // алерты на монетах, не открытых в этой сессии на графике, никогда не попадали
-        // в this._alerts и, соответственно, никогда не подписывались на цены в
-        // PriceManager => никогда не могли сработать. Теперь флаг выставляется только
-        // после реального завершения полной загрузки (см. _doLoadAllAlertsFromDB).
         this._allAlertsLoadedFromDB = false;
         this._loadAllAlertsPromise = null;
 
-        // ✅ КЭШ ДЛЯ ФИЛЬТРАЦИИ
         this._alertsCache = null;
         this._alertsCacheKey = null;
 
-        // ✅ rAF THROTTLE ДЛЯ HOVER
         this._pendingMouseEvent = null;
         this._hoverRafId = null;
 
@@ -5281,18 +5267,8 @@ class AlertLineManager {
 
         setTimeout(async () => {
             try {
-                // ✅ ИСПРАВЛЕНО: было "if (this._alerts.length > 0) return;" — см. комментарий
-                // у объявления this._allAlertsLoadedFromDB выше.
                 if (this._allAlertsLoadedFromDB) return;
                 if (!window.dbReady) {
-                    // ✅ ИСПРАВЛЕНО: раньше ожидание window.dbReady не имело потолка.
-                    // Если IndexedDB.open() завершается через onblocked/ошибку (см.
-                    // IndexedDBStorage: window.db там подменяется на Proxy-заглушку
-                    // НАВСЕГДА и window.dbReady остаётся false до конца жизни вкладки),
-                    // этот цикл крутился бы бесконечно раз в 50мс до конца сессии.
-                    // Теперь ждём не дольше 8с, после чего просто пробуем
-                    // loadAllAlertsFromDB() в любом случае — если БД правда недоступна,
-                    // она сама аккуратно завершится через "if (!window.db) return;".
                     const dbReadyTimeoutMs = 8000;
                     const waitStart = Date.now();
                     await new Promise(r => {
@@ -5311,7 +5287,6 @@ class AlertLineManager {
         }, 150);
     }
 
-    // ✅ КЭШИРОВАННЫЙ МЕТОД
     _getAlertsForCurrentSymbol() {
         const currentKey = this._getCurrentSymbolKey();
         if (this._alertsCacheKey === currentKey && this._alertsCache) {
@@ -5322,7 +5297,6 @@ class AlertLineManager {
         return this._alertsCache;
     }
 
-    // ✅ ИНВАЛИДАЦИЯ КЭША
     _invalidateAlertsCache() {
         this._alertsCache = null;
         this._alertsCacheKey = null;
@@ -5370,7 +5344,12 @@ class AlertLineManager {
 
             if (this._subscriptions.has(key)) continue;
 
-            const handler = (price, symbol, exchange, marketType) => {
+            // ✅ ИСПРАВЛЕНО: PriceManager теперь передает объект payload, а не просто число
+            // Поддерживаем оба формата для обратной совместимости
+            const handler = (payload, symbol, exchange, marketType) => {
+                const price = (typeof payload === 'object' && payload !== null) 
+                    ? payload.price 
+                    : payload;
                 this._checkAlerts(symbol, price, exchange, marketType);
             };
 
@@ -5407,13 +5386,6 @@ class AlertLineManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕНО (второй баг): раньше подписки на PriceManager нигде корректно не
-    // отписывались — только удалялись из локальной this._subscriptions Map, а сам колбэк
-    // продолжал висеть внутри window.priceManagerInstance.subscribers. При повторном
-    // создании алерта на той же монете это приводило к накоплению дублирующихся
-    // обработчиков на один и тот же ключ (лишняя нагрузка на каждый тик цены).
-    // Теперь любое место, где раньше было "this._subscriptions.delete(key)",
-    // использует этот метод, который сначала реально отписывается от PriceManager.
     _unsubscribeKey(key) {
         const handler = this._subscriptions.get(key);
         if (handler && window.priceManagerInstance) {
@@ -5526,7 +5498,7 @@ class AlertLineManager {
         const key = this._getSubscriptionKey(alert.symbol, alert.exchange, alert.marketType);
 
         if (!this._hasActiveAlertsForSymbol(alert.symbol, alert.exchange, alert.marketType, alert.id)) {
-            this._unsubscribeKey(key); // ✅ ИСПРАВЛЕНО: было this._subscriptions.delete(key)
+            this._unsubscribeKey(key);
             console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
         }
 
@@ -5660,10 +5632,6 @@ class AlertLineManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕНО: обёртка-дедупликатор поверх реальной загрузки (_doLoadAllAlertsFromDB).
-    // Если метод вызывается ещё раз, пока предыдущий вызов не завершился (например,
-    // параллельно из конструктора и откуда-то ещё), мы просто ждём уже идущий вызов,
-    // вместо того чтобы читать всю БД второй раз параллельно.
     async loadAllAlertsFromDB() {
         if (this._loadAllAlertsPromise) return this._loadAllAlertsPromise;
         this._loadAllAlertsPromise = this._doLoadAllAlertsFromDB();
@@ -5679,9 +5647,6 @@ class AlertLineManager {
             if (!window.db) return;
             const allRecords = await window.db.getAll('drawings');
             if (!allRecords || allRecords.length === 0) {
-                // ✅ ИСПРАВЛЕНО: даже если алертов в БД вообще нет, считаем полную
-                // загрузку выполненной, чтобы флаг this._allAlertsLoadedFromDB не остался
-                // навсегда false и не блокировал логику выше.
                 this._allAlertsLoadedFromDB = true;
                 return;
             }
@@ -5698,8 +5663,6 @@ class AlertLineManager {
                 await this.loadFromData(symbolKey, records);
             }
 
-            // ✅ ИСПРАВЛЕНО: флаг ставится ТОЛЬКО здесь, после того как реально прошли
-            // по всем монетам из БД — а не по факту "в this._alerts что-то есть".
             this._allAlertsLoadedFromDB = true;
 
             this._subscribeAlertsToPriceManager();
@@ -5798,7 +5761,7 @@ class AlertLineManager {
         const key = this._getSubscriptionKey(alert.symbol, alert.exchange, alert.marketType);
 
         if (!this._hasActiveAlertsForSymbol(alert.symbol, alert.exchange, alert.marketType, alertId)) {
-            this._unsubscribeKey(key); // ✅ ИСПРАВЛЕНО: было this._subscriptions.delete(key)
+            this._unsubscribeKey(key);
             console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
         }
 
@@ -5828,7 +5791,7 @@ class AlertLineManager {
 
             const key = this._getSubscriptionKey(item.alert.symbol, item.alert.exchange, item.alert.marketType);
             if (!this._hasActiveAlertsForSymbol(item.alert.symbol, item.alert.exchange, item.alert.marketType)) {
-                this._unsubscribeKey(key); // ✅ ИСПРАВЛЕНО: было this._subscriptions.delete(key)
+                this._unsubscribeKey(key);
                 console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
             }
 
@@ -5894,7 +5857,7 @@ class AlertLineManager {
         this._invalidateAlertsCache();
 
         for (const key of keysToRemove) {
-            this._unsubscribeKey(key); // ✅ ИСПРАВЛЕНО: было this._subscriptions.delete(key)
+            this._unsubscribeKey(key);
             console.log(`🔌 Отписка: ${key}`);
         }
 
@@ -6194,9 +6157,7 @@ class AlertLineManager {
             }
         });
 
-        // ✅ rAF-THROTTLED MOUSEMOVE С GUARD НА СКРОЛЛ
         container.addEventListener('mousemove', (e) => {
-            // Guard: при панорамировании/зуме пропускаем hover
             if (this._chartManager._isScrolling || this._chartManager._isScrollingFast) {
                 if (this._hoveredAlert) {
                     this._hoveredAlert.hovered = false;
@@ -6255,7 +6216,6 @@ class AlertLineManager {
         container.addEventListener('contextmenu', this._handleContextMenu);
     }
 
-    // ✅ ВЫНЕСЕННАЯ ЛОГИКА MOUSEMOVE
     _processMouseMove(e) {
         const container = this._chartManager.chartContainer;
         const rect = container.getBoundingClientRect();
@@ -7063,8 +7023,6 @@ class AlertLineManager {
             this._subCheckInterval = null;
         }
 
-        // ✅ ИСПРАВЛЕНО: перед очисткой локальной Map реально отписываемся от
-        // window.priceManagerInstance, а не просто забываем про handler-ы.
         if (window.priceManagerInstance) {
             for (const [key, handler] of this._subscriptions.entries()) {
                 try { window.priceManagerInstance.unsubscribe(key, handler); } catch (e) {}
