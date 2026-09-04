@@ -15,8 +15,8 @@ class PriceManager {
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
         this._connectionState = {};
         this._initInProgress = false;
-        this._destroyed = false;          // ✅ НОВОЕ: флаг уничтожения менеджера
-        this._wakeCheckTimerId = null;     // ✅ НОВОЕ: id вложенного таймера пробуждения вкладки
+        this._destroyed = false;          // ✅ флаг уничтожения менеджера
+        this._wakeCheckTimerId = null;     // ✅ id вложенного таймера пробуждения вкладки
         
         this.config = {
             reconnectDelay: 15000,
@@ -53,7 +53,7 @@ class PriceManager {
 
         if (typeof document !== 'undefined') {
             this._visibilityHandler = () => {
-                if (this._destroyed) return; // ✅ ФИКС: не реагируем после close()
+                if (this._destroyed) return; // ✅ не реагируем после close()
                 if (!document.hidden) {
                     const now = Date.now();
                     for (const key in this.connections) {
@@ -62,10 +62,10 @@ class PriceManager {
                         }
                     }
                     
-                    if (this._wakeCheckTimerId) clearTimeout(this._wakeCheckTimerId); // ✅ ФИКС: не копим параллельные таймеры
+                    if (this._wakeCheckTimerId) clearTimeout(this._wakeCheckTimerId); // ✅ не копим параллельные таймеры
                     this._wakeCheckTimerId = setTimeout(() => {
                         this._wakeCheckTimerId = null;
-                        if (this._destroyed) return; // ✅ ФИКС: менеджер уже уничтожен — не воскрешаем сокеты
+                        if (this._destroyed) return; // ✅ менеджер уже уничтожен — не воскрешаем сокеты
                         if (document.hidden) return;
                         const checkNow = Date.now();
                         for (const key in this.connections) {
@@ -91,11 +91,11 @@ class PriceManager {
             document.addEventListener('visibilitychange', this._visibilityHandler);
         }
         
-        console.log('✅ PriceManager v17 запущен (Защита от сна вкладки + Оптимизация 600+ монет)');
+        console.log('✅ PriceManager v18 запущен (Защита от сна вкладки + Оптимизация 600+ монет + Исправлен REST-резерв цен)');
     }
 
     _checkHeartbeats() {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         const now = Date.now();
         const ZOMBIE_TIMEOUT = 30000; 
 
@@ -128,7 +128,7 @@ class PriceManager {
         const hasLinear = this._bybitSubscriptions.linear.size > 0;
         const hasSpot = this._bybitSubscriptions.spot.size > 0;
 
-        // ✅ ФИКС: CONNECTING считаем "уже подключаемся", а не поводом для нового connect.
+        // ✅ CONNECTING считаем "уже подключаемся", а не поводом для нового connect.
         // Раньше проверка "!== OPEN" на каждый REST-полл (раз в 10с) заново дёргала
         // _connectBybitLinear/Spot, пока сокет ещё в процессе установки соединения —
         // это обрывало живой хэндшейк и запускало паразитный цикл переподключений.
@@ -145,8 +145,15 @@ class PriceManager {
     }
     
     // ========== ПОДКЛЮЧЕНИЯ К BINANCE ==========
+    // ⚠️ ПРОВЕРИТЬ: путь "/market/ws/" в URL ниже нетипичен для официального Binance Futures
+    // WS-эндпоинта (обычно это wss://fstream.binance.com/ws/!ticker@arr). Если это не
+    // сознательно настроенный прокси на вашей стороне, а опечатка — соединение может вообще
+    // не устанавливаться, и все фьючерсные алерты будут держаться только на REST-резерве
+    // (который был сломан, см. фикс в _fetchBinanceRest ниже). Я не стал менять этот URL
+    // без возможности проверить сетевое подключение — но стоит явно свериться с логами
+    // (успевает ли когда-нибудь появиться "✅ binance:futures WebSocket подключен").
     _connectBinanceFutures() {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         const key = 'binance:futures';
         const url = 'wss://fstream.binance.com/market/ws/!ticker@arr';
         
@@ -170,7 +177,7 @@ class PriceManager {
     }
     
     _connectBinanceSpot() {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         const key = 'binance:spot';
         const url = 'wss://stream.binance.com/ws/!ticker@arr';
         
@@ -194,13 +201,13 @@ class PriceManager {
     }
     
     _connectBinance(key, url, onMessageHandler) {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
             this.reconnectTimers.delete(key);
         }
         if (this.connections[key]) {
-            // ✅ ФИКС: обнуляем обработчики СТАРОГО сокета ДО close().
+            // ✅ обнуляем обработчики СТАРОГО сокета ДО close().
             // Иначе, если старый сокет ещё OPEN/CONNECTING, его "родной" onclose
             // сработает и запланирует свой собственный отложенный реконнект —
             // тот, что через 15-100с внезапно оборвёт уже нормально работающее
@@ -237,7 +244,7 @@ class PriceManager {
         ws.onclose = (event) => {
             this._connectionState[key] = 'closed';
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
-            if (this._destroyed) return; // ✅ ФИКС: после close() менеджера не планируем реконнект
+            if (this._destroyed) return; // ✅ после close() менеджера не планируем реконнект
             
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
@@ -258,23 +265,23 @@ class PriceManager {
     
     // ========== ПОДКЛЮЧЕНИЯ К BYBIT ==========
     _connectBybitLinear() {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         this._connectBybit('bybit:linear', 'wss://stream.bybit.com/v5/public/linear', 'linear', 'futures');
     }
     
     _connectBybitSpot() {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         this._connectBybit('bybit:spot', 'wss://stream.bybit.com/v5/public/spot', 'spot', 'spot');
     }
     
     _connectBybit(key, url, marketKey, marketType) {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
             this.reconnectTimers.delete(key);
         }
         if (this.connections[key]) {
-            // ✅ ФИКС: та же причина, что и в _connectBinance — обнуляем обработчики
+            // ✅ та же причина, что и в _connectBinance — обнуляем обработчики
             // старого сокета перед close(), чтобы не наплодить призрачные реконнекты.
             const oldWs = this.connections[key];
             oldWs.onclose = null;
@@ -321,7 +328,7 @@ class PriceManager {
             this._connectionState[key] = 'closed';
             this._stopPing(key);
             if (this.reconnectTimers.has(key)) clearTimeout(this.reconnectTimers.get(key));
-            if (this._destroyed) return; // ✅ ФИКС
+            if (this._destroyed) return; // ✅
             
             const attempts = this._connectionAttempts[key] || 0;
             const delay = Math.min(
@@ -383,9 +390,8 @@ class PriceManager {
         }
     }
 
-    // ✅ НОВОЕ: обратная операция к subscribeBybitSymbol.
-    // Раньше её не было вообще — набор подписок Bybit только рос,
-    // сокет продолжал получать и парсить тикеры, на которые никто не подписан.
+    // ✅ обратная операция к subscribeBybitSymbol — снимает подписку с сокета, когда
+    // на монету больше нет ни одного подписчика (используется из PriceManager.unsubscribe).
     unsubscribeBybitSymbol(symbol, marketType) {
         const marketKey = marketType === 'futures' ? 'linear' : 'spot';
         const clean = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -401,7 +407,7 @@ class PriceManager {
     
     // ========== REST (главный источник цен для алертов) ==========
     async _pollAlertPricesViaRest() {
-        if (this._destroyed) return; // ✅ ФИКС
+        if (this._destroyed) return; // ✅
         if (!window.alertLineManager) return;
         
         const activeAlerts = window.alertLineManager._alerts.filter(item => {
@@ -437,52 +443,68 @@ class PriceManager {
         await Promise.allSettled(tasks);
     }
     
+    // ✅ ИСПРАВЛЕНО (главный баг PriceManager): раньше при 2+ символах запрос строился
+    // как "...ticker/24hr?symbols=[\"BTCUSDT\",\"ETHUSDT\"]". Параметр "symbols" (батч
+    // из нескольких монет) поддерживается ТОЛЬКО у Binance SPOT API. У Binance FUTURES
+    // API (/fapi/v1/ticker/24hr) такого параметра нет — принимается только одиночный
+    // "symbol". В результате при наличии активных алертов на 2+ разных фьючерсных
+    // монетах одновременно запрос к Binance Futures завершался ошибкой, которая тихо
+    // проглатывалась в catch(e) {} — REST-резерв цен переставал обновляться вообще ни
+    // для одной из монет в этом батче. Теперь вместо одного "умного" батч-запроса мы
+    // запрашиваем ВЕСЬ список тикеров рынка одним обычным запросом без параметра
+    // symbol (официально поддерживаемый режим и для FUTURES, и для SPOT) и фильтруем
+    // нужные монеты уже на своей стороне. Заодно добавлена проверка response.ok —
+    // раньше ошибочный ответ пытались распарсить как валидный тикер.
     async _fetchBinanceRest(symbols, marketType) {
+        if (!symbols || symbols.length === 0) return;
         try {
-            const url = symbols.length === 1 
-                ? `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbol=${symbols[0]}`
-                : `https://${marketType === 'futures' ? 'fapi' : 'api'}.binance.com/${marketType === 'futures' ? 'fapi/v1' : 'api/v3'}/ticker/24hr?symbols=[${symbols.map(s => `"${s}"`).join(',')}]`;
-            
+            const url = marketType === 'futures'
+                ? 'https://fapi.binance.com/fapi/v1/ticker/24hr'
+                : 'https://api.binance.com/api/v3/ticker/24hr';
+
             const response = await this._fetchWithRetry(url);
-            if (!response) return;
+            if (!response || !response.ok) return;
             const data = await response.json();
             const tickers = Array.isArray(data) ? data : [data];
-            
+            const wanted = new Set(symbols);
+
             for (const ticker of tickers) {
+                if (!ticker.symbol || !wanted.has(ticker.symbol)) continue;
                 const price = parseFloat(ticker.lastPrice || ticker.price);
                 const change = parseFloat(ticker.priceChangePercent) || 0;
-                if (ticker.symbol && price && !isNaN(price)) {
+                if (price && !isNaN(price)) {
                     this._setPrice(ticker.symbol, { price, change }, 'binance', marketType);
                 }
             }
         } catch(e) {}
     }
     
+    // ✅ ИСПРАВЛЕНО: раньше символы склеивались через запятую в один параметр
+    // "symbol=BTCUSDT,ETHUSDT,..." батчами по 10. Официальный Bybit v5
+    // "/v5/market/tickers" документирован как принимающий только ОДИН symbol за
+    // запрос — поведение с несколькими через запятую не гарантировано (в лучшем
+    // случае действует как один из символов/игнорируется, в худшем — ошибка,
+    // которая проглатывалась в .catch(() => null)). Теперь запрашиваем весь список
+    // тикеров категории одним запросом без symbol и фильтруем нужные монеты сами —
+    // это и надёжнее, и требует всего одного запроса вместо нескольких батчей.
     async _fetchBybitRest(symbols, marketType) {
+        if (!symbols || symbols.length === 0) return;
         try {
             const category = marketType === 'futures' ? 'linear' : 'spot';
-            const batches = [];
-            for (let i = 0; i < symbols.length; i += 10) {
-                batches.push(symbols.slice(i, i + 10));
-            }
-            
-            const tasks = batches.map(batch => {
-                const symbolParam = batch.join(',');
-                return this._fetchWithRetry(
-                    `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${symbolParam}`
-                ).then(r => r?.json()).catch(() => null);
-            });
-            
-            const results = await Promise.all(tasks);
-            
-            for (const data of results) {
-                if (data?.retCode === 0 && Array.isArray(data.result?.list)) {
-                    for (const ticker of data.result.list) {
-                        const price = parseFloat(ticker.lastPrice);
-                        const change = parseFloat(ticker.price24hPcnt) || 0;
-                        if (ticker.symbol && price && !isNaN(price)) {
-                            this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
-                        }
+            const response = await this._fetchWithRetry(
+                `https://api.bybit.com/v5/market/tickers?category=${category}`
+            );
+            if (!response || !response.ok) return;
+            const data = await response.json();
+            const wanted = new Set(symbols);
+
+            if (data?.retCode === 0 && Array.isArray(data.result?.list)) {
+                for (const ticker of data.result.list) {
+                    if (!ticker.symbol || !wanted.has(ticker.symbol)) continue;
+                    const price = parseFloat(ticker.lastPrice);
+                    const change = parseFloat(ticker.price24hPcnt) || 0;
+                    if (price && !isNaN(price)) {
+                        this._setPrice(ticker.symbol, { price, change }, 'bybit', marketType);
                     }
                 }
             }
@@ -519,7 +541,7 @@ class PriceManager {
         const price = isObject ? parseFloat(priceData.price) : parseFloat(priceData);
         const change = isObject ? parseFloat(priceData.change) : undefined;
         
-        // ✅ ФИКС: раньше parseFloat(undefined) давал NaN вместо undefined,
+        // ✅ раньше parseFloat(undefined) давал NaN вместо undefined,
         // и проверка "volume === undefined" в дедупликации ниже никогда не срабатывала —
         // из-за этого REST-обновления цены (без volume/trades) всегда считались
         // "изменившимися" и лишний раз дёргали всех подписчиков.
@@ -599,7 +621,7 @@ class PriceManager {
         if (list.length === 0) {
             this.subscribers.delete(key);
             
-            // ✅ НОВОЕ: если это была Bybit-подписка и других подписчиков на неё
+            // ✅ если это была Bybit-подписка и других подписчиков на неё
             // не осталось — отписываемся от сокета, чтобы не копить лишний трафик.
             const parts = key.split(':');
             if (parts.length === 3 && parts[1] === 'bybit') {
@@ -669,7 +691,7 @@ class PriceManager {
     }
     
     close() {
-        this._destroyed = true; // ✅ НОВОЕ: блокирует любые дальнейшие реконнекты/таймеры
+        this._destroyed = true; // ✅ блокирует любые дальнейшие реконнекты/таймеры
         
         if (this._restPollInterval) {
             clearInterval(this._restPollInterval);
@@ -686,7 +708,7 @@ class PriceManager {
             this._visibilityHandler = null;
         }
         
-        if (this._wakeCheckTimerId) {           // ✅ ФИКС: чистим "призрачный" таймер пробуждения
+        if (this._wakeCheckTimerId) {           // ✅ чистим "призрачный" таймер пробуждения
             clearTimeout(this._wakeCheckTimerId);
             this._wakeCheckTimerId = null;
         }
@@ -720,7 +742,7 @@ class PriceManager {
 if (typeof window !== 'undefined') {
     window.PriceManager = PriceManager;
     
-    // ✅ ФИКС: защита от дублирования синглтона (например, при hot-reload скрипта).
+    // ✅ защита от дублирования синглтона (например, при hot-reload скрипта).
     // Раньше старый инстанс со всеми его WS/таймерами мог остаться жить
     // параллельно новому, удваивая соединения и трафик.
     if (window.priceManagerInstance && typeof window.priceManagerInstance.close === 'function') {
