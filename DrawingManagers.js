@@ -9859,6 +9859,7 @@ function isTyping() {
     return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
 }
 
+// 1. ОБРАБОТЧИК КЛАВИАТУРЫ (Клавиши)
 document.addEventListener('keydown', (e) => {
     if (isTyping()) return;
     
@@ -9905,25 +9906,6 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
-
-    // Y - линейка
-   document.addEventListener('mousedown', function(e) {
-    // Проверяем, что нажата средняя кнопка мыши (колесико)
-    if (e.button === 1) {
-        e.preventDefault();
-        if (window.rulerLineManager) {
-            const ns = !window.rulerLineManager._isDrawingMode;
-            window.rulerLineManager.setDrawingMode(ns);
-            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
-            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
-            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
-            if (window.textManager && ns) window.textManager.setDrawingMode(false);
-            const btn = document.getElementById('toolRuler');
-            if (btn) btn.style.background = ns ? '#4A90E2' : '';
-        }
-    }
-});
-    
     // T - текст
     if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
@@ -9933,13 +9915,33 @@ document.addEventListener('keydown', (e) => {
             if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
             if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
             if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
- 
             const btn = document.getElementById('toolText');
             if (btn) btn.style.background = ns ? '#4A90E2' : '';
         }
     }
-});
+}); // ✅ Закрывающая скобка для keydown
 
+// 2. ОБРАБОТЧИК МЫШИ (Средняя кнопка / Колесико для Линейки)
+// ✅ ИСПРАВЛЕНО: Теперь этот блок находится ОТДЕЛЬНО и регистрируется сразу при загрузке страницы
+document.addEventListener('mousedown', function(e) {
+    // Проверяем, что нажата средняя кнопка мыши (колесико)
+    if (e.button === 1) {
+        e.preventDefault(); // ✅ Обязательно: отключаем стандартный авто-скролл страницы колесиком
+        
+        if (window.rulerLineManager) {
+            const ns = !window.rulerLineManager._isDrawingMode;
+            window.rulerLineManager.setDrawingMode(ns);
+            
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            
+            const btn = document.getElementById('toolRuler');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+});
 (function() {
     const container = document.getElementById('chart-container');
     if (!container) return;
