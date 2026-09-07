@@ -13,6 +13,11 @@ class WebSocketManager {
         this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
+        this._dataBuffer = new Map();
+        this._flushTimer = null;
+        this._isSwitching = false;
+        this._switchingTimeout = null;
+        this._lastKlineEventTime = 0;
         
         this.currentSymbol = 'BTCUSDT';
         this.currentInterval = '1h';
@@ -64,17 +69,26 @@ class WebSocketManager {
         symbol = (symbol || this.currentSymbol).trim();
         exchange = exchange || this.currentExchange;
         marketType = marketType || this.currentMarketType;
-        // ФИКС: interval раньше принудительно приводился к .toLowerCase(), что
-        // превращало месячный интервал Binance '1M' в минутный '1m' (регистр
-        // здесь значим!). Это ломало свечи на месячном таймфрейме — фактически
-        // подписывались на минутный стрим, продолжая думать, что открыт месячный.
-        // Триммим, но регистр не трогаем.
-        interval = (interval || this.currentInterval).trim();
+        interval = (interval || this.currentInterval).trim().toLowerCase();
         
         if (exchange === 'binance' && marketType === 'futures' && 
             this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
             marketType = 'spot';
         }
+        
+        // Проверяем, реально ли что-то изменилось
+        const isChanged = symbol !== this.currentSymbol || 
+                         interval !== this.currentInterval || 
+                         exchange !== this.currentExchange || 
+                         marketType !== this.currentMarketType;
+        
+        if (!isChanged && this.isConnected) {
+            console.log('⏭️ Параметры не изменились, пропускаем');
+            return;
+        }
+        
+        // Устанавливаем флаг переключения
+        this._isSwitching = true;
         
         this.currentSymbol = symbol;
         this.currentInterval = interval;
@@ -82,17 +96,32 @@ class WebSocketManager {
         this.currentMarketType = marketType;
         this.retryCount = 0;
         
+        // Очищаем буфер при переключении
+        this._dataBuffer.clear();
+        this._lastKlineEventTime = 0;
+        
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        
         if (this._connectDebounceTimer) {
             clearTimeout(this._connectDebounceTimer);
         }
         
+        if (this._flushTimer) {
+            clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+        }
+        
+        if (this._switchingTimeout) {
+            clearTimeout(this._switchingTimeout);
+        }
+        
+        // Увеличиваем debounce при быстрых переключениях
         this._connectDebounceTimer = setTimeout(() => {
             this._doConnect();
-        }, 100);
+        }, 300);
     }
 
     _doConnect() {
@@ -100,68 +129,54 @@ class WebSocketManager {
         this.isConnecting = true;
 
         this._closeSocket();
-
-        // ФИКС: "удостоверение" сокета (symbol/interval/exchange) фиксируется
-        // здесь, в момент реального создания соединения, и больше НЕ читается
-        // из мутируемых this.currentSymbol/this.currentInterval при обработке
-        // каждого входящего сообщения. Раньше между вызовом connect() (который
-        // сразу перезаписывает currentSymbol/currentInterval) и фактическим
-        // созданием нового сокета проходит ~100мс debounce — всё это время
-        // СТАРЫЙ сокет ещё жив и продолжает слать сообщения, а фильтрация шла
-        // уже по НОВЫМ значениям. Для смены тикера это часто «случайно»
-        // работало (разный symbol в самом сообщении), а для смены таймфрейма
-        // на том же тикере — нет, т.к. interval вообще не проверялся.
-        const expectedSymbol = this.currentSymbol.toUpperCase();
-        const expectedInterval = this.currentInterval;
-        const exchange = this.currentExchange;
+        
         const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
         
-        if (exchange === 'binance') {
-            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${expectedInterval}`;
+        if (this.currentExchange === 'binance') {
+            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
             const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;
             
             console.log('🔌 KLINE:', klineUrl);
             console.log('🔌 TRADE:', tradeUrl);
             
-            this.wsKline = this._createWebSocket(klineUrl, 'kline', generation, expectedSymbol, expectedInterval, exchange);
-            this.wsTrade = this._createWebSocket(tradeUrl, 'trade', generation, expectedSymbol, expectedInterval, exchange);
-        } else if (exchange === 'bybit') {
+            this.wsKline = this._createWebSocket(klineUrl, 'kline', generation);
+            this.wsTrade = this._createWebSocket(tradeUrl, 'trade', generation);
+        } else if (this.currentExchange === 'bybit') {
             const wsUrl = 'wss://stream.bybit.com/v5/public/' + (this.currentMarketType === 'spot' ? 'spot' : 'linear');
             console.log('🔌 Bybit:', wsUrl);
-            this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation, expectedSymbol, expectedInterval, exchange);
+            this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation);
             this.wsTrade = this.wsKline;
         }
     }
 
-    _createWebSocket(url, type, generation, expectedSymbol, expectedInterval, exchange) {
+    _createWebSocket(url, type, generation) {
         let ws;
         try {
             ws = new WebSocket(url);
         } catch (e) {
             console.error(`❌ Ошибка создания ${type} WebSocket:`, e);
-            if (generation === this._connectGeneration) this.isConnecting = false;
+            if (generation === this._connectGeneration) {
+                this.isConnecting = false;
+                this._resetSwitchingFlag();
+            }
             this._scheduleReconnect(3000);
             return null;
         }
         
         ws._type = type;
         ws._generation = generation;
-        // ФИКС: удостоверение сокета — источник истины для валидации сообщений
-        ws._expectedSymbol = expectedSymbol;
-        ws._expectedInterval = expectedInterval;
-        ws._exchange = exchange;
         
         ws.onopen = () => {
-            if (generation !== this._connectGeneration) return;
+            if (generation !== this._connectGeneration) {
+                try { ws.close(); } catch(e) {}
+                return;
+            }
 
             console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
             
             if (type === 'bybit') {
-                // ФИКС: используем удостоверение сокета, а не мутируемые
-                // this.currentInterval/this.currentSymbol, на случай если
-                // между созданием сокета и событием onopen прилетел ещё один connect()
-                const bi = this.getExchangeInterval(ws._expectedInterval, ws._exchange);
-                const bs = this.formatSymbol(ws._expectedSymbol, ws._exchange);
+                const bi = this.getExchangeInterval(this.currentInterval, this.currentExchange);
+                const bs = this.formatSymbol(this.currentSymbol, this.currentExchange);
                 ws.send(JSON.stringify({
                     op: 'subscribe',
                     args: ['kline.' + bi + '.' + bs, 'publicTrade.' + bs]
@@ -188,6 +203,9 @@ class WebSocketManager {
                 this.retryCount = 0;
                 console.log('✅ Оба WebSocket подключены');
                 
+                // Сбрасываем флаг переключения после подключения
+                this._resetSwitchingFlag();
+                
                 if (this.chartManager && this.chartManager.onWebSocketConnected) {
                     this.chartManager.onWebSocketConnected();
                 }
@@ -197,9 +215,7 @@ class WebSocketManager {
         ws.onmessage = (event) => {
             if (generation !== this._connectGeneration) return;
             this._lastMessageTime = Date.now();
-            // ФИКС: передаём ws, чтобы валидировать сообщение по его собственному
-            // удостоверению (symbol/interval/exchange), а не по общему мутируемому состоянию
-            this._handleMessage(event.data, type, ws);
+            this._handleMessage(event.data, type);
         };
         
         ws.onclose = (event) => {
@@ -208,6 +224,7 @@ class WebSocketManager {
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
             this.isConnected = false;
             this.isConnecting = false;
+            this._resetSwitchingFlag();
             
             if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
                 return;
@@ -236,7 +253,27 @@ class WebSocketManager {
         return ws;
     }
 
-    _handleMessage(rawData, type, ws) {
+    _resetSwitchingFlag() {
+        if (this._switchingTimeout) {
+            clearTimeout(this._switchingTimeout);
+            this._switchingTimeout = null;
+        }
+        this._switchingTimeout = setTimeout(() => {
+            this._isSwitching = false;
+            this._switchingTimeout = null;
+        }, 500);
+    }
+
+    clearKlineQueue() {
+        this._dataBuffer.clear();
+        this._lastKlineEventTime = 0;
+        if (this._flushTimer) {
+            clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+        }
+    }
+
+    _handleMessage(rawData, type) {
         try {
             const raw = JSON.parse(rawData);
             
@@ -248,23 +285,25 @@ class WebSocketManager {
                 console.warn('⚠️ chartManager не найден');
                 return;
             }
-
-            // ФИКС: без удостоверения сокета дальше валидировать нечем — выходим
-            if (!ws || !ws._expectedSymbol) return;
-            const exchange = ws._exchange;
             
-            if (exchange === 'binance') {
+            // Игнорируем данные если идет переключение
+            if (this._isSwitching) {
+                console.log('⏳ Переключение, данные игнорируются');
+                return;
+            }
+            
+            if (this.currentExchange === 'binance') {
                 if (raw.e === 'kline' && raw.k) {
                     const k = raw.k;
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (!msgSymbol || msgSymbol !== ws._expectedSymbol) return;
-                    // ФИКС: раньше interval вообще не проверялся. При быстром
-                    // переключении таймфрейма на том же тикере старый сокет
-                    // (ещё не закрытый из-за 100мс debounce) присылал свечи
-                    // СТАРОГО интервала, и они беспрепятственно летели в чарт.
-                    if (k.i && k.i !== ws._expectedInterval) return;
+                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
                     this._lastRelevantMessageTime = Date.now();
+                    
+                    // Проверяем время события
+                    const eventTime = raw.E || Date.now();
+                    if (eventTime <= this._lastKlineEventTime) return;
+                    this._lastKlineEventTime = eventTime;
                     
                     let candleTime = Math.floor(k.t / 1000);
                     
@@ -278,25 +317,31 @@ class WebSocketManager {
                     
                     this._lastKlineTime = candleTime;
                     
+                    // Передаем данные напрямую с метаданными
+                    const candleData = {
+                        time: candleTime,
+                        open: parseFloat(k.o),
+                        high: parseFloat(k.h),
+                        low: parseFloat(k.l),
+                        close: parseFloat(k.c),
+                        volume: parseFloat(k.v),
+                        quoteVolume: parseFloat(k.q || 0),
+                        isClosed: k.x === true
+                    };
+                    
                     if (typeof chartManager.updateLastCandle === 'function') {
-                        // ФИКС: теперь всегда передаём meta {symbol, interval, exchange},
-                        // чтобы сработала собственная защита ChartManager.updateLastCandle
-                        chartManager.updateLastCandle({
-                            time: candleTime,
-                            open: parseFloat(k.o),
-                            high: parseFloat(k.h),
-                            low: parseFloat(k.l),
-                            close: parseFloat(k.c),
-                            volume: parseFloat(k.v),
-                            quoteVolume: parseFloat(k.q || 0),
-                            isClosed: k.x === true
-                        }, raw.E || Date.now(), { symbol: msgSymbol, interval: k.i, exchange: 'binance' });
+                        chartManager.updateLastCandle(candleData, eventTime, {
+                            symbol: this.currentSymbol,
+                            interval: this.currentInterval,
+                            exchange: this.currentExchange,
+                            marketType: this.currentMarketType
+                        });
                     }
                 }
                 
                 if (raw.e === 'aggTrade') {
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (!msgSymbol || msgSymbol !== ws._expectedSymbol) return;
+                    if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
                     this._lastRelevantMessageTime = Date.now();
                     
@@ -305,56 +350,66 @@ class WebSocketManager {
                         if (typeof chartManager._syncPriceLine === 'function') {
                             chartManager._syncPriceLine({
                                 time: Math.floor(raw.T / 1000),
-                                price: price
+                                price: price,
+                                symbol: this.currentSymbol,
+                                exchange: this.currentExchange,
+                                marketType: this.currentMarketType
                             });
                         }
                     }
                 }
             }
-            else if (exchange === 'bybit' && raw.topic) {
+            else if (this.currentExchange === 'bybit' && raw.topic) {
                 const parts = raw.topic.split('.');
                 let msgSymbol = null;
-                let msgIntervalRaw = null;
                 
                 if (raw.topic.startsWith('kline.') && parts.length >= 3) {
-                    msgIntervalRaw = parts[1];
                     msgSymbol = parts[2].toUpperCase();
                 } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
                     msgSymbol = parts[1].toUpperCase();
                 }
                 
-                if (!msgSymbol || msgSymbol !== ws._expectedSymbol) return;
-
-                // ФИКС: аналогичная проверка интервала для Bybit
-                if (msgIntervalRaw !== null) {
-                    const expectedBybitInterval = this.getExchangeInterval(ws._expectedInterval, 'bybit');
-                    if (msgIntervalRaw !== expectedBybitInterval) return;
-                }
+                if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
                 this._lastRelevantMessageTime = Date.now();
+                
+                const eventTime = raw.ts || Date.now();
+                if (eventTime <= this._lastKlineEventTime) return;
+                this._lastKlineEventTime = eventTime;
                 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
                     const k = raw.data[0];
                     
                     let candleTime = Math.floor(k.start / 1000);
-                    const intervalSeconds = this._getIntervalSecondsFromBybit(msgIntervalRaw);
-                    const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
                     
-                    if (candleTime !== expectedTime) {
-                        candleTime = expectedTime;
+                    if (parts.length >= 2) {
+                        const intervalStr = parts[1];
+                        const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
+                        const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                        
+                        if (candleTime !== expectedTime) {
+                            candleTime = expectedTime;
+                        }
                     }
                     
+                    const candleData = {
+                        time: candleTime,
+                        open: parseFloat(k.open),
+                        high: parseFloat(k.high),
+                        low: parseFloat(k.low),
+                        close: parseFloat(k.close),
+                        volume: parseFloat(k.volume),
+                        quoteVolume: parseFloat(k.turnover || 0),
+                        isClosed: k.confirm === true
+                    };
+                    
                     if (typeof chartManager.updateLastCandle === 'function') {
-                        chartManager.updateLastCandle({
-                            time: candleTime,
-                            open: parseFloat(k.open),
-                            high: parseFloat(k.high),
-                            low: parseFloat(k.low),
-                            close: parseFloat(k.close),
-                            volume: parseFloat(k.volume),
-                            quoteVolume: parseFloat(k.turnover || 0),
-                            isClosed: k.confirm === true
-                        }, raw.ts || Date.now(), { symbol: msgSymbol, interval: ws._expectedInterval, exchange: 'bybit' });
+                        chartManager.updateLastCandle(candleData, eventTime, {
+                            symbol: this.currentSymbol,
+                            interval: this.currentInterval,
+                            exchange: this.currentExchange,
+                            marketType: this.currentMarketType
+                        });
                     }
                 } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
                     const tradeData = raw.data[0];
@@ -364,7 +419,10 @@ class WebSocketManager {
                         if (typeof chartManager._syncPriceLine === 'function') {
                             chartManager._syncPriceLine({
                                 time: Math.floor(tradeData.T / 1000),
-                                price: price
+                                price: price,
+                                symbol: this.currentSymbol,
+                                exchange: this.currentExchange,
+                                marketType: this.currentMarketType
                             });
                         }
                     }
@@ -433,7 +491,7 @@ class WebSocketManager {
         };
         
         closeWs(this.wsKline);
-        if (this.wsTrade !== this.wsKline) closeWs(this.wsTrade);
+        closeWs(this.wsTrade);
         
         this.wsKline = null;
         this.wsTrade = null;
@@ -443,18 +501,11 @@ class WebSocketManager {
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
+        
+        // Очищаем буфер немедленно
+        this.clearKlineQueue();
+        
         this.connect(symbol, interval, exchange, marketType);
-    }
-
-    // ФИКС: метод отсутствовал вовсе. ChartManager вызывал его через
-    // опциональную цепочку (`?.`), поэтому вызов молча ничего не делал.
-    // Реальная защита от "просачивания" устаревших сообщений теперь обеспечена
-    // удостоверением сокета (ws._expectedSymbol/_expectedInterval/_exchange),
-    // но метод оставлен для совместимости с ChartManager и явного сброса
-    // водяных меток при переключении тикера/таймфрейма.
-    clearKlineQueue() {
-        this._lastKlineTime = 0;
-        this._lastRelevantMessageTime = 0;
     }
 
     closeAll() {
@@ -467,7 +518,16 @@ class WebSocketManager {
             clearTimeout(this._connectDebounceTimer); 
             this._connectDebounceTimer = null; 
         }
+        if (this._flushTimer) {
+            clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+        }
+        if (this._switchingTimeout) {
+            clearTimeout(this._switchingTimeout);
+            this._switchingTimeout = null;
+        }
         this._connectGeneration++;
+        this._dataBuffer.clear();
         this._closeSocket();
     }
     
