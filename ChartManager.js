@@ -15,6 +15,7 @@ class ChartManager {
         this._isRestoringZoom = false;
         this._isSwitchingInterval = false;
         this._isSwitchingChartType = false;
+        this._wsGeneration = undefined; // ✅ ДОБАВЛЕНО: поколение WebSocket
 
         // ============ ЗУМ КАК В TRADINGVIEW ============
         this._savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || null;
@@ -1081,27 +1082,35 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    // ИСПРАВЛЕНО: добавлена проверка meta и _switchingSymbol
+    // ✅ ИСПРАВЛЕНО: добавлена проверка generation и symbol
     _syncPriceLine(price) {
         if (price && typeof price === 'object') {
-            const meta = price.meta || price.symbol ? {
-                symbol: price.symbol,
-                exchange: price.exchange,
-                marketType: price.marketType
-            } : null;
+            // Проверяем generation если он есть
+            if (price.generation !== undefined && 
+                price.generation !== this._wsGeneration) {
+                return; // Старое сообщение от устаревшего сокета
+            }
+            
+            // Сохраняем поколение при первом получении
+            if (price.generation !== undefined && this._wsGeneration === undefined) {
+                this._wsGeneration = price.generation;
+            }
+            
+            // Проверяем символ
+            if (price.symbol && price.symbol !== this.currentSymbol) {
+                return; // Данные от другого символа
+            }
             
             if (typeof price.price === 'number') price = price.price;
             else if (typeof price.price === 'string') price = parseFloat(price.price);
             else if (typeof price.close === 'number') price = price.close;
             else if (typeof price.last === 'number') price = price.last;
-            else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
-            
-            if (meta) {
-                if (meta.symbol && meta.symbol !== this.currentSymbol) return;
-                if (meta.exchange && meta.exchange !== this.currentExchange) return;
-                if (meta.marketType && meta.marketType !== this.currentMarketType) return;
+            else { 
+                console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); 
+                return; 
             }
         }
+        
         if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
         if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
             this._isSwitchingInterval || this._switchingSymbol) return;
@@ -1116,7 +1125,7 @@ class ChartManager {
         });
     }
 
-    // ИСПРАВЛЕНО: добавлена проверка _switchingSymbol
+    // ✅ ИСПРАВЛЕНО: добавлена проверка _switchingSymbol
     _applyPriceUpdate(price) {
         if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
             this._isSwitchingInterval || this._switchingSymbol) return;
@@ -1185,7 +1194,19 @@ class ChartManager {
         }
     }
 
+    // ✅ ИСПРАВЛЕНО: добавлена проверка generation
     updateLastCandle(candle, eventTime = null, meta = null) {
+        // ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА: проверяем поколение
+        if (meta && meta.generation !== undefined && 
+            meta.generation !== this._wsGeneration) {
+            return; // Старое сообщение от устаревшего сокета
+        }
+        
+        // Сохраняем поколение при первом получении
+        if (meta && meta.generation !== undefined && this._wsGeneration === undefined) {
+            this._wsGeneration = meta.generation;
+        }
+        
         if (this._switchingSymbol || this._isSwitchingInterval || this._updatesSuspended || !this._isChartValid()) return;
         if (meta && (
             (meta.symbol && meta.symbol !== this.currentSymbol) ||
@@ -1299,7 +1320,7 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    // ИСПРАВЛЕНО: добавлена защита отложенных вызовов
+    // ✅ ИСПРАВЛЕНО: добавлена защита отложенных вызовов
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -2003,7 +2024,6 @@ class ChartManager {
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
 
-    // ИСПРАВЛЕНО: добавлена проверка _switchingSymbol
     _subscribeToPrice() {
         if (!this.priceManager) {
             setTimeout(() => this._subscribeToPrice(), 100);
