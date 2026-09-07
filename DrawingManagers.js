@@ -8683,119 +8683,103 @@ class TradeLevelRenderer {
         return Number(price).toFixed(this._getPrecision());
     }
 
-  draw(target) {
-    this._hitAreas = [];
-    const trade = this._trade;
-    const chartManager = this._chartManager;
-    const currentKey = chartManager.getCurrentSymbolKey ? chartManager.getCurrentSymbolKey() : null;
-    if (currentKey && trade.symbolKey && trade.symbolKey !== currentKey) return;
+    draw(target) {
+        this._hitAreas = [];
+        const trade = this._trade;
+        const chartManager = this._chartManager;
+        const currentKey = chartManager.getCurrentSymbolKey ? chartManager.getCurrentSymbolKey() : null;
+        if (currentKey && trade.symbolKey && trade.symbolKey !== currentKey) return;
 
-    target.useBitmapCoordinateSpace(scope => {
-        const ctx = scope.context;
-        const currentTf = chartManager.currentInterval;
-        if (!trade.isVisibleOnTimeframe(currentTf)) return;
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const currentTf = chartManager.currentInterval;
+            if (!trade.isVisibleOnTimeframe(currentTf)) return;
 
-        const entryY = chartManager.priceToCoordinate(trade.entryPrice);
-        const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
-        const tpY = (trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice)) ? chartManager.priceToCoordinate(trade.takeProfitPrice) : null;
-        const xCoord = chartManager.timeToCoordinate(trade.entryTime);
+            const entryY = chartManager.priceToCoordinate(trade.entryPrice);
+            const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
+            const tpY = (trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice)) ? chartManager.priceToCoordinate(trade.takeProfitPrice) : null;
+            const xCoord = chartManager.timeToCoordinate(trade.entryTime);
 
-        const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
-        const x = (xCoord !== null ? xCoord : mediaW / (2 * scope.horizontalPixelRatio)) * scope.horizontalPixelRatio;
-        const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
-        const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
-        const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
+            const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
+            const x = (xCoord !== null ? xCoord : mediaW / (2 * scope.horizontalPixelRatio)) * scope.horizontalPixelRatio;
+            const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
+            const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
+            const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
 
-        const isLong = trade.direction === 'long';
-        const entryColor = isLong ? '#00ff88' : '#f23645';
-        const arrowSize = 8 * scope.horizontalPixelRatio;
+            const isLong = trade.direction === 'long';
+            const entryColor = isLong ? '#07a321' : '#ca1020';
+            const arrowSize = 7 * scope.horizontalPixelRatio;
 
-        if (entry !== null) {
-            // Рисуем обводку (белую или черную рамку)
-            ctx.save();
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = 2 * scope.horizontalPixelRatio;
-            ctx.shadowColor = 'rgba(0,0,0,0.7)';
-            ctx.shadowBlur = 4;
-            ctx.beginPath();
-            if (isLong) {
-                ctx.moveTo(x, entry - arrowSize);
-                ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
-                ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
-            } else {
-                ctx.moveTo(x, entry + arrowSize);
-                ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
-                ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+            const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
+            const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
+            const rewardPercent = riskPercent * trade.riskRewardRatio;
+
+            // ✅ 1. Рисуем SL (линия и плашка справа на шкале)
+            if (sl !== null) {
+                this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `SL ${this._formatPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
             }
-            ctx.closePath();
-            ctx.fillStyle = entryColor;
-            ctx.fill();
-            ctx.stroke();
-            ctx.restore();
 
-            // Плашка цены входа сверху
-            ctx.save();
-            const fontSize = 9 * scope.horizontalPixelRatio;
-            ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
-            const priceText = this._formatPrice(trade.entryPrice);
-            const textMetrics = ctx.measureText(priceText);
-            const padding = 3 * scope.horizontalPixelRatio;
-            const labelX = x - (textMetrics.width + padding * 2) / 2;
-            const labelY = entry - arrowSize - fontSize - padding * 2 - 4 * scope.horizontalPixelRatio;
-            const labelW = textMetrics.width + padding * 2;
-            const labelH = fontSize + padding * 2;
-            
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-            ctx.shadowColor = 'rgba(0,0,0,0.5)';
-            ctx.shadowBlur = 3;
-            ctx.beginPath();
-            this._roundRect(ctx, labelX, labelY, labelW, labelH, 3 * scope.horizontalPixelRatio);
-            ctx.fill();
-            
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = '#FFFFFF'; // Всегда белый цвет
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(priceText, labelX + labelW / 2, labelY + labelH / 2);
-            ctx.restore();
-        }
+            // ✅ 2. Рисуем TP (линия и плашка справа на шкале)
+            if (tp !== null) {
+                this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `TP ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+            }
 
-        const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
-        const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
-        const rewardPercent = riskPercent * trade.riskRewardRatio;
+            // ✅ 3. Рисуем Entry (линия и плашка справа на шкале, ПОД или НАД SL/TP)
+            if (entry !== null) {
+                this._drawLine(ctx, scope, entry, entryColor, 'solid', 0.7);
+                this._drawLabel(ctx, scope, `Entry ${this._formatPrice(trade.entryPrice)}`, entry, entryColor);
+            }
 
-        if (sl !== null) {
-            this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `SL ${this._formatPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
-        }
+            // ✅ 4. Рисуем ТОЛЬКО стрелку (треугольник) на свече. ПЛАШКИ НАД СТРЕЛКОЙ БОЛЬШЕ НЕТ!
+            if (entry !== null) {
+                ctx.save();
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2 * scope.horizontalPixelRatio;
+                ctx.shadowColor = 'rgba(0,0,0,0.7)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                if (isLong) {
+                    ctx.moveTo(x, entry - arrowSize);
+                    ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
+                    ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
+                } else {
+                    ctx.moveTo(x, entry + arrowSize);
+                    ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
+                    ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+                }
+                ctx.closePath();
+                ctx.fillStyle = entryColor;
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
 
-        if (tp !== null) {
-            this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-            this._drawLabel(ctx, scope, `TP ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
-        }
+            // ✅ 5. Плечи и точки перетаскивания
+            if (trade.selected && trade.options.showPlechi && entry !== null) {
+                ctx.save();
+                ctx.setLineDash([4, 4]);
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.globalAlpha = 0.3;
+                if (sl !== null) { ctx.strokeStyle = trade.options.slColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke(); }
+                if (tp !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke(); }
+                ctx.restore();
+            }
 
-        if (trade.selected && trade.options.showPlechi && entry !== null) {
-            ctx.save();
-            ctx.setLineDash([4, 4]);
-            ctx.lineWidth = 1 * scope.horizontalPixelRatio;
-            ctx.globalAlpha = 0.3;
-            if (sl !== null) { ctx.strokeStyle = trade.options.slColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke(); }
-            if (tp !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke(); }
-            ctx.restore();
-        }
+            if (trade.showDragPoints) {
+                if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
+                if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
+                if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor);
+            }
 
-        if (trade.showDragPoints) {
-            if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
-            if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
-            if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor);
-        }
+            const hitBuffer = 15 * scope.horizontalPixelRatio;
+            if (entry !== null) this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
+            if (sl !== null) this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
+            if (tp !== null) this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
+        });
+    }
 
-        const hitBuffer = 15 * scope.horizontalPixelRatio;
-        if (entry !== null) this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
-        if (sl !== null) this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
-        if (tp !== null) this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
-    });
-}
     _drawLine(ctx, scope, y, color, style, opacity) {
         ctx.save();
         ctx.strokeStyle = color;
@@ -8863,22 +8847,18 @@ class TradeLevelRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-     hitTest(x, y) {
+    hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
 
-        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точки перетаскивания (если они видны)
         if (this._trade.showDragPoints) {
             for (const area of this._hitAreas) {
                 if (area.type === 'entry' || area.type === 'sl' || area.type === 'tp') {
-                    // Точка перетаскивания всегда рисуется в координатах (area.x, area.y)
                     const pointX = area.x; 
                     const pointY = area.y;
                     const dx = x - pointX;
                     const dy = y - pointY;
                     const distance = Math.sqrt(dx * dx + dy * dy);
-                    
-                    // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей для удобного клика
                     if (distance < 12) {
                         return { type: area.type, trade: area.trade, distance };
                     }
@@ -8886,7 +8866,6 @@ class TradeLevelRenderer {
             }
         }
 
-        // ✅ 2. Обычная проверка с уменьшенным буфером
         for (const area of this._hitAreas) {
             if (area.type === 'entry') {
                 const dx = x - area.x;
@@ -8897,7 +8876,6 @@ class TradeLevelRenderer {
                     bestDistance = distance;
                 }
             } else {
-                // Буфер уже уменьшен в методе draw до 4 * pixelRatio
                 if (x >= area.x1 && x <= area.x2) {
                     const distance = Math.abs(y - area.y);
                     if (distance < area.buffer && distance < bestDistance) {
@@ -9214,8 +9192,7 @@ class TradeLevelManager {
 
     setMagnetEnabled(enabled) { this._magnetEnabled = enabled; }
 
-      hitTest(x, y) {
-        // 1. Приоритет: уже выбранная сделка (чтобы не соскальзывать при перетаскивании)
+    hitTest(x, y) {
         if (this._selectedTrade) {
             const item = this._trades.find(t => t.trade === this._selectedTrade);
             if (item && item.primitive) {
@@ -9229,7 +9206,6 @@ class TradeLevelManager {
         let bestHit = null;
         let bestDistance = Infinity;
 
-        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые сделки находятся "поверх" старых)
         for (let i = this._trades.length - 1; i >= 0; i--) {
             const item = this._trades[i];
             if (item.trade === this._selectedTrade) continue;
@@ -9237,15 +9213,11 @@ class TradeLevelManager {
 
             try {
                 const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                
                 if (hit && hit.distance !== undefined) {
-                    // Строго ближе минимум на 2 пикселя
                     if (hit.distance < bestDistance - 2) {
                         bestHit = hit;
                         bestDistance = hit.distance;
-                    }
-                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
-                    else if (hit.distance <= bestDistance + 2) {
+                    } else if (hit.distance <= bestDistance + 2) {
                         bestHit = hit;
                         bestDistance = hit.distance;
                     }
@@ -9541,7 +9513,6 @@ class TradeLevelManager {
         this._updateStep();
         this._updatePreview();
         
-        // ВКЛАДКИ И ВИДИМОСТЬ
         this._renderTimeframeCheckboxes(trade);
         const stylePanel = panel.querySelector('#stylePanel');
         const visibilityPanel = panel.querySelector('#visibilityPanel');
@@ -9841,7 +9812,6 @@ class TradeLevelManager {
         this._selectedTrade = trade;
     }
 }
-
 if (typeof window !== 'undefined') {
     window.TradeLevel = TradeLevel;
     window.TradeLevelRenderer = TradeLevelRenderer;
@@ -9849,6 +9819,8 @@ if (typeof window !== 'undefined') {
     window.TradeLevelPrimitive = TradeLevelPrimitive;
     window.TradeLevelManager = TradeLevelManager;
 }
+
+
 
 
 
