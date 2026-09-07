@@ -8707,33 +8707,14 @@ class TradeLevelRenderer {
             const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
 
             const isLong = trade.direction === 'long';
-            const entryColor = isLong ? '#07a321' : '#ca1020';
-            const arrowSize = 7 * scope.horizontalPixelRatio;
+            const entryColor = isLong ? '#00ff88' : '#f23645';
+            const arrowSize = 6 * scope.horizontalPixelRatio;
 
-            const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
-            const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
-            const rewardPercent = riskPercent * trade.riskRewardRatio;
-
-            // ✅ 1. Рисуем SL (линия и плашка справа на шкале)
-            if (sl !== null) {
-                this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
-                this._drawLabel(ctx, scope, `SL ${this._formatPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
-            }
-
-            // ✅ 2. Рисуем TP (линия и плашка справа на шкале)
-            if (tp !== null) {
-                this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
-                this._drawLabel(ctx, scope, `TP ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
-            }
-
-            // ✅ 3. Рисуем Entry (линия и плашка справа на шкале, ПОД или НАД SL/TP)
             if (entry !== null) {
+                // 1. СПЛОШНАЯ линия входа
                 this._drawLine(ctx, scope, entry, entryColor, 'solid', 0.7);
-                this._drawLabel(ctx, scope, `Entry ${this._formatPrice(trade.entryPrice)}`, entry, entryColor);
-            }
 
-            // ✅ 4. Рисуем ТОЛЬКО стрелку (треугольник) на свече. ПЛАШКИ НАД СТРЕЛКОЙ БОЛЬШЕ НЕТ!
-            if (entry !== null) {
+                // 2. Стрелка (осталась как была)
                 ctx.save();
                 ctx.strokeStyle = '#FFFFFF';
                 ctx.lineWidth = 2 * scope.horizontalPixelRatio;
@@ -8754,9 +8735,25 @@ class TradeLevelRenderer {
                 ctx.fill();
                 ctx.stroke();
                 ctx.restore();
+
+                // 3. Плашка с ценой и подписью «ТВХ» справа (как у стопа и тейка)
+                this._drawLabel(ctx, scope, `ТВХ ${this._formatPrice(trade.entryPrice)}`, entry, entryColor);
             }
 
-            // ✅ 5. Плечи и точки перетаскивания
+            const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
+            const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
+            const rewardPercent = riskPercent * trade.riskRewardRatio;
+
+            if (sl !== null) {
+                this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `Стоп ${this._formatPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
+            }
+
+            if (tp !== null) {
+                this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `Тейк ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+            }
+
             if (trade.selected && trade.options.showPlechi && entry !== null) {
                 ctx.save();
                 ctx.setLineDash([4, 4]);
@@ -8773,10 +8770,21 @@ class TradeLevelRenderer {
                 if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor);
             }
 
-            const hitBuffer = 15 * scope.horizontalPixelRatio;
-            if (entry !== null) this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade });
-            if (sl !== null) this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
-            if (tp !== null) this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
+            const hitBuffer = 8 * scope.horizontalPixelRatio;
+
+            // Хит-зоны (приоритет: стрелка > линии)
+            if (entry !== null) {
+                // Хит-зона для стрелки (перетаскивание времени)
+                this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade, isPoint: true });
+                // Хит-зона для линии входа (только выделение, без перетаскивания)
+                this._hitAreas.push({ type: 'entry-line', x1: 0, x2: mediaW, y: entry, buffer: hitBuffer, trade });
+            }
+            if (sl !== null) {
+                this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
+            }
+            if (tp !== null) {
+                this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
+            }
         });
     }
 
@@ -8851,44 +8859,33 @@ class TradeLevelRenderer {
         let bestHit = null;
         let bestDistance = Infinity;
 
-        if (this._trade.showDragPoints) {
-            for (const area of this._hitAreas) {
-                if (area.type === 'entry' || area.type === 'sl' || area.type === 'tp') {
-                    const pointX = area.x; 
-                    const pointY = area.y;
-                    const dx = x - pointX;
-                    const dy = y - pointY;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    if (distance < 12) {
-                        return { type: area.type, trade: area.trade, distance };
-                    }
-                }
-            }
-        }
-
+        // 1. Приоритет: стрелка входа
         for (const area of this._hitAreas) {
-            if (area.type === 'entry') {
+            if (area.type === 'entry' && area.isPoint) {
                 const dx = x - area.x;
                 const dy = y - area.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 if (distance < area.radius && distance < bestDistance) {
-                    bestHit = { type: 'entry', trade: area.trade, distance };
+                    bestHit = { type: area.type, trade: area.trade, distance };
                     bestDistance = distance;
                 }
-            } else {
-                if (x >= area.x1 && x <= area.x2) {
-                    const distance = Math.abs(y - area.y);
-                    if (distance < area.buffer && distance < bestDistance) {
-                        bestHit = { type: area.type, trade: area.trade, distance };
-                        bestDistance = distance;
-                    }
+            }
+        }
+
+        // 2. Обычная проверка линий (включая entry-line)
+        for (const area of this._hitAreas) {
+            if (area.isPoint) continue;
+            if (x >= area.x1 && x <= area.x2) {
+                const distance = Math.abs(y - area.y);
+                if (distance < area.buffer && distance < bestDistance) {
+                    bestHit = { type: area.type, trade: area.trade, distance };
+                    bestDistance = distance;
                 }
             }
         }
         return bestHit;
     }
 }
-
 class TradeLevelPaneView {
     constructor(trade, chartManager) {
         this._trade = trade;
