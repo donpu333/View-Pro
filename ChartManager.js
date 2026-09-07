@@ -15,7 +15,6 @@ class ChartManager {
         this._isRestoringZoom = false;
         this._isSwitchingInterval = false;
         this._isSwitchingChartType = false;
-        this._wsGeneration = undefined; // ✅ ДОБАВЛЕНО: поколение WebSocket
 
         // ============ ЗУМ КАК В TRADINGVIEW ============
         this._savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || null;
@@ -1082,35 +1081,14 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    // ✅ ИСПРАВЛЕНО: добавлена проверка generation и symbol
     _syncPriceLine(price) {
         if (price && typeof price === 'object') {
-            // Проверяем generation если он есть
-            if (price.generation !== undefined && 
-                price.generation !== this._wsGeneration) {
-                return; // Старое сообщение от устаревшего сокета
-            }
-            
-            // Сохраняем поколение при первом получении
-            if (price.generation !== undefined && this._wsGeneration === undefined) {
-                this._wsGeneration = price.generation;
-            }
-            
-            // Проверяем символ
-            if (price.symbol && price.symbol !== this.currentSymbol) {
-                return; // Данные от другого символа
-            }
-            
             if (typeof price.price === 'number') price = price.price;
             else if (typeof price.price === 'string') price = parseFloat(price.price);
             else if (typeof price.close === 'number') price = price.close;
             else if (typeof price.last === 'number') price = price.last;
-            else { 
-                console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); 
-                return; 
-            }
+            else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
         }
-        
         if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
         if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
             this._isSwitchingInterval || this._switchingSymbol) return;
@@ -1125,7 +1103,6 @@ class ChartManager {
         });
     }
 
-    // ✅ ИСПРАВЛЕНО: добавлена проверка _switchingSymbol
     _applyPriceUpdate(price) {
         if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
             this._isSwitchingInterval || this._switchingSymbol) return;
@@ -1194,19 +1171,7 @@ class ChartManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕНО: добавлена проверка generation
     updateLastCandle(candle, eventTime = null, meta = null) {
-        // ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА: проверяем поколение
-        if (meta && meta.generation !== undefined && 
-            meta.generation !== this._wsGeneration) {
-            return; // Старое сообщение от устаревшего сокета
-        }
-        
-        // Сохраняем поколение при первом получении
-        if (meta && meta.generation !== undefined && this._wsGeneration === undefined) {
-            this._wsGeneration = meta.generation;
-        }
-        
         if (this._switchingSymbol || this._isSwitchingInterval || this._updatesSuspended || !this._isChartValid()) return;
         if (meta && (
             (meta.symbol && meta.symbol !== this.currentSymbol) ||
@@ -1320,7 +1285,6 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
-    // ✅ ИСПРАВЛЕНО: добавлена защита отложенных вызовов
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1329,7 +1293,6 @@ class ChartManager {
             if (this.timerManager) this.timerManager.hideImmediately();
 
             const isNewSymbol = forceNewSymbol;
-            const generationAtStart = this._activeGeneration;
             
             this.chart.applyOptions({ handleScroll: false, handleScale: false });
             
@@ -1401,7 +1364,6 @@ class ChartManager {
             }
             
             setTimeout(() => {
-                if (generationAtStart !== this._activeGeneration) return;
                 if (this.indicatorManager && this._isChartValid()) {
                     this.indicatorManager.restorePendingIndicators();
                     this.indicatorManager.updateAllIndicators();
@@ -1410,10 +1372,6 @@ class ChartManager {
             }, 0);
             
             const positionAfterDataApplied = () => {
-                if (generationAtStart !== this._activeGeneration) {
-                    if (onReady) onReady();
-                    return;
-                }
                 if (!this._isChartValid()) {
                     if (onReady) onReady();
                     return;
@@ -1469,7 +1427,6 @@ class ChartManager {
             this._updatePageTitle();
             if (typeof getPrecisionFromExchange === 'function') {
                 getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
-                    if (generationAtStart !== this._activeGeneration) return;
                     if (this.currentSymbol === symbol && this._isChartValid()) {
                         localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
                         this.applyPriceFormat(precision);
@@ -1477,10 +1434,7 @@ class ChartManager {
                     }
                 }).catch(() => {});
             }
-            setTimeout(() => {
-                if (generationAtStart !== this._activeGeneration) return;
-                if (window.renderDrawings) window.renderDrawings();
-            }, 0);
+            setTimeout(() => { if (window.renderDrawings) window.renderDrawings(); }, 0);
             this._lastTimeframe = interval;
             if (!window._dailySeparator && window.DailySeparator) window._dailySeparator = new window.DailySeparator(this);
             if (window._dailySeparator?.redraw) window._dailySeparator.redraw();
