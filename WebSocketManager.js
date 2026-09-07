@@ -389,12 +389,7 @@ class WebSocketManager {
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
         
-        // Мгновенная очистка графика перед переключением
-        if (this.chartManager && typeof this.chartManager.clearChart === 'function') {
-            this.chartManager.clearChart();
-        }
-        
-        // Сбрасываем фильтр времени
+        // Только сбрасываем фильтр, НЕ очищаем график
         this.clearKlineQueue();
         
         this.connect(symbol, interval, exchange, marketType);
