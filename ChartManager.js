@@ -132,10 +132,6 @@ class ChartManager {
         this._volumeDataCache = null;
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
-        // Настройки шкалы объёма централизованы здесь, чтобы их можно было
-        // переприменять из ЛЮБОГО места, где меняются данные volumeSeries
-        // (см. _applyVolumeScaleOptions ниже) — это и есть фикс бага
-        // "гистограмма растягивается на весь график".
         this._volumeScaleMargins = { top: 0.85, bottom: 0 };
 
         // ============ FETCH TIMEOUT ============
@@ -230,6 +226,17 @@ class ChartManager {
             }
         });
 
+        // ============ СОЗДАНИЕ ШКАЛЫ ОБЪЁМА ============
+        if (typeof this.chart.addPriceScale === 'function') {
+            this.chart.addPriceScale({
+                id: 'volume',
+                scaleMargins: { top: 0.85, bottom: 0 },
+                borderColor: '#333333',
+                borderVisible: true,
+                autoScale: false
+            });
+        }
+        
         // ============ ЦВЕТА ПО УМОЛЧАНИЮ ============
         const _DEFAULT_BULLISH = '#26a69a';
         const _DEFAULT_BEARISH = '#ef5350';
@@ -282,11 +289,6 @@ class ChartManager {
                     priceScaleId: 'volume', priceFormat: { type: 'volume' }, color: '#26a69a', lineWidth: 1,
                     lastValueVisible: false, priceLineVisible: false, title: ''
                 });
-                // ФИКС: раньше опции шкалы объёма выставлялись инлайном только здесь.
-                // Теперь это единая точка входа (_applyVolumeScaleOptions), которая
-                // вызывается ПОВСЮДУ, где меняются данные volumeSeries — иначе
-                // после setData/update в других методах autoScale иногда
-                // "раздувал" гистограмму на весь график в обход scaleMargins.
                 this._applyVolumeScaleOptions();
                 this.bullishColor = this.bullishColor || initialBullish;
                 this.bearishColor = this.bearishColor || initialBearish;
@@ -355,34 +357,16 @@ class ChartManager {
         }, 1000);
     }
 
-    // ============ ШКАЛА ОБЪЁМА (ФИКС БАГА "НА ВЕСЬ ЭКРАН" И БАГА "ГИСТОГРАММА НЕ ВИДНА") ============
-    // Единая точка применения опций шкалы 'volume'. Вызывать после КАЖДОГО
-    // setData()/update() на volumeSeries.
-    //
-    // ВАЖНО (фикс от 02.09): autoScale ЗДЕСЬ ДОЛЖЕН БЫТЬ true.
-    // Раньше стояло autoScale: false, и это ломало отображение гистограммы
-    // ПОЛНОСТЬЮ: если autoScale выключен, шкала 'volume' никогда не вычисляет
-    // диапазон значений (min/max) по реальным данным — в отличие от шкалы
-    // 'right' (свечи), у которой есть отдельный явный шаг "autoScale:true на
-    // 1 кадр -> посчитать диапазон по данным -> autoScale:false" (см.
-    // positionAfterDataApplied/finalizeAfterRescale и autoScale()).
-    // У шкалы 'volume' такого шага никогда не было, autoScale:false
-    // выставлялся сразу, в том числе в конструкторе ДО прихода каких-либо
-    // данных — из-за этого диапазон шкалы застревал на дефолтном/нулевом,
-    // все бары гистограммы оказывались вне видимого диапазона и просто не
-    // рисовались.
-    // scaleMargins {top:0.85, bottom:0} и так ограничивают гистограмму
-    // нижними ~15% графика НЕЗАВИСИМО от autoScale — растягивания на весь
-    // график с autoScale:true не будет, а сам объём при этом снова виден.
+    // ============ ШКАЛА ОБЪЁМА ============
     _applyVolumeScaleOptions() {
         if (!this.chart) return;
         const volumeScale = this.chart.priceScale('volume');
         if (!volumeScale) return;
         volumeScale.applyOptions({
-            scaleMargins: this._volumeScaleMargins, // {top:0.85, bottom:0} — объём живёт в нижних ~15%
+            scaleMargins: this._volumeScaleMargins,
             visible: true,
             borderVisible: true,
-            autoScale: true // ФИКС: было false — гистограмма из-за этого не рисовалась вообще
+            autoScale: false
         });
     }
 
@@ -474,9 +458,6 @@ class ChartManager {
 
     _applyPriceLineColor(series, color) {
         if (!series || !color) return;
-        // PERF: пропускаем applyOptions, если цвет для ЭТОЙ конкретной серии не изменился.
-        // Храним последний применённый цвет прямо на объекте серии, а не глобально,
-        // иначе при переключении candle/bar с одинаковым цветом линия не обновится.
         if (series.__lastLineColor === color) return;
         series.applyOptions({
             priceLineColor: color,
@@ -1073,7 +1054,7 @@ class ChartManager {
     }
 
     _performUpdate() {
-        if (!this.chartData.length || this._updatesSuspended || !this._isChartValid()) return;
+        if (!this.chartData.length || this._updatesSuspended || !this._isChartValid() || this._switchingSymbol) return;
         const cachedPrecision = localStorage.getItem(`precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`);
         if (cachedPrecision) {
             if (this._lastAppliedPrecision !== cachedPrecision) {
@@ -1100,22 +1081,30 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
-    // PERF: цена может прилетать по WS десятки раз в секунду. Раньше вся тяжёлая
-    // логика (series.update + applyOptions на price-line + drawings redraw) выполнялась
-    // синхронно на КАЖДЫЙ тик — это и было основным источником подтормаживания.
-    // Теперь тик только запоминается, а реальная обработка батчится через
-    // requestAnimationFrame — максимум 1 раз за кадр (~60 раз/сек), как делает
-    // TradingView и как уже сделано для crosshair в этом же классе.
+    // ИСПРАВЛЕНО: добавлена проверка meta и _switchingSymbol
     _syncPriceLine(price) {
         if (price && typeof price === 'object') {
+            const meta = price.meta || price.symbol ? {
+                symbol: price.symbol,
+                exchange: price.exchange,
+                marketType: price.marketType
+            } : null;
+            
             if (typeof price.price === 'number') price = price.price;
             else if (typeof price.price === 'string') price = parseFloat(price.price);
             else if (typeof price.close === 'number') price = price.close;
             else if (typeof price.last === 'number') price = price.last;
             else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
+            
+            if (meta) {
+                if (meta.symbol && meta.symbol !== this.currentSymbol) return;
+                if (meta.exchange && meta.exchange !== this.currentExchange) return;
+                if (meta.marketType && meta.marketType !== this.currentMarketType) return;
+            }
         }
         if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
-        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
+        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
+            this._isSwitchingInterval || this._switchingSymbol) return;
 
         this._pendingPriceValue = price;
         if (this._priceUpdateRafId !== null) return;
@@ -1127,8 +1116,10 @@ class ChartManager {
         });
     }
 
+    // ИСПРАВЛЕНО: добавлена проверка _switchingSymbol
     _applyPriceUpdate(price) {
-        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
+        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
+            this._isSwitchingInterval || this._switchingSymbol) return;
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series || !this.chartData || this.chartData.length === 0) return;
         const lastCandle = this.chartData[this.chartData.length - 1];
@@ -1308,6 +1299,7 @@ class ChartManager {
         await new Promise(r => setTimeout(r, 50));
     }
 
+    // ИСПРАВЛЕНО: добавлена защита отложенных вызовов
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1316,6 +1308,7 @@ class ChartManager {
             if (this.timerManager) this.timerManager.hideImmediately();
 
             const isNewSymbol = forceNewSymbol;
+            const generationAtStart = this._activeGeneration;
             
             this.chart.applyOptions({ handleScroll: false, handleScale: false });
             
@@ -1364,9 +1357,6 @@ class ChartManager {
                 this.volumeSeries.setData(volumeData);
                 this._volumeDataDirty = false; 
                 this._lastVolumeUpdateIndex = this.chartData.length - 1;
-                // ФИКС: переприменяем margins/autoScale сразу после setData —
-                // именно смена символа/интервала (частый setData с новыми
-                // порядками величин объёма) была самым частым триггером бага.
                 this._applyVolumeScaleOptions();
             }
             
@@ -1390,6 +1380,7 @@ class ChartManager {
             }
             
             setTimeout(() => {
+                if (generationAtStart !== this._activeGeneration) return;
                 if (this.indicatorManager && this._isChartValid()) {
                     this.indicatorManager.restorePendingIndicators();
                     this.indicatorManager.updateAllIndicators();
@@ -1398,6 +1389,10 @@ class ChartManager {
             }, 0);
             
             const positionAfterDataApplied = () => {
+                if (generationAtStart !== this._activeGeneration) {
+                    if (onReady) onReady();
+                    return;
+                }
                 if (!this._isChartValid()) {
                     if (onReady) onReady();
                     return;
@@ -1430,9 +1425,6 @@ class ChartManager {
                     if (this._isChartValid()) {
                         const ps = this.chart.priceScale('right');
                         if (ps) { try { ps.applyOptions({ autoScale: false }); } catch(e) {} }
-                        // ФИКС: правая шкала (свечи) переключает autoScale true→false
-                        // через два кадра — на этом же кадре переутверждаем и шкалу
-                        // объёма, чтобы её margins не "поехали" вслед за этим.
                         this._applyVolumeScaleOptions();
                     }
                     if (this.timerManager && this._isChartValid() && this.lastCandle) {
@@ -1456,6 +1448,7 @@ class ChartManager {
             this._updatePageTitle();
             if (typeof getPrecisionFromExchange === 'function') {
                 getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
+                    if (generationAtStart !== this._activeGeneration) return;
                     if (this.currentSymbol === symbol && this._isChartValid()) {
                         localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
                         this.applyPriceFormat(precision);
@@ -1463,7 +1456,10 @@ class ChartManager {
                     }
                 }).catch(() => {});
             }
-            setTimeout(() => { if (window.renderDrawings) window.renderDrawings(); }, 0);
+            setTimeout(() => {
+                if (generationAtStart !== this._activeGeneration) return;
+                if (window.renderDrawings) window.renderDrawings();
+            }, 0);
             this._lastTimeframe = interval;
             if (!window._dailySeparator && window.DailySeparator) window._dailySeparator = new window.DailySeparator(this);
             if (window._dailySeparator?.redraw) window._dailySeparator.redraw();
@@ -1905,8 +1901,6 @@ class ChartManager {
                         }
                         
                         try { priceScale.applyOptions({ autoScale: false }); } catch (e) {}
-                        // ФИКС: авто-скейл ЦЕНОВОЙ (right) шкалы иногда триггерит
-                        // побочный пересчёт и у шкалы объёма — переутверждаем её здесь.
                         this._applyVolumeScaleOptions();
                         
                         this._autoScalePending = false;
@@ -2009,6 +2003,7 @@ class ChartManager {
     updateAllIndicators() { this.indicatorManager.updateAllIndicators(); }
     restoreIndicators() { this.indicatorManager.loadIndicators(); }
 
+    // ИСПРАВЛЕНО: добавлена проверка _switchingSymbol
     _subscribeToPrice() {
         if (!this.priceManager) {
             setTimeout(() => this._subscribeToPrice(), 100);
