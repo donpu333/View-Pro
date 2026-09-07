@@ -243,26 +243,36 @@ class HorizontalRayRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    hitTest(x, y) {
+     hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
+        const ray = this._ray;
+        const pixelRatio = window.devicePixelRatio || 1;
 
-        if (this._hitArea) {
-            const buffer = 10;
-            const centerY = this._hitArea.y + this._hitArea.height / 2;
-            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-            
-            if (inY) {
-                const distance = Math.abs(y - centerY);
-                if (distance < bestDistance) {
-                    bestHit = { type: 'line', ray: this._ray, distance: distance };
-                    bestDistance = distance;
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (Drag Point)
+        // Если луч выделен и готов к перетаскиванию, проверяем попадание СТРОГО в точку
+        if (ray.readyToDrag || ray.dragging) {
+            const xCoordinate = this._chartManager.timeToCoordinate(ray.time);
+            const yCoordinate = this._chartManager.priceToCoordinate(ray.price);
+            if (xCoordinate !== null && yCoordinate !== null) {
+                const pointX = Math.round(xCoordinate * pixelRatio);
+                // Берем центр линии из уже рассчитанной hit-области
+                const centerY = this._hitArea ? (this._hitArea.y + this._hitArea.height / 2) : (yCoordinate * pixelRatio);
+                
+                const dx = x - pointX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей для удобного клика
+                if (distance < 12) {
+                    return { type: 'dragPoint', ray: ray, distance: distance };
                 }
             }
         }
 
+        // ✅ 2. Ценовая метка (Label)
         if (this._priceLabelHitArea) {
-            const padding = 15;
+            const padding = 10; // ✅ Уменьшили с 15 до 10 для большей точности
             const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
             const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
             
@@ -276,7 +286,22 @@ class HorizontalRayRenderer {
                 const dy = y - centerY;
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 if (distance < bestDistance) {
-                    bestHit = { type: 'label', ray: this._ray, distance: distance };
+                    bestHit = { type: 'label', ray: ray, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        // ✅ 3. Линия (с уменьшенным буфером)
+        if (this._hitArea) {
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4 (решает проблему пересечения близких линий!)
+            const centerY = this._hitArea.y + this._hitArea.height / 2;
+            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+            
+            if (inY) {
+                const distance = Math.abs(y - centerY);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'line', ray: ray, distance: distance };
                     bestDistance = distance;
                 }
             }
@@ -285,7 +310,6 @@ class HorizontalRayRenderer {
         return bestHit;
     }
 }
-
 class HorizontalRayPaneView {
     constructor(ray, chartManager) {
         this._ray = ray;
@@ -1157,9 +1181,10 @@ class HorizontalRayManager {
         this._rays = this._rays.filter(item => item.ray.symbolKey !== symbolKey);
     }
     
-    hitTest(x, y) {
+       hitTest(x, y) {
         const raysForCurrent = this._getRaysForCurrentSymbol();
         
+        // 1. Абсолютный приоритет: уже выбранный луч (чтобы не соскальзывать на соседний при перетаскивании)
         if (this._selectedRay) {
             const selItem = raysForCurrent.find(item => item.ray === this._selectedRay);
             if (selItem && selItem.primitive?._paneView?._renderer) {
@@ -1171,21 +1196,32 @@ class HorizontalRayManager {
         let bestHit = null;
         let bestDistance = Infinity;
         
-        for (const item of raysForCurrent) {
+        // 2. Идем с КОНЦА массива (Z-Index: последние нарисованные объекты находятся "сверху")
+        for (let i = raysForCurrent.length - 1; i >= 0; i--) {
+            const item = raysForCurrent[i];
             if (!item.primitive?._paneView?._renderer) continue;
             if (item.ray === this._selectedRay) continue;
             
             const hit = item.primitive._paneView._renderer.hitTest(x, y);
             
-            if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                bestHit = { ray: item.ray, type: hit.type, distance: hit.distance };
-                bestDistance = hit.distance;
+            if (hit && hit.distance !== undefined) {
+                // ✅ Если текущий объект ближе минимум на 2 пикселя — он точно побеждает
+                if (hit.distance < bestDistance - 2) {
+                    bestHit = { ray: item.ray, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                } 
+                // ✅ Если расстояния почти равны (разница в пределах 2 пикселей), 
+                // то побеждает тот, который "выше" (то есть идет позже в массиве, так как мы идем с конца)
+                else if (hit.distance <= bestDistance + 2) {
+                    bestHit = { ray: item.ray, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                }
             }
         }
         
         return bestHit;
     }
-    
+
     _handleChartClick(event) {
         if (!this._isDrawingMode) return;
         
@@ -1942,10 +1978,32 @@ class TrendLineRenderer {
         });
     }
 
-    hitTest(x, y) {
+      hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
 
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точки перетаскивания (если линия в режиме редактирования)
+        // Если линия выделена и показывает точки, клик по точке = немедленный возврат
+        if (this._trendLine.editMode || this._trendLine.showDragPoint1 || this._trendLine.showDragPoint2) {
+            if (this._hitAreaPoint1) {
+                const dx = x - this._hitAreaPoint1.x;
+                const dy = y - this._hitAreaPoint1.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint1.radius) {
+                    return { type: 'point1', trendLine: this._trendLine, distance: distance };
+                }
+            }
+            if (this._hitAreaPoint2) {
+                const dx = x - this._hitAreaPoint2.x;
+                const dy = y - this._hitAreaPoint2.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint2.radius) {
+                    return { type: 'point2', trendLine: this._trendLine, distance: distance };
+                }
+            }
+        }
+
+        // ✅ 2. Точки перетаскивания (даже если не в editMode, но точки видны)
         if (this._hitAreaPoint1) {
             const dx = x - this._hitAreaPoint1.x;
             const dy = y - this._hitAreaPoint1.y;
@@ -1966,8 +2024,9 @@ class TrendLineRenderer {
             }
         }
 
+        // ✅ 3. Линия (с УМЕНЬШЕННЫМ буфером)
         if (this._hitAreaLine) {
-            const buffer = 10;
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4
             const x1 = this._hitAreaLine.x1;
             const y1 = this._hitAreaLine.y1;
             const x2 = this._hitAreaLine.x2;
@@ -2853,32 +2912,43 @@ class TrendLineManager {
         this.setDrawingMode(false);
     }
 
-    hitTest(x, y) {
+      hitTest(x, y) {
+        // 1. Приоритет: уже выбранная линия
         if (this._selectedLine) {
             const selItem = this._trendLines.find(item => item.trendLine === this._selectedLine);
-            if (selItem && selItem.primitive?._paneView?._renderer) {
+            if (selItem?.primitive?._paneView?._renderer) {
                 try {
                     const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
                     if (hit) return hit;
-                } catch (e) { }
+                } catch (e) {}
             }
         }
 
         let bestHit = null;
         let bestDistance = Infinity;
 
-        for (const item of this._trendLines) {
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._trendLines.length - 1; i >= 0; i--) {
+            const item = this._trendLines[i];
             if (!item.primitive?._paneView?._renderer) continue;
             if (item.trendLine === this._selectedLine) continue;
 
             try {
                 const hit = item.primitive._paneView._renderer.hitTest(x, y);
 
-                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                    bestHit = hit;
-                    bestDistance = hit.distance;
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
                 }
-            } catch (e) { }
+            } catch (e) {}
         }
 
         return bestHit;
@@ -3486,10 +3556,50 @@ class RulerLineRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    hitTest(x, y) {
+      hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
 
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точки перетаскивания (если линейка выделена)
+        if (this._ruler.showDragPoint1 || this._ruler.showDragPoint2) {
+            if (this._hitAreaPoint1) {
+                const dx = x - this._hitAreaPoint1.x;
+                const dy = y - this._hitAreaPoint1.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint1.radius) {
+                    return { type: 'point1', ruler: this._ruler, distance: distance };
+                }
+            }
+            if (this._hitAreaPoint2) {
+                const dx = x - this._hitAreaPoint2.x;
+                const dy = y - this._hitAreaPoint2.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint2.radius) {
+                    return { type: 'point2', ruler: this._ruler, distance: distance };
+                }
+            }
+        }
+
+        // ✅ 2. Информационная панель (Label)
+        if (this._hitAreaInfo) {
+            const inX = x >= this._hitAreaInfo.x && x <= this._hitAreaInfo.x + this._hitAreaInfo.width;
+            const inY = y >= this._hitAreaInfo.y && y <= this._hitAreaInfo.y + this._hitAreaInfo.height;
+            
+            if (inX && inY) {
+                const centerX = this._hitAreaInfo.x + this._hitAreaInfo.width / 2;
+                const centerY = this._hitAreaInfo.y + this._hitAreaInfo.height / 2;
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < bestDistance) {
+                    bestHit = { type: 'info', ruler: this._ruler, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        // ✅ 3. Точки перетаскивания (обычная проверка, если не сработал абсолютный приоритет)
         if (this._hitAreaPoint1) {
             const dx = x - this._hitAreaPoint1.x;
             const dy = y - this._hitAreaPoint1.y;
@@ -3510,8 +3620,9 @@ class RulerLineRenderer {
             }
         }
 
+        // ✅ 4. Линия (с УМЕНЬШЕННЫМ буфером)
         if (this._hitAreaLine) {
-            const buffer = 10;
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4 (решает проблему пересечения близких линий!)
             const x1 = this._hitAreaLine.x1;
             const y1 = this._hitAreaLine.y1;
             const x2 = this._hitAreaLine.x2;
@@ -3542,28 +3653,9 @@ class RulerLineRenderer {
             }
         }
 
-        if (this._hitAreaInfo) {
-            const inX = x >= this._hitAreaInfo.x && x <= this._hitAreaInfo.x + this._hitAreaInfo.width;
-            const inY = y >= this._hitAreaInfo.y && y <= this._hitAreaInfo.y + this._hitAreaInfo.height;
-            
-            if (inX && inY) {
-                const centerX = this._hitAreaInfo.x + this._hitAreaInfo.width / 2;
-                const centerY = this._hitAreaInfo.y + this._hitAreaInfo.height / 2;
-                const dx = x - centerX;
-                const dy = y - centerY;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                
-                if (distance < bestDistance) {
-                    bestHit = { type: 'info', ruler: this._ruler, distance: distance };
-                    bestDistance = distance;
-                }
-            }
-        }
-
         return bestHit;
     }
 }
-
 class TempRulerPointPrimitive {
     constructor(rulerManager) {
         this._manager = rulerManager;
@@ -4110,7 +4202,8 @@ class RulerLineManager {
         this._requestRedraw();
     }
 
-    hitTest(x, y) {
+       hitTest(x, y) {
+        // 1. Приоритет: уже выбранная линейка
         if (this._selectedRuler) {
             const selItem = this._rulers.find(item => item.ruler === this._selectedRuler);
             if (selItem && selItem.primitive?._paneView?._renderer) {
@@ -4120,25 +4213,36 @@ class RulerLineManager {
                 } catch (e) {}
             }
         }
-        
+
         let bestHit = null;
         let bestDistance = Infinity;
-        
-        for (const item of this._rulers) {
+
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._rulers.length - 1; i >= 0; i--) {
+            const item = this._rulers[i];
             if (!item.primitive?._paneView?._renderer) continue;
             if (item.ruler === this._selectedRuler) continue;
-            
+
             try {
                 const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                    bestHit = hit;
-                    bestDistance = hit.distance;
+                
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
                 }
             } catch (e) {}
         }
+
         return bestHit;
     }
-
     _handleMouseDown(e) {
         if (e.button !== 0) return;
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
@@ -5078,27 +5182,31 @@ class AlertLineRenderer {
         ctx.closePath();
     }
 
-    hitTest(x, y) {
+      hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
+        const pixelRatio = window.devicePixelRatio || 1;
 
-        if (this._hitArea) {
-            const buffer = 10;
-            const centerY = this._hitArea.y + this._hitArea.height / 2;
-            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-            const inX = x >= this._hitArea.x1 - buffer && x <= this._hitArea.x2 + buffer;
-            
-            if (inX && inY) {
-                const distance = Math.abs(y - centerY);
-                if (distance < bestDistance) {
-                    bestHit = { type: 'line', alert: this._alert, distance: distance };
-                    bestDistance = distance;
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (Drag Point)
+        if (this._alert.showDragPoint && this._hitArea) {
+            const xCoordinate = this._chartManager.timeToCoordinate(this._alert.time);
+            if (xCoordinate !== null) {
+                const pointX = Math.round(xCoordinate * pixelRatio);
+                const centerY = this._hitArea.y + this._hitArea.height / 2;
+                const dx = x - pointX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей
+                if (distance < 12) {
+                    return { type: 'dragPoint', alert: this._alert, distance: distance };
                 }
             }
         }
 
+        // ✅ 2. Ценовая метка (Label)
         if (this._priceLabelHitArea) {
-            const padding = 15;
+            const padding = 10; // ✅ БЫЛО 15, СТАЛО 10
             const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
             const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
             
@@ -5113,6 +5221,22 @@ class AlertLineRenderer {
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 if (distance < bestDistance) {
                     bestHit = { type: 'label', alert: this._alert, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        // ✅ 3. Линия (с УМЕНЬШЕННЫМ буфером)
+        if (this._hitArea) {
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4
+            const centerY = this._hitArea.y + this._hitArea.height / 2;
+            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+            const inX = x >= this._hitArea.x1 - buffer && x <= this._hitArea.x2 + buffer;
+            
+            if (inX && inY) {
+                const distance = Math.abs(y - centerY);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'line', alert: this._alert, distance: distance };
                     bestDistance = distance;
                 }
             }
@@ -5889,7 +6013,8 @@ class AlertLineManager {
         this._requestRedraw();
     }
 
-    hitTest(x, y) {
+       hitTest(x, y) {
+        // 1. Приоритет: уже выбранный алерт
         if (this._selectedAlert) {
             const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
             if (selItem?.primitive?._paneView?._renderer) {
@@ -5899,22 +6024,32 @@ class AlertLineManager {
                 } catch (e) {}
             }
         }
-
+        
         let bestHit = null;
         let bestDistance = Infinity;
-
-        for (const item of this._alerts) {
+        
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._alerts.length - 1; i >= 0; i--) {
+            const item = this._alerts[i];
             if (!item.primitive?._paneView?._renderer) continue;
             if (item.alert === this._selectedAlert) continue;
+            
             try {
                 const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                    bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
-                    bestDistance = hit.distance;
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    } 
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    }
                 }
             } catch (e) {}
         }
-
         return bestHit;
     }
 
@@ -7242,11 +7377,23 @@ class TextRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    hitTest(x, y) {
+      hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
 
-        // Текстовый прямоугольник
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (если текст выделен)
+        if (this._text.showDragPoint && this._dragHitArea) {
+            const dx = x - this._dragHitArea.x;
+            const dy = y - this._dragHitArea.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // Если попали в радиус точки перетаскивания — немедленно возвращаем результат
+            if (distance < this._dragHitArea.radius) {
+                return { type: 'drag', text: this._text, distance: distance };
+            }
+        }
+
+        // ✅ 2. Текстовый прямоугольник (основная область)
         if (this._hitArea) {
             const inX = x >= this._hitArea.x && x <= this._hitArea.x + this._hitArea.width;
             const inY = y >= this._hitArea.y && y <= this._hitArea.y + this._hitArea.height;
@@ -7265,7 +7412,7 @@ class TextRenderer {
             }
         }
 
-        // Drag точка
+        // ✅ 3. Drag точка (резервная проверка, если по какой-то причине не сработал приоритет выше)
         if (this._dragHitArea) {
             const dx = x - this._dragHitArea.x;
             const dy = y - this._dragHitArea.y;
@@ -7965,37 +8112,47 @@ _detachAllPrimitivesForSymbol(symbolKey) {
     this._texts = this._texts.filter(item => item.text.symbolKey !== symbolKey);
 }
 
-hitTest(x, y) {
-    // Приоритет: выбранный текст проверяем первым
-    if (this._selectedText) {
-        const selItem = this._texts.find(item => item.text === this._selectedText);
-        if (selItem && selItem.primitive?._paneView?._renderer) {
+    hitTest(x, y) {
+        // 1. Абсолютный приоритет: уже выбранный текст
+        if (this._selectedText) {
+            const selItem = this._texts.find(item => item.text === this._selectedText);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return { text: this._selectedText, type: hit.type, distance: hit.distance };
+                } catch (e) {}
+            }
+        }
+
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._texts.length - 1; i >= 0; i--) {
+            const item = this._texts[i];
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.text === this._selectedText) continue;
+
             try {
-                const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
-                if (hit) return { text: this._selectedText, type: hit.type, distance: hit.distance };
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = { text: item.text, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = { text: item.text, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    }
+                }
             } catch (e) {}
         }
+
+        return bestHit;
     }
-    
-    let bestHit = null;
-    let bestDistance = Infinity;
-    
-    for (const item of this._texts) {
-        if (!item.primitive?._paneView?._renderer) continue;
-        if (item.text === this._selectedText) continue;
-        
-        try {
-            const hit = item.primitive._paneView._renderer.hitTest(x, y);
-            
-            if (hit && hit.distance !== undefined && hit.distance < bestDistance) {
-                bestHit = { text: item.text, type: hit.type, distance: hit.distance };
-                bestDistance = hit.distance;
-            }
-        } catch (e) {}
-    }
-    
-    return bestHit;
-}
    _handleChartClick(event) {
     if (!this._isDrawingMode) return;
     
@@ -8706,9 +8863,30 @@ class TradeLevelRenderer {
         ctx.quadraticCurveTo(x, y, x + r, y);
     }
 
-    hitTest(x, y) {
+     hitTest(x, y) {
         let bestHit = null;
         let bestDistance = Infinity;
+
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точки перетаскивания (если они видны)
+        if (this._trade.showDragPoints) {
+            for (const area of this._hitAreas) {
+                if (area.type === 'entry' || area.type === 'sl' || area.type === 'tp') {
+                    // Точка перетаскивания всегда рисуется в координатах (area.x, area.y)
+                    const pointX = area.x; 
+                    const pointY = area.y;
+                    const dx = x - pointX;
+                    const dy = y - pointY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей для удобного клика
+                    if (distance < 12) {
+                        return { type: area.type, trade: area.trade, distance };
+                    }
+                }
+            }
+        }
+
+        // ✅ 2. Обычная проверка с уменьшенным буфером
         for (const area of this._hitAreas) {
             if (area.type === 'entry') {
                 const dx = x - area.x;
@@ -8719,6 +8897,7 @@ class TradeLevelRenderer {
                     bestDistance = distance;
                 }
             } else {
+                // Буфер уже уменьшен в методе draw до 4 * pixelRatio
                 if (x >= area.x1 && x <= area.x2) {
                     const distance = Math.abs(y - area.y);
                     if (distance < area.buffer && distance < bestDistance) {
@@ -9035,21 +9214,45 @@ class TradeLevelManager {
 
     setMagnetEnabled(enabled) { this._magnetEnabled = enabled; }
 
-    hitTest(x, y) {
+      hitTest(x, y) {
+        // 1. Приоритет: уже выбранная сделка (чтобы не соскальзывать при перетаскивании)
         if (this._selectedTrade) {
             const item = this._trades.find(t => t.trade === this._selectedTrade);
             if (item && item.primitive) {
-                const hit = item.primitive._paneView._renderer.hitTest(x, y);
-                if (hit) return hit;
+                try {
+                    const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return hit;
+                } catch (e) {}
             }
         }
-        for (const item of this._trades) {
+
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые сделки находятся "поверх" старых)
+        for (let i = this._trades.length - 1; i >= 0; i--) {
+            const item = this._trades[i];
             if (item.trade === this._selectedTrade) continue;
             if (!item.primitive) continue;
-            const hit = item.primitive._paneView._renderer.hitTest(x, y);
-            if (hit) return hit;
+
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                }
+            } catch (e) {}
         }
-        return null;
+        return bestHit;
     }
 
     _setupEventListeners() {
@@ -9704,7 +9907,9 @@ document.addEventListener('keydown', (e) => {
     
 
     // Y - линейка
-    if (e.code === 'KeyY' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+   document.addEventListener('mousedown', function(e) {
+    // Проверяем, что нажата средняя кнопка мыши (колесико)
+    if (e.button === 1) {
         e.preventDefault();
         if (window.rulerLineManager) {
             const ns = !window.rulerLineManager._isDrawingMode;
@@ -9717,6 +9922,7 @@ document.addEventListener('keydown', (e) => {
             if (btn) btn.style.background = ns ? '#4A90E2' : '';
         }
     }
+});
     
     // T - текст
     if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
