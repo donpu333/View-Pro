@@ -132,6 +132,10 @@ class ChartManager {
         this._volumeDataCache = null;
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
+        // Настройки шкалы объёма централизованы здесь, чтобы их можно было
+        // переприменять из ЛЮБОГО места, где меняются данные volumeSeries
+        // (см. _applyVolumeScaleOptions ниже) — это и есть фикс бага
+        // "гистограмма растягивается на весь график".
         this._volumeScaleMargins = { top: 0.85, bottom: 0 };
 
         // ============ FETCH TIMEOUT ============
@@ -190,53 +194,52 @@ class ChartManager {
         this._formatCache = new Map();
         this._lastCrosshairColor = null;
 
-        // ============ СОЗДАНИЕ ГРАФИКА ============
-        this.chart = LightweightCharts.createChart(container, {
-            layout: { background: { color: '#000000' }, textColor: '#808080' },
-            grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-            handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
-            handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
-            animation: { duration: 0 },
-            timeScale: {
-                timeVisible: true, 
-                secondsVisible: false, 
-                borderColor: '#333333', 
-                barSpacing: this._savedBarSpacing || 25,
-                minBarSpacing: 1, 
-                fixLeftEdge: false, 
-                fixRightEdge: false, 
-                rightOffset: 12,
-                shiftVisibleRangeOnNewBar: true,
-                tickMarkFormatter: (time) => {
-                    const date = new Date(time * 1000);
-                    return date.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
-                }
-            },
-            rightPriceScale: {
-                borderColor: '#333333', borderVisible: true, scaleMargins: { top: 0.1, bottom: 0.1 },
-                autoScale: false, entireTextOnly: true,
-            },
-            localization: {
-                timeFormatter: (time) => {
-                    return new Date(time * 1000).toLocaleString('ru-RU', {
-                        timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                    });
-                }
-            }
-        });
-
-        // ============ СОЗДАНИЕ ШКАЛЫ ОБЪЁМА ============
-        if (typeof this.chart.addPriceScale === 'function') {
-            this.chart.addPriceScale({
-                id: 'volume',
-                scaleMargins: { top: 0.85, bottom: 0 },
-                borderColor: '#333333',
-                borderVisible: true,
-                autoScale: false
+       // ============ СОЗДАНИЕ ГРАФИКА ============
+this.chart = LightweightCharts.createChart(container, {
+    layout: { background: { color: '#000000' }, textColor: '#808080' },
+    grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+    handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+    animation: { duration: 0 },
+    timeScale: {
+        timeVisible: true, 
+        secondsVisible: false, 
+        borderColor: '#333333', 
+        barSpacing: this._savedBarSpacing || 25,
+        minBarSpacing: 1, 
+        fixLeftEdge: false, 
+        fixRightEdge: false, 
+        rightOffset: 12,
+        shiftVisibleRangeOnNewBar: true,
+        tickMarkFormatter: (time) => {
+            const date = new Date(time * 1000);
+            return date.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
+        }
+    },
+    rightPriceScale: {
+        borderColor: '#333333', borderVisible: true, scaleMargins: { top: 0.1, bottom: 0.1 },
+        autoScale: false, entireTextOnly: true,
+    },
+    localization: {
+        timeFormatter: (time) => {
+            return new Date(time * 1000).toLocaleString('ru-RU', {
+                timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
             });
         }
-        
+    }
+});
+
+// ============ СОЗДАНИЕ ШКАЛЫ ОБЪЁМА (обязательно для v4+) ============
+if (typeof this.chart.addPriceScale === 'function') {
+    this.chart.addPriceScale({
+        id: 'volume',
+        scaleMargins: { top: 0.85, bottom: 0 },
+        borderColor: '#333333',
+        borderVisible: true,
+        autoScale: false
+    });
+}
         // ============ ЦВЕТА ПО УМОЛЧАНИЮ ============
         const _DEFAULT_BULLISH = '#26a69a';
         const _DEFAULT_BEARISH = '#ef5350';
@@ -289,6 +292,11 @@ class ChartManager {
                     priceScaleId: 'volume', priceFormat: { type: 'volume' }, color: '#26a69a', lineWidth: 1,
                     lastValueVisible: false, priceLineVisible: false, title: ''
                 });
+                // ФИКС: раньше опции шкалы объёма выставлялись инлайном только здесь.
+                // Теперь это единая точка входа (_applyVolumeScaleOptions), которая
+                // вызывается ПОВСЮДУ, где меняются данные volumeSeries — иначе
+                // после setData/update в других методах autoScale иногда
+                // "раздувал" гистограмму на весь график в обход scaleMargins.
                 this._applyVolumeScaleOptions();
                 this.bullishColor = this.bullishColor || initialBullish;
                 this.bearishColor = this.bearishColor || initialBearish;
@@ -357,16 +365,21 @@ class ChartManager {
         }, 1000);
     }
 
-    // ============ ШКАЛА ОБЪЁМА ============
+    // ============ ШКАЛА ОБЪЁМА (ФИКС БАГА "НА ВЕСЬ ЭКРАН") ============
+    // Единая точка применения опций шкалы 'volume'. Вызывать после КАЖДОГО
+    // setData()/update() на volumeSeries, а не только при resize/смене типа
+    // графика — иначе lightweight-charts может проигнорировать scaleMargins
+    // при внутреннем автоскейле и растянуть гистограмму на всю высоту,
+    // перекрыв свечи.
     _applyVolumeScaleOptions() {
         if (!this.chart) return;
         const volumeScale = this.chart.priceScale('volume');
         if (!volumeScale) return;
         volumeScale.applyOptions({
-            scaleMargins: this._volumeScaleMargins,
+            scaleMargins: this._volumeScaleMargins, // {top:0.85, bottom:0} — объём живёт в нижних ~15%
             visible: true,
             borderVisible: true,
-            autoScale: false
+            autoScale: false // обязательно false — см. комментарий выше
         });
     }
 
@@ -458,6 +471,9 @@ class ChartManager {
 
     _applyPriceLineColor(series, color) {
         if (!series || !color) return;
+        // PERF: пропускаем applyOptions, если цвет для ЭТОЙ конкретной серии не изменился.
+        // Храним последний применённый цвет прямо на объекте серии, а не глобально,
+        // иначе при переключении candle/bar с одинаковым цветом линия не обновится.
         if (series.__lastLineColor === color) return;
         series.applyOptions({
             priceLineColor: color,
@@ -1054,7 +1070,7 @@ class ChartManager {
     }
 
     _performUpdate() {
-        if (!this.chartData.length || this._updatesSuspended || !this._isChartValid() || this._switchingSymbol) return;
+        if (!this.chartData.length || this._updatesSuspended || !this._isChartValid()) return;
         const cachedPrecision = localStorage.getItem(`precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`);
         if (cachedPrecision) {
             if (this._lastAppliedPrecision !== cachedPrecision) {
@@ -1081,6 +1097,12 @@ class ChartManager {
         this.scheduleUpdatePosition();
     }
 
+    // PERF: цена может прилетать по WS десятки раз в секунду. Раньше вся тяжёлая
+    // логика (series.update + applyOptions на price-line + drawings redraw) выполнялась
+    // синхронно на КАЖДЫЙ тик — это и было основным источником подтормаживания.
+    // Теперь тик только запоминается, а реальная обработка батчится через
+    // requestAnimationFrame — максимум 1 раз за кадр (~60 раз/сек), как делает
+    // TradingView и как уже сделано для crosshair в этом же классе.
     _syncPriceLine(price) {
         if (price && typeof price === 'object') {
             if (typeof price.price === 'number') price = price.price;
@@ -1090,8 +1112,7 @@ class ChartManager {
             else { console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', price); return; }
         }
         if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
-        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
-            this._isSwitchingInterval || this._switchingSymbol) return;
+        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
 
         this._pendingPriceValue = price;
         if (this._priceUpdateRafId !== null) return;
@@ -1104,8 +1125,7 @@ class ChartManager {
     }
 
     _applyPriceUpdate(price) {
-        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || 
-            this._isSwitchingInterval || this._switchingSymbol) return;
+        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series || !this.chartData || this.chartData.length === 0) return;
         const lastCandle = this.chartData[this.chartData.length - 1];
@@ -1341,6 +1361,9 @@ class ChartManager {
                 this.volumeSeries.setData(volumeData);
                 this._volumeDataDirty = false; 
                 this._lastVolumeUpdateIndex = this.chartData.length - 1;
+                // ФИКС: переприменяем margins/autoScale сразу после setData —
+                // именно смена символа/интервала (частый setData с новыми
+                // порядками величин объёма) была самым частым триггером бага.
                 this._applyVolumeScaleOptions();
             }
             
@@ -1404,6 +1427,9 @@ class ChartManager {
                     if (this._isChartValid()) {
                         const ps = this.chart.priceScale('right');
                         if (ps) { try { ps.applyOptions({ autoScale: false }); } catch(e) {} }
+                        // ФИКС: правая шкала (свечи) переключает autoScale true→false
+                        // через два кадра — на этом же кадре переутверждаем и шкалу
+                        // объёма, чтобы её margins не "поехали" вслед за этим.
                         this._applyVolumeScaleOptions();
                     }
                     if (this.timerManager && this._isChartValid() && this.lastCandle) {
@@ -1876,6 +1902,8 @@ class ChartManager {
                         }
                         
                         try { priceScale.applyOptions({ autoScale: false }); } catch (e) {}
+                        // ФИКС: авто-скейл ЦЕНОВОЙ (right) шкалы иногда триггерит
+                        // побочный пересчёт и у шкалы объёма — переутверждаем её здесь.
                         this._applyVolumeScaleOptions();
                         
                         this._autoScalePending = false;
