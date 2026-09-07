@@ -11,8 +11,6 @@ class WebSocketManager {
         this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
-        this._isSwitching = false;
-        this._switchingTimeout = null;
         this._lastKlineEventTime = 0;
         
         this.currentSymbol = 'BTCUSDT';
@@ -76,23 +74,18 @@ class WebSocketManager {
         
         if (!isChanged && this.isConnected) return;
         
-        // Устанавливаем флаг переключения
-        this._isSwitching = true;
-        
         this.currentSymbol = symbol;
         this.currentInterval = interval;
         this.currentExchange = exchange;
         this.currentMarketType = marketType;
         this.retryCount = 0;
         
-        // Сбрасываем время события и фильтр
+        // Сбрасываем фильтр времени при переключении
         this._lastKlineEventTime = 0;
         
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
         if (this._connectDebounceTimer) { clearTimeout(this._connectDebounceTimer); }
-        if (this._switchingTimeout) { clearTimeout(this._switchingTimeout); }
         
-        // Увеличиваем debounce до 300мс для защиты от дребезга
         this._connectDebounceTimer = setTimeout(() => {
             this._doConnect();
         }, 300);
@@ -129,10 +122,7 @@ class WebSocketManager {
             ws = new WebSocket(url);
         } catch (e) {
             console.error(`❌ Ошибка создания ${type} WebSocket:`, e);
-            if (generation === this._connectGeneration) {
-                this.isConnecting = false;
-                this._resetSwitchingFlag();
-            }
+            if (generation === this._connectGeneration) this.isConnecting = false;
             this._scheduleReconnect(3000);
             return null;
         }
@@ -177,9 +167,6 @@ class WebSocketManager {
                 this.retryCount = 0;
                 console.log('✅ Оба WebSocket подключены');
                 
-                // Сбрасываем флаг переключения после подключения
-                this._resetSwitchingFlag();
-                
                 if (this.chartManager && this.chartManager.onWebSocketConnected) {
                     this.chartManager.onWebSocketConnected();
                 }
@@ -187,6 +174,7 @@ class WebSocketManager {
         };
         
         ws.onmessage = (event) => {
+            // ГЛАВНАЯ ЗАЩИТА: проверка поколения
             if (generation !== this._connectGeneration) return;
             
             this._lastRelevantMessageTime = Date.now();
@@ -199,7 +187,6 @@ class WebSocketManager {
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
             this.isConnected = false;
             this.isConnecting = false;
-            this._resetSwitchingFlag();
             
             if (event.code === 1000 || event.code === 1005 || event.code === 1006) return;
             
@@ -226,17 +213,6 @@ class WebSocketManager {
         return ws;
     }
 
-    _resetSwitchingFlag() {
-        if (this._switchingTimeout) {
-            clearTimeout(this._switchingTimeout);
-            this._switchingTimeout = null;
-        }
-        this._switchingTimeout = setTimeout(() => {
-            this._isSwitching = false;
-            this._switchingTimeout = null;
-        }, 500);
-    }
-
     clearKlineQueue() {
         this._lastKlineEventTime = 0;
     }
@@ -248,12 +224,6 @@ class WebSocketManager {
             
             const chartManager = this.chartManager || window.chartManager;
             if (!chartManager) return;
-            
-            // Игнорируем данные если идет переключение
-            if (this._isSwitching) {
-                console.log('⏳ Переключение, данные игнорируются');
-                return;
-            }
             
             if (this.currentExchange === 'binance') {
                 if (raw.e === 'kline' && raw.k) {
@@ -419,7 +389,12 @@ class WebSocketManager {
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
         
-        // Очищаем очередь при переключении
+        // Мгновенная очистка графика перед переключением
+        if (this.chartManager && typeof this.chartManager.clearChart === 'function') {
+            this.chartManager.clearChart();
+        }
+        
+        // Сбрасываем фильтр времени
         this.clearKlineQueue();
         
         this.connect(symbol, interval, exchange, marketType);
@@ -428,7 +403,6 @@ class WebSocketManager {
     closeAll() {
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
         if (this._connectDebounceTimer) { clearTimeout(this._connectDebounceTimer); this._connectDebounceTimer = null; }
-        if (this._switchingTimeout) { clearTimeout(this._switchingTimeout); this._switchingTimeout = null; }
         this._connectGeneration++;
         this._closeSocket();
     }
