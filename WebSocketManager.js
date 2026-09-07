@@ -8,13 +8,9 @@ class WebSocketManager {
         this.isConnected = false;
         this.isConnecting = false;
         this._connectGeneration = 0;
-        this._lastKlineTime = 0;
-        this._lastMessageTime = 0;
         this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
-        this._dataBuffer = new Map();
-        this._flushTimer = null;
         this._isSwitching = false;
         this._switchingTimeout = null;
         this._lastKlineEventTime = 0;
@@ -27,9 +23,7 @@ class WebSocketManager {
         this.binanceSpotOnlyTokens = ['BTCDOMUSDT', 'DEFIUSDT', 'ALTUSDT', 'NFTUSDT', 'TOPCOINSUSDT'];
         
         this._visibilityHandler = () => {
-            if (!document.hidden) {
-                this._onTabVisible();
-            }
+            if (!document.hidden) this._onTabVisible();
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
         
@@ -45,7 +39,6 @@ class WebSocketManager {
     }
 
     _autoConnect() {
-        console.log('🚀 WebSocketManager: автоподключение...');
         this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
 
@@ -76,16 +69,12 @@ class WebSocketManager {
             marketType = 'spot';
         }
         
-        // Проверяем, реально ли что-то изменилось
         const isChanged = symbol !== this.currentSymbol || 
                          interval !== this.currentInterval || 
                          exchange !== this.currentExchange || 
                          marketType !== this.currentMarketType;
         
-        if (!isChanged && this.isConnected) {
-            console.log('⏭️ Параметры не изменились, пропускаем');
-            return;
-        }
+        if (!isChanged && this.isConnected) return;
         
         // Устанавливаем флаг переключения
         this._isSwitching = true;
@@ -96,29 +85,14 @@ class WebSocketManager {
         this.currentMarketType = marketType;
         this.retryCount = 0;
         
-        // Очищаем буфер при переключении
-        this._dataBuffer.clear();
+        // Сбрасываем время события и фильтр
         this._lastKlineEventTime = 0;
         
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
+        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        if (this._connectDebounceTimer) { clearTimeout(this._connectDebounceTimer); }
+        if (this._switchingTimeout) { clearTimeout(this._switchingTimeout); }
         
-        if (this._connectDebounceTimer) {
-            clearTimeout(this._connectDebounceTimer);
-        }
-        
-        if (this._flushTimer) {
-            clearTimeout(this._flushTimer);
-            this._flushTimer = null;
-        }
-        
-        if (this._switchingTimeout) {
-            clearTimeout(this._switchingTimeout);
-        }
-        
-        // Увеличиваем debounce при быстрых переключениях
+        // Увеличиваем debounce до 300мс для защиты от дребезга
         this._connectDebounceTimer = setTimeout(() => {
             this._doConnect();
         }, 300);
@@ -133,8 +107,8 @@ class WebSocketManager {
         const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
         
         if (this.currentExchange === 'binance') {
-            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
-            const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;
+            const klineUrl = `wss://fstream.binance.com/ws/${fs}@kline_${this.currentInterval}`;
+            const tradeUrl = `wss://fstream.binance.com/ws/${fs}@aggTrade`;
             
             console.log('🔌 KLINE:', klineUrl);
             console.log('🔌 TRADE:', tradeUrl);
@@ -172,7 +146,7 @@ class WebSocketManager {
                 return;
             }
 
-            console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
+            console.log(`✅ ${type.toUpperCase()} WebSocket подключён (Gen: ${generation})`);
             
             if (type === 'bybit') {
                 const bi = this.getExchangeInterval(this.currentInterval, this.currentExchange);
@@ -214,7 +188,8 @@ class WebSocketManager {
         
         ws.onmessage = (event) => {
             if (generation !== this._connectGeneration) return;
-            this._lastMessageTime = Date.now();
+            
+            this._lastRelevantMessageTime = Date.now();
             this._handleMessage(event.data, type);
         };
         
@@ -226,9 +201,7 @@ class WebSocketManager {
             this.isConnecting = false;
             this._resetSwitchingFlag();
             
-            if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
-                return;
-            }
+            if (event.code === 1000 || event.code === 1005 || event.code === 1006) return;
             
             if (event.code === 1008) {
                 if (this.currentExchange === 'binance' && 
@@ -265,26 +238,16 @@ class WebSocketManager {
     }
 
     clearKlineQueue() {
-        this._dataBuffer.clear();
         this._lastKlineEventTime = 0;
-        if (this._flushTimer) {
-            clearTimeout(this._flushTimer);
-            this._flushTimer = null;
-        }
     }
 
     _handleMessage(rawData, type) {
         try {
             const raw = JSON.parse(rawData);
-            
             if (raw.op === 'pong' || raw.op === 'subscribe') return;
             
             const chartManager = this.chartManager || window.chartManager;
-            
-            if (!chartManager) {
-                console.warn('⚠️ chartManager не найден');
-                return;
-            }
+            if (!chartManager) return;
             
             // Игнорируем данные если идет переключение
             if (this._isSwitching) {
@@ -298,34 +261,21 @@ class WebSocketManager {
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
                     if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
-                    this._lastRelevantMessageTime = Date.now();
-                    
-                    // Проверяем время события
+                    // Фильтрация по времени события
                     const eventTime = raw.E || Date.now();
                     if (eventTime <= this._lastKlineEventTime) return;
                     this._lastKlineEventTime = eventTime;
                     
                     let candleTime = Math.floor(k.t / 1000);
-                    
                     const intervalSeconds = this._getIntervalSeconds(k.i);
                     const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                    if (candleTime !== expectedTime) candleTime = expectedTime;
                     
-                    if (candleTime !== expectedTime) {
-                        console.warn(`🛑 WS невыровненное время: ${candleTime} → ${expectedTime}`);
-                        candleTime = expectedTime;
-                    }
-                    
-                    this._lastKlineTime = candleTime;
-                    
-                    // Передаем данные напрямую с метаданными
                     const candleData = {
                         time: candleTime,
-                        open: parseFloat(k.o),
-                        high: parseFloat(k.h),
-                        low: parseFloat(k.l),
-                        close: parseFloat(k.c),
-                        volume: parseFloat(k.v),
-                        quoteVolume: parseFloat(k.q || 0),
+                        open: parseFloat(k.o), high: parseFloat(k.h),
+                        low: parseFloat(k.l), close: parseFloat(k.c),
+                        volume: parseFloat(k.v), quoteVolume: parseFloat(k.q || 0),
                         isClosed: k.x === true
                     };
                     
@@ -334,7 +284,8 @@ class WebSocketManager {
                             symbol: this.currentSymbol,
                             interval: this.currentInterval,
                             exchange: this.currentExchange,
-                            marketType: this.currentMarketType
+                            marketType: this.currentMarketType,
+                            generation: this._connectGeneration
                         });
                     }
                 }
@@ -343,8 +294,6 @@ class WebSocketManager {
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
                     if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
-                    this._lastRelevantMessageTime = Date.now();
-                    
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
                         if (typeof chartManager._syncPriceLine === 'function') {
@@ -353,7 +302,8 @@ class WebSocketManager {
                                 price: price,
                                 symbol: this.currentSymbol,
                                 exchange: this.currentExchange,
-                                marketType: this.currentMarketType
+                                marketType: this.currentMarketType,
+                                generation: this._connectGeneration
                             });
                         }
                     }
@@ -363,43 +313,29 @@ class WebSocketManager {
                 const parts = raw.topic.split('.');
                 let msgSymbol = null;
                 
-                if (raw.topic.startsWith('kline.') && parts.length >= 3) {
-                    msgSymbol = parts[2].toUpperCase();
-                } else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) {
-                    msgSymbol = parts[1].toUpperCase();
-                }
+                if (raw.topic.startsWith('kline.') && parts.length >= 3) msgSymbol = parts[2].toUpperCase();
+                else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) msgSymbol = parts[1].toUpperCase();
                 
                 if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
 
-                this._lastRelevantMessageTime = Date.now();
-                
                 const eventTime = raw.ts || Date.now();
                 if (eventTime <= this._lastKlineEventTime) return;
                 this._lastKlineEventTime = eventTime;
-                
+
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
                     const k = raw.data[0];
-                    
                     let candleTime = Math.floor(k.start / 1000);
                     
                     if (parts.length >= 2) {
-                        const intervalStr = parts[1];
-                        const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
-                        const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
-                        
-                        if (candleTime !== expectedTime) {
-                            candleTime = expectedTime;
-                        }
+                        const intervalSeconds = this._getIntervalSecondsFromBybit(parts[1]);
+                        candleTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
                     }
                     
                     const candleData = {
                         time: candleTime,
-                        open: parseFloat(k.open),
-                        high: parseFloat(k.high),
-                        low: parseFloat(k.low),
-                        close: parseFloat(k.close),
-                        volume: parseFloat(k.volume),
-                        quoteVolume: parseFloat(k.turnover || 0),
+                        open: parseFloat(k.open), high: parseFloat(k.high),
+                        low: parseFloat(k.low), close: parseFloat(k.close),
+                        volume: parseFloat(k.volume), quoteVolume: parseFloat(k.turnover || 0),
                         isClosed: k.confirm === true
                     };
                     
@@ -408,13 +344,13 @@ class WebSocketManager {
                             symbol: this.currentSymbol,
                             interval: this.currentInterval,
                             exchange: this.currentExchange,
-                            marketType: this.currentMarketType
+                            marketType: this.currentMarketType,
+                            generation: this._connectGeneration
                         });
                     }
                 } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
                     const tradeData = raw.data[0];
                     const price = parseFloat(tradeData.p);
-                    
                     if (!isNaN(price) && price > 0) {
                         if (typeof chartManager._syncPriceLine === 'function') {
                             chartManager._syncPriceLine({
@@ -422,7 +358,8 @@ class WebSocketManager {
                                 price: price,
                                 symbol: this.currentSymbol,
                                 exchange: this.currentExchange,
-                                marketType: this.currentMarketType
+                                marketType: this.currentMarketType,
+                                generation: this._connectGeneration
                             });
                         }
                     }
@@ -434,33 +371,21 @@ class WebSocketManager {
     }
 
     _getIntervalSeconds(interval) {
-        const map = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-            '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
-            '1d': 86400, '1w': 604800, '1M': 2592000
-        };
+        const map = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200, '1d': 86400, '1w': 604800, '1M': 2592000 };
         return map[interval] || 3600;
     }
 
     _getIntervalSecondsFromBybit(intervalStr) {
-        const map = {
-            '1': 60, '3': 180, '5': 300, '15': 900, '30': 1800,
-            '60': 3600, '240': 14400, '360': 21600, '720': 43200,
-            'D': 86400, 'W': 604800, 'M': 2592000
-        };
+        const map = { '1': 60, '3': 180, '5': 300, '15': 900, '30': 1800, '60': 3600, '240': 14400, '360': 21600, '720': 43200, 'D': 86400, 'W': 604800, 'M': 2592000 };
         return map[intervalStr] || 3600;
     }
 
     _scheduleReconnect(delay = null) {
         if (this.reconnectTimer) return;
-        
         if (delay === null) {
             this.retryCount++;
             delay = Math.min(5000 * Math.pow(1.5, this.retryCount - 1), 60000);
         }
-        
-        console.log(`🔄 Переподключение через ${delay}ms (попытка ${this.retryCount})`);
-        
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             this._doConnect();
@@ -470,28 +395,20 @@ class WebSocketManager {
     _closeSocket() {
         const closeWs = (ws) => {
             if (!ws) return;
-            
-            if (ws._pingInterval) {
-                clearInterval(ws._pingInterval);
-                ws._pingInterval = null;
-            }
-            
-            ws.onopen = null;
-            ws.onclose = null;
-            ws.onerror = null;
-            ws.onmessage = null;
-            
+            if (ws._pingInterval) { clearInterval(ws._pingInterval); ws._pingInterval = null; }
+            ws.onopen = null; ws.onclose = null; ws.onerror = null; ws.onmessage = null;
             try {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.close(1000, 'User disconnect');
-                } else if (ws.readyState === WebSocket.CONNECTING) {
-                    ws.close();
-                }
+                if (ws.readyState === WebSocket.OPEN) ws.close(1000, 'User disconnect');
+                else if (ws.readyState === WebSocket.CONNECTING) ws.close();
             } catch (e) {}
         };
         
-        closeWs(this.wsKline);
-        closeWs(this.wsTrade);
+        if (this.wsKline === this.wsTrade) {
+            closeWs(this.wsKline);
+        } else {
+            closeWs(this.wsKline);
+            closeWs(this.wsTrade);
+        }
         
         this.wsKline = null;
         this.wsTrade = null;
@@ -502,57 +419,33 @@ class WebSocketManager {
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
         
-        // Очищаем буфер немедленно
+        // Очищаем очередь при переключении
         this.clearKlineQueue();
         
         this.connect(symbol, interval, exchange, marketType);
     }
 
     closeAll() {
-        console.log('🔌 Закрытие WebSocket...');
-        if (this.reconnectTimer) { 
-            clearTimeout(this.reconnectTimer); 
-            this.reconnectTimer = null; 
-        }
-        if (this._connectDebounceTimer) { 
-            clearTimeout(this._connectDebounceTimer); 
-            this._connectDebounceTimer = null; 
-        }
-        if (this._flushTimer) {
-            clearTimeout(this._flushTimer);
-            this._flushTimer = null;
-        }
-        if (this._switchingTimeout) {
-            clearTimeout(this._switchingTimeout);
-            this._switchingTimeout = null;
-        }
+        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        if (this._connectDebounceTimer) { clearTimeout(this._connectDebounceTimer); this._connectDebounceTimer = null; }
+        if (this._switchingTimeout) { clearTimeout(this._switchingTimeout); this._switchingTimeout = null; }
         this._connectGeneration++;
-        this._dataBuffer.clear();
         this._closeSocket();
     }
     
     ensureConnected() {
-        const klineState = this.wsKline?.readyState;
-        const tradeState = this.wsTrade?.readyState;
-        
-        const klineOk = klineState === WebSocket.OPEN || klineState === WebSocket.CONNECTING;
-        const tradeOk = tradeState === WebSocket.OPEN || tradeState === WebSocket.CONNECTING;
-        
-        if (!klineOk || !tradeOk) {
-            console.log('⚠️ WebSocket не подключён, переподключаемся...');
-            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
-        }
+        const klineOk = this.wsKline?.readyState === WebSocket.OPEN || this.wsKline?.readyState === WebSocket.CONNECTING;
+        const tradeOk = this.wsTrade?.readyState === WebSocket.OPEN || this.wsTrade?.readyState === WebSocket.CONNECTING;
+        if (!klineOk || !tradeOk) this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
 
     forceReconnect() {
-        console.log('🔄 Принудительное переподключение...');
         this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
 
     _onTabVisible() {
         const now = Date.now();
         if (this._lastRelevantMessageTime && (now - this._lastRelevantMessageTime > 10000)) {
-            console.log('🔄 Нет данных, переподключаемся');
             this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
         } else {
             this.ensureConnected();
@@ -560,16 +453,9 @@ class WebSocketManager {
     }
 
     destroy() {
-        console.log('🗑️ Уничтожение WebSocketManager...');
         document.removeEventListener('visibilitychange', this._visibilityHandler);
-        
-        if (this._statusCheckInterval) {
-            clearInterval(this._statusCheckInterval);
-            this._statusCheckInterval = null;
-        }
-        
+        if (this._statusCheckInterval) { clearInterval(this._statusCheckInterval); this._statusCheckInterval = null; }
         this.closeAll();
-        console.log('✅ WebSocketManager уничтожен');
     }
 }
 
