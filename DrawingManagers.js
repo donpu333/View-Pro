@@ -8604,7 +8604,6 @@ function getFormattedPriceFromChart(chartManager, price) {
         return Number(price).toFixed(2);
     }
 }
-
 class TradeLevel {
     constructor(entryPrice, stopLossPrice, options = {}) {
         this.entryPrice = entryPrice;
@@ -8615,7 +8614,11 @@ class TradeLevel {
         this.manualTP = options.manualTP || false;
         this.entryTime = options.time || Date.now() / 1000;
         this.anchorTime = this.entryTime;
-        this.id = `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        // FIX: use crypto.randomUUID when available for a truly unique id,
+        // fall back to the old scheme in environments without it.
+        this.id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+            ? crypto.randomUUID()
+            : `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
         this.symbolKey = options.symbolKey || null;
         this.symbol = options.symbol || null;
         this.exchange = options.exchange || null;
@@ -8868,6 +8871,8 @@ class TradeLevelRenderer {
                 if (distance < area.radius && distance < bestDistance) {
                     bestHit = { type: area.type, trade: area.trade, distance };
                     bestDistance = distance;
+                    // FIX (minor perf): can't do better than an exact hit, stop early.
+                    if (bestDistance === 0) return bestHit;
                 }
             }
         }
@@ -8880,6 +8885,7 @@ class TradeLevelRenderer {
                 if (distance < area.buffer && distance < bestDistance) {
                     bestHit = { type: area.type, trade: area.trade, distance };
                     bestDistance = distance;
+                    if (bestDistance === 0) return bestHit;
                 }
             }
         }
@@ -8947,12 +8953,19 @@ class TradeLevelManager {
         this._isWaitingForSL = false;
         this._pixelRatio = window.devicePixelRatio || 1;
         this._magnetEnabled = true;
+        // FIX: magnet snap radius was hardcoded to 150px inside _snapToCandle,
+        // which covers almost the whole chart height and made the click point
+        // jump to the nearest OHLC level almost every time. Moved it here as a
+        // small, sane default (12px) so it only snaps when you click genuinely
+        // close to a high/low/close.
+        this._magnetPriceThresholdPx = 12;
         this._selectedDirection = 'long';
         this._editingTrade = null;
         this._tpManuallySet = false;
         this._pendingTradeTime = null;
         this._lastMouseClientX = 0;
         this._lastMouseClientY = 0;
+        this._tempTrade = null;
 
         if (window.drawingLoaderCoordinator) window.drawingLoaderCoordinator.register(this, 'tradelevel');
 
@@ -9240,7 +9253,10 @@ class TradeLevelManager {
             if (this._isDrawingMode) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                this._handleDrawingClick(e, x, y);
+                // FIX: _handleDrawingClick never used the x/y args passed here
+                // (it recomputed its own CSS-pixel coordinates internally),
+                // so the unused params were dropped from its signature.
+                this._handleDrawingClick(e);
                 return;
             }
             const hit = this.hitTest(x, y);
@@ -9273,6 +9289,30 @@ class TradeLevelManager {
             const rect = container.getBoundingClientRect();
             const x = (e.clientX - rect.left) * this._pixelRatio;
             const y = (e.clientY - rect.top) * this._pixelRatio;
+
+            // FIX: live "ghost" preview of the SL line while waiting for the
+            // second click. We already created _tempTrade on the first click,
+            // so just keep its stopLossPrice glued to the cursor and redraw —
+            // this reuses the existing render pipeline instead of a new overlay.
+            if (this._isDrawingMode && this._isWaitingForSL && this._tempTrade && this._drawingEntry) {
+                const cssX = e.clientX - rect.left;
+                const cssY = e.clientY - rect.top;
+                let price = this._chartManager.coordinateToPrice(cssY);
+                if (price !== null && !isNaN(price)) {
+                    if (this._magnetEnabled) {
+                        const time = this._chartManager.coordinateToTime(cssX) ?? this._drawingEntry.time;
+                        const snapped = this._snapToCandle(price, time);
+                        price = snapped.price;
+                    }
+                    this._tempTrade.stopLossPrice = price;
+                    this._tempTrade.manualTP = false;
+                    this._tempTrade.update();
+                    this._requestRedraw();
+                }
+                container.style.cursor = 'crosshair';
+                return;
+            }
+
             if (this._potentialDrag && !this._isDragging) {
                 const dx = Math.abs(x - this._potentialDrag.startX);
                 const dy = Math.abs(y - this._potentialDrag.startY);
@@ -9359,7 +9399,9 @@ class TradeLevelManager {
         container.addEventListener('contextmenu', (e) => { this._handleContextMenu(e); });
     }
 
-    _handleDrawingClick(e, x, y) {
+    // FIX: dropped the unused (x, y) params — coordinates are computed fresh
+    // below in CSS pixels, which is what coordinateToPrice/Time expect.
+    _handleDrawingClick(e) {
         if (e.target.closest('#tradeCreatePanel')) return;
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
         const cssY = (e.clientY - rect.top);
@@ -9394,6 +9436,19 @@ class TradeLevelManager {
         }
     }
 
+    // FIX: new helper so Escape can cleanly bail out of an in-progress
+    // entry->SL drawing sequence (removes the temp trade too).
+    _cancelDrawing() {
+        if (this._tempTrade) {
+            this.deleteTrade(this._tempTrade.id);
+            this._tempTrade = null;
+        }
+        this._drawingEntry = null;
+        this._isWaitingForSL = false;
+        this._pendingTradeTime = null;
+        this.setDrawingMode(false);
+    }
+
     _handleContextMenu(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -9423,17 +9478,18 @@ class TradeLevelManager {
             menu.style.display = 'flex';
             menu.style.left = e.clientX + 'px';
             menu.style.top = e.clientY + 'px';
+            // FIX: the previous cloneNode()+replaceChild() dance was only
+            // there to strip old handlers, but assigning .onclick directly
+            // already replaces any previous handler — so the clone/replace
+            // was dead weight (and also churned the DOM node identity for
+            // no reason). Just reassign onclick.
             const settingsBtn = document.getElementById('tradeContextSettingsBtn');
             if (settingsBtn) {
-                const newSettingsBtn = settingsBtn.cloneNode(true);
-                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
-                newSettingsBtn.onclick = (ev) => { ev.stopPropagation(); this._showSettings(hit.trade); menu.style.display = 'none'; };
+                settingsBtn.onclick = (ev) => { ev.stopPropagation(); this._showSettings(hit.trade); menu.style.display = 'none'; };
             }
             const deleteBtn = document.getElementById('tradeContextDeleteBtn');
             if (deleteBtn) {
-                const newDeleteBtn = deleteBtn.cloneNode(true);
-                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-                newDeleteBtn.onclick = (ev) => { ev.stopPropagation(); this.deleteTrade(hit.trade.id); menu.style.display = 'none'; };
+                deleteBtn.onclick = (ev) => { ev.stopPropagation(); this.deleteTrade(hit.trade.id); menu.style.display = 'none'; };
             }
         }
     }
@@ -9445,6 +9501,15 @@ class TradeLevelManager {
             if (e.code === 'KeyL' && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 e.preventDefault();
                 this.setDrawingMode(!this._isDrawingMode);
+            }
+            // FIX: Escape now cancels an in-progress drawing sequence
+            // (removes the temp entry trade) instead of leaving the tool
+            // stuck waiting for a second click with no way out but a
+            // second stray click or the L hotkey.
+            if (e.key === 'Escape' && this._isDrawingMode) {
+                e.preventDefault();
+                this._cancelDrawing();
+                return;
             }
             if (e.key === 'Delete' && this._selectedTrade) {
                 e.preventDefault();
@@ -9559,31 +9624,29 @@ class TradeLevelManager {
                 }
             };
         });
+        // FIX: same redundant cloneNode()+replaceChild() pattern as the
+        // context menu buttons — direct .onclick reassignment is sufficient
+        // and avoids needlessly recreating these DOM nodes every time the
+        // panel opens.
         const selectAllBtn = panel.querySelector('#selectAllTimeframes');
         const deselectAllBtn = panel.querySelector('#deselectAllTimeframes');
         const selectMinutesBtn = panel.querySelector('#selectMinutesTimeframes');
         if (selectAllBtn) {
-            const newSelectAll = selectAllBtn.cloneNode(true);
-            selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
-            newSelectAll.onclick = (e) => {
+            selectAllBtn.onclick = (e) => {
                 e.stopPropagation();
                 container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; if(trade) trade.timeframeVisibility[cb.dataset.timeframe] = true; });
                 if(trade) { this._requestRedraw(); this._saveTrades(); }
             };
         }
         if (deselectAllBtn) {
-            const newDeselectAll = deselectAllBtn.cloneNode(true);
-            deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
-            newDeselectAll.onclick = (e) => {
+            deselectAllBtn.onclick = (e) => {
                 e.stopPropagation();
                 container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; if(trade) trade.timeframeVisibility[cb.dataset.timeframe] = false; });
                 if(trade) { this._requestRedraw(); this._saveTrades(); }
             };
         }
         if (selectMinutesBtn) {
-            const newSelectMinutes = selectMinutesBtn.cloneNode(true);
-            selectMinutesBtn.parentNode.replaceChild(newSelectMinutes, selectMinutesBtn);
-            newSelectMinutes.onclick = (e) => {
+            selectMinutesBtn.onclick = (e) => {
                 e.stopPropagation();
                 const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
                 container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
@@ -9764,7 +9827,12 @@ class TradeLevelManager {
                 const dLow = Math.abs(lowY - priceY);
                 const dClose = Math.abs(closeY - priceY);
                 const minDist = Math.min(dHigh, dLow, dClose);
-                if (minDist < 150) {
+                // FIX: this threshold was hardcoded to 150 (px), which on a
+                // typical chart height covers almost the entire visible
+                // range — so the clicked price nearly always snapped to the
+                // nearest high/low/close instead of staying where you clicked.
+                // Now uses the configurable, much smaller _magnetPriceThresholdPx.
+                if (minDist < this._magnetPriceThresholdPx) {
                     if (minDist === dHigh) price = closest.high;
                     else if (minDist === dLow) price = closest.low;
                     else price = closest.close;
@@ -9816,11 +9884,6 @@ if (typeof window !== 'undefined') {
     window.TradeLevelPrimitive = TradeLevelPrimitive;
     window.TradeLevelManager = TradeLevelManager;
 }
-
-
-
-
-
 
 // ========== ГОРЯЧИЕ КЛАВИШИ ==========
 function isTyping() {
