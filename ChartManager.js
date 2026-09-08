@@ -5,7 +5,14 @@ class ChartManager {
         this.lastCandle = null;
         this._loadingSymbol = false;
         this._switchingSymbol = false;
-        this._pendingSymbolSwitch = null;
+        // ФИКС: раньше был отдельный this._pendingSymbolSwitch, который
+        // хранил только "следующую" смену СИМВОЛА и полностью игнорировал
+        // параллельные переключения ТАЙМФРЕЙМА (см. switchInterval ниже).
+        // Теперь это единая очередь "последнего желаемого состояния"
+        // (символ+биржа+тип рынка+интервал), которую заполняют и
+        // switchSymbol(), и switchInterval() — см. _queuePendingSwitch()
+        // и _dispatchPendingSwitch().
+        this._pendingSwitchRequest = null;
         this._generationCounter = 0;
         this._activeGeneration = 0;
         this._updatesSuspended = false;
@@ -1193,8 +1200,14 @@ if (typeof this.chart.addPriceScale === 'function') {
 
     updateLastCandle(candle, eventTime = null, meta = null) {
         if (this._switchingSymbol || this._isSwitchingInterval || this._updatesSuspended || !this._isChartValid()) return;
+        // ФИКС: сравнение символа сделано регистронезависимым. meta.symbol
+        // приходит из WebSocketManager "как есть" (то, что было передано в
+        // connect()), а this.currentSymbol может отличаться по регистру в
+        // редких случаях — раньше строгое сравнение теоретически могло
+        // ложно отбросить ВАЛИДНОЕ обновление. Интервал сравниваем строго,
+        // т.к. он уже нормализован (toLowerCase) в WebSocketManager.
         if (meta && (
-            (meta.symbol && meta.symbol !== this.currentSymbol) ||
+            (meta.symbol && meta.symbol.toUpperCase() !== this.currentSymbol.toUpperCase()) ||
             (meta.interval && meta.interval !== this.currentInterval)
         )) return;
         if (!candle || typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return;
@@ -1526,9 +1539,64 @@ if (typeof this.chart.addPriceScale === 'function') {
         if (this.priceManager) this.priceManager.resume?.();
     }
 
+    // ФИКС: единая очередь "последнего желаемого состояния" графика.
+    // Вызывается и из switchSymbol(), и из switchInterval(), когда в
+    // момент клика менеджер уже занят предыдущим переключением. Хранит
+    // ТОЛЬКО последний запрошенный результат (merge поверх уже
+    // отложенного, либо поверх текущего состояния), а не список всех
+    // промежуточных кликов — поэтому при частых кликах по тикерам/
+    // таймфреймам график не будет последовательно "проскакивать" через
+    // каждый промежуточный (уже неактуальный) вариант.
+    _queuePendingSwitch(partial) {
+        const base = this._pendingSwitchRequest || {
+            symbol: this.currentSymbol,
+            exchange: this.currentExchange,
+            marketType: this.currentMarketType,
+            interval: this.currentInterval
+        };
+        this._pendingSwitchRequest = Object.assign({}, base, partial);
+    }
+
+    // ФИКС: разбирает накопленный отложенный запрос (если он есть) и
+    // применяет ТОЛЬКО реальную разницу с текущим состоянием графика —
+    // если ничего не поменялось (пока текущее переключение шло, значение
+    // "устоялось" на прежнем), никакого лишнего переключения не будет.
+    _dispatchPendingSwitch() {
+        if (!this._pendingSwitchRequest) return;
+        const next = this._pendingSwitchRequest;
+        this._pendingSwitchRequest = null;
+
+        const symbolChanged = next.symbol !== this.currentSymbol ||
+            next.exchange !== this.currentExchange ||
+            next.marketType !== this.currentMarketType;
+        const intervalChanged = next.interval !== this.currentInterval;
+
+        if (!symbolChanged && !intervalChanged) return;
+
+        if (symbolChanged) {
+            if (intervalChanged) {
+                // switchSymbol() всегда фетчит по this.currentInterval,
+                // поэтому если вместе с символом менялся и таймфрейм —
+                // проставляем его заранее, чтобы фетч ушёл сразу с
+                // правильным интервалом (без лишнего повторного switchInterval).
+                this.currentInterval = next.interval;
+                localStorage.setItem('lastTimeframe', next.interval);
+            }
+            this.switchSymbol(next.symbol, next.exchange, next.marketType);
+        } else if (intervalChanged) {
+            this.switchInterval(next.interval);
+        }
+    }
+
     async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol || this._isSwitchingInterval) {
-            this._pendingSymbolSwitch = { symbol, exchange, marketType };
+            // ФИКС: раньше здесь хранился только последний символ-свитч и
+            // безусловно ждал полного завершения ТЕКУЩЕГО переключения
+            // (включая полную отрисовку уже неактуального тикера) — из-за
+            // этого при быстрых кликах график на мгновение полностью
+            // отрисовывал "правильные, но устаревшие" данные, что выглядело
+            // как баг. Теперь запрос просто сливается в единую очередь.
+            this._queuePendingSwitch({ symbol, exchange, marketType });
             return;
         }
         this._switchingSymbol = true;
@@ -1544,11 +1612,7 @@ if (typeof this.chart.addPriceScale === 'function') {
             this._startPeriodicSync();
             this._startNewCandleChecker();
             this._syncRecentCandles().catch(() => {});
-            if (this._pendingSymbolSwitch) {
-                const next = this._pendingSymbolSwitch;
-                this._pendingSymbolSwitch = null;
-                this.switchSymbol(next.symbol, next.exchange, next.marketType);
-            }
+            this._dispatchPendingSwitch();
         };
         const rollbackSwitch = (error) => {
             console.error(`❌ Не удалось переключиться на ${symbol} (${exchange}/${marketType}):`, error);
@@ -1556,11 +1620,7 @@ if (typeof this.chart.addPriceScale === 'function') {
             this._switchingSymbol = false;
             this._resumeAllUpdates(generationId);
             this._hideSymbolSwitchOverlay();
-            if (this._pendingSymbolSwitch) {
-                const next = this._pendingSymbolSwitch;
-                this._pendingSymbolSwitch = null;
-                this.switchSymbol(next.symbol, next.exchange, next.marketType);
-            }
+            this._dispatchPendingSwitch();
         };
         try {
             this._suspendAllUpdates();
@@ -1592,7 +1652,15 @@ if (typeof this.chart.addPriceScale === 'function') {
     }
 
     async switchInterval(newInterval) {
-        if (this._isSwitchingInterval || this._switchingSymbol) return;
+        if (this._isSwitchingInterval || this._switchingSymbol) {
+            // ФИКС: раньше запрос ПРОСТО ОТБРАСЫВАЛСЯ здесь без всякой
+            // очереди — при быстрых кликах по таймфреймам большинство
+            // кликов терялось молча, и график мог "застрять" на
+            // таймфрейме, который пользователь уже не выбирал. Теперь
+            // запрос сохраняется в ту же общую очередь, что и switchSymbol.
+            this._queuePendingSwitch({ interval: newInterval });
+            return;
+        }
         if (this.currentInterval === newInterval) return;
         
         this._isSwitchingInterval = true;
@@ -1681,11 +1749,11 @@ if (typeof this.chart.addPriceScale === 'function') {
                 this._startPeriodicSync();
                 this._startNewCandleChecker();
             }
-            if (this._pendingSymbolSwitch) {
-                const next = this._pendingSymbolSwitch;
-                this._pendingSymbolSwitch = null;
-                this.switchSymbol(next.symbol, next.exchange, next.marketType);
-            }
+            // ФИКС: используем единую очередь вместо старого
+            // this._pendingSymbolSwitch (которая никогда не заполнялась
+            // из switchInterval и поэтому не могла "подхватить" отложенный
+            // свитч символа, случившийся во время смены таймфрейма).
+            this._dispatchPendingSwitch();
         }
     }
 
