@@ -95,27 +95,42 @@ class WebSocketManager {
         this.isConnecting = true;
 
         this._closeSocket();
+
+        // ФИКС: снимок целевых параметров ИМЕННО в момент реального открытия
+        // сокета. Раньше сообщения фильтровались по мутирующимся
+        // this.currentSymbol/this.currentInterval, которые уже обновляются
+        // синхронно в connect(), ДО того как _doConnect() реально выполнится
+        // (100мс дебаунс) — то есть пока старый сокет ещё жив и шлёт данные
+        // старого таймфрейма/тикера, они трактовались как данные нового.
+        // Теперь у каждого сокета есть собственный неизменяемый контекст
+        // подписки, по которому и фильтруются его сообщения.
+        const subContext = {
+            symbol: this.currentSymbol,
+            interval: this.currentInterval,
+            exchange: this.currentExchange,
+            marketType: this.currentMarketType
+        };
+
+        const fs = this.formatSymbol(subContext.symbol, subContext.exchange);
         
-        const fs = this.formatSymbol(this.currentSymbol, this.currentExchange);
-        
-        if (this.currentExchange === 'binance') {
-            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${this.currentInterval}`;
+        if (subContext.exchange === 'binance') {
+            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${subContext.interval}`;
             const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;
             
             console.log('🔌 KLINE:', klineUrl);
             console.log('🔌 TRADE:', tradeUrl);
             
-            this.wsKline = this._createWebSocket(klineUrl, 'kline', generation);
-            this.wsTrade = this._createWebSocket(tradeUrl, 'trade', generation);
-        } else if (this.currentExchange === 'bybit') {
-            const wsUrl = 'wss://stream.bybit.com/v5/public/' + (this.currentMarketType === 'spot' ? 'spot' : 'linear');
+            this.wsKline = this._createWebSocket(klineUrl, 'kline', generation, subContext);
+            this.wsTrade = this._createWebSocket(tradeUrl, 'trade', generation, subContext);
+        } else if (subContext.exchange === 'bybit') {
+            const wsUrl = 'wss://stream.bybit.com/v5/public/' + (subContext.marketType === 'spot' ? 'spot' : 'linear');
             console.log('🔌 Bybit:', wsUrl);
-            this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation);
+            this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation, subContext);
             this.wsTrade = this.wsKline;
         }
     }
 
-    _createWebSocket(url, type, generation) {
+    _createWebSocket(url, type, generation, subContext) {
         let ws;
         try {
             ws = new WebSocket(url);
@@ -128,6 +143,10 @@ class WebSocketManager {
         
         ws._type = type;
         ws._generation = generation;
+        // ФИКС: контекст подписки "приклеен" к сокету — используется при
+        // обработке КАЖДОГО его сообщения, независимо от того, что успело
+        // измениться в this.currentSymbol/this.currentInterval за это время.
+        ws._subContext = subContext;
         
         ws.onopen = () => {
             if (generation !== this._connectGeneration) return;
@@ -135,8 +154,8 @@ class WebSocketManager {
             console.log(`✅ ${type.toUpperCase()} WebSocket подключён`);
             
             if (type === 'bybit') {
-                const bi = this.getExchangeInterval(this.currentInterval, this.currentExchange);
-                const bs = this.formatSymbol(this.currentSymbol, this.currentExchange);
+                const bi = this.getExchangeInterval(subContext.interval, subContext.exchange);
+                const bs = this.formatSymbol(subContext.symbol, subContext.exchange);
                 ws.send(JSON.stringify({
                     op: 'subscribe',
                     args: ['kline.' + bi + '.' + bs, 'publicTrade.' + bs]
@@ -172,7 +191,7 @@ class WebSocketManager {
         ws.onmessage = (event) => {
             if (generation !== this._connectGeneration) return;
             this._lastMessageTime = Date.now();
-            this._handleMessage(event.data, type);
+            this._handleMessage(event.data, type, subContext);
         };
         
         ws.onclose = (event) => {
@@ -209,7 +228,7 @@ class WebSocketManager {
         return ws;
     }
 
-_handleMessage(rawData, type) {
+_handleMessage(rawData, type, subContext) {
     try {
         const raw = JSON.parse(rawData);
         
@@ -221,19 +240,32 @@ _handleMessage(rawData, type) {
             console.warn('⚠️ chartManager не найден');
             return;
         }
+
+        // Защита от вызова без контекста подписки (не должно происходить,
+        // но лучше явно отбросить сообщение, чем обработать его "вслепую").
+        if (!subContext) return;
         
-        if (this.currentExchange === 'binance') {
+        if (subContext.exchange === 'binance') {
             if (raw.e === 'kline' && raw.k) {
                 const k = raw.k;
                 const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
+                if (msgSymbol && msgSymbol !== subContext.symbol.toUpperCase()) return;
+
+                // ФИКС: сверяем интервал СВЕЧИ из сообщения с интервалом,
+                // на который подписан именно этот сокет. Раньше такой
+                // проверки не было вовсе — при быстрой смене таймфрейма
+                // ещё не закрытый старый сокет "1m" мог прислать данные,
+                // которые пересчитывались как данные нового интервала "1h"
+                // (candleTime заново выравнивался по чужому шагу) —
+                // отсюда битые/скачущие свечи сразу после переключения.
+                if (k.i && k.i !== subContext.interval) return;
 
                 this._lastRelevantMessageTime = Date.now();
                 
                 let candleTime = Math.floor(k.t / 1000);
                 
                 // Проверка выравнивания
-                const intervalSeconds = this._getIntervalSeconds(k.i);
+                const intervalSeconds = this._getIntervalSeconds(subContext.interval);
                 const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
                 
                 if (candleTime !== expectedTime) {
@@ -244,6 +276,11 @@ _handleMessage(rawData, type) {
                 this._lastKlineTime = candleTime;
                 
                 if (typeof chartManager.updateLastCandle === 'function') {
+                    // ФИКС: передаём meta {symbol, interval} — ChartManager
+                    // теперь реально использует их как вторую линию защиты
+                    // (см. updateLastCandle), на случай если сам график уже
+                    // переключился на другой тикер/интервал, а этот сокет
+                    // ещё не успели закрыть.
                     chartManager.updateLastCandle({
                         time: candleTime,
                         open: parseFloat(k.o),
@@ -253,29 +290,37 @@ _handleMessage(rawData, type) {
                         volume: parseFloat(k.v),
                         quoteVolume: parseFloat(k.q || 0),
                         isClosed: k.x === true
-                    }, raw.E || Date.now());
+                    }, raw.E || Date.now(), { symbol: subContext.symbol, interval: subContext.interval });
                 }
             }
             
             if (raw.e === 'aggTrade') {
                 const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                if (msgSymbol && msgSymbol !== this.currentSymbol.toUpperCase()) return;
+                if (msgSymbol && msgSymbol !== subContext.symbol.toUpperCase()) return;
 
                 this._lastRelevantMessageTime = Date.now();
                 
                 const price = parseFloat(raw.p);
                 if (!isNaN(price) && price > 0) {
-                    if (typeof chartManager._syncPriceLine === 'function') {
-                        // ✅ ИСПРАВЛЕНО: передаем объект с временем
-                        chartManager._syncPriceLine({
-                            time: Math.floor(raw.T / 1000), // время сделки в секундах
-                            price: price
-                        });
+                    // ФИКС: доп. сверка с РЕАЛЬНЫМ текущим символом графика.
+                    // _syncPriceLine раньше вызывался без какой-либо проверки
+                    // символа — если ChartManager уже переключился на другой
+                    // тикер, а этот сокет (ещё старого тикера) не успели
+                    // закрыть, чужой тик мог на мгновение исказить последнюю
+                    // свечу нового графика.
+                    if (!chartManager.currentSymbol ||
+                        chartManager.currentSymbol.toUpperCase() === subContext.symbol.toUpperCase()) {
+                        if (typeof chartManager._syncPriceLine === 'function') {
+                            chartManager._syncPriceLine({
+                                time: Math.floor(raw.T / 1000), // время сделки в секундах
+                                price: price
+                            });
+                        }
                     }
                 }
             }
         }
-        else if (this.currentExchange === 'bybit' && raw.topic) {
+        else if (subContext.exchange === 'bybit' && raw.topic) {
             const parts = raw.topic.split('.');
             let msgSymbol = null;
             
@@ -285,7 +330,15 @@ _handleMessage(rawData, type) {
                 msgSymbol = parts[1].toUpperCase();
             }
             
-            if (!msgSymbol || msgSymbol !== this.currentSymbol.toUpperCase()) return;
+            if (!msgSymbol || msgSymbol !== subContext.symbol.toUpperCase()) return;
+
+            if (raw.topic.startsWith('kline.') && parts.length >= 2) {
+                // ФИКС: аналогичная проверка интервала для Bybit — интервал
+                // зашит прямо в топике ('kline.{interval}.{symbol}'),
+                // сверяем его с интервалом, на который подписан этот сокет.
+                const expectedBybitInterval = this.getExchangeInterval(subContext.interval, 'bybit');
+                if (parts[1] !== expectedBybitInterval) return;
+            }
 
             this._lastRelevantMessageTime = Date.now();
             
@@ -294,14 +347,12 @@ _handleMessage(rawData, type) {
                 
                 let candleTime = Math.floor(k.start / 1000);
                 
-                if (parts.length >= 2) {
-                    const intervalStr = parts[1];
-                    const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
-                    const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
-                    
-                    if (candleTime !== expectedTime) {
-                        candleTime = expectedTime;
-                    }
+                const intervalStr = parts[1];
+                const intervalSeconds = this._getIntervalSecondsFromBybit(intervalStr);
+                const expectedTime = Math.floor(candleTime / intervalSeconds) * intervalSeconds;
+                
+                if (candleTime !== expectedTime) {
+                    candleTime = expectedTime;
                 }
                 
                 if (typeof chartManager.updateLastCandle === 'function') {
@@ -314,19 +365,21 @@ _handleMessage(rawData, type) {
                         volume: parseFloat(k.volume),
                         quoteVolume: parseFloat(k.turnover || 0),
                         isClosed: k.confirm === true
-                    }, raw.ts || Date.now());
+                    }, raw.ts || Date.now(), { symbol: subContext.symbol, interval: subContext.interval });
                 }
             } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
                 const tradeData = raw.data[0];
                 const price = parseFloat(tradeData.p);
                 
                 if (!isNaN(price) && price > 0) {
-                    if (typeof chartManager._syncPriceLine === 'function') {
-                        // ✅ ИСПРАВЛЕНО: передаем объект с временем
-                        chartManager._syncPriceLine({
-                            time: Math.floor(tradeData.T / 1000), // время сделки в секундах
-                            price: price
-                        });
+                    if (!chartManager.currentSymbol ||
+                        chartManager.currentSymbol.toUpperCase() === subContext.symbol.toUpperCase()) {
+                        if (typeof chartManager._syncPriceLine === 'function') {
+                            chartManager._syncPriceLine({
+                                time: Math.floor(tradeData.T / 1000), // время сделки в секундах
+                                price: price
+                            });
+                        }
                     }
                 }
             }
