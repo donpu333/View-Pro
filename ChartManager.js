@@ -17,7 +17,7 @@ class ChartManager {
         this._isSwitchingChartType = false;
 
         // ============ ЗУМ КАК В TRADINGVIEW ============
-        this._savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 8;
+        this._savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
         this._lastSavedBarSpacing = this._savedBarSpacing;
         this._pendingBarSpacing = null;
 
@@ -220,11 +220,11 @@ class ChartManager {
                 timeVisible: true,
                 secondsVisible: false,
                 borderColor: '#333333',
-                barSpacing: this._savedBarSpacing || 8,
+                barSpacing: this._savedBarSpacing || 25,
                 minBarSpacing: 1,
                 fixLeftEdge: false,
                 fixRightEdge: false,
-                rightOffset: 5,
+                rightOffset: 25,
                 shiftVisibleRangeOnNewBar: true,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
@@ -362,7 +362,7 @@ class ChartManager {
         this._applyVolumeScaleOptions();
 
         if (!localStorage.getItem('chartBarSpacing')) {
-            localStorage.setItem('chartBarSpacing', '8');
+            localStorage.setItem('chartBarSpacing', '25');
         }
 
         // ============ СОЗДАНИЕ TIMER MANAGER ============
@@ -1826,13 +1826,13 @@ class ChartManager {
                 }
                 
                 const timeScale = this.chart.timeScale();
-                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 8;
+                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
                 timeScale.applyOptions({ barSpacing: savedBarSpacing });
                 
                 const lastIndex = this.chartData.length - 1;
                 const containerWidth = this.chartContainer.clientWidth || 800;
                 const visibleBars = Math.floor(containerWidth / savedBarSpacing);
-                const rightOffset = 5;
+                const rightOffset = 25;
                 
                 let from = Math.max(0, lastIndex - visibleBars + rightOffset);
                 let to = lastIndex + rightOffset;
@@ -2406,14 +2406,14 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
             
-            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 8;
+            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
             
             if (enableRealTime) {
                 timeScale.scrollToRealTime();
             } else {
                 const lastIndex = this.chartData.length - 1;
-                const targetPosition = lastIndex + 5;
+                const targetPosition = lastIndex + 25;
                 timeScale.scrollToPosition(targetPosition, true);
             }
             
