@@ -390,29 +390,6 @@ if (typeof this.chart.addPriceScale === 'function') {
         });
     }
 
-    // ФИКС: у шкалы 'volume' autoScale всегда стоит false (это защищает от
-    // "растягивания" гистограммы на каждый тик — см. _applyVolumeScaleOptions
-    // выше), НО если ей ни разу не дать посчитать реальный диапазон значений
-    // автоматически, диапазон остаётся дефолтным и не соответствует реальным
-    // объёмам (сотни тысяч и т.п.) — бары рисуются за пределами видимой
-    // области, гистограмма выглядит как полностью отсутствующая. Для шкалы
-    // 'right' (цена) в коде уже есть приём "включить autoScale → дать
-    // посчитать за 2 кадра → выключить" (см. setDataQuick/autoScale()) —
-    // здесь тот же приём для шкалы объёма. Вызывать ТОЛЬКО после массовой
-    // замены данных (setData), а не после точечного update() одной свечи —
-    // иначе вернётся исходный баг "растягивания" на живых тиках.
-    _calibrateVolumeScale() {
-        if (!this.chart) return;
-        const volumeScale = this.chart.priceScale('volume');
-        if (!volumeScale) return;
-        volumeScale.applyOptions({ autoScale: true });
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                this._applyVolumeScaleOptions();
-            });
-        });
-    }
-
     // ============ МЕТОДЫ ЦВЕТА И УТИЛИТЫ ============
     getCurrentPriceColor() {
         if (!this.chartData || this.chartData.length === 0) return this.bullishColor || '#26a69a';
@@ -757,7 +734,14 @@ if (typeof this.chart.addPriceScale === 'function') {
                     this._lastVolumeUpdateIndex = this.chartData.length - 1;
                     const volumeData = this._buildVolumeData(this.chartData);
                     this.volumeSeries.setData(volumeData);
-                    this._calibrateVolumeScale();
+                    // ФИКС: это фоновый путь (восстановление после сворачивания
+                    // вкладки), тут НЕТ overlay поверх графика — калибровку
+                    // (autoScale true→false) сюда не добавляем, иначе вспышка
+                    // "растянутой" гистограммы будет видна прямо во время
+                    // обычной работы. Диапазон, откалиброванный при первой
+                    // загрузке (см. setDataQuick), обычно остаётся годным для
+                    // последующих данных того же тикера.
+                    this._applyVolumeScaleOptions();
                 }
             }
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -794,7 +778,9 @@ if (typeof this.chart.addPriceScale === 'function') {
             this._volumeDataCache = null; this._volumeDataDirty = false;
             const volumeData = this._buildVolumeData(this.chartData);
             this.volumeSeries.setData(volumeData);
-            this._calibrateVolumeScale();
+            // ФИКС: без overlay — калибровку (autoScale toggle) сюда не
+            // добавляем по той же причине, что и выше.
+            this._applyVolumeScaleOptions();
         }
         this._syncLineColor();
         if (this.timerManager) {
@@ -1400,10 +1386,14 @@ if (typeof this.chart.addPriceScale === 'function') {
                 // ФИКС: переприменяем margins/autoScale сразу после setData —
                 // именно смена символа/интервала (частый setData с новыми
                 // порядками величин объёма) была самым частым триггером бага.
-                // Плюс калибровка (_calibrateVolumeScale) — иначе диапазон
-                // шкалы объёма никогда не подстраивается под реальные числа,
-                // и гистограмма визуально не появляется на первой загрузке.
-                this._calibrateVolumeScale();
+                // Настоящая калибровка диапазона (autoScale true→false)
+                // выполняется НИЖЕ, в positionAfterDataApplied/
+                // finalizeAfterRescale — синхронно с калибровкой шкалы цены
+                // 'right' и ПОД тем же затемняющим оверлеем переключения
+                // (_symbolSwitchOverlay), чтобы кратковременная "растянутая"
+                // гистограмма (побочный эффект autoScale:true в этой версии
+                // библиотеки) не была видна пользователю.
+                this._applyVolumeScaleOptions();
             }
             
             const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -1479,6 +1469,18 @@ if (typeof this.chart.addPriceScale === 'function') {
                 };
                 
                 const priceScale = this.chart.priceScale('right');
+                // ФИКС: включаем autoScale для шкалы объёма ОДНОВРЕМЕННО со
+                // шкалой цены — оба тумблера "true" происходят в одном и том
+                // же (скрытом оверлеем) окне из 2 кадров, и оба гасятся обратно
+                // в finalizeAfterRescale выше. Раньше калибровка объёма
+                // выполнялась отдельным, несинхронизированным таймингом — из-за
+                // этого вспышка "растянутой" гистограммы успевала произойти
+                // уже ПОСЛЕ того как оверлей переключения скрывался, и была
+                // видна пользователю при быстрой смене тикера/таймфрейма.
+                if (this.volumeSeries && this.chartData.length > 0) {
+                    const volumeScale = this.chart.priceScale('volume');
+                    if (volumeScale) { try { volumeScale.applyOptions({ autoScale: true }); } catch(e) {} }
+                }
                 if (priceScale) {
                     priceScale.applyOptions({ autoScale: true });
                     requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
@@ -2283,9 +2285,9 @@ if (typeof this.chart.addPriceScale === 'function') {
             this.volumeSeries.setData(volumeData);
             this._volumeDataDirty = false;
             this._lastVolumeUpdateIndex = this.chartData.length - 1;
-            // ФИКС: это тоже bulk setData (не точечный update()) — калибруем
-            // диапазон шкалы объёма так же, как в setDataQuick.
-            this._calibrateVolumeScale();
+            // ФИКС: без overlay — калибровку (autoScale toggle) сюда не
+            // добавляем по той же причине (см. комментарии выше).
+            this._applyVolumeScaleOptions();
         }
     }
 
