@@ -657,9 +657,8 @@ class ChartManager {
                     this._stampCandle(cur, freshCandle._source, freshCandle._receivedAt);
                     cur.open = freshCandle.open; 
                     cur.close = freshCandle.close; 
-                    // FIX: не даём "фитилю" схлопнуться при чуть более старом фоновом снапшоте — только расширяем экстремумы
-                    cur.high = Math.max(cur.high, freshCandle.high); 
-                    cur.low = Math.min(cur.low, freshCandle.low);
+                    cur.high = freshCandle.high; 
+                    cur.low = freshCandle.low;
                     cur.volume = freshCandle.volume; 
                     cur.quoteVolume = freshCandle.quoteVolume || cur.volume;
                     
@@ -849,9 +848,8 @@ class ChartManager {
                         // пропускаем обновление
                     } else {
                         oldLastCandle.open = fresh.open; 
-                        // FIX: расширяем, а не перезаписываем экстремумы — иначе фитиль "прыгает"
-                        oldLastCandle.high = Math.max(oldLastCandle.high, fresh.high); 
-                        oldLastCandle.low = Math.min(oldLastCandle.low, fresh.low);
+                        oldLastCandle.high = fresh.high; 
+                        oldLastCandle.low = fresh.low;
                         oldLastCandle.close = fresh.close; 
                         oldLastCandle.volume = fresh.volume;
                         oldLastCandle.quoteVolume = fresh.quoteVolume || fresh.volume;
@@ -1655,11 +1653,8 @@ class ChartManager {
             
             currentLastCandle.open = candle.open; 
             currentLastCandle.close = candle.close;
-            // FIX: не перезаписываем high/low напрямую значениями из (потенциально более старого)
-            // kline-снапшота — иначе уже нарисованный тиками фитиль "схлопывается" и снова "выпрыгивает".
-            // Реальный high/low закрытой свечи не может быть меньше уже показанного локально экстремума.
-            currentLastCandle.high = Math.max(currentLastCandle.high, candle.high); 
-            currentLastCandle.low = Math.min(currentLastCandle.low, candle.low);
+            currentLastCandle.high = candle.high; 
+            currentLastCandle.low = candle.low;
             currentLastCandle.volume = candle.volume; 
             currentLastCandle.quoteVolume = candle.quoteVolume;
             
@@ -1671,10 +1666,6 @@ class ChartManager {
             currentLastCandle._closed = willBeClosed;
             this._stampCandle(currentLastCandle, 'ws', receivedAt);
             this.lastCandle = currentLastCandle;
-            
-            // Обновляем updateData актуальными (смерженными) значениями high/low
-            updateData.high = currentLastCandle.high;
-            updateData.low = currentLastCandle.low;
             
             if (this.candleSeries) this.candleSeries.update(updateData);
             if (this.barSeries) this.barSeries.update(updateData);
@@ -1695,9 +1686,8 @@ class ChartManager {
             
             existingCandle.open = candle.open; 
             existingCandle.close = candle.close;
-            // FIX: та же защита от "схлопывания" фитиля для исторической свечи
-            existingCandle.high = Math.max(existingCandle.high, candle.high); 
-            existingCandle.low = Math.min(existingCandle.low, candle.low);
+            existingCandle.high = candle.high; 
+            existingCandle.low = candle.low;
             existingCandle.volume = candle.volume; 
             existingCandle.quoteVolume = candle.quoteVolume;
             
@@ -3728,9 +3718,8 @@ class ChartManager {
                     // не обновляем закрытую свечу
                 } else {
                     lc.open = matchLast.open; 
-                    // FIX: не даём фитилю "схлопнуться" при фоновом обновлении последней свечи
-                    lc.high = Math.max(lc.high, matchLast.high); 
-                    lc.low = Math.min(lc.low, matchLast.low); 
+                    lc.high = matchLast.high; 
+                    lc.low = matchLast.low; 
                     lc.close = matchLast.close;
                     lc.volume = matchLast.volume; 
                     lc.quoteVolume = matchLast.quoteVolume;
