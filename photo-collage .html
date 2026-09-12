@@ -146,10 +146,6 @@
             user-select: none;
             z-index: 10;
             text-shadow: 2px 2px 6px black;
-            padding: 8px 20px;
-            background: rgba(0, 0, 0, 0.55);
-            border-radius: 6px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
             white-space: nowrap;
         }
 
@@ -364,7 +360,6 @@
             image: null,
             pos: {x:15, y:15},
             cW:0, cH:0, iW:0, iH:0,
-            // НОВОЕ: параметры реального отображения изображения (contain)
             scale: 1,
             displayW: 0,
             displayH: 0,
@@ -409,11 +404,9 @@
                 const parent = s.textEl.parentElement;
                 const pr = parent.getBoundingClientRect();
                 
-                // ОГРАНИЧЕНИЕ: перетаскивание только в пределах реального изображения
                 let nx = e.clientX-pr.left-offX;
                 let ny = e.clientY-pr.top-offY;
                 
-                // Границы = реальное положение изображения в контейнере
                 const minX = s.offsetX;
                 const minY = s.offsetY;
                 const maxX = s.offsetX + s.displayW - s.textEl.offsetWidth;
@@ -469,9 +462,7 @@
                     if (container) {
                         setTimeout(() => {
                             adjustContainerHeight(container, data[key].previewImg);
-                            // ВАЖНО: пересчитать размеры после изменения высоты
                             updateSlotMetrics(data[key]);
-                            // Сбросить позицию текста в центр изображения
                             resetTextPosition(data[key]);
                         }, 100);
                     }
@@ -493,7 +484,6 @@
     bindUpload('img2L','l',d2,'twoLayout2'); 
     bindUpload('img2R','r',d2,'twoLayout2');
 
-    // НОВАЯ ФУНКЦИЯ: вычисляет реальные параметры отображения изображения (contain)
     function updateSlotMetrics(s) {
         if(s.previewImg.style.display !== 'block') return;
         const p = s.previewImg.parentElement;
@@ -502,7 +492,6 @@
         s.iW = s.previewImg.naturalWidth;
         s.iH = s.previewImg.naturalHeight;
         
-        // Расчёт параметров object-fit: contain
         const scaleByW = s.cW / s.iW;
         const scaleByH = s.cH / s.iH;
         s.scale = Math.min(scaleByW, scaleByH);
@@ -512,7 +501,6 @@
         s.offsetY = (s.cH - s.displayH) / 2;
     }
 
-    // НОВАЯ ФУНКЦИЯ: устанавливает текст в центр реального изображения
     function resetTextPosition(s) {
         updateSlotMetrics(s);
         const cx = s.offsetX + s.displayW / 2 - s.textEl.offsetWidth / 2;
@@ -527,25 +515,20 @@
         genBtn.disabled = !Object.values(data).every(s=>s.image);
     }
 
-    // ИСПРАВЛЕННАЯ ФУНКЦИЯ: учитывает смещение изображения из-за contain
     function drawTxt(ctx, s, text, ox, oy, tw, th) {
         if(!s.iW) return;
         
-        // Пересчитываем актуальные метрики (контейнер мог измениться)
         updateSlotMetrics(s);
         
         const px = s.pos.x;
         const py = s.pos.y;
         
-        // Координаты текста ОТНОСИТЕЛЬНО реального изображения (в экранных пикселях)
         const relX = px - s.offsetX;
         const relY = py - s.offsetY;
         
-        // Переводим в натуральные пиксели изображения
         const imgX = relX / s.scale;
         const imgY = relY / s.scale;
         
-        // Масштабируем на канвас
         const tx = ox + imgX * (tw / s.iW);
         const ty = oy + imgY * (th / s.iH);
         
@@ -616,7 +599,6 @@
 
     document.getElementById('clearTextBtn').onclick = ()=> textarea.value='';
 
-    // Объединение коллажей
     let img1=null, img2=null, combineName='';
     const c1=document.getElementById('combine1'), c2=document.getElementById('combine2');
     const p1=document.getElementById('prevC1'), p2=document.getElementById('prevC2');
