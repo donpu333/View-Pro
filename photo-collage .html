@@ -9,11 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" type="image/svg+xml" href="./favicon.svg">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #0a0a12;
             color: #e0e0ff;
@@ -42,11 +38,7 @@
             -webkit-text-fill-color: transparent;
             font-family: 'Montserrat', sans-serif;
         }
-        .collage-subtitle {
-            font-size: 1.1rem;
-            color: #aaa;
-            margin-top: 0.3rem;
-        }
+        .collage-subtitle { font-size: 1.1rem; color: #aaa; margin-top: 0.3rem; }
         .collage-mode-selector {
             display: flex;
             justify-content: center;
@@ -65,17 +57,9 @@
             font-size: 1rem;
             transition: all 0.2s;
         }
-        .mode-btn.active {
-            background-color: #4361ee;
-            color: white;
-            border-color: #4361ee;
-        }
-        .mode-btn:hover:not(.active) {
-            border-color: #4cc9f0;
-            color: #4cc9f0;
-        }
+        .mode-btn.active { background-color: #4361ee; color: white; border-color: #4361ee; }
+        .mode-btn:hover:not(.active) { border-color: #4cc9f0; color: #4cc9f0; }
 
-        /* ===== РАСКЛАДКИ ===== */
         .collage-layout {
             display: flex;
             flex-direction: column;
@@ -83,28 +67,17 @@
             margin-bottom: 20px;
             width: 100%;
         }
-        .upload-top {
+        .upload-top, .upload-bottom, .four-images-layout, .two-images-layout {
             display: flex;
             gap: 15px;
-            width: 100%;
-        }
-        .upload-bottom {
-            display: flex;
             width: 100%;
         }
         .four-images-layout {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 15px;
-            width: 100%;
-        }
-        .two-images-layout {
-            display: flex;
-            gap: 15px;
-            width: 100%;
         }
 
-        /* ===== ЯЧЕЙКА ЗАГРУЗКИ ===== */
         .upload-box {
             flex: 1;
             width: 100%;
@@ -146,12 +119,11 @@
             flex-shrink: 0;
         }
 
-        /* ===== ПРЕВЬЮ ===== */
         .preview-container {
             position: relative;
             width: 100%;
             flex: 1 1 0;
-            min-height: 0;
+            min-height: 200px;
             background: #0a0a12;
             border-radius: 8px;
             overflow: hidden;
@@ -181,7 +153,6 @@
             white-space: nowrap;
         }
 
-        /* ===== КНОПКИ ===== */
         .collage-controls {
             display: flex;
             justify-content: center;
@@ -203,29 +174,12 @@
             font-size: 1rem;
             transition: 0.2s;
         }
-        .collage-btn:disabled {
-            background: #2a2a35;
-            color: #555;
-            cursor: not-allowed;
-        }
-        .collage-btn:hover:not(:disabled) {
-            background: #3f37c9;
-        }
+        .collage-btn:disabled { background: #2a2a35; color: #555; cursor: not-allowed; }
+        .collage-btn:hover:not(:disabled) { background: #3f37c9; }
 
-        /* ===== РЕЗУЛЬТАТ ===== */
-        .collage-result {
-            margin-top: 15px;
-            width: 100%;
-        }
-        .collage-with-text {
-            display: flex;
-            gap: 20px;
-            width: 100%;
-        }
-        .collage-column {
-            flex: 3;
-            min-width: 0;
-        }
+        .collage-result { margin-top: 15px; width: 100%; }
+        .collage-with-text { display: flex; gap: 20px; width: 100%; }
+        .collage-column { flex: 3; min-width: 0; }
         .text-column {
             flex: 1;
             background: #1a1a26;
@@ -258,17 +212,12 @@
             margin-top: 10px;
         }
 
-        #collageCanvas {
+        #collageCanvas, #combinedCollageCanvas {
             width: 100%;
             display: none;
             border-radius: 10px;
         }
-        #combinedCollageCanvas {
-            width: 100%;
-            display: none;
-            border-radius: 10px;
-            margin-top: 15px;
-        }
+        #combinedCollageCanvas { margin-top: 15px; }
 
         .combine-collage-section {
             margin-top: 25px;
@@ -278,36 +227,15 @@
             border: 1px solid #2a2a3a;
             width: 100%;
         }
-        .combine-row {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            width: 100%;
-        }
-        .combine-row .upload-box {
-            flex: 1;
-            min-width: 300px;
-            /* Высота теперь устанавливается динамически */
-        }
+        .combine-row { display: flex; gap: 15px; flex-wrap: wrap; width: 100%; }
+        .combine-row .upload-box { flex: 1; min-width: 300px; }
 
         @media (max-width: 768px) {
-            .collage-container {
-                max-width: 100vw;
-                padding: 10px;
-            }
-            .upload-top, .two-images-layout, .combine-row {
-                flex-direction: column;
-            }
-            .four-images-layout {
-                grid-template-columns: 1fr;
-            }
-            .collage-with-text {
-                flex-direction: column;
-            }
-            .text-column {
-                min-width: 100%;
-                height: 200px;
-            }
+            .collage-container { max-width: 100vw; padding: 10px; }
+            .upload-top, .two-images-layout, .combine-row { flex-direction: column; }
+            .four-images-layout { grid-template-columns: 1fr; }
+            .collage-with-text { flex-direction: column; }
+            .text-column { min-width: 100%; height: 200px; }
         }
     </style>
 </head>
@@ -324,7 +252,6 @@
         <button id="twoModeBtn" class="mode-btn">2 фото</button>
     </div>
 
-    <!-- 3 ФОТО -->
     <div id="threeLayout" class="collage-layout">
         <div class="upload-top" id="uploadTop3">
             <div class="upload-box">
@@ -350,7 +277,6 @@
         </div>
     </div>
 
-    <!-- 4 ФОТО -->
     <div id="fourLayout" class="collage-layout" style="display:none">
         <div class="four-images-layout" id="fourLayout4">
             <div class="upload-box"><h3>1D</h3><input type="file" id="img4TL" class="collage-file-input" accept="image/*"><select id="sel4TL" class="tf-select"><option value="1D" selected>1D</option><option value="1W">1W</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container"><img id="prev4TL" class="preview-img"><div id="txt4TL" class="draggable-text">1D</div></div></div>
@@ -360,7 +286,6 @@
         </div>
     </div>
 
-    <!-- 2 ФОТО -->
     <div id="twoLayout" class="collage-layout" style="display:none">
         <div class="two-images-layout" id="twoLayout2">
             <div class="upload-box"><h3>Левое</h3><input type="file" id="img2L" class="collage-file-input" accept="image/*"><select id="sel2L" class="tf-select"><option value="1D" selected>1D</option><option value="1W">1W</option><option value="4H">4H</option><option value="1H">1H</option><option value="15M">15M</option><option value="5M">5M</option><option value="1M">1M</option></select><div class="preview-container"><img id="prev2L" class="preview-img"><div id="txt2L" class="draggable-text">1D</div></div></div>
@@ -438,7 +363,13 @@
             select: document.getElementById(selId),
             image: null,
             pos: {x:15, y:15},
-            cW:0, cH:0, iW:0, iH:0
+            cW:0, cH:0, iW:0, iH:0,
+            // НОВОЕ: параметры реального отображения изображения (contain)
+            scale: 1,
+            displayW: 0,
+            displayH: 0,
+            offsetX: 0,
+            offsetY: 0
         };
     }
 
@@ -477,10 +408,20 @@
                 if(!drag) return;
                 const parent = s.textEl.parentElement;
                 const pr = parent.getBoundingClientRect();
+                
+                // ОГРАНИЧЕНИЕ: перетаскивание только в пределах реального изображения
                 let nx = e.clientX-pr.left-offX;
                 let ny = e.clientY-pr.top-offY;
-                nx = Math.max(0, Math.min(nx, pr.width-s.textEl.offsetWidth));
-                ny = Math.max(0, Math.min(ny, pr.height-s.textEl.offsetHeight));
+                
+                // Границы = реальное положение изображения в контейнере
+                const minX = s.offsetX;
+                const minY = s.offsetY;
+                const maxX = s.offsetX + s.displayW - s.textEl.offsetWidth;
+                const maxY = s.offsetY + s.displayH - s.textEl.offsetHeight;
+                
+                nx = Math.max(minX, Math.min(nx, maxX));
+                ny = Math.max(minY, Math.min(ny, maxY));
+                
                 s.textEl.style.left = nx+'px';
                 s.textEl.style.top = ny+'px';
                 s.pos = {x:nx, y:ny};
@@ -500,15 +441,12 @@
 
     function adjustContainerHeight(containerElement, imageElement) {
         if (!imageElement || imageElement.style.display !== 'block') return;
-        
         const containerWidth = containerElement.offsetWidth;
         const imgWidth = imageElement.naturalWidth;
         const imgHeight = imageElement.naturalHeight;
-        
         if (imgWidth && imgHeight && containerWidth) {
             const aspectRatio = imgHeight / imgWidth;
-            const calculatedHeight = containerWidth * aspectRatio;
-            containerElement.style.height = calculatedHeight + 'px';
+            containerElement.style.height = (containerWidth * aspectRatio) + 'px';
         }
     }
 
@@ -529,9 +467,14 @@
                     
                     const container = document.getElementById(containerId);
                     if (container) {
-                        setTimeout(() => adjustContainerHeight(container, data[key].previewImg), 100);
+                        setTimeout(() => {
+                            adjustContainerHeight(container, data[key].previewImg);
+                            // ВАЖНО: пересчитать размеры после изменения высоты
+                            updateSlotMetrics(data[key]);
+                            // Сбросить позицию текста в центр изображения
+                            resetTextPosition(data[key]);
+                        }, 100);
                     }
-                    
                     checkReady();
                 };
                 img.src = ev.target.result;
@@ -550,17 +493,62 @@
     bindUpload('img2L','l',d2,'twoLayout2'); 
     bindUpload('img2R','r',d2,'twoLayout2');
 
+    // НОВАЯ ФУНКЦИЯ: вычисляет реальные параметры отображения изображения (contain)
+    function updateSlotMetrics(s) {
+        if(s.previewImg.style.display !== 'block') return;
+        const p = s.previewImg.parentElement;
+        s.cW = p.offsetWidth;
+        s.cH = p.offsetHeight;
+        s.iW = s.previewImg.naturalWidth;
+        s.iH = s.previewImg.naturalHeight;
+        
+        // Расчёт параметров object-fit: contain
+        const scaleByW = s.cW / s.iW;
+        const scaleByH = s.cH / s.iH;
+        s.scale = Math.min(scaleByW, scaleByH);
+        s.displayW = s.iW * s.scale;
+        s.displayH = s.iH * s.scale;
+        s.offsetX = (s.cW - s.displayW) / 2;
+        s.offsetY = (s.cH - s.displayH) / 2;
+    }
+
+    // НОВАЯ ФУНКЦИЯ: устанавливает текст в центр реального изображения
+    function resetTextPosition(s) {
+        updateSlotMetrics(s);
+        const cx = s.offsetX + s.displayW / 2 - s.textEl.offsetWidth / 2;
+        const cy = s.offsetY + s.displayH / 2 - s.textEl.offsetHeight / 2;
+        s.textEl.style.left = cx + 'px';
+        s.textEl.style.top = cy + 'px';
+        s.pos = {x: cx, y: cy};
+    }
+
     function checkReady() {
         const data = getData();
         genBtn.disabled = !Object.values(data).every(s=>s.image);
     }
 
+    // ИСПРАВЛЕННАЯ ФУНКЦИЯ: учитывает смещение изображения из-за contain
     function drawTxt(ctx, s, text, ox, oy, tw, th) {
         if(!s.iW) return;
-        const sx = tw/s.iW, sy = th/s.iH;
-        const px = s.pos.x, py = s.pos.y;
-        const tx = ox + (px/s.cW)*s.iW*sx;
-        const ty = oy + (py/s.cH)*s.iH*sy;
+        
+        // Пересчитываем актуальные метрики (контейнер мог измениться)
+        updateSlotMetrics(s);
+        
+        const px = s.pos.x;
+        const py = s.pos.y;
+        
+        // Координаты текста ОТНОСИТЕЛЬНО реального изображения (в экранных пикселях)
+        const relX = px - s.offsetX;
+        const relY = py - s.offsetY;
+        
+        // Переводим в натуральные пиксели изображения
+        const imgX = relX / s.scale;
+        const imgY = relY / s.scale;
+        
+        // Масштабируем на канвас
+        const tx = ox + imgX * (tw / s.iW);
+        const ty = oy + imgY * (th / s.iH);
+        
         ctx.font = 'bold 120px Montserrat';
         ctx.fillStyle = 'white';
         ctx.shadowColor = 'rgba(0,0,0,0.8)';
@@ -570,13 +558,7 @@
     }
 
     function updateSizes(data) {
-        Object.values(data).forEach(s=>{
-            if(s.previewImg.style.display==='block'){
-                const p = s.previewImg.parentElement;
-                s.cW = p.offsetWidth; s.cH = p.offsetHeight;
-                s.iW = s.previewImg.naturalWidth; s.iH = s.previewImg.naturalHeight;
-            }
-        });
+        Object.values(data).forEach(s => updateSlotMetrics(s));
     }
 
     genBtn.onclick = ()=>{
@@ -652,13 +634,10 @@
                     setter(img); 
                     prev.src=ev.target.result; 
                     prev.style.display='block'; 
-                    
-                    // АВТОМАТИЧЕСКАЯ ПОДСТРОЙКА ВЫСОТЫ ДЛЯ ОБЪЕДИНЕНИЯ
                     const box = document.getElementById(boxId);
                     if (box) {
                         setTimeout(() => adjustContainerHeight(box, prev), 100);
                     }
-                    
                     combBtn.disabled=!(img1&&img2); 
                 };
                 img.src=ev.target.result;
