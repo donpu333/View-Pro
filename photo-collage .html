@@ -358,13 +358,15 @@
             previewImg: document.getElementById(prevId),
             select: document.getElementById(selId),
             image: null,
-            pos: {x:15, y:15},
+            relX: 0.1,  // ИЗМЕНЕНО: начальная позиция в углу (10% от левого края)
+            relY: 0.1,  // ИЗМЕНЕНО: начальная позиция в углу (10% от верхнего края)
             cW:0, cH:0, iW:0, iH:0,
             scale: 1,
             displayW: 0,
             displayH: 0,
             offsetX: 0,
-            offsetY: 0
+            offsetY: 0,
+            hasImage: false  // НОВОЕ: флаг, было ли загружено фото
         };
     }
 
@@ -417,7 +419,11 @@
                 
                 s.textEl.style.left = nx+'px';
                 s.textEl.style.top = ny+'px';
-                s.pos = {x:nx, y:ny};
+                
+                const relX = (nx - s.offsetX) / s.displayW;
+                const relY = (ny - s.offsetY) / s.displayH;
+                s.relX = Math.max(0, Math.min(1, relX));
+                s.relY = Math.max(0, Math.min(1, relY));
             });
             window.addEventListener('mouseup', ()=>{ drag=false; });
         });
@@ -426,7 +432,12 @@
 
     function bindSelects(data) {
         Object.values(data).forEach(s=>{
-            s.select.onchange = ()=> { s.textEl.textContent = s.select.value; };
+            s.select.onchange = ()=> { 
+                s.textEl.textContent = s.select.value;
+                if (s.hasImage) {
+                    updateTextPosition(s);
+                }
+            };
             s.textEl.textContent = s.select.value;
         });
     }
@@ -463,7 +474,13 @@
                         setTimeout(() => {
                             adjustContainerHeight(container, data[key].previewImg);
                             updateSlotMetrics(data[key]);
-                            resetTextPosition(data[key]);
+                            
+                            // ИЗМЕНЕНО: при первой загрузке ставим в угол, при последующих - обновляем позицию
+                            if (!data[key].hasImage) {
+                                data[key].hasImage = true;
+                                // Позиция уже установлена в slot() как relX: 0.1, relY: 0.1
+                            }
+                            updateTextPosition(data[key]);
                         }, 100);
                     }
                     checkReady();
@@ -501,13 +518,12 @@
         s.offsetY = (s.cH - s.displayH) / 2;
     }
 
-    function resetTextPosition(s) {
+    function updateTextPosition(s) {
         updateSlotMetrics(s);
-        const cx = s.offsetX + s.displayW / 2 - s.textEl.offsetWidth / 2;
-        const cy = s.offsetY + s.displayH / 2 - s.textEl.offsetHeight / 2;
-        s.textEl.style.left = cx + 'px';
-        s.textEl.style.top = cy + 'px';
-        s.pos = {x: cx, y: cy};
+        const px = s.offsetX + s.relX * s.displayW;
+        const py = s.offsetY + s.relY * s.displayH;
+        s.textEl.style.left = px + 'px';
+        s.textEl.style.top = py + 'px';
     }
 
     function checkReady() {
@@ -520,14 +536,8 @@
         
         updateSlotMetrics(s);
         
-        const px = s.pos.x;
-        const py = s.pos.y;
-        
-        const relX = px - s.offsetX;
-        const relY = py - s.offsetY;
-        
-        const imgX = relX / s.scale;
-        const imgY = relY / s.scale;
+        const imgX = s.relX * s.iW;
+        const imgY = s.relY * s.iH;
         
         const tx = ox + imgX * (tw / s.iW);
         const ty = oy + imgY * (th / s.iH);
