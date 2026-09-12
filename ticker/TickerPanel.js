@@ -15,6 +15,12 @@ const TICKER_TIMINGS = {
 };
 const QUOTE_ASSETS = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH'];
 
+// ✅ НОВОЕ: поля сортировки, значения которых приходят асинхронно (REST/WS).
+// Если активна сортировка по одному из них, после подгрузки данных список
+// нужно реально пересчитать (getFilteredTickers -> sort), а не просто
+// перекрасить текст в уже отрисованных на старых местах DOM-узлах.
+const DATA_DEPENDENT_SORT_FIELDS = new Set(['price', 'change', 'volume', 'trades']);
+
 class TickerPanel {
     constructor(coordinator) {
         this.coordinator = coordinator;
@@ -170,6 +176,37 @@ class TickerPanel {
             this.renderTickerList();
             this._renderPending = false;
         });
+    }
+
+    // ✅ НОВОЕ: true, если текущая активная сортировка зависит от данных,
+    // приходящих асинхронно (цена/изменение/объём/сделки). Используется,
+    // чтобы понять — после подгрузки REST/батч-данных достаточно просто
+    // обновить текст в DOM (updatePriceElements) или нужно по-настоящему
+    // пересчитать порядок строк (filterCache = null + renderTickerList).
+    _isDataDependentSort() {
+        return !!this.state?.sortBy && DATA_DEPENDENT_SORT_FIELDS.has(this.state.sortBy);
+    }
+
+    // ✅ НОВОЕ: единая точка "данные обновились массово (REST-батч, начальная
+    // загрузка, батч-фетч снапшотов)". Раньше во всех этих местах вызывался
+    // только this.renderer.updatePriceElements() — он лишь переписывает текст
+    // в уже существующих DOM-узлах на их ТЕКУЩИХ позициях и никогда не меняет
+    // порядок строк. Из-за этого при активной сортировке по price/change/
+    // volume/trades (в т.ч. видимая стрелка в шапке) список визуально
+    // переставал сортироваться после переключения вотчлиста или после
+    // прихода первых реальных чисел (до этого все тикеры имели volume=0,
+    // поэтому сортировать было не по чему, а после — никто не пересчитывал
+    // порядок). Теперь если активная сортировка зависит от данных —
+    // делаем полноценный пересчёт и ререндер; иначе — как раньше, дёшево
+    // обновляем только текст.
+    _refreshAfterBulkPriceUpdate() {
+        if (this._isDestroyed) return;
+        if (this._isDataDependentSort()) {
+            this.filterCache = null;
+            this._scheduleRender();
+        } else {
+            this.renderer?.updatePriceElements?.();
+        }
     }
     
     _escapeHtml(str) {
@@ -405,6 +442,11 @@ class TickerPanel {
             });
         }
     }
+    // Примечание: точечные live-тики (WS) намеренно НЕ пересортировывают
+    // список даже при активной сортировке по цене/объёму — иначе строки
+    // прыгали бы под курсором на каждое обновление. Пересчёт порядка
+    // происходит только после массовых REST-обновлений, см.
+    // _refreshAfterBulkPriceUpdate().
 }
     processParallelData(results, updateOnly = false) {
         const MAX_SYMBOLS = 4000;
@@ -471,11 +513,16 @@ class TickerPanel {
             this.startTickerPanelPriceEngine();
             this.setupDelegatedEvents();
             setTimeout(() => {
-                if (this.renderer && !this._isDestroyed) {
-                    this.filterCache = null;
-                    this.renderer.updatePriceElements?.();
-                    console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
-                }
+                if (this._isDestroyed) return;
+                // ✅ ФИКС: раньше здесь были filterCache=null + updatePriceElements(),
+                // но updatePriceElements() НЕ пересчитывает порядок строк — только
+                // текст в уже существующих DOM-узлах на их текущих позициях.
+                // Комментарий в логе "Пересортировано" был неверным: реального
+                // пересчёта порядка не происходило. Теперь используем общий метод,
+                // который при активной сортировке по данным (price/change/volume/
+                // trades) действительно пересчитывает и ререндерит список.
+                this._refreshAfterBulkPriceUpdate();
+                console.log(`✅ Пересортировано: ${this.displayedTickers?.length} тикеров`);
             }, TICKER_TIMINGS.FINAL_RERENDER_DELAY);
         });
     }
@@ -553,7 +600,18 @@ class TickerPanel {
             
             if (!this._blockDOMUpdates && !this._isDestroyed) {
                 setTimeout(() => { 
-                    this.renderer.updatePriceElements?.(); 
+                    // ✅ ФИКС: главный источник бага "стрелка сортировки активна,
+                    // но после REST-загрузки/переключения вотчлиста список не
+                    // пересортировывается". Раньше здесь вызывался только
+                    // this.renderer.updatePriceElements(), который лишь обновляет
+                    // текст в DOM на текущих позициях строк и никогда не меняет
+                    // порядок. В результате первые реальные цифры объёма/цены/
+                    // изменения (пришедшие после того, как строки уже были
+                    // отрисованы с volume=0 и потому не отсортированы толком)
+                    // просто подставлялись в "замороженный" порядок навсегда.
+                    // Теперь при активной сортировке по price/change/volume/trades
+                    // список реально пересчитывается и перерисовывается.
+                    this._refreshAfterBulkPriceUpdate();
                     this.updateModalCount?.(); 
                 }, 50);
             }
@@ -915,7 +973,10 @@ class TickerPanel {
                 fetchBybitBulk(byFutures, 'futures'),
                 fetchBybitBulk(bySpot, 'spot')
             ]);
-            if (!this._isDestroyed) this.renderer?.updatePriceElements();
+            // ✅ ФИКС: тот же паттерн — раньше здесь безусловно вызывался
+            // updatePriceElements(), не пересчитывающий порядок. Теперь при
+            // активной сортировке по данным список реально пересортировывается.
+            if (!this._isDestroyed) this._refreshAfterBulkPriceUpdate();
         } finally {
             this._fetchBatchInProgress = false;
         }
@@ -1015,7 +1076,9 @@ class TickerPanel {
                     }
                 });
             }
-            if (!this._isDestroyed) this.renderer.updatePriceElements();
+            // ✅ ФИКС: тот же паттерн, что и выше — пересортировка при
+            // активной сортировке по данным вместо простого обновления текста.
+            if (!this._isDestroyed) this._refreshAfterBulkPriceUpdate();
         } catch (error) { 
             console.error('❌ Ошибка загрузки Bybit:', error); 
         }
