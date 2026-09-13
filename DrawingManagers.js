@@ -8609,13 +8609,14 @@ class TradeLevel {
         this.entryPrice = entryPrice;
         this.stopLossPrice = stopLossPrice;
         this.takeProfitPrice = null;
+        this.takeProfitPrice2 = null; // НОВЫЙ: Второй тейк-профит
         this.direction = options.direction || (stopLossPrice > entryPrice ? 'short' : 'long');
         this.riskRewardRatio = options.riskRewardRatio || 3;
+        this.riskRewardRatio2 = options.riskRewardRatio2 || 5; // НОВЫЙ: R:R для второго тейка (по умолчанию 5)
         this.manualTP = options.manualTP || false;
+        this.manualTP2 = options.manualTP2 || false; // НОВЫЙ: Флаг ручного изменения второго тейка
         this.entryTime = options.time || Date.now() / 1000;
         this.anchorTime = this.entryTime;
-        // FIX: use crypto.randomUUID when available for a truly unique id,
-        // fall back to the old scheme in environments without it.
         this.id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
             ? crypto.randomUUID()
             : `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
@@ -8645,14 +8646,27 @@ class TradeLevel {
     }
 
     updateTP() {
-        if (this.manualTP && this.takeProfitPrice !== null && !isNaN(this.takeProfitPrice)) return;
         const risk = Math.abs(this.entryPrice - this.stopLossPrice);
         if (isNaN(risk) || risk === 0) return;
-        const multiplier = this.riskRewardRatio || 3;
-        if (this.direction === 'long') {
-            this.takeProfitPrice = this.entryPrice + (risk * multiplier);
-        } else {
-            this.takeProfitPrice = this.entryPrice - (risk * multiplier);
+        
+        // Обновление первого тейка
+        if (!this.manualTP || this.takeProfitPrice === null || isNaN(this.takeProfitPrice)) {
+            const multiplier = this.riskRewardRatio || 3;
+            if (this.direction === 'long') {
+                this.takeProfitPrice = this.entryPrice + (risk * multiplier);
+            } else {
+                this.takeProfitPrice = this.entryPrice - (risk * multiplier);
+            }
+        }
+        
+        // Обновление второго тейка (по умолчанию 5к1)
+        if (!this.manualTP2 || this.takeProfitPrice2 === null || isNaN(this.takeProfitPrice2)) {
+            const multiplier2 = this.riskRewardRatio2 || 5;
+            if (this.direction === 'long') {
+                this.takeProfitPrice2 = this.entryPrice + (risk * multiplier2);
+            } else {
+                this.takeProfitPrice2 = this.entryPrice - (risk * multiplier2);
+            }
         }
     }
 
@@ -8701,6 +8715,7 @@ class TradeLevelRenderer {
             const entryY = chartManager.priceToCoordinate(trade.entryPrice);
             const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
             const tpY = (trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice)) ? chartManager.priceToCoordinate(trade.takeProfitPrice) : null;
+            const tp2Y = (trade.takeProfitPrice2 !== null && !isNaN(trade.takeProfitPrice2)) ? chartManager.priceToCoordinate(trade.takeProfitPrice2) : null; // НОВЫЙ
             const xCoord = chartManager.timeToCoordinate(trade.entryTime);
 
             const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
@@ -8708,16 +8723,15 @@ class TradeLevelRenderer {
             const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
             const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
             const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
+            const tp2 = tp2Y !== null ? tp2Y * scope.verticalPixelRatio : null; // НОВЫЙ
 
             const isLong = trade.direction === 'long';
             const entryColor = isLong ? '#00ff88' : '#f23645';
             const arrowSize = 6 * scope.horizontalPixelRatio;
 
             if (entry !== null) {
-                // 1. СПЛОШНАЯ линия входа
                 this._drawLine(ctx, scope, entry, entryColor, 'solid', 0.7);
 
-                // 2. Стрелка (осталась как была)
                 ctx.save();
                 ctx.strokeStyle = '#FFFFFF';
                 ctx.lineWidth = 2 * scope.horizontalPixelRatio;
@@ -8739,13 +8753,13 @@ class TradeLevelRenderer {
                 ctx.stroke();
                 ctx.restore();
 
-                // 3. Плашка с ценой и подписью «ТВХ» справа (как у стопа и тейка)
                 this._drawLabel(ctx, scope, `ТВХ ${this._formatPrice(trade.entryPrice)}`, entry, entryColor);
             }
 
             const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
             const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
             const rewardPercent = riskPercent * trade.riskRewardRatio;
+            const rewardPercent2 = riskPercent * (trade.riskRewardRatio2 || 5); // НОВЫЙ
 
             if (sl !== null) {
                 this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
@@ -8757,6 +8771,12 @@ class TradeLevelRenderer {
                 this._drawLabel(ctx, scope, `Тейк ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
             }
 
+            // НОВЫЙ: Отрисовка второго тейка
+            if (tp2 !== null) {
+                this._drawLine(ctx, scope, tp2, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `Тейк 2 ${this._formatPrice(trade.takeProfitPrice2)} (1:${(trade.riskRewardRatio2 || 5).toFixed(2)} | ${rewardPercent2.toFixed(2)}%)`, tp2, trade.options.tpColor);
+            }
+
             if (trade.selected && trade.options.showPlechi && entry !== null) {
                 ctx.save();
                 ctx.setLineDash([4, 4]);
@@ -8764,6 +8784,7 @@ class TradeLevelRenderer {
                 ctx.globalAlpha = 0.3;
                 if (sl !== null) { ctx.strokeStyle = trade.options.slColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke(); }
                 if (tp !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke(); }
+                if (tp2 !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp2); ctx.stroke(); } // НОВЫЙ
                 ctx.restore();
             }
 
@@ -8771,15 +8792,13 @@ class TradeLevelRenderer {
                 if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
                 if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
                 if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor);
+                if (tp2 !== null) this._drawDragPoint(ctx, scope, x, tp2, trade.options.tpColor); // НОВЫЙ
             }
 
             const hitBuffer = 8 * scope.horizontalPixelRatio;
 
-            // Хит-зоны (приоритет: стрелка > линии)
             if (entry !== null) {
-                // Хит-зона для стрелки (перетаскивание времени)
                 this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade, isPoint: true });
-                // Хит-зона для линии входа (только выделение, без перетаскивания)
                 this._hitAreas.push({ type: 'entry-line', x1: 0, x2: mediaW, y: entry, buffer: hitBuffer, trade });
             }
             if (sl !== null) {
@@ -8787,6 +8806,10 @@ class TradeLevelRenderer {
             }
             if (tp !== null) {
                 this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
+            }
+            // НОВЫЙ: Хит-зона для второго тейка
+            if (tp2 !== null) {
+                this._hitAreas.push({ type: 'tp2', x1: 0, x2: mediaW, y: tp2, buffer: hitBuffer, trade });
             }
         });
     }
@@ -8862,7 +8885,6 @@ class TradeLevelRenderer {
         let bestHit = null;
         let bestDistance = Infinity;
 
-        // 1. Приоритет: стрелка входа
         for (const area of this._hitAreas) {
             if (area.type === 'entry' && area.isPoint) {
                 const dx = x - area.x;
@@ -8871,13 +8893,11 @@ class TradeLevelRenderer {
                 if (distance < area.radius && distance < bestDistance) {
                     bestHit = { type: area.type, trade: area.trade, distance };
                     bestDistance = distance;
-                    // FIX (minor perf): can't do better than an exact hit, stop early.
                     if (bestDistance === 0) return bestHit;
                 }
             }
         }
 
-        // 2. Обычная проверка линий (включая entry-line)
         for (const area of this._hitAreas) {
             if (area.isPoint) continue;
             if (x >= area.x1 && x <= area.x2) {
@@ -8892,6 +8912,7 @@ class TradeLevelRenderer {
         return bestHit;
     }
 }
+
 class TradeLevelPaneView {
     constructor(trade, chartManager) {
         this._trade = trade;
@@ -8953,11 +8974,6 @@ class TradeLevelManager {
         this._isWaitingForSL = false;
         this._pixelRatio = window.devicePixelRatio || 1;
         this._magnetEnabled = true;
-        // FIX: magnet snap radius was hardcoded to 150px inside _snapToCandle,
-        // which covers almost the whole chart height and made the click point
-        // jump to the nearest OHLC level almost every time. Moved it here as a
-        // small, sane default (12px) so it only snaps when you click genuinely
-        // close to a high/low/close.
         this._magnetPriceThresholdPx = 12;
         this._selectedDirection = 'long';
         this._editingTrade = null;
@@ -9049,9 +9065,12 @@ class TradeLevelManager {
                         existing.trade.entryPrice = rec.data.entryPrice;
                         existing.trade.stopLossPrice = rec.data.stopLossPrice;
                         existing.trade.takeProfitPrice = rec.data.takeProfitPrice;
+                        existing.trade.takeProfitPrice2 = rec.data.takeProfitPrice2; // НОВЫЙ
                         existing.trade.direction = rec.data.direction;
                         existing.trade.riskRewardRatio = rec.data.riskRewardRatio;
+                        existing.trade.riskRewardRatio2 = rec.data.riskRewardRatio2; // НОВЫЙ
                         existing.trade.manualTP = rec.data.manualTP || false;
+                        existing.trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
                         existing.trade.entryTime = rec.data.entryTime;
                         existing.trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
                         existing.trade.options = { ...existing.trade.options, ...rec.data.options };
@@ -9072,9 +9091,12 @@ class TradeLevelManager {
                     trade.id = rec.id;
                     trade.symbolKey = rec.symbolKey;
                     trade.takeProfitPrice = rec.data.takeProfitPrice;
+                    trade.takeProfitPrice2 = rec.data.takeProfitPrice2; // НОВЫЙ
                     trade.direction = rec.data.direction;
                     trade.riskRewardRatio = rec.data.riskRewardRatio;
+                    trade.riskRewardRatio2 = rec.data.riskRewardRatio2; // НОВЫЙ
                     trade.manualTP = rec.data.manualTP || false;
+                    trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
                     trade.entryTime = rec.data.entryTime;
                     trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
                     trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
@@ -9108,8 +9130,8 @@ class TradeLevelManager {
             return window.db.put('drawings', {
                 id: trade.id, type: 'tradelevel', symbolKey: trade.symbolKey || this._getCurrentSymbolKey(),
                 data: {
-                    entryPrice: trade.entryPrice, stopLossPrice: trade.stopLossPrice, takeProfitPrice: trade.takeProfitPrice,
-                    direction: trade.direction, riskRewardRatio: trade.riskRewardRatio, manualTP: trade.manualTP,
+                    entryPrice: trade.entryPrice, stopLossPrice: trade.stopLossPrice, takeProfitPrice: trade.takeProfitPrice, takeProfitPrice2: trade.takeProfitPrice2, // НОВЫЙ
+                    direction: trade.direction, riskRewardRatio: trade.riskRewardRatio, riskRewardRatio2: trade.riskRewardRatio2, manualTP: trade.manualTP, manualTP2: trade.manualTP2, // НОВЫЙ
                     entryTime: trade.entryTime, anchorTime: trade.anchorTime ?? trade.entryTime,
                     options: trade.options, timeframeVisibility: trade.timeframeVisibility,
                     symbol: trade.symbol, exchange: trade.exchange, marketType: trade.marketType
@@ -9253,9 +9275,6 @@ class TradeLevelManager {
             if (this._isDrawingMode) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                // FIX: _handleDrawingClick never used the x/y args passed here
-                // (it recomputed its own CSS-pixel coordinates internally),
-                // so the unused params were dropped from its signature.
                 this._handleDrawingClick(e);
                 return;
             }
@@ -9270,7 +9289,8 @@ class TradeLevelManager {
                 hit.trade.selected = true;
                 hit.trade.showDragPoints = true;
                 this._selectedTrade = hit.trade;
-                this._potentialDrag = { trade: hit.trade, type: hit.type, startX: x, startY: y, startEntry: hit.trade.entryPrice, startSL: hit.trade.stopLossPrice, startTP: hit.trade.takeProfitPrice, startTime: hit.trade.entryTime };
+                // НОВЫЙ: добавлен startTP2 в potentialDrag
+                this._potentialDrag = { trade: hit.trade, type: hit.type, startX: x, startY: y, startEntry: hit.trade.entryPrice, startSL: hit.trade.stopLossPrice, startTP: hit.trade.takeProfitPrice, startTP2: hit.trade.takeProfitPrice2, startTime: hit.trade.entryTime };
                 this._requestRedraw();
             } else {
                 if (this._selectedTrade) {
@@ -9290,10 +9310,6 @@ class TradeLevelManager {
             const x = (e.clientX - rect.left) * this._pixelRatio;
             const y = (e.clientY - rect.top) * this._pixelRatio;
 
-            // FIX: live "ghost" preview of the SL line while waiting for the
-            // second click. We already created _tempTrade on the first click,
-            // so just keep its stopLossPrice glued to the cursor and redraw —
-            // this reuses the existing render pipeline instead of a new overlay.
             if (this._isDrawingMode && this._isWaitingForSL && this._tempTrade && this._drawingEntry) {
                 const cssX = e.clientX - rect.left;
                 const cssY = e.clientY - rect.top;
@@ -9324,6 +9340,7 @@ class TradeLevelManager {
                     if (this._dragType === 'entry') this._dragStartPrice = this._potentialDrag.startEntry;
                     else if (this._dragType === 'sl') this._dragStartPrice = this._potentialDrag.startSL;
                     else if (this._dragType === 'tp') this._dragStartPrice = this._potentialDrag.startTP;
+                    else if (this._dragType === 'tp2') this._dragStartPrice = this._potentialDrag.startTP2; // НОВЫЙ
                     container.style.cursor = 'grabbing';
                 }
             }
@@ -9354,6 +9371,18 @@ class TradeLevelManager {
                             const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
                             const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
                             this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
+                        }
+                    }
+                } else if (this._dragType === 'tp2') { // НОВЫЙ: Логика перетаскивания второго тейка
+                    const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP2);
+                    if (startPriceY !== null) {
+                        const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+                        if (newPrice !== null) {
+                            this._dragTrade.takeProfitPrice2 = newPrice;
+                            this._dragTrade.manualTP2 = true;
+                            const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
+                            const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
+                            this._dragTrade.riskRewardRatio2 = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio2;
                         }
                     }
                 }
@@ -9399,8 +9428,6 @@ class TradeLevelManager {
         container.addEventListener('contextmenu', (e) => { this._handleContextMenu(e); });
     }
 
-    // FIX: dropped the unused (x, y) params — coordinates are computed fresh
-    // below in CSS pixels, which is what coordinateToPrice/Time expect.
     _handleDrawingClick(e) {
         if (e.target.closest('#tradeCreatePanel')) return;
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
@@ -9436,8 +9463,6 @@ class TradeLevelManager {
         }
     }
 
-    // FIX: new helper so Escape can cleanly bail out of an in-progress
-    // entry->SL drawing sequence (removes the temp trade too).
     _cancelDrawing() {
         if (this._tempTrade) {
             this.deleteTrade(this._tempTrade.id);
@@ -9478,11 +9503,6 @@ class TradeLevelManager {
             menu.style.display = 'flex';
             menu.style.left = e.clientX + 'px';
             menu.style.top = e.clientY + 'px';
-            // FIX: the previous cloneNode()+replaceChild() dance was only
-            // there to strip old handlers, but assigning .onclick directly
-            // already replaces any previous handler — so the clone/replace
-            // was dead weight (and also churned the DOM node identity for
-            // no reason). Just reassign onclick.
             const settingsBtn = document.getElementById('tradeContextSettingsBtn');
             if (settingsBtn) {
                 settingsBtn.onclick = (ev) => { ev.stopPropagation(); this._showSettings(hit.trade); menu.style.display = 'none'; };
@@ -9502,10 +9522,6 @@ class TradeLevelManager {
                 e.preventDefault();
                 this.setDrawingMode(!this._isDrawingMode);
             }
-            // FIX: Escape now cancels an in-progress drawing sequence
-            // (removes the temp entry trade) instead of leaving the tool
-            // stuck waiting for a second click with no way out but a
-            // second stray click or the L hotkey.
             if (e.key === 'Escape' && this._isDrawingMode) {
                 e.preventDefault();
                 this._cancelDrawing();
@@ -9624,10 +9640,6 @@ class TradeLevelManager {
                 }
             };
         });
-        // FIX: same redundant cloneNode()+replaceChild() pattern as the
-        // context menu buttons — direct .onclick reassignment is sufficient
-        // and avoids needlessly recreating these DOM nodes every time the
-        // panel opens.
         const selectAllBtn = panel.querySelector('#selectAllTimeframes');
         const deselectAllBtn = panel.querySelector('#deselectAllTimeframes');
         const selectMinutesBtn = panel.querySelector('#selectMinutesTimeframes');
@@ -9827,11 +9839,6 @@ class TradeLevelManager {
                 const dLow = Math.abs(lowY - priceY);
                 const dClose = Math.abs(closeY - priceY);
                 const minDist = Math.min(dHigh, dLow, dClose);
-                // FIX: this threshold was hardcoded to 150 (px), which on a
-                // typical chart height covers almost the entire visible
-                // range — so the clicked price nearly always snapped to the
-                // nearest high/low/close instead of staying where you clicked.
-                // Now uses the configurable, much smaller _magnetPriceThresholdPx.
                 if (minDist < this._magnetPriceThresholdPx) {
                     if (minDist === dHigh) price = closest.high;
                     else if (minDist === dLow) price = closest.low;
