@@ -8631,6 +8631,7 @@ class TradeLevel {
             lineWidth: options.lineWidth || 1,
             showLabels: options.showLabels !== undefined ? options.showLabels : true,
             showPlechi: options.showPlechi !== undefined ? options.showPlechi : true,
+            showTP2: options.showTP2 !== undefined ? options.showTP2 : true, // НОВЫЙ: Показывать второй тейк
         };
         
         const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
@@ -8715,7 +8716,7 @@ class TradeLevelRenderer {
             const entryY = chartManager.priceToCoordinate(trade.entryPrice);
             const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
             const tpY = (trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice)) ? chartManager.priceToCoordinate(trade.takeProfitPrice) : null;
-            const tp2Y = (trade.takeProfitPrice2 !== null && !isNaN(trade.takeProfitPrice2)) ? chartManager.priceToCoordinate(trade.takeProfitPrice2) : null; // НОВЫЙ
+            const tp2Y = (trade.takeProfitPrice2 !== null && !isNaN(trade.takeProfitPrice2)) ? chartManager.priceToCoordinate(trade.takeProfitPrice2) : null;
             const xCoord = chartManager.timeToCoordinate(trade.entryTime);
 
             const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
@@ -8723,7 +8724,7 @@ class TradeLevelRenderer {
             const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
             const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
             const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
-            const tp2 = tp2Y !== null ? tp2Y * scope.verticalPixelRatio : null; // НОВЫЙ
+            const tp2 = tp2Y !== null ? tp2Y * scope.verticalPixelRatio : null;
 
             const isLong = trade.direction === 'long';
             const entryColor = isLong ? '#00ff88' : '#f23645';
@@ -8759,7 +8760,7 @@ class TradeLevelRenderer {
             const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
             const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
             const rewardPercent = riskPercent * trade.riskRewardRatio;
-            const rewardPercent2 = riskPercent * (trade.riskRewardRatio2 || 5); // НОВЫЙ
+            const rewardPercent2 = riskPercent * (trade.riskRewardRatio2 || 5);
 
             if (sl !== null) {
                 this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
@@ -8771,8 +8772,8 @@ class TradeLevelRenderer {
                 this._drawLabel(ctx, scope, `Тейк ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
             }
 
-            // НОВЫЙ: Отрисовка второго тейка
-            if (tp2 !== null) {
+            // НОВЫЙ: Отрисовка второго тейка (только если включен в настройках)
+            if (tp2 !== null && trade.options.showTP2 !== false) {
                 this._drawLine(ctx, scope, tp2, trade.options.tpColor, 'dashed', 0.7);
                 this._drawLabel(ctx, scope, `Тейк 2 ${this._formatPrice(trade.takeProfitPrice2)} (1:${(trade.riskRewardRatio2 || 5).toFixed(2)} | ${rewardPercent2.toFixed(2)}%)`, tp2, trade.options.tpColor);
             }
@@ -8784,7 +8785,7 @@ class TradeLevelRenderer {
                 ctx.globalAlpha = 0.3;
                 if (sl !== null) { ctx.strokeStyle = trade.options.slColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke(); }
                 if (tp !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke(); }
-                if (tp2 !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp2); ctx.stroke(); } // НОВЫЙ
+                if (tp2 !== null && trade.options.showTP2 !== false) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp2); ctx.stroke(); }
                 ctx.restore();
             }
 
@@ -8792,7 +8793,7 @@ class TradeLevelRenderer {
                 if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
                 if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
                 if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor);
-                if (tp2 !== null) this._drawDragPoint(ctx, scope, x, tp2, trade.options.tpColor); // НОВЫЙ
+                if (tp2 !== null && trade.options.showTP2 !== false) this._drawDragPoint(ctx, scope, x, tp2, trade.options.tpColor);
             }
 
             const hitBuffer = 8 * scope.horizontalPixelRatio;
@@ -8807,8 +8808,8 @@ class TradeLevelRenderer {
             if (tp !== null) {
                 this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
             }
-            // НОВЫЙ: Хит-зона для второго тейка
-            if (tp2 !== null) {
+            // НОВЫЙ: Хит-зона для второго тейка (только если включен)
+            if (tp2 !== null && trade.options.showTP2 !== false) {
                 this._hitAreas.push({ type: 'tp2', x1: 0, x2: mediaW, y: tp2, buffer: hitBuffer, trade });
             }
         });
@@ -9073,7 +9074,7 @@ class TradeLevelManager {
                         existing.trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
                         existing.trade.entryTime = rec.data.entryTime;
                         existing.trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
-                        existing.trade.options = { ...existing.trade.options, ...rec.data.options };
+                        existing.trade.options = { ...existing.trade.options, ...rec.data.options }; // Обновляет showTP2 и другие опции
                         existing.trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
                         if (!existing.trade.manualTP) existing.trade.updateTP();
                         if (isCurrentSymbol && (!existing.primitive || !existing.series || existing.series !== series)) {
@@ -9133,7 +9134,8 @@ class TradeLevelManager {
                     entryPrice: trade.entryPrice, stopLossPrice: trade.stopLossPrice, takeProfitPrice: trade.takeProfitPrice, takeProfitPrice2: trade.takeProfitPrice2, // НОВЫЙ
                     direction: trade.direction, riskRewardRatio: trade.riskRewardRatio, riskRewardRatio2: trade.riskRewardRatio2, manualTP: trade.manualTP, manualTP2: trade.manualTP2, // НОВЫЙ
                     entryTime: trade.entryTime, anchorTime: trade.anchorTime ?? trade.entryTime,
-                    options: trade.options, timeframeVisibility: trade.timeframeVisibility,
+                    options: trade.options, // Содержит showTP2
+                    timeframeVisibility: trade.timeframeVisibility,
                     symbol: trade.symbol, exchange: trade.exchange, marketType: trade.marketType
                 }
             }).catch(e => console.error(`❌ Save trade error (${trade.id}):`, e));
@@ -9597,6 +9599,37 @@ class TradeLevelManager {
         const tabStyle = panel.querySelector('#tabStyle');
         const tabVisibility = panel.querySelector('#tabVisibility');
 
+        // НОВЫЙ: Динамическое добавление чекбокса для скрытия второго тейка в панель стилей
+        if (stylePanel) {
+            let tp2CheckboxContainer = stylePanel.querySelector('#showTP2Container');
+            if (!tp2CheckboxContainer) {
+                tp2CheckboxContainer = document.createElement('div');
+                tp2CheckboxContainer.id = 'showTP2Container';
+                tp2CheckboxContainer.className = 'setting-row';
+                tp2CheckboxContainer.style.marginTop = '12px';
+                tp2CheckboxContainer.style.paddingTop = '12px';
+                tp2CheckboxContainer.style.borderTop = '1px solid #404040';
+                tp2CheckboxContainer.innerHTML = `
+                    <label style="display: flex; align-items: center; gap: 8px; color: #E0E0E0; cursor: pointer; font-size: 13px; user-select: none;">
+                        <input type="checkbox" id="showTP2Checkbox" style="accent-color: #4A90E2; width: 16px; height: 16px; cursor: pointer;">
+                        <span>Показывать второй тейк-профит (5:1)</span>
+                    </label>
+                `;
+                stylePanel.appendChild(tp2CheckboxContainer);
+            }
+            const showTP2Checkbox = tp2CheckboxContainer.querySelector('#showTP2Checkbox');
+            if (showTP2Checkbox) {
+                showTP2Checkbox.checked = trade ? (trade.options.showTP2 !== false) : true;
+                showTP2Checkbox.onchange = (e) => {
+                    if (trade) {
+                        trade.options.showTP2 = e.target.checked;
+                        this._requestRedraw();
+                        this._saveTrades();
+                    }
+                };
+            }
+        }
+
         const switchTab = (tabName) => {
             if (tabName === 'style') {
                 if (tabStyle) { tabStyle.style.background = '#4A90E2'; tabStyle.style.color = '#fff'; tabStyle.style.border = 'none'; }
@@ -9884,6 +9917,7 @@ class TradeLevelManager {
         this._selectedTrade = trade;
     }
 }
+
 if (typeof window !== 'undefined') {
     window.TradeLevel = TradeLevel;
     window.TradeLevelRenderer = TradeLevelRenderer;
@@ -9891,7 +9925,6 @@ if (typeof window !== 'undefined') {
     window.TradeLevelPrimitive = TradeLevelPrimitive;
     window.TradeLevelManager = TradeLevelManager;
 }
-
 // ========== ГОРЯЧИЕ КЛАВИШИ ==========
 function isTyping() {
     const a = document.activeElement;
