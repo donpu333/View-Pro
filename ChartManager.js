@@ -1,5 +1,3 @@
-
-
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval(), чтобы не
@@ -117,6 +115,11 @@ class ChartManager {
         this._pendingHistoryLoad = false;
         this._historyEndTime = null;
         this._fetchPromise = null;
+
+        // PERF: кэш прочитанной из localStorage точности цены, чтобы не дёргать
+        // синхронный localStorage.getItem() на каждый rAF-тик в _performUpdate().
+        this._cachedPrecisionKey = null;
+        this._cachedPrecisionValue = null;
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         this._maxCandlesInMemory = isMobile ? 3000 : 8000;
@@ -523,6 +526,19 @@ class ChartManager {
         return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
     }
 
+    // PERF: единая точка обновления «горячих» тиков цены/свечи. Раньше почти
+    // каждый апдейт вызывался на ОБЕИХ сериях (candle + bar), хотя в любой
+    // момент времени видна только одна (вторая имеет visible:false) — то есть
+    // LightweightCharts тратил вдвое больше работы на пересчёт/рендер на
+    // каждый тик. Теперь обновляется только видимая серия; при переключении
+    // типа графика (setChartType) вновь становящаяся видимой серия принудительно
+    // синхронизируется через setData(this.chartData), так что она никогда не
+    // окажется "устаревшей" — единственным источником истины остаётся this.chartData.
+    _updateVisibleSeries(updateData) {
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series) series.update(updateData);
+    }
+
     _showSymbolSwitchOverlay() {
         if (this._symbolSwitchOverlay) {
             try {
@@ -803,8 +819,7 @@ class ChartManager {
                             close: cur.close
                         };
 
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
+                        this._updateVisibleSeries(updateData);
 
                         if (this.volumeSeries) {
                             const isBullish = cur.close >= cur.open;
@@ -905,8 +920,7 @@ class ChartManager {
                             close: candle.close
                         };
 
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
+                        this._updateVisibleSeries(updateData);
 
                         if (this.volumeSeries) {
                             const isBullish = candle.close >= candle.open;
@@ -1059,8 +1073,7 @@ class ChartManager {
                             close: oldLastCandle.close
                         };
 
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
+                        this._updateVisibleSeries(updateData);
 
                         if (this.volumeSeries) {
                             const isBullish = oldLastCandle.close >= oldLastCandle.open;
@@ -1099,8 +1112,7 @@ class ChartManager {
                         close: candle.close
                     };
 
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
+                    this._updateVisibleSeries(updateData);
 
                     if (this.volumeSeries) {
                         const isBullish = candle.close >= candle.open;
@@ -1417,6 +1429,10 @@ class ChartManager {
 
                 if (this._pendingBarSpacing && this._pendingBarSpacing !== this._lastSavedBarSpacing) {
                     this._lastSavedBarSpacing = this._pendingBarSpacing;
+                    // PERF: держим this._savedBarSpacing в памяти синхронно с записью,
+                    // чтобы scrollToLast()/positionAfterDataApplied() не читали
+                    // localStorage на каждый вызов (см. #8).
+                    this._savedBarSpacing = this._pendingBarSpacing;
                     localStorage.setItem('chartBarSpacing', this._pendingBarSpacing);
                 }
 
@@ -1432,11 +1448,14 @@ class ChartManager {
             if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
 
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
-                if (!this._panelsSyncRafId) {
+                const panels = this.indicatorManager.panelManager.panels;
+
+                // PERF (#10): не планировать rAF ради синхронизации панелей, если
+                // панелей вообще нет — раньше requestAnimationFrame создавался
+                // безусловно на каждое изменение видимого диапазона.
+                if (panels && panels.length > 0 && !this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
                         this._isSyncing = true;
-
-                        const panels = this.indicatorManager.panelManager.panels;
 
                         panels.forEach((panel) => {
                             if (panel.chart && !panel.isCollapsed) {
@@ -1474,6 +1493,22 @@ class ChartManager {
 
             resizeTimeout = setTimeout(() => {
                 if (this._isChartValid()) {
+                    // PERF (#12): пропускаем дорогой пересчёт (высоты, панели,
+                    // индикаторы, перерисовка объектов), если размеры контейнера
+                    // фактически не изменились (resize сработал "вхолостую",
+                    // например из-за появления/исчезновения полосы прокрутки на
+                    // другом элементе страницы). this._lastWidth/_lastHeight уже
+                    // заводились в конструкторе, но раньше нигде не использовались.
+                    const newWidth = this.chartContainer.clientWidth;
+                    const newHeight = this.chartContainer.clientHeight;
+
+                    if (newWidth === this._lastWidth && newHeight === this._lastHeight) {
+                        return;
+                    }
+
+                    this._lastWidth = newWidth;
+                    this._lastHeight = newHeight;
+
                     this._updateMainChartHeight();
 
                     if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
@@ -1569,13 +1604,26 @@ class ChartManager {
             this._chartTypeSwitchTimeout = null;
         }
 
+        const previousType = this.currentChartType;
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
 
         if (type === 'candle') {
+            // PERF (#1): т.к. в горячих путях (тики цены/свечи) теперь обновляется
+            // только ВИДИМАЯ серия (_updateVisibleSeries), серия, ставшая активной
+            // при переключении типа, могла отстать от this.chartData (единственного
+            // источника истины). Поэтому перед показом досинхронизируем её полным
+            // setData — это разовая операция только в момент явного переключения
+            // пользователем типа графика, а не на каждый тик.
+            if (previousType !== 'candle' && this.candleSeries && this.chartData.length) {
+                this.candleSeries.setData(this.chartData);
+            }
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
             if (this.barSeries) this.barSeries.applyOptions({ visible: false });
         } else if (type === 'bar') {
+            if (previousType !== 'bar' && this.barSeries && this.chartData.length) {
+                this.barSeries.setData(this.chartData);
+            }
             if (this.barSeries) this.barSeries.applyOptions({ visible: true });
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
         }
@@ -1670,11 +1718,38 @@ class ChartManager {
         }
     }
 
+    // PERF (#2): читает точность из localStorage только когда меняется ключ
+    // (символ/биржа/рынок), а не на каждый вызов. Раньше _performUpdate() дёргал
+    // синхронный localStorage.getItem() на каждом rAF-тике обновления графика.
+    _getCachedPrecision(symbol, exchange, marketType) {
+        const key = `precision_${symbol}_${exchange}_${marketType}`;
+
+        if (this._cachedPrecisionKey === key) {
+            return this._cachedPrecisionValue;
+        }
+
+        const value = localStorage.getItem(key);
+        this._cachedPrecisionKey = key;
+        this._cachedPrecisionValue = value;
+
+        return value;
+    }
+
+    _setCachedPrecision(symbol, exchange, marketType, precision) {
+        const key = `precision_${symbol}_${exchange}_${marketType}`;
+        const value = String(precision);
+
+        localStorage.setItem(key, value);
+
+        this._cachedPrecisionKey = key;
+        this._cachedPrecisionValue = value;
+    }
+
     _performUpdate() {
         if (!this.chartData.length || this._updatesSuspended || !this._isChartValid()) return;
 
-        const cachedPrecision = localStorage.getItem(
-            `precision_${this.currentSymbol}_${this.currentExchange}_${this.currentMarketType}`
+        const cachedPrecision = this._getCachedPrecision(
+            this.currentSymbol, this.currentExchange, this.currentMarketType
         );
 
         if (cachedPrecision) {
@@ -1798,8 +1873,7 @@ class ChartManager {
                     close: currentCandle.close
                 };
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     const isBullish = currentCandle.close >= currentCandle.open;
@@ -1852,8 +1926,7 @@ class ChartManager {
                     close: newCandle.close
                 };
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     this.volumeSeries.update({
@@ -1901,8 +1974,7 @@ class ChartManager {
             close: lastCandle.close
         };
 
-        if (this.candleSeries) this.candleSeries.update(updateData);
-        if (this.barSeries) this.barSeries.update(updateData);
+        this._updateVisibleSeries(updateData);
 
         if (this.volumeSeries) {
             const isBullish = lastCandle.close >= lastCandle.open;
@@ -2018,8 +2090,7 @@ class ChartManager {
                 this._stampCandle(currentLastCandle, 'ws', receivedAt);
                 this.lastCandle = currentLastCandle;
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     const isBullish = currentLastCandle.close >= currentLastCandle.open;
@@ -2091,8 +2162,7 @@ class ChartManager {
                 this._addToTimeMap(candle.time, this.chartData.length - 1);
                 this.lastCandle = candle;
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     const isBullish = candle.close >= candle.open;
@@ -2221,8 +2291,7 @@ class ChartManager {
             close: candle.close
         };
 
-        if (this.candleSeries) this.candleSeries.update(updateData);
-        if (this.barSeries) this.barSeries.update(updateData);
+        this._updateVisibleSeries(updateData);
 
         if (this.volumeSeries) {
             this.volumeSeries.update({
@@ -2342,7 +2411,7 @@ class ChartManager {
                 this._applyPriceLineColor(series, lineColor);
             }
 
-            const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+            const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
             const inferredPrecision = this._inferPrecisionFromData();
 
             if (cachedPrecision) {
@@ -2350,7 +2419,7 @@ class ChartManager {
                 this._lastAppliedPrecision = cachedPrecision;
             } else {
                 this.applyPriceFormat(inferredPrecision);
-                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, inferredPrecision);
+                this._setCachedPrecision(symbol, exchange, marketType, inferredPrecision);
                 this._lastAppliedPrecision = String(inferredPrecision);
             }
 
@@ -2369,7 +2438,10 @@ class ChartManager {
                 }
 
                 const timeScale = this.chart.timeScale();
-                const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
+                // PERF (#8): используем закэшированное в памяти значение вместо
+                // localStorage.getItem() — актуально всегда синхронизировано через
+                // scheduleUpdate-обработчик скролла (см. setupOptimizedSubscriptions).
+                const savedBarSpacing = this._savedBarSpacing || 25;
 
                 timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
@@ -2429,7 +2501,7 @@ class ChartManager {
             if (typeof getPrecisionFromExchange === 'function') {
                 getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
                     if (this.currentSymbol === symbol && this._isChartValid()) {
-                        localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                        this._setCachedPrecision(symbol, exchange, marketType, precision);
                         this.applyPriceFormat(precision);
                         this._lastAppliedPrecision = String(precision);
                     }
@@ -2666,7 +2738,7 @@ class ChartManager {
                 window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
             }
 
-            const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+            const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
 
             if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision));
 
@@ -2839,6 +2911,18 @@ class ChartManager {
             this._latestCrosshairData = null;
             this._clearPanelsCrosshair();
 
+            return;
+        }
+
+        // PERF (#9): если время под курсором совпадает с предыдущей отрисованной
+        // свечой (курсор просто чуть сдвинулся по X внутри той же свечи),
+        // не пересчитываем change%/volume заново — берём готовые значения и
+        // обновляем только координату X, необходимую для позиционирования.
+        if (this._latestCrosshairData && this._latestCrosshairData.visible &&
+            this._latestCrosshairData.time === param.time) {
+            this._latestCrosshairData.pointX = param.point.x;
+            this._applyCrosshairDOMOptimized();
+            this._syncPanelsCrosshairOptimized();
             return;
         }
 
@@ -3025,7 +3109,10 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
 
-            const savedBarSpacing = parseFloat(localStorage.getItem('chartBarSpacing')) || 25;
+            // PERF (#8): значение уже актуально держится в памяти (this._savedBarSpacing),
+            // синхронизируется при каждом изменении в setupOptimizedSubscriptions —
+            // не нужно читать localStorage синхронно на каждый вызов scrollToLast().
+            const savedBarSpacing = this._savedBarSpacing || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
             if (enableRealTime) {
@@ -3402,12 +3489,15 @@ class ChartManager {
     // 27. ВАЛИДАЦИЯ И САНИТИЗАЦИЯ СВЕЧЕЙ
     // =================================================================================
 
-    _isValidCandle(candle) {
+    _isValidCandle(candle, nowSecHint = null) {
         if (!candle || typeof candle !== 'object') return false;
 
         if (typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return false;
 
-        const nowSec = Math.floor(Date.now() / 1000);
+        // PERF (#6): позволяет вызывающему коду (например, циклу фильтрации
+        // батча свечей в fetchKlines) передать уже вычисленный nowSec один раз
+        // на весь батч вместо повторного Date.now() на каждую свечу.
+        const nowSec = nowSecHint !== null ? nowSecHint : Math.floor(Date.now() / 1000);
         const maxAllowedTime = nowSec + this._getIntervalSeconds();
 
         if (candle.time > maxAllowedTime) return false;
@@ -3522,8 +3612,7 @@ class ChartManager {
             close: candle.close
         };
 
-        if (this.candleSeries) this.candleSeries.update(updateData);
-        if (this.barSeries) this.barSeries.update(updateData);
+        this._updateVisibleSeries(updateData);
 
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (activeSeries) this._applyPriceLineColor(activeSeries, lineColor);
@@ -3719,11 +3808,14 @@ class ChartManager {
                 return true;
             });
 
-            const validCandles = noDupes.filter(c => this._isValidCandle(c));
+            // PERF (#6): nowSec вычисляется один раз на весь батч и передаётся в
+            // _isValidCandle(), вместо повторного Date.now() на каждую свечу внутри filter().
+            const batchNowSec = Math.floor(Date.now() / 1000);
+            const validCandles = noDupes.filter(c => this._isValidCandle(c, batchNowSec));
 
             validCandles.sort((a, b) => a.time - b.time);
 
-            const currentStart = this._alignTimeToInterval(Math.floor(Date.now() / 1000));
+            const currentStart = this._alignTimeToInterval(batchNowSec);
 
             for (const c of validCandles) {
                 this._stampCandle(c, 'rest', requestStartedAt);
@@ -4076,7 +4168,7 @@ class ChartManager {
     }
 
     updatePricePrecision(symbol, exchange, marketType) {
-        const cachedPrecision = localStorage.getItem(`precision_${symbol}_${exchange}_${marketType}`);
+        const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
 
         if (cachedPrecision) {
             this.applyPriceFormat(parseInt(cachedPrecision));
@@ -4088,7 +4180,7 @@ class ChartManager {
         if (typeof getPrecisionFromExchange === 'function') {
             getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
                 this.applyPriceFormat(precision);
-                localStorage.setItem(`precision_${symbol}_${exchange}_${marketType}`, precision);
+                this._setCachedPrecision(symbol, exchange, marketType, precision);
             }).catch(() => {});
         }
     }
@@ -4445,8 +4537,7 @@ class ChartManager {
                         time: lc.time, open: lc.open, high: lc.high, low: lc.low, close: lc.close
                     };
 
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
+                    this._updateVisibleSeries(updateData);
 
                     if (this.volumeSeries) {
                         const isBullish = lc.close >= lc.open;
@@ -4478,8 +4569,7 @@ class ChartManager {
                         time: c.time, open: c.open, high: c.high, low: c.low, close: c.close
                     };
 
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
+                    this._updateVisibleSeries(updateData);
                 }
 
                 this._updateVolumeOptimized();
