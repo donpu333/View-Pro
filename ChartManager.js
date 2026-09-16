@@ -1,4 +1,54 @@
-
+// =====================================================================================
+// ИСПРАВЛЕННАЯ ВЕРСИЯ — устранены причины неправильной отрисовки свечей (особенно на 5m)
+// =====================================================================================
+// FIX #1 (ГЛАВНЫЙ): _receivedAt теперь ВСЕГДА в локальной базе времени (Date.now()).
+//   Раньше WS-события stamp'ились биржевым eventTime (поле E, мс), а REST/кэш/
+//   placeholder'ы — локальным Date.now(). При любом рассинхроне часов машины и биржи
+//   _isFresherUpdate() отклонял настоящие WS-обновления, и текущая свеча оставалась
+//   placeholder'ом (неверный open, нулевой volume, «обрубленные» тени) до 30с REST-синка.
+//   Биржевое время события хранится отдельно в _eventTime и используется только для
+//   порядка событий внутри WS-потока.
+// FIX #2: series.update() бросает исключение при времени СТАРЕЕ последнего бара серии
+//   (lightweight-charts). Неперехваченное исключение рассинхронизировало серию и
+//   chartData — после этого ВСЕ последующие свечи рисовались неправильно. Добавлено
+//   самолечение: при ошибке update() выполняется полный setData из chartData.
+// FIX #3: _applyPriceUpdate не имел защиты для currentCandleStart < lastCandle.time —
+//   мог запушить свечу СТАРЕЕ последней (нелокализованный сбой сортировки массива),
+//   а также обновлял НЕпоследний бар через update() (исключение) и подменял lastCandle
+//   несуществующим «последним». Теперь тики применяются только к последней свече;
+//   новая свеча создаётся только для строго следующего периода; опоздавшие тики
+//   структуру данных не трогают.
+// FIX #4: tickTime в _applyPriceUpdate мог прийти в миллисекундах — «граница периода»
+//   улетала в будущее, каждый тик провоцировал REST catch-up, а свечи замирали.
+//   Добавлена нормализация (мс → с) и sanity-окно.
+// FIX #5: Гейт `eventTime <= _lastKlineEventTime` отклонял финальное событие закрытия
+//   свечи (x=true), если биржа присылала два kline-события с одинаковым E (одна
+//   миллисекунда) — свеча оставалась «незакрытой» и продолжала меняться. Теперь
+//   отклоняются только строго более старые события.
+// FIX #6: _catchUpMissedCandles: фиксированный limit=10 оставлял дыру в данных при
+//   отставании >10 свечей; scrollToLast() дёргал вьюпорт даже при просмотре истории;
+//   предыдущая свеча не помечалась закрытой. Теперь лимит адаптивный (до 1000),
+//   пушится только непрерывная префикс-цепочка (при большом разрыве — переход на
+//   свежие данные + лечение дыры), скролл только если пользователь не в истории.
+// FIX #7: _syncRecentCandles пушил «пропущенные» свечи без проверки непрерывности —
+//   в массиве могла возникнуть дыра (на графике бары «слипаются», индикаторы врут).
+// FIX #8: fetchKlines не выравнивал openTime по границе интервала — одна «кривая»
+//   свеча ломала lookup в _candleTimeMap и плодила дубликаты в одном слоте.
+// FIX #9: _performTrimNow при просмотре старой истории мог отрезать правый край
+//   ВКЛЮЧАЯ текущую свечу — live-обновления тут же добавляли её обратно, trim снова
+//   отрезал: REST-спам, мерцание, неверная последняя свеча. Теперь «живой хвост»
+//   (>=120 последних свечей + текущий период) не отрезается никогда.
+// FIX #10: Добавлен _healDataGaps() — обнаружение и заполнение внутренних дыр в данных
+//   (fetch с endTime), вызывается после catch-up/возврата на вкладку/периодического
+//   синка (троттлинг 30с).
+// FIX #11: Карантин (1с) после возврата на вкладку глушил WS-события — по окончании
+//   карантина выполняется компенсирующий _syncRecentCandles().
+// FIX #12: refreshCandlesAfterTabHidden / refreshCandlesInBackground — пуш новых свечей
+//   только непрерывной цепочкой; при разрыве делегируем catch-up/heal.
+// FIX #13: Мелочи: _createNewCandle stamp'овал свечу биржевым eventTime (см. FIX #1);
+//   защита от null currentSymbol в meta-проверке updateLastCandle; безопасный доступ
+//   к lastCandle в _syncRecentCandles.
+// =====================================================================================
 
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
@@ -5248,3 +5298,102 @@ class ChartManager {
             }
         } catch (error) {}
     }
+
+    // =================================================================================
+    // 38. ОЖИДАНИЕ ГОТОВНОСТИ
+    // =================================================================================
+
+    async waitForReady() {
+        let attempts = 0;
+        const maxAttempts = 50;
+
+        while (attempts < maxAttempts) {
+            if (this._isChartValid() && this.chartData && this.chartData.length > 0 &&
+                this.chart.timeScale()?.getVisibleRange()) {
+                return true;
+            }
+
+            await new Promise(r => setTimeout(r, 100));
+            attempts++;
+        }
+
+        return false;
+    }
+
+    async waitForSeriesReady() {
+        return this.waitForReady();
+    }
+
+    // =================================================================================
+    // 39. ПЛАНИРОВАНИЕ ПЕРЕРИСОВКИ ОБЪЕКТОВ РИСОВАНИЯ
+    // =================================================================================
+
+    manualAutoScale() {
+        this.autoScale();
+    }
+
+    scheduleDrawingsUpdate(forceHighPriority = false) {
+        if (document.hidden || !this._isChartValid()) return;
+        if (this._isVerticalZooming) return;
+
+        const now = performance.now();
+
+        let delay;
+
+        if (forceHighPriority) delay = 0;
+        else if (this._isScrollingFast) delay = 50;
+        else if (this._isScrolling) delay = 100;
+        else delay = 150;
+
+        if (now - (this._lastDrawingsCall || 0) < delay) {
+            if (!this._drawingsFinalUpdateTimeout) {
+                this._drawingsFinalUpdateTimeout = setTimeout(() => {
+                    this._drawingsFinalUpdateTimeout = null;
+
+                    if (window.renderDrawings) {
+                        window.renderDrawings();
+                    }
+                }, delay);
+            }
+
+            return;
+        }
+
+        this._lastDrawingsCall = now;
+
+        if (this._drawingsUpdateRafId === null && window.renderDrawings) {
+            this._drawingsUpdateRafId = requestAnimationFrame(() => {
+                window.renderDrawings();
+                this._drawingsUpdateRafId = null;
+            });
+        }
+    }
+
+    requestDrawingsRedraw() {
+        if (document.hidden || !this._isChartValid()) return;
+
+        if (this._isScrolling || this._isScrollingFast) {
+            this._pendingDrawingsRedraw = true;
+            return;
+        }
+
+        if (this._drawingsRafId !== null) return;
+
+        this._drawingsRafId = requestAnimationFrame(() => {
+            this._drawingsRafId = null;
+            this._performDrawingsRedraw();
+        });
+    }
+
+    _performDrawingsRedraw() {
+        if (window.rayManager?._applyRedrawIfNeeded) window.rayManager._applyRedrawIfNeeded();
+        if (window.trendLineManager?._requestRedraw) window.trendLineManager._requestRedraw();
+        if (window.rulerLineManager?._requestRedraw) window.rulerLineManager._requestRedraw();
+        if (window.alertLineManager?._applyRedrawsIfNeeded) window.alertLineManager._applyRedrawsIfNeeded();
+        if (window.textManager?._requestRedraw) window.textManager._requestRedraw();
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.ChartManager = ChartManager;
+}
