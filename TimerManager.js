@@ -1,39 +1,4 @@
-// =====================================================================================
-// ИСПРАВЛЕННАЯ ВЕРСИЯ TimerManager (+ TimerPrimitive / TimerRenderer)
-// =====================================================================================
-// T-FIX #1 (ВАЖНО, влияет на СВЕЧИ): подписка на цену переживала смену символа.
-//   После switchSymbol старый обработчик продолжал получать тики ПРОШЛОГО
-//   символа и писать их в chartManager.currentRealPrice. Эту цену использует
-//   _ensureCurrentCandle() для open/high/low/close новой свечи — т.е. тик
-//   чужого тикера мог исказить свечу нового графика. Теперь:
-//     а) обработчик сверяет symbol/exchange/marketType и ключ подписки;
-//     б) TimerManager подписывается на _notifySymbolChange и переподписывается.
-// T-FIX #2: _detachPrimitive() отцеплял примитив от серии, вычисленной по
-//   ТЕКУЩЕМУ currentChartType, а не от той, к которой примитив реально прикреплён.
-//   При setChartType → reattach() тип уже переключён → detach шёл к НЕ ТОЙ серии:
-//   примитив-сирота оставался на старой серии (двойной бейдж при возврате,
-//   утечка). Теперь серия прикрепления запоминается в _attachedSeries.
-// T-FIX #3: series.subscribeDataChanged() есть не во всех версиях
-//   lightweight-charts. Раньше TypeError на этом вызове попадал в общий catch,
-//   который ОБНУЛЯЛ _primitive — таймер отключался полностью, а уже
-//   прикреплённый примитив оставался сиротой на серии. Теперь: attach —
-//   отдельный try (критичный), subscribeDataChanged — feature-detect + свой
-//   try (некритичный: бейдж и так обновляется из _tick/updatePrice/updateAllViews).
-// T-FIX #4: hideImmediately() был определён В КЛАССЕ ДВАЖДЫ — первое
-//   определение (только setEnabled(false)) молча затиралось вторым (stop +
-//   setEnabled). Мёртвый код удалён, оставлено фактически работавшее поведение.
-// T-FIX #5: _tick() считал остаток до закрытия свечи от МОСКОВСКОГО времени.
-//   Для 6h/12h сдвиг +3ч НЕ делится нацело на период — бейдж отсчитывал до
-//   неверной границы (свечи биржи закрываются по UTC, и ChartManager
-//   выравнивает их по UTC). Теперь фаза считается от Date.now() (UTC).
-// T-FIX #6: бесконечный 200мс-ретрай _subscribeToPrice() не отменялся —
-//   крутился даже после destroy()/detach() и мог подписаться «из могилы».
-//   Таймер ретрая сохраняется и отменяется; добавлен флаг _destroyed.
-// T-FIX #7: TimerPrimitive.detached() не очищал _chart/_requestUpdate —
-//   requestRedraw() мог дёргать stale-колбэк отсоединённого примитива.
-// T-FIX #8: destroy() теперь отменяет отложенный _init (setTimeout 300мс)
-//   и ретрай подписки; колбэк смены символа защищён флагом _destroyed.
-// =====================================================================================
+
 
 class TimerRenderer {
     constructor(timerManager) {
@@ -280,7 +245,7 @@ class TimerManager {
         this._dataChangedUnsubscribe = null;
         this._scrollHandler = null;
 
-        // T-FIX #2/#6/#8: новые служебные поля
+        // T-FIX #2/#6/#8: служебные поля
         this._attachedSeries = null;      // серия, к которой РЕАЛЬНО прикреплён примитив
         this._destroyed = false;          // запрет фоновых циклов после destroy
         this._priceRetryTimeout = null;   // отменяемый ретрай подписки на цену
@@ -295,11 +260,29 @@ class TimerManager {
         }, 300);
     }
 
+    // T-FIX #9: единая точка установки подписки на смену символа.
+    // Раньше это было зашито только в _init(), и если reattach() вызывался
+    // ДО срабатывания отложенного _init (первые 300мс), _init выходил рано
+    // по флагу _initialized, и подписка НИКОГДА не создавалась.
+    _ensureSymbolChangeSubscription() {
+        if (this._destroyed || this._symbolChangeHandler) return;
+        if (typeof this._chartManager?._subscribeToSymbolChange !== 'function') return;
+
+        this._symbolChangeHandler = () => {
+            if (this._destroyed) return;
+            this._subscribeToPrice();
+        };
+        this._chartManager._subscribeToSymbolChange(this._symbolChangeHandler);
+    }
+
     _init() {
         if (this._disabled || this._destroyed || !this._chartManager?.chart) return;
 
         // ✅ Проверяем, не инициализирован ли уже
         if (this._initialized && this._primitive) {
+            // T-FIX #9: даже при раннем выходе гарантируем, что подписка
+            // на смену символа установлена (её мог пропустить reattach()).
+            this._ensureSymbolChangeSubscription();
             return;
         }
 
@@ -308,18 +291,8 @@ class TimerManager {
         this._subscribeToPrice();
         this._subscribeToColorChanges();
 
-        // T-FIX #1: переподписываемся на цену при смене символа/биржи/рынка —
-        // раньше подписка на СТАРЫЙ ключ жила вечно, и тики чужого тикера
-        // портили chartManager.currentRealPrice (его использует
-        // _ensureCurrentCandle для построения новой свечи!).
-        if (!this._symbolChangeHandler &&
-            typeof this._chartManager._subscribeToSymbolChange === 'function') {
-            this._symbolChangeHandler = () => {
-                if (this._destroyed) return;
-                this._subscribeToPrice();
-            };
-            this._chartManager._subscribeToSymbolChange(this._symbolChangeHandler);
-        }
+        // T-FIX #1 + #9: переподписываемся на цену при смене символа/биржи/рынка.
+        this._ensureSymbolChangeSubscription();
 
         this._initialized = true;
     }
@@ -429,10 +402,7 @@ class TimerManager {
         if (this._primitive) {
             try {
                 // T-FIX #2: отцепляем ОТ ТОЙ серии, к которой примитив был
-                // реально прикреплён. Раньше серия вычислялась по текущему
-                // currentChartType — при setChartType → reattach() тип уже
-                // переключён, detach шёл к чужой серии, а примитив-сирота
-                // оставался на старой и продолжал рисовать бейдж.
+                // реально прикреплён.
                 const series = this._attachedSeries ||
                     (this._chartManager?.currentChartType === 'candle'
                         ? this._chartManager?.candleSeries
@@ -476,6 +446,7 @@ class TimerManager {
             // destroy()/detach() (раньше цикл 200мс крутился вечно).
             this._priceRetryTimeout = setTimeout(() => {
                 this._priceRetryTimeout = null;
+                if (this._destroyed) return;
                 this._subscribeToPrice();
             }, 200);
             return;
@@ -493,10 +464,7 @@ class TimerManager {
             const cm = this._chartManager;
             if (!cm) return;
 
-            // T-FIX #1: отсекаем тики ЧУЖОГО символа/биржи/рынка. Пока
-            // переподписка не произошла, старая подписка может ещё присылать
-            // события прежнего тикера — раньше они писались в
-            // currentRealPrice и могли попасть в open новой свечи.
+            // T-FIX #1: отсекаем тики ЧУЖОГО символа/биржи/рынка.
             if (symbol && cm.currentSymbol && symbol !== cm.currentSymbol) return;
             if (exchange && cm.currentExchange && exchange !== cm.currentExchange) return;
             if (marketType && cm.currentMarketType && marketType !== cm.currentMarketType) return;
@@ -580,10 +548,7 @@ class TimerManager {
         this._updateTimerState();
     }
 
-    // T-FIX #4: ЕДИНСТВЕННОЕ определение hideImmediately(). В исходном классе
-    // метод был объявлен дважды: первое определение (только setEnabled(false))
-    // молча затиралось вторым. Фактически всегда работало поведение
-    // «stop + спрятать бейдж» — оно и оставлено.
+    // T-FIX #4: ЕДИНСТВЕННОЕ определение hideImmediately().
     // Используется в setDataQuick() перед сменой данных/тикера, чтобы бейдж не
     // рисовался по устаревшей (ещё не пересчитанной) шкале цены.
     hideImmediately() {
@@ -609,9 +574,8 @@ class TimerManager {
 
         // T-FIX #5: фаза обратного отсчёта — от UTC-времени (Date.now()).
         // Границы свечей биржи (и выравнивание в ChartManager) — UTC.
-        // Прежний расчёт от московского времени давал ошибку +3ч для 6h/12h
-        // (сдвиг не делится нацело на период) — бейдж показывал неверное
-        // время до закрытия свечи.
+        // Московский сдвиг +3ч не делится нацело на 2h/4h/6h/12h/1d —
+        // бейдж показывал неверное время до закрытия свечи.
         const left = dur - (Date.now() % dur);
         const txt = Utils.formatTimeRemaining(left);
 
@@ -635,6 +599,13 @@ class TimerManager {
 
         this._attachToSeries(series);
         this._subscribeToPrice();
+
+        // T-FIX #9: гарантируем установку подписки на смену символа. Если
+        // reattach() случился раньше отложенного _init (первые 300мс), _init
+        // потом выйдет рано по флагу _initialized — и без этого вызова
+        // подписка не создалась бы НИКОГДА, ломая T-FIX #1.
+        this._ensureSymbolChangeSubscription();
+
         this._initialized = true;
 
         // ✅ Запускаем таймер заново
