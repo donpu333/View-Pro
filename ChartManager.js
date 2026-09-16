@@ -1,54 +1,4 @@
-// =====================================================================================
-// ИСПРАВЛЕННАЯ ВЕРСИЯ — устранены причины неправильной отрисовки свечей (особенно на 5m)
-// =====================================================================================
-// FIX #1 (ГЛАВНЫЙ): _receivedAt теперь ВСЕГДА в локальной базе времени (Date.now()).
-//   Раньше WS-события stamp'ились биржевым eventTime (поле E, мс), а REST/кэш/
-//   placeholder'ы — локальным Date.now(). При любом рассинхроне часов машины и биржи
-//   _isFresherUpdate() отклонял настоящие WS-обновления, и текущая свеча оставалась
-//   placeholder'ом (неверный open, нулевой volume, «обрубленные» тени) до 30с REST-синка.
-//   Биржевое время события хранится отдельно в _eventTime и используется только для
-//   порядка событий внутри WS-потока.
-// FIX #2: series.update() бросает исключение при времени СТАРЕЕ последнего бара серии
-//   (lightweight-charts). Неперехваченное исключение рассинхронизировало серию и
-//   chartData — после этого ВСЕ последующие свечи рисовались неправильно. Добавлено
-//   самолечение: при ошибке update() выполняется полный setData из chartData.
-// FIX #3: _applyPriceUpdate не имел защиты для currentCandleStart < lastCandle.time —
-//   мог запушить свечу СТАРЕЕ последней (нелокализованный сбой сортировки массива),
-//   а также обновлял НЕпоследний бар через update() (исключение) и подменял lastCandle
-//   несуществующим «последним». Теперь тики применяются только к последней свече;
-//   новая свеча создаётся только для строго следующего периода; опоздавшие тики
-//   структуру данных не трогают.
-// FIX #4: tickTime в _applyPriceUpdate мог прийти в миллисекундах — «граница периода»
-//   улетала в будущее, каждый тик провоцировал REST catch-up, а свечи замирали.
-//   Добавлена нормализация (мс → с) и sanity-окно.
-// FIX #5: Гейт `eventTime <= _lastKlineEventTime` отклонял финальное событие закрытия
-//   свечи (x=true), если биржа присылала два kline-события с одинаковым E (одна
-//   миллисекунда) — свеча оставалась «незакрытой» и продолжала меняться. Теперь
-//   отклоняются только строго более старые события.
-// FIX #6: _catchUpMissedCandles: фиксированный limit=10 оставлял дыру в данных при
-//   отставании >10 свечей; scrollToLast() дёргал вьюпорт даже при просмотре истории;
-//   предыдущая свеча не помечалась закрытой. Теперь лимит адаптивный (до 1000),
-//   пушится только непрерывная префикс-цепочка (при большом разрыве — переход на
-//   свежие данные + лечение дыры), скролл только если пользователь не в истории.
-// FIX #7: _syncRecentCandles пушил «пропущенные» свечи без проверки непрерывности —
-//   в массиве могла возникнуть дыра (на графике бары «слипаются», индикаторы врут).
-// FIX #8: fetchKlines не выравнивал openTime по границе интервала — одна «кривая»
-//   свеча ломала lookup в _candleTimeMap и плодила дубликаты в одном слоте.
-// FIX #9: _performTrimNow при просмотре старой истории мог отрезать правый край
-//   ВКЛЮЧАЯ текущую свечу — live-обновления тут же добавляли её обратно, trim снова
-//   отрезал: REST-спам, мерцание, неверная последняя свеча. Теперь «живой хвост»
-//   (>=120 последних свечей + текущий период) не отрезается никогда.
-// FIX #10: Добавлен _healDataGaps() — обнаружение и заполнение внутренних дыр в данных
-//   (fetch с endTime), вызывается после catch-up/возврата на вкладку/периодического
-//   синка (троттлинг 30с).
-// FIX #11: Карантин (1с) после возврата на вкладку глушил WS-события — по окончании
-//   карантина выполняется компенсирующий _syncRecentCandles().
-// FIX #12: refreshCandlesAfterTabHidden / refreshCandlesInBackground — пуш новых свечей
-//   только непрерывной цепочкой; при разрыве делегируем catch-up/heal.
-// FIX #13: Мелочи: _createNewCandle stamp'овал свечу биржевым eventTime (см. FIX #1);
-//   защита от null currentSymbol в meta-проверке updateLastCandle; безопасный доступ
-//   к lastCandle в _syncRecentCandles.
-// =====================================================================================
+
 
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
@@ -1079,24 +1029,18 @@ class ChartManager {
                         this._updateVolumeOptimized();
                         this._applyVolumeScaleOptions();
                     }
-                } else {
-                    for (const candle of pushedMissing) {
-                        const updateData = {
-                            time: candle.time,
-                            open: candle.open,
-                            high: candle.high,
-                            low: candle.low,
-                            close: candle.close
-                        };
+                } else if (pushedMissing.length > 0) {
+                    // FIX #19: атомарная перерисовка вместо пошагового update()
+                    // по каждой добавленной свече (без «дорисовывания» на экране)
+                    if (this._isChartValid()) {
+                        if (this.candleSeries) this.candleSeries.setData(currentData);
+                        if (this.barSeries) this.barSeries.setData(currentData);
 
-                        this._updateVisibleSeries(updateData);
-
-                        // FIX #2: безопасное обновление объёма
-                        this._safeVolumeBarUpdate(
-                            candle.time,
-                            candle.quoteVolume || candle.volume || 0,
-                            candle.close >= candle.open ? this.bullishColor : this.bearishColor
-                        );
+                        this._volumeDataCache = null;
+                        this._volumeDataDirty = true;
+                        this._lastVolumeUpdateIndex = -1;
+                        this._updateVolumeOptimized();
+                        this._applyVolumeScaleOptions();
                     }
                 }
 
@@ -1292,23 +1236,6 @@ class ChartManager {
                     this._addToTimeMap(candle.time, currentData.length - 1);
                     cursorTime = candle.time;
 
-                    const updateData = {
-                        time: candle.time,
-                        open: candle.open,
-                        high: candle.high,
-                        low: candle.low,
-                        close: candle.close
-                    };
-
-                    this._updateVisibleSeries(updateData);
-
-                    // FIX #2: безопасное обновление объёма
-                    this._safeVolumeBarUpdate(
-                        candle.time,
-                        candle.quoteVolume,
-                        candle.close >= candle.open ? this.bullishColor : this.bearishColor
-                    );
-
                     dataChanged = true;
                 }
 
@@ -1317,11 +1244,23 @@ class ChartManager {
                 }
 
                 if (dataChanged) {
+                    // FIX #19: ЕДИНАЯ атомарная перерисовка вместо пошагового
+                    // update() по каждой свече. Раньше на возврате во вкладку
+                    // свечи «дорисовывались» на глазах по одной (каждая со
+                    // сдвигом вьюпорта) — теперь график меняется одной кадровой
+                    // операцией и появляется сразу полностью отрисованным.
+                    if (this._isChartValid()) {
+                        if (this.candleSeries) this.candleSeries.setData(currentData);
+                        if (this.barSeries) this.barSeries.setData(currentData);
+
+                        this._volumeDataCache = null;
+                        this._volumeDataDirty = true;
+                        this._lastVolumeUpdateIndex = -1;
+                        this._updateVolumeOptimized();
+                        this._applyVolumeScaleOptions();
+                    }
+
                     this.lastCandle = currentData[currentData.length - 1];
-                    this._volumeDataCache = null;
-                    this._volumeDataDirty = true;
-                    this._lastVolumeUpdateIndex = currentData.length - 1;
-                    this._applyVolumeScaleOptions();
                 }
             } else {
                 const updatedData = [];
@@ -3162,7 +3101,26 @@ class ChartManager {
                 return;
             }
 
-            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, finishSwitch);
+            // FIX #18: при попадании в кэш затемнение снимается ТОЛЬКО после
+            // завершения фонового досвежения (не более 2.5с) — иначе досылка
+            // недостающих свечей происходила на глазах и дёргала вьюпорт.
+            let cacheRefreshPromise = null;
+            if (isFromCache) {
+                cacheRefreshPromise = Promise.race([
+                    this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
+                    new Promise(r => setTimeout(r, 2500))
+                ]);
+            }
+
+            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, () => {
+                if (cacheRefreshPromise) {
+                    cacheRefreshPromise.then(() => {
+                        if (this._activeGeneration === generationId) finishSwitch();
+                    });
+                } else {
+                    finishSwitch();
+                }
+            });
 
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
@@ -3175,10 +3133,6 @@ class ChartManager {
             localStorage.setItem('lastMarketType', marketType);
 
             this._notifySymbolChange();
-
-            if (isFromCache) {
-                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
-            }
         } catch (error) {
             rollbackSwitch(error);
         }
@@ -3276,9 +3230,23 @@ class ChartManager {
             }
 
             if (isFromCache) {
-                this.refreshCandlesInBackground(
-                    this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
-                ).catch(() => {});
+                // FIX #18: кэш может быть устаревшим (до 5 мин). Раньше фоновое
+                // досвежение выполнялось УЖЕ ПОСЛЕ снятия затемнения: добавление
+                // недостающих свечей сдвигало вьюпорт (shiftVisibleRangeOnNewBar)
+                // + scrollToLast() → видимый «резкий скачок» сразу после
+                // переключения (особенно на повторных переключениях, когда кэш
+                // уже сохранён — первое-то переключение идёт через REST и без
+                // скачка). Теперь досвежение дожидается ПОД затемнением (не
+                // более 2.5с, чтобы не висеть на плохой сети). Итоговое
+                // состояние идентично прежнему — исчез только скачок.
+                await Promise.race([
+                    this.refreshCandlesInBackground(
+                        this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+                    ).catch(() => {}),
+                    new Promise(r => setTimeout(r, 2500))
+                ]);
+
+                if (this._activeGeneration !== generationId) return;
             }
         } catch (error) {
             console.error('❌ Ошибка переключения таймфрейма:', error);
@@ -5155,15 +5123,16 @@ class ChartManager {
                     this.chartData.push(...newCandles);
                     this._rebuildTimeMap();
 
+                    // FIX #19: ЕДИНАЯ атомарная перерисовка (раньше свечи
+                    // добавлялись по одной через update() — визуально это
+                    // выглядело как «дорисовывание» графика по частям)
+                    this._volumeDataCache = null;
                     this._volumeDataDirty = true;
                     this._lastVolumeUpdateIndex = -1;
 
-                    for (const c of newCandles) {
-                        const updateData = {
-                            time: c.time, open: c.open, high: c.high, low: c.low, close: c.close
-                        };
-
-                        this._updateVisibleSeries(updateData);
+                    if (this._isChartValid()) {
+                        if (this.candleSeries) this.candleSeries.setData(this.chartData);
+                        if (this.barSeries) this.barSeries.setData(this.chartData);
                     }
 
                     this._updateVolumeOptimized();
