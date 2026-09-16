@@ -1,4 +1,3 @@
-
 class WebSocketManager {
     constructor(chartManager) {
         this.chartManager = chartManager;
@@ -9,15 +8,13 @@ class WebSocketManager {
         this.isConnected = false;
         this.isConnecting = false;
         this._connectGeneration = 0;
-        this._lastKlineTime = 0;
-        this._lastMessageTime = 0;
         this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
-        // W-FIX #6: флаг явного закрытия (сторож не воскрешает соединение)
+        // Флаг явного закрытия — сторож и reconnect не воскрешают соединение
         this._closedByUser = false;
 
-        // ФИКС: набор интервалов, по которым уже предупреждали о несовпадении
+        // Набор интервалов, по которым уже предупреждали о несовпадении
         // выравнивания — чтобы не спамить в консоль на каждом сообщении.
         this._warnedAlign = new Set();
 
@@ -26,7 +23,13 @@ class WebSocketManager {
         this.currentExchange = 'binance';
         this.currentMarketType = 'futures';
 
-        this.binanceSpotOnlyTokens = ['BTCDOMUSDT', 'DEFIUSDT', 'ALTUSDT', 'NFTUSDT', 'TOPCOINSUSDT'];
+        // ФИКС: переименовано из binanceSpotOnlyTokens. Эти тикеры — ФЬЮЧЕРСНЫЕ
+        // индексы Binance (BTCDOM — доминация BTC, DEFI, NFT и т.п.) и на споте
+        // не торгуются. Старая логика переключала их в 'spot' и уводила
+        // подписку на несуществующий стрим.
+        this.binanceFuturesOnlyTokens = [
+            'BTCDOMUSDT', 'DEFIUSDT', 'ALTUSDT', 'NFTUSDT', 'TOPCOINSUSDT'
+        ];
 
         this._visibilityHandler = () => {
             if (!document.hidden) {
@@ -35,9 +38,9 @@ class WebSocketManager {
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
 
-        // W-FIX #3: сторож соединения. Раньше условие `this.isConnected &&`
-        // блокировало проверку после любого закрытия (onclose сбрасывает
-        // isConnected в false) — мёртвый WS не восстанавливался никогда.
+        // Сторож соединения: если данные не приходят >30 с или соединение
+        // "idle" (нет ни сокетов, ни запланированного реконнекта) —
+        // восстанавливаем связь.
         this._statusCheckInterval = setInterval(() => {
             if (this._closedByUser) return;
 
@@ -48,8 +51,13 @@ class WebSocketManager {
                 !this.reconnectTimer && !this._connectDebounceTimer;
 
             if (stale) {
-                console.warn('⚠️ Нет данных 30 сек, проверяем соединение');
-                this.ensureConnected();
+                console.warn('⚠️ Нет данных 30 сек, переподключаемся');
+                // ФИКС: ensureConnected() проверяет только readyState и не
+                // поможет при OPEN-сокете с мёртвым каналом. Полноценный
+                // реконнект + сброс метки, чтобы не триггерить повторно.
+                this._lastRelevantMessageTime = Date.now();
+                this.connect(this.currentSymbol, this.currentInterval,
+                             this.currentExchange, this.currentMarketType);
             } else if (idle) {
                 this.ensureConnected();
             }
@@ -59,10 +67,10 @@ class WebSocketManager {
     }
 
     _autoConnect() {
-        // W-FIX #5: не переподключаемся, если соединение уже установлено или
-        // подключение уже запланировано (ChartManager.connect / reconnectTimer).
         if (this._closedByUser) return;
 
+        // Не переподключаемся, если соединение уже установлено или
+        // подключение уже запланировано.
         const alreadyActive = this.wsKline || this.wsTrade ||
             this.reconnectTimer || this._connectDebounceTimer;
 
@@ -72,7 +80,8 @@ class WebSocketManager {
         }
 
         console.log('🚀 WebSocketManager: автоподключение...');
-        this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
+        this.connect(this.currentSymbol, this.currentInterval,
+                     this.currentExchange, this.currentMarketType);
     }
 
     getExchangeInterval(interval, exchange) {
@@ -88,7 +97,9 @@ class WebSocketManager {
     }
 
     formatSymbol(symbol, exchange) {
-        return exchange === 'bybit' ? symbol.trim().toUpperCase() : symbol.trim().toLowerCase();
+        return exchange === 'bybit'
+            ? symbol.trim().toUpperCase()
+            : symbol.trim().toLowerCase();
     }
 
     connect(symbol, interval, exchange, marketType) {
@@ -96,15 +107,18 @@ class WebSocketManager {
         exchange = exchange || this.currentExchange;
         marketType = marketType || this.currentMarketType;
 
-        // W-FIX #1: ТОЛЬКО trim, без toLowerCase()! Идентификаторы интервалов
-        // регистрозависимы: '1M' (месяц) после toLowerCase() превращался в '1m'
-        // (минута) — сокет подписывался не на тот таймфрейм, а meta.interval
+        // ВАЖНО: только trim, без toLowerCase(). Идентификаторы интервалов
+        // регистрозависимы: '1M' (месяц) после toLowerCase() становился '1m'
+        // (минута) — сокет подписывался не на тот таймфрейм, meta.interval
         // не совпадал с currentInterval графика, и все свечи отбрасывались.
         interval = (interval || this.currentInterval).trim();
 
-        if (exchange === 'binance' && marketType === 'futures' &&
-            this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
-            marketType = 'spot';
+        // ФИКС: инвертированная логика. Раньше фьючерсные индексы Binance
+        // принудительно уводились в spot. Теперь — наоборот: если запрошен
+        // spot, но тикер торгуется только на фьючерсах, остаёмся на futures.
+        if (exchange === 'binance' && marketType === 'spot' &&
+            this.binanceFuturesOnlyTokens.includes(symbol.toUpperCase())) {
+            marketType = 'futures';
         }
 
         this.currentSymbol = symbol;
@@ -113,7 +127,7 @@ class WebSocketManager {
         this.currentMarketType = marketType;
         this.retryCount = 0;
 
-        // W-FIX #6: явное подключение снимает флаг закрытия
+        // Явное подключение снимает флаг закрытия
         this._closedByUser = false;
 
         if (this.reconnectTimer) {
@@ -136,14 +150,10 @@ class WebSocketManager {
 
         this._closeSocket();
 
-        // ФИКС: снимок целевых параметров ИМЕННО в момент реального открытия
-        // сокета. Раньше сообщения фильтровались по мутирующимся
-        // this.currentSymbol/this.currentInterval, которые уже обновляются
-        // синхронно в connect(), ДО того как _doConnect() реально выполнится
-        // (100мс дебаунс) — то есть пока старый сокет ещё жив и шлёт данные
-        // старого таймфрейма/тикера, они трактовались как данные нового.
-        // Теперь у каждого сокета есть собственный неизменяемый контекст
-        // подписки, по которому и фильтруются его сообщения.
+        // Снимок целевых параметров ИМЕННО в момент открытия сокета.
+        // Все фильтры сообщений идут по этому неизменяемому контексту, а не
+        // по мутирующимся this.current*, которые могли быть уже обновлены
+        // синхронно в connect() (пока старый сокет ещё жив и шлёт данные).
         const subContext = {
             symbol: this.currentSymbol,
             interval: this.currentInterval,
@@ -167,7 +177,8 @@ class WebSocketManager {
             this.wsKline = this._createWebSocket(klineUrl, 'kline', generation, subContext);
             this.wsTrade = this._createWebSocket(tradeUrl, 'trade', generation, subContext);
         } else if (subContext.exchange === 'bybit') {
-            const wsUrl = 'wss://stream.bybit.com/v5/public/' + (subContext.marketType === 'spot' ? 'spot' : 'linear');
+            const wsUrl = 'wss://stream.bybit.com/v5/public/' +
+                (subContext.marketType === 'spot' ? 'spot' : 'linear');
             console.log('🔌 Bybit:', wsUrl);
             this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation, subContext);
             this.wsTrade = this.wsKline;
@@ -189,9 +200,6 @@ class WebSocketManager {
 
         ws._type = type;
         ws._generation = generation;
-        // ФИКС: контекст подписки "приклеен" к сокету — используется при
-        // обработке КАЖДОГО его сообщения, независимо от того, что успело
-        // измениться в this.currentSymbol/this.currentInterval за это время.
         ws._subContext = subContext;
 
         ws.onopen = () => {
@@ -211,10 +219,11 @@ class WebSocketManager {
                 ws._pingInterval = setInterval(() => {
                     if (generation !== this._connectGeneration) {
                         clearInterval(ws._pingInterval);
+                        ws._pingInterval = null;
                         return;
                     }
                     if (ws && ws.readyState === WebSocket.OPEN) {
-                        try { ws.send(JSON.stringify({ op: 'ping' })); } catch(e) {}
+                        try { ws.send(JSON.stringify({ op: 'ping' })); } catch (e) {}
                     }
                 }, 20000);
             }
@@ -226,8 +235,8 @@ class WebSocketManager {
                 this.isConnected = true;
                 this.isConnecting = false;
                 this.retryCount = 0;
-                // W-FIX #3: сбрасываем метку «последних данных», чтобы сторож
-                // отсчитывал 30с молчания от момента восстановления связи
+                // Сбрасываем метку «последних данных», чтобы сторож отсчитывал
+                // 30 с молчания от момента восстановления связи.
                 this._lastRelevantMessageTime = Date.now();
                 console.log('✅ Оба WebSocket подключены');
 
@@ -239,7 +248,6 @@ class WebSocketManager {
 
         ws.onmessage = (event) => {
             if (generation !== this._connectGeneration) return;
-            this._lastMessageTime = Date.now();
             this._handleMessage(event.data, type, subContext);
         };
 
@@ -247,29 +255,33 @@ class WebSocketManager {
             if (generation !== this._connectGeneration) return;
 
             console.log(`🔌 ${type.toUpperCase()} WebSocket закрыт:`, event.code, event.reason);
+
+            // ФИКС: чистим ping-интервал этого сокета здесь, а не только в
+            // _closeSocket(). Иначе после серверного/сетевого закрытия
+            // интервал продолжит тикать в мёртвое соединение.
+            if (ws._pingInterval) {
+                clearInterval(ws._pingInterval);
+                ws._pingInterval = null;
+            }
+
             this.isConnected = false;
             this.isConnecting = false;
 
-            // W-FIX #2: коды 1000/1005/1006 РАНЬШЕ выходили без переподключения.
+            // Коды 1000/1005/1006 раньше выходили без переподключения:
             //   - 1006: аварийный обрыв (сеть/прокси/сон машины) — самый частый;
             //   - 1000: сервер Binance планово закрывает стрим каждые 24 часа;
             //   - 1005: статус не передан (тоже авария).
-            // Намеренное закрытие (_closeSocket) предварительно снимает все
-            // обработчики, поэтому сюда такие события не попадают вовсе —
-            // значит, ЛЮБОЙ сработавший onclose требует переподключения.
-            // Без этого фикса WS умирал молча, и свечи жили только на
-            // 30-секундном REST-синке (визуально — «иногда кривые свечи»).
-
-            // W-FIX #7: 1008 (invalid policy) — решаем по НЕИЗМЕНЯЕМОМУ контексту
-            // сокета, а не по мутирующимся this.current*: старый сокет не должен
-            // переключать marketType новой подписки.
+            // Намеренное закрытие (_closeSocket) обнуляет обработчики, поэтому
+            // сюда такие события не попадают. Значит, ЛЮБОЙ сработавший onclose
+            // требует переподключения.
             if (event.code === 1008) {
                 if (subContext.exchange === 'binance' &&
                     subContext.marketType === 'futures' &&
-                    this.binanceSpotOnlyTokens.includes(subContext.symbol.toUpperCase()) &&
-                    // переключаем только если сокет относится к текущей подписке
+                    this.binanceFuturesOnlyTokens.includes(subContext.symbol.toUpperCase()) &&
                     this.currentSymbol === subContext.symbol &&
                     this.currentInterval === subContext.interval) {
+                    // Резервный предохранитель: если по какой-то причине
+                    // фьючерсный индекс ушёл в spot-запрос.
                     this.currentMarketType = 'spot';
                     this._scheduleReconnect(500);
                     return;
@@ -302,8 +314,6 @@ class WebSocketManager {
                 return;
             }
 
-            // Защита от вызова без контекста подписки (не должно происходить,
-            // но лучше явно отбросить сообщение, чем обработать его "вслепую").
             if (!subContext) return;
 
             if (subContext.exchange === 'binance') {
@@ -312,34 +322,26 @@ class WebSocketManager {
                     const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
                     if (msgSymbol && msgSymbol !== subContext.symbol.toUpperCase()) return;
 
-                    // ФИКС: сверяем интервал СВЕЧИ из сообщения с интервалом,
-                    // на который подписан именно этот сокет. Раньше такой
-                    // проверки не было вовсе — при быстрой смене таймфрейма
-                    // ещё не закрытый старый сокет "1m" мог прислать данные,
-                    // которые пересчитывались как данные нового интервала "1h"
-                    // (candleTime заново выравнивался по чужому шагу) —
-                    // отсюда битые/скачущие свечи сразу после переключения.
+                    // Сверяем интервал СВЕЧИ из сообщения с интервалом,
+                    // на который подписан именно этот сокет. Без этого при
+                    // быстрой смене таймфрейма ещё не закрытый старый сокет
+                    // "1m" мог прислать данные, которые пересчитывались как
+                    // данные нового интервала "1h" — отсюда битые/скачущие
+                    // свечи сразу после переключения.
                     if (k.i && k.i !== subContext.interval) return;
 
                     this._lastRelevantMessageTime = Date.now();
 
                     let candleTime = Math.floor(k.t / 1000);
 
-                    // ФИКС: календарное выравнивание вместо
-                    // Math.floor(t / step) * step.
-                    //
-                    // Старая формула работала только для ТФ, кратных суткам,
-                    // начинающимся от эпохи Unix. Эпоха Unix — ЧЕТВЕРГ,
-                    // поэтому для 1w шаг 604800 сек давал четверги, а не
-                    // понедельники: Binance присылает 1788739200 (Пн),
-                    // а floor-формула превращала его в 1788393600 (Чт) —
-                    // отсюда и "🛑 WS невыровненное время".
-                    // Для 1M шаг 2592000 (30 дней) вообще не совпадает
-                    // с длиной календарного месяца.
+                    // Календарное выравнивание вместо
+                    // Math.floor(t / step) * step. Старая формула не работала
+                    // для 1w (эпоха Unix — четверг, а Binance присылает
+                    // понедельник) и для 1M (30-дневный шаг ≠ календарный
+                    // месяц).
                     const expectedTime = this._alignTimeToInterval(candleTime, subContext.interval);
 
                     if (candleTime !== expectedTime) {
-                        // Не спамим в консоль — предупреждаем один раз на интервал.
                         if (!this._warnedAlign.has(subContext.interval)) {
                             console.warn(`⚠️ WS время не совпало с выравниванием: ${candleTime} → ${expectedTime} (${subContext.interval})`);
                             this._warnedAlign.add(subContext.interval);
@@ -347,14 +349,10 @@ class WebSocketManager {
                         candleTime = expectedTime;
                     }
 
-                    this._lastKlineTime = candleTime;
-
                     if (typeof chartManager.updateLastCandle === 'function') {
-                        // ФИКС: передаём meta {symbol, interval} — ChartManager
-                        // теперь реально использует их как вторую линию защиты
-                        // (см. updateLastCandle), на случай если сам график уже
-                        // переключился на другой тикер/интервал, а этот сокет
-                        // ещё не успели закрыть.
+                        // meta {symbol, interval} — вторая линия защиты в
+                        // ChartManager: если график уже переключился на другой
+                        // тикер/интервал, а этот сокет ещё не закрыт.
                         chartManager.updateLastCandle({
                             time: candleTime,
                             open: parseFloat(k.o),
@@ -364,7 +362,10 @@ class WebSocketManager {
                             volume: parseFloat(k.v),
                             quoteVolume: parseFloat(k.q || 0),
                             isClosed: k.x === true
-                        }, raw.E || Date.now(), { symbol: subContext.symbol, interval: subContext.interval });
+                        }, raw.E || Date.now(), {
+                            symbol: subContext.symbol,
+                            interval: subContext.interval
+                        });
                     }
                 }
 
@@ -376,17 +377,14 @@ class WebSocketManager {
 
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
-                        // ФИКС: доп. сверка с РЕАЛЬНЫМ текущим символом графика.
-                        // _syncPriceLine раньше вызывался без какой-либо проверки
-                        // символа — если ChartManager уже переключился на другой
-                        // тикер, а этот сокет (ещё старого тикера) не успели
-                        // закрыть, чужой тик мог на мгновение исказить последнюю
-                        // свечу нового графика.
+                        // Сверка с реальным текущим символом графика:
+                        // если ChartManager уже переключился, чужой тик
+                        // не должен исказить последнюю свечу.
                         if (!chartManager.currentSymbol ||
                             chartManager.currentSymbol.toUpperCase() === subContext.symbol.toUpperCase()) {
                             if (typeof chartManager._syncPriceLine === 'function') {
                                 chartManager._syncPriceLine({
-                                    time: Math.floor(raw.T / 1000), // время сделки в секундах
+                                    time: Math.floor(raw.T / 1000),
                                     price: price
                                 });
                             }
@@ -407,9 +405,6 @@ class WebSocketManager {
                 if (!msgSymbol || msgSymbol !== subContext.symbol.toUpperCase()) return;
 
                 if (raw.topic.startsWith('kline.') && parts.length >= 2) {
-                    // ФИКС: аналогичная проверка интервала для Bybit — интервал
-                    // зашит прямо в топике ('kline.{interval}.{symbol}'),
-                    // сверяем его с интервалом, на который подписан этот сокет.
                     const expectedBybitInterval = this.getExchangeInterval(subContext.interval, 'bybit');
                     if (parts[1] !== expectedBybitInterval) return;
                 }
@@ -417,14 +412,11 @@ class WebSocketManager {
                 this._lastRelevantMessageTime = Date.now();
 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
-                    // W-FIX #4: берём ПОСЛЕДНИЙ элемент батча — у Bybit свежие
-                    // данные идут в конце массива (data[0] — самый старый).
+                    // У Bybit свежие данные идут в КОНЦЕ батча (data[0] — самый старый).
                     const k = raw.data[raw.data.length - 1];
 
                     let candleTime = Math.floor(k.start / 1000);
 
-                    // ФИКС: то же календарное выравнивание, что и для Binance.
-                    // Bybit для 1w тоже присылает понедельник, для 1M — 1-е число.
                     const expectedTime = this._alignTimeToInterval(candleTime, subContext.interval);
 
                     if (candleTime !== expectedTime) {
@@ -445,10 +437,12 @@ class WebSocketManager {
                             volume: parseFloat(k.volume),
                             quoteVolume: parseFloat(k.turnover || 0),
                             isClosed: k.confirm === true
-                        }, raw.ts || Date.now(), { symbol: subContext.symbol, interval: subContext.interval });
+                        }, raw.ts || Date.now(), {
+                            symbol: subContext.symbol,
+                            interval: subContext.interval
+                        });
                     }
                 } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
-                    // W-FIX #4: последняя (самая свежая) сделка батча
                     const tradeData = raw.data[raw.data.length - 1];
                     const price = parseFloat(tradeData.p);
 
@@ -457,7 +451,7 @@ class WebSocketManager {
                             chartManager.currentSymbol.toUpperCase() === subContext.symbol.toUpperCase()) {
                             if (typeof chartManager._syncPriceLine === 'function') {
                                 chartManager._syncPriceLine({
-                                    time: Math.floor(tradeData.T / 1000), // время сделки в секундах
+                                    time: Math.floor(tradeData.T / 1000),
                                     price: price
                                 });
                             }
@@ -471,21 +465,14 @@ class WebSocketManager {
     }
 
     _getIntervalSeconds(interval) {
+        // ФИКС: добавлен '2h': 7200. Раньше для 2h выравнивание уходило
+        // в fallback 3600 и работало «по совпадению».
         const map = {
             '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-            '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+            '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
             '1d': 86400, '1w': 604800, '1M': 2592000
         };
         return map[interval] || 3600;
-    }
-
-    _getIntervalSecondsFromBybit(intervalStr) {
-        const map = {
-            '1': 60, '3': 180, '5': 300, '15': 900, '30': 1800,
-            '60': 3600, '240': 14400, '360': 21600, '720': 43200,
-            'D': 86400, 'W': 604800, 'M': 2592000
-        };
-        return map[intervalStr] || 3600;
     }
 
     /**
@@ -579,8 +566,8 @@ class WebSocketManager {
 
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
-        // При смене инструмента/таймфрейма сбрасываем "один раз на интервал",
-        // чтобы при возврате на проблемный интервал снова увидеть предупреждение.
+        // Сбрасываем «один раз на интервал», чтобы при возврате на проблемный
+        // интервал снова увидеть предупреждение.
         this._warnedAlign.clear();
         this.connect(symbol, interval, exchange, marketType);
     }
@@ -588,7 +575,7 @@ class WebSocketManager {
     closeAll() {
         console.log('🔌 Закрытие WebSocket...');
 
-        // W-FIX #6: помечаем явное закрытие — сторож и reconnect не воскрешают
+        // Явное закрытие — сторож и reconnect не воскрешают соединение
         this._closedByUser = true;
 
         if (this.reconnectTimer) {
@@ -614,17 +601,17 @@ class WebSocketManager {
 
         if (!klineOk || !tradeOk) {
             console.log('⚠️ WebSocket не подключён, переподключаемся...');
-            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
+            this.connect(this.currentSymbol, this.currentInterval,
+                         this.currentExchange, this.currentMarketType);
         }
     }
 
     forceReconnect() {
-        // W-FIX #8: не убиваем ЖИВОЕ соединение. ChartManager вызывает
-        // forceReconnect() при каждом возврате на вкладку; пересоздание живых
-        // сокетов давало «слепое окно» (сотни мс), в котором терялись kline-
-        // события. Если сокеты живы, но данные протухли (сон машины, half-open
-        // TCP) — это покрывает _onTabVisible(): нет данных >10с -> полный
-        // реконнект.
+        // Не убиваем ЖИВОЕ соединение. ChartManager вызывает forceReconnect()
+        // при каждом возврате на вкладку; пересоздание живых сокетов давало
+        // «слепое окно» (сотни мс), в котором терялись kline-события.
+        // Если сокеты живы, но данные протухли (сон машины, half-open TCP) —
+        // это покрывает _onTabVisible(): нет данных >10 с → полный реконнект.
         const alive = (ws) => ws &&
             (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
 
@@ -634,7 +621,8 @@ class WebSocketManager {
         }
 
         console.log('🔄 Принудительное переподключение...');
-        this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
+        this.connect(this.currentSymbol, this.currentInterval,
+                     this.currentExchange, this.currentMarketType);
     }
 
     _onTabVisible() {
@@ -644,7 +632,8 @@ class WebSocketManager {
         if (this._lastRelevantMessageTime && (now - this._lastRelevantMessageTime > 10000)) {
             console.log('🔄 Нет данных, переподключаемся');
             this._lastRelevantMessageTime = now; // не триггерить повторно до новых данных
-            this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
+            this.connect(this.currentSymbol, this.currentInterval,
+                         this.currentExchange, this.currentMarketType);
         } else {
             this.ensureConnected();
         }
