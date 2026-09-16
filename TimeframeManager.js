@@ -1,5 +1,3 @@
-
-
 class TimeframeManager {
     constructor(chartManager, wsManager, timerManager) {
         this.chartManager = chartManager;
@@ -7,29 +5,26 @@ class TimeframeManager {
         this.timerManager = timerManager;
         this.currentInterval = this._getInitialInterval();
         console.log('📊 TimeframeManager: таймфрейм =', this.currentInterval);
-        
+
         this.savedCenterTime = null;
         this.savedTimeSpan = null;
-        this.savedVisibleBars = 0;   // TF-FIX #9: сколько свечей было видно (TradingView-стиль)
+        this.savedVisibleBars = 0;
         this._timeScaleUnsubscribe = null;
         this._abortController = null;
         this._saveTimeout = null;
 
-        // TF-FIX #2/#8: реестр UI-слушателей для корректного снятия в destroy()
         this._destroyed = false;
-        this._uiListeners = [];        // [{target, type, handler}]
+        this._uiListeners = [];
         this._symbolChangeHandler = null;
 
         this._handleDocumentClick = this._handleDocumentClick.bind(this);
         this._handleGlobalClick = this._handleGlobalClick.bind(this);
         this._handleGlobalKeydown = this._handleGlobalKeydown.bind(this);
         this._handleVisibleRangeChange = this._handleVisibleRangeChange.bind(this);
-        
+
         this.init();
     }
 
-    // TF-FIX #2: регистрируем слушатель с запоминанием — чтобы destroy() мог
-    // снять его даже если он висел на статичном DOM-элементе
     _addListener(target, type, handler) {
         if (!target || typeof target.addEventListener !== 'function') return;
         target.addEventListener(type, handler);
@@ -51,7 +46,7 @@ class TimeframeManager {
         this.loadStarredTimeframes();
         this.setupEventListeners();
         this.setupControlButtons();
-        
+
         this.timerManager.start(this.currentInterval);
         this.chartManager.setCurrentInterval(this.currentInterval);
 
@@ -59,8 +54,6 @@ class TimeframeManager {
         document.addEventListener('click', this._handleGlobalClick);
         document.addEventListener('keydown', this._handleGlobalKeydown);
 
-        // TF-FIX #4: обновляем информацию об инструменте, когда ChartManager
-        // РЕАЛЬНО завершил смену символа/рынка (Alt+T, поиск по символу и т.д.)
         if (typeof this.chartManager?._subscribeToSymbolChange === 'function') {
             this._symbolChangeHandler = () => {
                 if (this._destroyed) return;
@@ -80,23 +73,17 @@ class TimeframeManager {
     }
 
     destroy() {
-        // TF-FIX #8: флаг гасит отложенные rAF/колбэки
         this._destroyed = true;
 
         document.removeEventListener('click', this._handleDocumentClick);
         document.removeEventListener('click', this._handleGlobalClick);
         document.removeEventListener('keydown', this._handleGlobalKeydown);
 
-        // TF-FIX #2: снимаем ВСЕ зарегистрированные UI-слушатели
         for (const { target, type, handler } of this._uiListeners) {
             try { target.removeEventListener(type, handler); } catch (e) {}
         }
         this._uiListeners = [];
 
-        // TF-FIX #1: в lightweight-charts v4 subscribe... НЕ возвращает функцию
-        // отписки — отписываемся парным unsubscribe... по тому же обработчику.
-        // Старый путь (_timeScaleUnsubscribe как функция) сохранён на случай
-        // альтернативной реализации timeScale.
         try {
             const timeScale = this.chartManager?.chart?.timeScale?.();
             if (timeScale?.unsubscribeVisibleLogicalRangeChange) {
@@ -105,22 +92,19 @@ class TimeframeManager {
         } catch (e) {}
 
         if (this._timeScaleUnsubscribe) {
-            typeof this._timeScaleUnsubscribe === 'function' 
-                ? this._timeScaleUnsubscribe() 
+            typeof this._timeScaleUnsubscribe === 'function'
+                ? this._timeScaleUnsubscribe()
                 : this._timeScaleUnsubscribe?.unsubscribe?.();
             this._timeScaleUnsubscribe = null;
         }
 
-        // TF-FIX #8: API отписки от symbol change в ChartManager нет — колбэк
-        // обнулён и защищён флагом _destroyed; ChartManager очистит список
-        // колбэков в своём destroy().
         this._symbolChangeHandler = null;
 
         if (this._abortController) {
             this._abortController.abort();
             this._abortController = null;
         }
-        
+
         if (this._saveTimeout) {
             cancelAnimationFrame(this._saveTimeout);
             this._saveTimeout = null;
@@ -128,7 +112,7 @@ class TimeframeManager {
     }
 
     _handleVisibleRangeChange() {
-        if (this._destroyed) return; // TF-FIX #8
+        if (this._destroyed) return;
         if (this._saveTimeout) cancelAnimationFrame(this._saveTimeout);
         this._saveTimeout = requestAnimationFrame(() => {
             this._saveTimeout = null;
@@ -137,8 +121,6 @@ class TimeframeManager {
     }
 
     saveCurrentPosition() {
-        // TF-FIX #3: защита от уничтоженного/неготового chart — раньше
-        // this.chartManager.chart.timeScale() бросал TypeError на каждом rAF
         if (this._destroyed) return;
 
         const timeScale = this.chartManager?.chart?.timeScale?.();
@@ -150,123 +132,95 @@ class TimeframeManager {
         } catch (e) { return; }
 
         const data = this.chartManager.chartData;
-        
+
         if (visibleRange && data?.length > 0) {
             const fromIndex = Math.max(0, Math.floor(visibleRange.from));
             const toIndex = Math.min(data.length - 1, Math.ceil(visibleRange.to));
-            
+
             if (fromIndex < toIndex) {
                 const centerIndex = Math.floor((fromIndex + toIndex) / 2);
                 this.savedCenterTime = data[centerIndex].time;
                 this.savedTimeSpan = data[toIndex].time - data[fromIndex].time;
-                // TF-FIX #9: запоминаем ШИРИНУ вьюпорта в барах — при
-                // восстановлении позиции после смены ТФ сохраним тот же масштаб
-                this.savedVisibleBars = Math.max(0, visibleRange.to - visibleRange.from);
+                // Используем ИНДЕКСЫ в данных — без учёта пустого правого отступа.
+                // Раньше в savedVisibleBars попадал и rightOffset, из-за чего при
+                // восстановлении показывалось на ~25 свечей меньше.
+                this.savedVisibleBars = Math.max(0, toIndex - fromIndex + 1);
             }
         }
     }
 
-   // TF-FIX #6: параметр force — обязателен для вызова сразу после смены ТФ:
-   // новый график всегда позиционируется у правого края, и прежний guard
-   // «видна последняя свеча → не трогать» блокировал восстановление ВСЕГДА.
-   restorePosition(force = false) {
-    if (this._destroyed) return;
-    if (!this.chartManager || !this.chartManager._isChartValid?.()) return;
-    if (!this.savedCenterTime || !this.chartManager.chartData?.length) {
-        return;
-    }
-    
-    const data = this.chartManager.chartData;
-    const timeScale = this.chartManager.chart?.timeScale?.();
-    if (!timeScale) return;
+    // Метод оставлен как публичный API для ручного вызова. Автоматически
+    // больше не используется — см. switchToTimeframe.
+    restorePosition(force = false) {
+        if (this._destroyed) return;
+        if (!this.chartManager || !this.chartManager._isChartValid?.()) return;
+        if (!this.savedCenterTime || !this.chartManager.chartData?.length) return;
 
-    // TF-FIX #9: сохранённый центр должен попадать в диапазон НОВОГО датасета —
-    // иначе не восстанавливаем ничего (иначе вьюпорт уезжал бы «в никуда»)
-    const firstTime = data[0].time;
-    const lastTime = data[data.length - 1].time;
-    if (this.savedCenterTime < firstTime || this.savedCenterTime > lastTime) {
-        return;
-    }
-    
-    if (!force) {
-        // Не перехватываем вьюпорт, если пользователь и так у последних свечей
-        let currentRange = null;
-        try { currentRange = timeScale.getVisibleLogicalRange(); } catch (e) {}
+        const data = this.chartManager.chartData;
+        const timeScale = this.chartManager.chart?.timeScale?.();
+        if (!timeScale) return;
 
-        if (currentRange) {
-            const lastIndex = data.length - 1;
-            if (currentRange.to >= lastIndex - 2) {
-                return;
-            }
-        }
-    }
-    
-    // TF-FIX #6б: удалена «приоритетная» ветвь с chartManager._savedLogicalRange:
-    //   1) _savedWasViewingHistory в ChartManager не существует (мёртвый код);
-    //   2) даже с _savedLogicalRange это ИНДЕКСЫ старого датасета — после смены
-    //      ТФ/символа длина и шаг массива другие, позиция восстановилась бы криво.
-    // Расчёт по абсолютному ВРЕМЕНИ ниже корректен между любыми датасетами.
+        const firstTime = data[0].time;
+        const lastTime = data[data.length - 1].time;
+        if (this.savedCenterTime < firstTime || this.savedCenterTime > lastTime) return;
 
-    let left = 0, right = data.length - 1, centerIndex = -1;
-    while (left <= right) {
-        const mid = Math.floor((left + right) / 2);
-        if (data[mid].time === this.savedCenterTime) { 
-            centerIndex = mid; 
-            break; 
-        }
-        data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
-    }
-    
-    if (centerIndex === -1) centerIndex = left;
-    centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
+        if (!force) {
+            let currentRange = null;
+            try { currentRange = timeScale.getVisibleLogicalRange(); } catch (e) {}
 
-    // TF-FIX #9: TradingView-поведение — сохраняем ТО ЖЕ количество видимых
-    // свечей, что было до переключения (прежний расчёт «радиуса» с клампом
-    // 15..250 показывал ~36 свечей вместо прежних нескольких сотен —
-    // «отрисовывает несколько свечей»).
-    let from, to;
-
-    if (this.savedVisibleBars > 2) {
-        const half = this.savedVisibleBars / 2;
-        from = Math.round(centerIndex - half);
-        to = Math.round(centerIndex + half);
-    } else {
-        let radius = 40;
-        if (this.savedTimeSpan > 0 && data.length > 1) {
-            const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
-            if (avg > 0) {
-                radius = Math.round((this.savedTimeSpan / 2) / avg);
-                radius = Math.max(15, Math.min(radius, 250));
+            if (currentRange) {
+                const lastIndex = data.length - 1;
+                if (currentRange.to >= lastIndex - 2) return;
             }
         }
 
-        const padding = Math.max(3, Math.floor(radius * 0.15));
-        from = centerIndex - radius - padding;
-        to = centerIndex + radius + padding;
+        let left = 0, right = data.length - 1, centerIndex = -1;
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            if (data[mid].time === this.savedCenterTime) {
+                centerIndex = mid;
+                break;
+            }
+            data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
+        }
 
-        if (to - from < radius * 1.5) {
-            from = to - radius * 1.5;
+        if (centerIndex === -1) centerIndex = left;
+        centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
+
+        let from, to;
+
+        if (this.savedVisibleBars > 2) {
+            const half = Math.floor(this.savedVisibleBars / 2);
+            from = centerIndex - half;
+            to = centerIndex + half;
+        } else {
+            let radius = 40;
+            if (this.savedTimeSpan > 0 && data.length > 1) {
+                const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
+                if (avg > 0) {
+                    radius = Math.round((this.savedTimeSpan / 2) / avg);
+                    radius = Math.max(15, Math.min(radius, 250));
+                }
+            }
+
+            const padding = Math.max(3, Math.floor(radius * 0.15));
+            from = centerIndex - radius - padding;
+            to = centerIndex + radius + padding;
+        }
+
+        from = Math.max(0, Math.floor(from));
+        to = Math.min(data.length - 1, Math.ceil(to));
+
+        if (from < to) {
+            try {
+                timeScale.setVisibleLogicalRange({ from, to });
+            } catch (e) {
+                console.warn('⚠️ Ошибка при установке видимого диапазона:', e);
+            }
         }
     }
-
-    from = Math.max(0, Math.floor(from));
-    to = Math.min(data.length - 1 + 25, Math.ceil(to)); // +25 — штатный rightOffset
-
-    if (from < to) {
-        try {
-            timeScale.setVisibleLogicalRange({ from, to });
-        } catch (e) {
-            console.warn('⚠️ Ошибка при установке видимого диапазона:', e);
-        }
-    }
-}
 
     setupEventListeners() {
-        // TF-FIX #2: все слушатели регистрируются через _addListener —
-        // destroy() сможет их снять (анонимные слушатели на статичных DOM-
-        // элементах при пересоздании менеджера накапливались: клик по
-        // заголовку toggles-овал панель несколько раз — при чётном количестве
-        // панель выглядела «сломанной»).
         const header = document.getElementById('timeframeHeader');
         if (header) {
             this._addListener(header, 'click', (e) => {
@@ -344,100 +298,114 @@ class TimeframeManager {
     }
 
     _handleGlobalKeydown(event) {
-        if (event.altKey && event.key === 't') {
-            event.preventDefault();
-            const newType = this.chartManager.currentMarketType === 'futures' ? 'spot' : 'futures';
+        if (!event.altKey || event.key !== 't') return;
 
-            // TF-FIX #4: switchSymbol — АСИНХРОННЫЙ (поля currentMarketType и
-            // пр. меняются в середине процесса). Прежний синхронный вызов
-            // updateInstrumentInfo() показывал устаревший PERP/SPOT. Теперь:
-            //   1) подписка на _notifySymbolChange (init) обновит бейдж, когда
-            //      поля реально изменятся;
-            //   2) плюс обновляемся после resolve — на случай очереди
-            //      переключений, где notify сработает позже.
-            const result = this.chartManager.switchSymbol(
-                this.chartManager.currentSymbol, this.chartManager.currentExchange, newType
-            );
+        // Не перехватываем хоткей, если пользователь печатает в поле ввода.
+        const tag = (event.target?.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || event.target?.isContentEditable) return;
 
-            Promise.resolve(result).then(() => {
-                if (!this._destroyed) this.updateInstrumentInfo();
-            }).catch(() => {});
+        event.preventDefault();
+        if (this._destroyed) return;
 
-            this.updateInstrumentInfo();
-        }
+        const newType = this.chartManager.currentMarketType === 'futures' ? 'spot' : 'futures';
+
+        // switchSymbol асинхронный; поля currentMarketType/currentSymbol меняются
+        // внутри процесса. UI обновится через _subscribeToSymbolChange
+        // (см. init) — когда ChartManager реально завершит смену.
+        // Синхронный updateInstrumentInfo() удалён: он читал старое значение
+        // и давал мигание устаревшим PERP/SPOT.
+        Promise.resolve(this.chartManager.switchSymbol(
+            this.chartManager.currentSymbol,
+            this.chartManager.currentExchange,
+            newType
+        )).catch(() => {});
     }
 
-  async switchToTimeframe(tf) {
-    if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
+    async switchToTimeframe(tf) {
+        if (this._destroyed) return;
+        if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
 
-    if (this._abortController) {
-        this._abortController.abort();
-        console.log('🛑 Предыдущее переключение таймфрейма отменено');
-    }
+        // AbortController оставлен для обратной совместимости с внешним API,
+        // но реальной отмены не делает: switchInterval всё равно доработает.
+        if (this._abortController) this._abortController.abort();
+        this._abortController = new AbortController();
+        const { signal } = this._abortController;
 
-    this._abortController = new AbortController();
-    const { signal } = this._abortController;
+        console.log('🔄 Переключение на таймфрейм:', tf);
 
-    console.log('🔄 Переключение на таймфрейм:', tf);
+        this.saveCurrentPosition();
 
-    this.saveCurrentPosition();
+        document.querySelectorAll('.timeframe-item').forEach(i => {
+            i.classList.toggle('active', i.dataset.tf === tf);
+        });
+        document.getElementById('timeframePanel')?.classList.remove('expanded');
+        this._updateCurrentTfBadge(tf);
 
-    document.querySelectorAll('.timeframe-item').forEach(i => {
-        i.classList.toggle('active', i.dataset.tf === tf);
-    });
-    document.getElementById('timeframePanel')?.classList.remove('expanded');
-    this._updateCurrentTfBadge(tf);
+        const previousInterval = this.currentInterval;
 
-    const previousInterval = this.currentInterval;
-
-    // ВНИМАНИЕ: поведение переключения ТФ — КАК В ОРИГИНАЛЕ.
-    // Никакого авто-восстановления позиции: после смены таймфрейма вид всегда
-    // у последних свечей, под затемняющей подложкой ChartManager.
-    // (restorePosition() сохранён как метод для ручного вызова, но
-    // автоматически больше НЕ вызывается.)
-
-    try {
-        await this.chartManager.switchInterval(tf);
-
-        if (signal.aborted) {
-            console.log('🛑 Переключение отменено после switchInterval');
+        try {
+            await this.chartManager.switchInterval(tf);
+        } catch (error) {
+            // На случай, если ChartManager когда-нибудь начнёт пробрасывать
+            // ошибки наружу (сейчас — нет, он их глотает внутри себя).
+            if (error?.name !== 'AbortError') {
+                console.error('❌ Ошибка при переключении:', error);
+                this._rollbackTimeframe(previousInterval);
+            }
+            if (this._abortController?.signal === signal) this._abortController = null;
             return;
         }
 
-        this.currentInterval = tf;
-        localStorage.setItem('lastTimeframe', tf);
-        this.chartManager.setCurrentInterval(tf);
-
-        if (this.wsManager?.updateSymbolAndTimeframe) {
-            this.wsManager.updateSymbolAndTimeframe(
-                this.chartManager.currentSymbol, tf,
-                this.chartManager.currentExchange,
-                this.chartManager.currentMarketType
-            );
+        if (this._destroyed) {
+            if (this._abortController?.signal === signal) this._abortController = null;
+            return;
         }
 
-        this.timerManager.start(tf);
-        
+        // switchInterval у ChartManager глотает ошибки — определяем неудачу
+        // по факту: currentInterval не сменился. Иначе UI показывал бы новый
+        // ТФ, а на графике были бы старые данные.
+        if (this.chartManager.currentInterval !== tf) {
+            console.warn('⚠️ switchInterval не сменил интервал (вероятно, ошибка загрузки)');
+            this._rollbackTimeframe(previousInterval);
+            if (this._abortController?.signal === signal) this._abortController = null;
+            return;
+        }
+
+        // Синхронизируем локальное состояние из ChartManager — он источник
+        // истины. Независимо от signal.aborted: switchInterval уже отработал,
+        // и chartManager.currentInterval теперь равен tf. Раньше при aborted
+        // мы выходили, оставив this.currentInterval устаревшим.
+        this.currentInterval = this.chartManager.currentInterval;
+        localStorage.setItem('lastTimeframe', this.currentInterval);
+        this.chartManager.setCurrentInterval(this.currentInterval);
+
+        // wsManager.updateSymbolAndTimeframe здесь УДАЛЁН: его уже вызвал
+        // ChartManager.switchInterval. Повторный вызов давал двойной реконнект
+        // WS на каждое переключение ТФ (в логах — два 🔌 KLINE подряд).
+
+        this.timerManager.start(this.currentInterval);
+
         requestAnimationFrame(() => {
+            if (this._destroyed) return;
             if (this.timerManager) {
-                const price = this.chartManager.currentRealPrice 
+                const price = this.chartManager.currentRealPrice
                     ?? this.chartManager.lastCandle?.close;
-                if (price != null) {
-                    this.timerManager.updatePrice(price);
-                }
-                if (this.chartManager._applyPriceScaleWidth) {
-                    this.chartManager._applyPriceScaleWidth();
-                }
+                if (price != null) this.timerManager.updatePrice(price);
+            }
+            if (this.chartManager._applyPriceScaleWidth) {
+                this.chartManager._applyPriceScaleWidth();
             }
         });
-        
+
         this.chartManager.autoScale();
 
-        // КАК В ОРИГИНАЛЕ: после смены ТФ — всегда вид у последних свечей
-        // (авто-восстановление позиции истории удалено по требованию:
-        // оно и вызывало «скачки» на повторных переключениях).
+        // Восстановление позиции истории после смены ТФ не выполняется:
+        // ChartManager всегда позиционирует вьюпорт у правого края под
+        // затемняющей подложкой. restorePosition() оставлен как публичный
+        // API для внешнего вызова.
 
         requestAnimationFrame(() => {
+            if (this._destroyed) return;
             window.rayManager?.syncWithNewTimeframe();
             window.trendLineManager?.syncWithNewTimeframe();
             window.rulerLineManager?.syncWithNewTimeframe();
@@ -447,27 +415,24 @@ class TimeframeManager {
 
         console.log('✅ Таймфрейм переключен:', tf);
 
-    } catch (error) {
-        if (error.name === 'AbortError' || signal?.aborted) {
-            console.log('🛑 Переключение отменено (AbortError)');
-            return;
-        }
-        console.error('❌ Ошибка при переключении:', error);
-        this._rollbackTimeframe(previousInterval);
-    } finally {
         if (this._abortController?.signal === signal) {
             this._abortController = null;
         }
+
         this.updateInstrumentInfo();
         this.loadStarredTimeframes();
     }
-}
 
     _rollbackTimeframe(previousInterval) {
+        if (this._destroyed) return;
+
         this.currentInterval = previousInterval;
         this.chartManager.setCurrentInterval(previousInterval);
         this._updateCurrentTfBadge(previousInterval);
-        
+
+        // Оставлено: rollback бывает и ПОСЛЕ того, как switchInterval успел
+        // увести WS-подписку на новый интервал (ветка «currentInterval !== tf»).
+        // В этом случае нужно вернуть WS обратно.
         if (this.wsManager?.updateSymbolAndTimeframe) {
             this.wsManager.updateSymbolAndTimeframe(
                 this.chartManager.currentSymbol, previousInterval,
@@ -475,7 +440,7 @@ class TimeframeManager {
                 this.chartManager.currentMarketType
             );
         }
-        
+
         document.querySelectorAll('.timeframe-item').forEach(i => {
             i.classList.toggle('active', i.dataset.tf === previousInterval);
         });
@@ -512,12 +477,6 @@ class TimeframeManager {
             }
         };
 
-        // TF-FIX #7: прежняя запись
-        //   navigator.clipboard?.writeText(text).then(done).catch(fallback)
-        // при отсутствии clipboard API (http/небезопасный контекст/старый
-        // браузер) КОРОТИЛА всю цепочку — .catch с fallback на execCommand не
-        // выполнялся никогда, и кнопка копирования молча не работала.
-        // Теперь ветви явные.
         const legacyCopy = () => {
             const ta = document.createElement('textarea');
             ta.value = text;
