@@ -1,4 +1,5 @@
 
+
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval(), чтобы не
