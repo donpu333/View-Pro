@@ -1,48 +1,4 @@
-// =====================================================================================
-// ИСПРАВЛЕННАЯ ВЕРСИЯ TimeframeManager
-// =====================================================================================
-// TF-FIX #1: _timeScaleUnsubscribe ВСЕГДА был undefined — в lightweight-charts
-//   v4 subscribeVisibleLogicalRangeChange() ничего не возвращает, отписка
-//   делается через unsubscribeVisibleLogicalRangeChange(handler). Обработчик
-//   утекал: после destroy() на каждое изменение диапазона продолжал
-//   выполняться saveCurrentPosition() по мёртвому chart (TypeError в rAF).
-// TF-FIX #2: UI-слушатели (заголовок панели, кнопки TF/candle/bar/scroll/
-//   autoscale, копирование) регистрировались АНОНИМНЫМИ функциями и в
-//   destroy() не снимались. При пересоздании менеджера (re-init/hot-reload)
-//   слушатели накапливались: клик по заголовку переключал панель N раз
-//   (при чётном N — панель «не открывается»), switchToTimeframe вызывался
-//   несколько раз за клик. Теперь все обработчики хранятся и снимаются.
-// TF-FIX #3: saveCurrentPosition()/restorePosition() не имели защиты от
-//   уничтоженного chart — TypeError на каждом rAF после destroy.
-// TF-FIX #4: Alt+T (спот/фьючерс): updateInstrumentInfo() вызывался СРАЗУ
-//   после запуска АСИНХРОННОГО switchSymbol() — бейдж PERP/SPOT оставался
-//   устаревшим, т.к. switchSymbol меняет currentMarketType в середине
-//   процесса. Теперь обновление бейджа подписано на
-//   _subscribeToSymbolChange (ChartManager уведомляет, когда поля реально
-//   изменены) + обновляется после resolve промиса.
-// TF-FIX #5: switchToTimeframe проверял chartManager._savedWasViewingHistory —
-//   такого поля в ChartManager НЕТ (есть _isViewingHistory). Ветвь
-//   «восстановить позицию истории после смены ТФ» была мёртвым кодом:
-//   при просмотре истории и смене таймфрейма пользователя всегда выбрасывало
-//   к последним свечам. Теперь состояние просмотра истории захватывается
-//   ДО переключения из реального поля _isViewingHistory.
-// TF-FIX #6: restorePosition():
-//   а) guard «видна последняя свеча → не восстанавливать» делал восстановление
-//      после смены ТФ НЕВОЗМОЖНЫМ в принципе: setDataQuick всегда позиционирует
-//      новый график у правого края → to >= lastIndex-2 → ранний return.
-//      Добавлен параметр force (switchToTimeframe зовёт с force=true).
-//   б) «приоритетная» ветвь применяла _savedLogicalRange — ИНДЕКСЫ старого
-//      датасета (другой ТФ/символ ⇒ другая длина и шаг) — к новому массиву:
-//      позиция восстанавливалась бы неверно. Ветвь удалена (она и не работала,
-//      см. TF-FIX #5), оставлен только надёжный расчёт по ВРЕМЕНИ.
-// TF-FIX #7: copyToClipboard(): `navigator.clipboard?.writeText(...).then(...)
-//   .catch(fallback)` — optional chaining при отсутствии clipboard (http,
-//   небезопасный контекст, старые браузеры) КОРОТИТ ВСЮ цепочку вместе с
-//   catch — fallback на execCommand не выполнялся НИКОГДА, кнопка копирования
-//   молча умирала. Переписано явными ветвями.
-// TF-FIX #8: destroy() — флаг _destroyed (гасит отложенные rAF/колбэки),
-//   снятие подписки на symbol change, обнуление ссылок.
-// =====================================================================================
+
 
 class TimeframeManager {
     constructor(chartManager, wsManager, timerManager) {
@@ -434,21 +390,11 @@ class TimeframeManager {
 
     const previousInterval = this.currentInterval;
 
-    // TF-FIX #5 (уточнён): «пользователь в истории» определяем по ФАКТИЧЕСКОМУ
-    // вьюпорту, а не по флагу chartManager._isViewingHistory — флаг
-    // проставляется на каждое событие диапазона и в переходные моменты
-    // (перестроение данных) может быть ложно true → «скачки» после каждого
-    // переключения. Порог 5 баров: пользователь у правого края (штатный
-    // rightOffset=25) НИКОГДА не считается «в истории».
-    const wasViewingHistory = (() => {
-        try {
-            const ts = this.chartManager.chart?.timeScale?.();
-            const range = ts?.getVisibleLogicalRange?.();
-            const data = this.chartManager.chartData;
-            if (!range || !data || data.length === 0) return false;
-            return range.to < (data.length - 1) - 5;
-        } catch (e) { return false; }
-    })();
+    // ВНИМАНИЕ: поведение переключения ТФ — КАК В ОРИГИНАЛЕ.
+    // Никакого авто-восстановления позиции: после смены таймфрейма вид всегда
+    // у последних свечей, под затемняющей подложкой ChartManager.
+    // (restorePosition() сохранён как метод для ручного вызова, но
+    // автоматически больше НЕ вызывается.)
 
     try {
         await this.chartManager.switchInterval(tf);
@@ -487,20 +433,9 @@ class TimeframeManager {
         
         this.chartManager.autoScale();
 
-        // TF-FIX #9: восстановление позиции — только если пользователь ДЕЙСТВИТЕЛЬНО
-        // был в истории (по фактическому вьюпорту), и под той же затемняющей
-        // подложкой, что используется при смене символа — никаких «голых»
-        // скачков вьюпорта. Сохраняются центр по времени и количество видимых
-        // свечей (TradingView-стиль).
-        if (wasViewingHistory) {
-            this.chartManager._showSymbolSwitchOverlay?.();
-            this.restorePosition(true);
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    this.chartManager._hideSymbolSwitchOverlay?.();
-                });
-            });
-        }
+        // КАК В ОРИГИНАЛЕ: после смены ТФ — всегда вид у последних свечей
+        // (авто-восстановление позиции истории удалено по требованию:
+        // оно и вызывало «скачки» на повторных переключениях).
 
         requestAnimationFrame(() => {
             window.rayManager?.syncWithNewTimeframe();
