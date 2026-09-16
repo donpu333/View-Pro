@@ -54,6 +54,7 @@ class TimeframeManager {
         
         this.savedCenterTime = null;
         this.savedTimeSpan = null;
+        this.savedVisibleBars = 0;   // TF-FIX #9: сколько свечей было видно (TradingView-стиль)
         this._timeScaleUnsubscribe = null;
         this._abortController = null;
         this._saveTimeout = null;
@@ -202,6 +203,9 @@ class TimeframeManager {
                 const centerIndex = Math.floor((fromIndex + toIndex) / 2);
                 this.savedCenterTime = data[centerIndex].time;
                 this.savedTimeSpan = data[toIndex].time - data[fromIndex].time;
+                // TF-FIX #9: запоминаем ШИРИНУ вьюпорта в барах — при
+                // восстановлении позиции после смены ТФ сохраним тот же масштаб
+                this.savedVisibleBars = Math.max(0, visibleRange.to - visibleRange.from);
             }
         }
     }
@@ -219,6 +223,14 @@ class TimeframeManager {
     const data = this.chartManager.chartData;
     const timeScale = this.chartManager.chart?.timeScale?.();
     if (!timeScale) return;
+
+    // TF-FIX #9: сохранённый центр должен попадать в диапазон НОВОГО датасета —
+    // иначе не восстанавливаем ничего (иначе вьюпорт уезжал бы «в никуда»)
+    const firstTime = data[0].time;
+    const lastTime = data[data.length - 1].time;
+    if (this.savedCenterTime < firstTime || this.savedCenterTime > lastTime) {
+        return;
+    }
     
     if (!force) {
         // Не перехватываем вьюпорт, если пользователь и так у последних свечей
@@ -252,22 +264,37 @@ class TimeframeManager {
     if (centerIndex === -1) centerIndex = left;
     centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
 
-    let radius = 40;
-    if (this.savedTimeSpan > 0 && data.length > 1) {
-        const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
-        if (avg > 0) {
-            radius = Math.round((this.savedTimeSpan / 2) / avg);
-            radius = Math.max(15, Math.min(radius, 250));
+    // TF-FIX #9: TradingView-поведение — сохраняем ТО ЖЕ количество видимых
+    // свечей, что было до переключения (прежний расчёт «радиуса» с клампом
+    // 15..250 показывал ~36 свечей вместо прежних нескольких сотен —
+    // «отрисовывает несколько свечей»).
+    let from, to;
+
+    if (this.savedVisibleBars > 2) {
+        const half = this.savedVisibleBars / 2;
+        from = Math.round(centerIndex - half);
+        to = Math.round(centerIndex + half);
+    } else {
+        let radius = 40;
+        if (this.savedTimeSpan > 0 && data.length > 1) {
+            const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
+            if (avg > 0) {
+                radius = Math.round((this.savedTimeSpan / 2) / avg);
+                radius = Math.max(15, Math.min(radius, 250));
+            }
+        }
+
+        const padding = Math.max(3, Math.floor(radius * 0.15));
+        from = centerIndex - radius - padding;
+        to = centerIndex + radius + padding;
+
+        if (to - from < radius * 1.5) {
+            from = to - radius * 1.5;
         }
     }
-    
-    const padding = Math.max(3, Math.floor(radius * 0.15));
-    let from = Math.max(0, centerIndex - radius - padding);
-    let to = Math.min(data.length - 1, centerIndex + radius + padding);
-    
-    if (to - from < radius * 1.5) {
-        from = Math.max(0, to - radius * 1.5);
-    }
+
+    from = Math.max(0, Math.floor(from));
+    to = Math.min(data.length - 1 + 25, Math.ceil(to)); // +25 — штатный rightOffset
 
     if (from < to) {
         try {
@@ -407,12 +434,21 @@ class TimeframeManager {
 
     const previousInterval = this.currentInterval;
 
-    // TF-FIX #5: захватываем состояние «пользователь в истории» ДО переключения.
-    // Прежняя проверка chartManager._savedWasViewingHistory обращалась к
-    // несуществующему полю (в ChartManager оно называется _isViewingHistory) —
-    // восстановление позиции после смены ТФ было мёртвым кодом: пользователя
-    // всегда выбрасывало к последним свечам, даже если он разбирал историю.
-    const wasViewingHistory = this.chartManager._isViewingHistory === true;
+    // TF-FIX #5 (уточнён): «пользователь в истории» определяем по ФАКТИЧЕСКОМУ
+    // вьюпорту, а не по флагу chartManager._isViewingHistory — флаг
+    // проставляется на каждое событие диапазона и в переходные моменты
+    // (перестроение данных) может быть ложно true → «скачки» после каждого
+    // переключения. Порог 5 баров: пользователь у правого края (штатный
+    // rightOffset=25) НИКОГДА не считается «в истории».
+    const wasViewingHistory = (() => {
+        try {
+            const ts = this.chartManager.chart?.timeScale?.();
+            const range = ts?.getVisibleLogicalRange?.();
+            const data = this.chartManager.chartData;
+            if (!range || !data || data.length === 0) return false;
+            return range.to < (data.length - 1) - 5;
+        } catch (e) { return false; }
+    })();
 
     try {
         await this.chartManager.switchInterval(tf);
@@ -451,12 +487,19 @@ class TimeframeManager {
         
         this.chartManager.autoScale();
 
-        // TF-FIX #5/#6: восстанавливаем позицию ТОЛЬКО если пользователь был в
-        // истории (реальное поле _isViewingHistory, захваченное до переключения),
-        // и с force=true — иначе guard «видна последняя свеча» заблокировал бы
-        // восстановление: новый датасет всегда позиционируется у правого края.
+        // TF-FIX #9: восстановление позиции — только если пользователь ДЕЙСТВИТЕЛЬНО
+        // был в истории (по фактическому вьюпорту), и под той же затемняющей
+        // подложкой, что используется при смене символа — никаких «голых»
+        // скачков вьюпорта. Сохраняются центр по времени и количество видимых
+        // свечей (TradingView-стиль).
         if (wasViewingHistory) {
+            this.chartManager._showSymbolSwitchOverlay?.();
             this.restorePosition(true);
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.chartManager._hideSymbolSwitchOverlay?.();
+                });
+            });
         }
 
         requestAnimationFrame(() => {
@@ -550,46 +593,3 @@ class TimeframeManager {
             document.body.removeChild(ta);
         };
 
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            navigator.clipboard.writeText(text).then(done).catch(legacyCopy);
-        } else {
-            legacyCopy();
-        }
-    }
-
-    loadStarredTimeframes() {
-        const starred = JSON.parse(localStorage.getItem('starredTimeframes') || '[]');
-        document.querySelectorAll('.tf-star').forEach(s => {
-            s.classList.toggle('starred', starred.includes(s.dataset.tf));
-        });
-        this.updateStarredDisplay(starred);
-    }
-
-    saveStarredTimeframes() {
-        const starred = Array.from(document.querySelectorAll('.tf-star.starred'), s => s.dataset.tf);
-        localStorage.setItem('starredTimeframes', JSON.stringify(starred));
-        this.updateStarredDisplay(starred);
-    }
-
-    updateStarredDisplay(starred) {
-        const container = document.getElementById('starredTimeframes');
-        if (!container) return;
-        container.innerHTML = '';
-        starred.forEach(tf => {
-            const label = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[tf] : null) || tf;
-            const item = document.createElement('div');
-            item.className = 'starred-item' + (tf === this.currentInterval ? ' active' : '');
-            item.dataset.tf = tf;
-            item.innerHTML = `<span class="tf-name">${label}</span>`;
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.switchToTimeframe(tf);
-            });
-            container.appendChild(item);
-        });
-    }
-}
-
-if (typeof window !== 'undefined') {
-    window.TimeframeManager = TimeframeManager;
-}
