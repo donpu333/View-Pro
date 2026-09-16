@@ -1,3 +1,5 @@
+
+
 class WebSocketManager {
     constructor(chartManager) {
         this.chartManager = chartManager;
@@ -13,6 +15,8 @@ class WebSocketManager {
         this._lastRelevantMessageTime = 0;
         this._connectDebounceTimer = null;
         this._statusCheckInterval = null;
+        // W-FIX #6: флаг явного закрытия (сторож не воскрешает соединение)
+        this._closedByUser = false;
 
         // ФИКС: набор интервалов, по которым уже предупреждали о несовпадении
         // выравнивания — чтобы не спамить в консоль на каждом сообщении.
@@ -32,10 +36,22 @@ class WebSocketManager {
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
 
+        // W-FIX #3: сторож соединения. Раньше условие `this.isConnected &&`
+        // блокировало проверку после любого закрытия (onclose сбрасывает
+        // isConnected в false) — мёртвый WS не восстанавливался никогда.
         this._statusCheckInterval = setInterval(() => {
-            if (this.isConnected && this._lastRelevantMessageTime &&
-                (Date.now() - this._lastRelevantMessageTime > 30000)) {
+            if (this._closedByUser) return;
+
+            const stale = this._lastRelevantMessageTime &&
+                (Date.now() - this._lastRelevantMessageTime > 30000);
+
+            const idle = !this.isConnected && !this.isConnecting &&
+                !this.reconnectTimer && !this._connectDebounceTimer;
+
+            if (stale) {
                 console.warn('⚠️ Нет данных 30 сек, проверяем соединение');
+                this.ensureConnected();
+            } else if (idle) {
                 this.ensureConnected();
             }
         }, 15000);
@@ -44,6 +60,18 @@ class WebSocketManager {
     }
 
     _autoConnect() {
+        // W-FIX #5: не переподключаемся, если соединение уже установлено или
+        // подключение уже запланировано (ChartManager.connect / reconnectTimer).
+        if (this._closedByUser) return;
+
+        const alreadyActive = this.wsKline || this.wsTrade ||
+            this.reconnectTimer || this._connectDebounceTimer;
+
+        if (alreadyActive) {
+            console.log('🚀 WebSocketManager: подключение уже активно, автоподключение пропущено');
+            return;
+        }
+
         console.log('🚀 WebSocketManager: автоподключение...');
         this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
@@ -68,7 +96,12 @@ class WebSocketManager {
         symbol = (symbol || this.currentSymbol).trim();
         exchange = exchange || this.currentExchange;
         marketType = marketType || this.currentMarketType;
-        interval = (interval || this.currentInterval).trim().toLowerCase();
+
+        // W-FIX #1: ТОЛЬКО trim, без toLowerCase()! Идентификаторы интервалов
+        // регистрозависимы: '1M' (месяц) после toLowerCase() превращался в '1m'
+        // (минута) — сокет подписывался не на тот таймфрейм, а meta.interval
+        // не совпадал с currentInterval графика, и все свечи отбрасывались.
+        interval = (interval || this.currentInterval).trim();
 
         if (exchange === 'binance' && marketType === 'futures' &&
             this.binanceSpotOnlyTokens.includes(symbol.toUpperCase())) {
@@ -81,6 +114,9 @@ class WebSocketManager {
         this.currentMarketType = marketType;
         this.retryCount = 0;
 
+        // W-FIX #6: явное подключение снимает флаг закрытия
+        this._closedByUser = false;
+
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -90,6 +126,7 @@ class WebSocketManager {
         }
 
         this._connectDebounceTimer = setTimeout(() => {
+            this._connectDebounceTimer = null;
             this._doConnect();
         }, 100);
     }
@@ -118,8 +155,12 @@ class WebSocketManager {
         const fs = this.formatSymbol(subContext.symbol, subContext.exchange);
 
         if (subContext.exchange === 'binance') {
-            const klineUrl = `wss://fstream.binance.com/market/ws/${fs}@kline_${subContext.interval}`;
-            const tradeUrl = `wss://fstream.binance.com/market/ws/${fs}@aggTrade`;
+            const baseHost = subContext.marketType === 'spot'
+                ? 'wss://stream.binance.com:9443/ws'
+                : 'wss://fstream.binance.com/market/ws';
+
+            const klineUrl = `${baseHost}/${fs}@kline_${subContext.interval}`;
+            const tradeUrl = `${baseHost}/${fs}@aggTrade`;
 
             console.log('🔌 KLINE:', klineUrl);
             console.log('🔌 TRADE:', tradeUrl);
@@ -131,6 +172,8 @@ class WebSocketManager {
             console.log('🔌 Bybit:', wsUrl);
             this.wsKline = this._createWebSocket(wsUrl, 'bybit', generation, subContext);
             this.wsTrade = this.wsKline;
+        } else {
+            this.isConnecting = false;
         }
     }
 
@@ -184,6 +227,9 @@ class WebSocketManager {
                 this.isConnected = true;
                 this.isConnecting = false;
                 this.retryCount = 0;
+                // W-FIX #3: сбрасываем метку «последних данных», чтобы сторож
+                // отсчитывал 30с молчания от момента восстановления связи
+                this._lastRelevantMessageTime = Date.now();
                 console.log('✅ Оба WebSocket подключены');
 
                 if (this.chartManager && this.chartManager.onWebSocketConnected) {
@@ -205,18 +251,30 @@ class WebSocketManager {
             this.isConnected = false;
             this.isConnecting = false;
 
-            if (event.code === 1000 || event.code === 1005 || event.code === 1006) {
-                return;
-            }
+            // W-FIX #2: коды 1000/1005/1006 РАНЬШЕ выходили без переподключения.
+            //   - 1006: аварийный обрыв (сеть/прокси/сон машины) — самый частый;
+            //   - 1000: сервер Binance планово закрывает стрим каждые 24 часа;
+            //   - 1005: статус не передан (тоже авария).
+            // Намеренное закрытие (_closeSocket) предварительно снимает все
+            // обработчики, поэтому сюда такие события не попадают вовсе —
+            // значит, ЛЮБОЙ сработавший onclose требует переподключения.
+            // Без этого фикса WS умирал молча, и свечи жили только на
+            // 30-секундном REST-синке (визуально — «иногда кривые свечи»).
 
+            // W-FIX #7: 1008 (invalid policy) — решаем по НЕИЗМЕНЯЕМОМУ контексту
+            // сокета, а не по мутирующимся this.current*: старый сокет не должен
+            // переключать marketType новой подписки.
             if (event.code === 1008) {
-                if (this.currentExchange === 'binance' &&
-                    this.currentMarketType === 'futures' &&
-                    this.binanceSpotOnlyTokens.includes(this.currentSymbol.toUpperCase())) {
+                if (subContext.exchange === 'binance' &&
+                    subContext.marketType === 'futures' &&
+                    this.binanceSpotOnlyTokens.includes(subContext.symbol.toUpperCase()) &&
+                    // переключаем только если сокет относится к текущей подписке
+                    this.currentSymbol === subContext.symbol &&
+                    this.currentInterval === subContext.interval) {
                     this.currentMarketType = 'spot';
                     this._scheduleReconnect(500);
+                    return;
                 }
-                return;
             }
 
             this._scheduleReconnect();
@@ -360,7 +418,9 @@ class WebSocketManager {
                 this._lastRelevantMessageTime = Date.now();
 
                 if (raw.topic.startsWith('kline.') && raw.data?.length) {
-                    const k = raw.data[0];
+                    // W-FIX #4: берём ПОСЛЕДНИЙ элемент батча — у Bybit свежие
+                    // данные идут в конце массива (data[0] — самый старый).
+                    const k = raw.data[raw.data.length - 1];
 
                     let candleTime = Math.floor(k.start / 1000);
 
@@ -389,7 +449,8 @@ class WebSocketManager {
                         }, raw.ts || Date.now(), { symbol: subContext.symbol, interval: subContext.interval });
                     }
                 } else if (raw.topic.startsWith('publicTrade.') && raw.data?.length) {
-                    const tradeData = raw.data[0];
+                    // W-FIX #4: последняя (самая свежая) сделка батча
+                    const tradeData = raw.data[raw.data.length - 1];
                     const price = parseFloat(tradeData.p);
 
                     if (!isNaN(price) && price > 0) {
@@ -465,6 +526,7 @@ class WebSocketManager {
     }
 
     _scheduleReconnect(delay = null) {
+        if (this._closedByUser) return;
         if (this.reconnectTimer) return;
 
         if (delay === null) {
@@ -504,6 +566,10 @@ class WebSocketManager {
         };
 
         closeWs(this.wsKline);
+
+        // У Bybit wsTrade === wsKline (один сокет) — повторный вызов closeWs
+        // для того же объекта безопасен: обработчики уже сняты, а readyState
+        // CLOSING/CLOSED не попадает ни под одну ветку закрытия.
         closeWs(this.wsTrade);
 
         this.wsKline = null;
@@ -522,6 +588,10 @@ class WebSocketManager {
 
     closeAll() {
         console.log('🔌 Закрытие WebSocket...');
+
+        // W-FIX #6: помечаем явное закрытие — сторож и reconnect не воскрешают
+        this._closedByUser = true;
+
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -535,6 +605,8 @@ class WebSocketManager {
     }
 
     ensureConnected() {
+        if (this._closedByUser) return;
+
         const klineState = this.wsKline?.readyState;
         const tradeState = this.wsTrade?.readyState;
 
@@ -553,9 +625,12 @@ class WebSocketManager {
     }
 
     _onTabVisible() {
+        if (this._closedByUser) return;
+
         const now = Date.now();
         if (this._lastRelevantMessageTime && (now - this._lastRelevantMessageTime > 10000)) {
             console.log('🔄 Нет данных, переподключаемся');
+            this._lastRelevantMessageTime = now; // не триггерить повторно до новых данных
             this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
         } else {
             this.ensureConnected();
