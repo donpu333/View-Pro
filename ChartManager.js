@@ -1,12 +1,11 @@
-
-
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
-// FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval(), чтобы не
-// пересоздавать объект-литерал на каждый (очень частый) вызов.
+// FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval().
+// FIX 2H: добавлен '2h': 7200 — без него _getNextIntervalTimeFor('2h')
+// возвращал +3600 (1 час), и каждая 2h-свеча трактовалась как дыра.
 const INTERVAL_SECONDS_MAP = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-    '1h': 3600, '4h': 14400, '6h': 21600, '12h': 43200,
+    '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
     '1d': 86400, '1w': 604800, '1M': 2592000
 };
 
@@ -79,7 +78,7 @@ class ChartManager {
         this._currentFetchController = null;
         this._historyFetchController = null;
         this._backgroundFetchController = null;
-        this._healFetchController = null; // FIX #16: отдельный канал лечения дыр
+        this._healFetchController = null;
         this._updateTimeout = null;
         this._autoScalePending = false;
         this._isVerticalZooming = false;
@@ -90,7 +89,7 @@ class ChartManager {
         this._refreshingAfterHidden = false;
         this._periodicSyncInterval = null;
         this._quarantineTimeout = null;
-        this._preHiddenSuspendedState = false; // FIX A: истинное состояние до карантина
+        this._preHiddenSuspendedState = false;
         this._lastKlineEventTime = 0;
         this._catchingUpMissed = false;
         this._lastCatchUpAttempt = 0;
@@ -101,15 +100,16 @@ class ChartManager {
         this._pendingPriceValue = null;
         this._pendingPriceUpdate = null;
         this._candleTimeMap = new Map();
-        // FIX #15: признак уничтоженного экземпляра
         this._destroyed = false;
-        // FIX #2/#10: состояние самолечения серий и заполнения дыр в данных
         this._lastSeriesResyncAt = 0;
         this._healingGaps = false;
         this._lastGapHealAttempt = 0;
-        // Дыры, которые биржа не может заполнить (торговые паузы/делистинги) —
-        // чтобы не долбить REST каждые 30с заведомо пустыми запросами
         this._unhealableGaps = new Set();
+        // FIX SMOOTH: невидимая серия (candle/bar) помечается как "требующая
+        // синхронизации" — setData применяется только к видимой, а невидимая
+        // досинхронизируется в setChartType. Это убирает двойной setData в
+        // горячих путях и убирает визуальные "перерисовки" при синхронизациях.
+        this._invisibleSeriesDirty = false;
         this._isScrolling = false;
         this._isScrollingFast = false;
         this._lastDrawingsCall = 0;
@@ -128,10 +128,11 @@ class ChartManager {
         this._historyEndTime = null;
         this._fetchPromise = null;
 
-        // PERF: кэш прочитанной из localStorage точности цены, чтобы не дёргать
-        // синхронный localStorage.getItem() на каждый rAF-тик в _performUpdate().
         this._cachedPrecisionKey = null;
         this._cachedPrecisionValue = null;
+        // FIX PERF: кэш "выведенной" точности — чтобы _performUpdate не дёргал
+        // applyPriceFormat на каждом rAF, пока не пришёл ответ getPrecisionFromExchange.
+        this._lastInferredPrecision = null;
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         this._maxCandlesInMemory = isMobile ? 3000 : 8000;
@@ -538,22 +539,10 @@ class ChartManager {
         return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
     }
 
-    // PERF: единая точка обновления «горячих» тиков цены/свечи. Раньше почти
-    // каждый апдейт вызывался на ОБЕИХ сериях (candle + bar), хотя в любой
-    // момент времени видна только одна (вторая имеет visible:false) — то есть
-    // LightweightCharts тратил вдвое больше работы на пересчёт/рендер на
-    // каждый тик. Теперь обновляется только видимая серия; при переключении
-    // типа графика (setChartType) вновь становящаяся видимой серия принудительно
-    // синхронизируется через setData(this.chartData), так что она никогда не
-    // окажется "устаревшей" — единственным источником истины остаётся this.chartData.
     _updateVisibleSeries(updateData) {
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series) return;
 
-        // FIX #2: series.update() бросает исключение, если переданное время СТАРЕЕ
-        // последнего бара серии (lightweight-charts). Неперехваченное исключение
-        // оставляло серию рассинхронизированной с chartData, и все последующие свечи
-        // отрисовывались неправильно. Теперь при ошибке — полная ресинхронизация.
         try {
             series.update(updateData);
         } catch (e) {
@@ -561,9 +550,6 @@ class ChartManager {
         }
     }
 
-    // FIX #2: аварийное восстановление обеих ценовых серий и объёма из chartData
-    // (единственного источника истины). Троттлинг 250мс — защита от цикла setData
-    // на каждом тике, если данные находятся в заведомо невалидном состоянии.
     _resyncSeriesFromData() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
 
@@ -572,20 +558,131 @@ class ChartManager {
         this._lastSeriesResyncAt = now;
 
         try {
-            if (this.candleSeries) this.candleSeries.setData(this.chartData);
-            if (this.barSeries) this.barSeries.setData(this.chartData);
+            this._applyDataAtomically();
+        } catch (e) {}
+    }
 
+    // =================================================================================
+    // FIX #20 + FIX SMOOTH: АТОМАРНОЕ ПРИМЕНЕНИЕ ДАННЫХ С СОХРАНЕНИЕМ ВЬЮПОРТА
+    // =================================================================================
+    // Ключевые изменения против предыдущей версии:
+    //   1) setData применяется ТОЛЬКО к видимой серии; невидимая помечается
+    //      _invisibleSeriesDirty и синхронизируется в setChartType. Это устраняет
+    //      двойную работу на каждом обновлении и мигание, которое появлялось,
+    //      когда setData на невидимой серии провоцировал лишний пересчёт.
+    //   2) Вьюпорт восстанавливается по anchor'у — ВРЕМЕНИ первой видимой свечи.
+    //      Раньше использовался getVisibleRange()/setVisibleRange() с абсолютными
+    //      time-границами; на неполных интервалах они «плавали», и после каждого
+    //      setData график заметно дёргался.
+    //   3) Не плодим rAF/scrollToRealTime, если это не нужно.
+    _applyDataAtomically(rebuildVolume = true) {
+        if (!this._isChartValid() || !this.chartData.length) return;
+
+        const ts = this.chart.timeScale();
+        if (!ts) return;
+
+        let anchorTime = null;
+        let visibleSpan = 0;
+        let atRightEdge = false;
+
+        try {
+            const lr = ts.getVisibleLogicalRange();
+            const lastIndex = this.chartData.length - 1;
+
+            if (lr && lastIndex >= 0 && lr.to > lr.from) {
+                atRightEdge = lr.to >= lastIndex - 2;
+                visibleSpan = Math.max(10, lr.to - lr.from);
+
+                const fromIdx = Math.max(0, Math.min(this.chartData.length - 1, Math.floor(lr.from)));
+                anchorTime = this.chartData[fromIdx]?.time ?? null;
+            }
+        } catch (e) {}
+
+        const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const otherSeries = this.currentChartType === 'candle' ? this.barSeries : this.candleSeries;
+
+        try {
+            if (visibleSeries) visibleSeries.setData(this.chartData);
+        } catch (e) {}
+
+        if (otherSeries) this._invisibleSeriesDirty = true;
+
+        if (rebuildVolume) {
             this._volumeDataCache = null;
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1;
 
-            this._updateVolumeOptimized();
+            if (this.volumeSeries) {
+                try {
+                    const volumeData = this._buildVolumeData(this.chartData);
+                    this.volumeSeries.setData(volumeData);
+                    this._volumeDataDirty = false;
+                    this._lastVolumeUpdateIndex = this.chartData.length - 1;
+                } catch (e) {}
+            }
             this._applyVolumeScaleOptions();
+        }
+
+        try {
+            if (atRightEdge) {
+                ts.scrollToRealTime();
+            } else if (anchorTime != null) {
+                const newIdx = this._candleTimeMap.get(anchorTime);
+                if (newIdx !== undefined) {
+                    ts.setVisibleLogicalRange({
+                        from: newIdx,
+                        to: newIdx + visibleSpan
+                    });
+                }
+            }
         } catch (e) {}
     }
 
-    // FIX #2: безопасное инкрементальное обновление бара объёма с откатом на полный
-    // setData при рассинхроне серии и chartData.
+    // FIX SMOOTH: лёгкий путь для случая "новые свечи строго продолжают хвост".
+    // Никакого setData, только series.update() на каждую новую свечу. Это
+    // основной сценарий live-догона: WS-свеча/периодический sync/REST-catchup
+    // дописали 1..N баров в конец — их не нужно перерисовывать через setData.
+    _applyAppendOnly(newCandles) {
+        if (!this._isChartValid() || !newCandles || newCandles.length === 0) return;
+
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (!series) return;
+
+        let failed = false;
+
+        for (const c of newCandles) {
+            try {
+                series.update({
+                    time: c.time,
+                    open: c.open,
+                    high: c.high,
+                    low: c.low,
+                    close: c.close
+                });
+            } catch (e) {
+                failed = true;
+                break;
+            }
+
+            if (this.volumeSeries) {
+                this._safeVolumeBarUpdate(
+                    c.time,
+                    c.quoteVolume || c.volume || 0,
+                    c.close >= c.open ? this.bullishColor : this.bearishColor
+                );
+            }
+        }
+
+        if (failed) {
+            this._resyncSeriesFromData();
+            return;
+        }
+
+        this._invisibleSeriesDirty = true;
+        this._volumeDataDirty = true;
+        this._lastVolumeUpdateIndex = this.chartData.length - 1;
+    }
+
     _safeVolumeBarUpdate(time, value, color) {
         if (!this.volumeSeries) return;
 
@@ -625,9 +722,25 @@ class ChartManager {
         this._syncRecentCandles().catch(() => {});
     }
 
+    // FIX SMOOTH: стаб DOM-элемента дополнен методами classList.contains/toggle,
+    // иначе _applyCrosshairDOMOptimized() падал с TypeError, если элемента
+    // candleStatsOverlay нет в DOM (штатный сценарий — именно для этого и
+    // существует стаб).
     _safeElement(id) {
         const el = document.getElementById(id);
-        return el ? el : { classList: { add: () => {}, remove: () => {} }, textContent: '', style: {} };
+        if (el) return el;
+
+        return {
+            classList: {
+                add: () => {},
+                remove: () => {},
+                contains: () => false,
+                toggle: () => {}
+            },
+            textContent: '',
+            className: '',
+            style: {}
+        };
     }
 
     // =================================================================================
@@ -654,16 +767,7 @@ class ChartManager {
         if (!candle) return candle;
 
         candle._source = source;
-
-        // FIX #1: _receivedAt — ВСЕГДА локальные часы (единая база времени для
-        // сравнения «свежести»). Биржевое eventTime сюда больше не пишется: при
-        // расхождении часов машины и биржи сравнение receivedAt(eventTime) c
-        // receivedAt(Date.now()) давало ложный вердикт «данные устарели», и реальные
-        // WS-обновления свечи отбрасывались.
         candle._receivedAt = (receivedAt !== null && receivedAt !== undefined && !isNaN(receivedAt)) ? receivedAt : Date.now();
-
-        // Биржевое время события (поле E) — только для упорядочивания событий
-        // внутри WS-потока; при любом не-WS обновлении сбрасывается.
         candle._eventTime = (eventTime !== null && eventTime !== undefined && !isNaN(eventTime)) ? eventTime : null;
 
         return candle;
@@ -672,11 +776,6 @@ class ChartManager {
     _isFresherUpdate(existingCandle, receivedAt, source) {
         if (!existingCandle || existingCandle._receivedAt === undefined || existingCandle._receivedAt === null) return true;
 
-        // FIX #1b: placeholder (синтетическая свеча, созданная из тиков цены —
-        // volume=0, приблизительный open) ВСЕГДА уступает реальным данным
-        // (WS-kline / REST / cache), даже если метки времени совпали до
-        // миллисекунды. Иначе настоящая свеча с биржи могла отклоняться, и на
-        // графике оставалась «плоская» свеча без объёма.
         if (existingCandle._isPlaceholder === true) return true;
 
         if (receivedAt > existingCandle._receivedAt) return true;
@@ -736,14 +835,10 @@ class ChartManager {
     // 7. РАСЧЁТ ГРАНИЦ ИНТЕРВАЛОВ
     // =================================================================================
 
-    // FIX D: используем константу модуля вместо литерала, создаваемого на каждый вызов.
     _getIntervalSeconds() {
         return INTERVAL_SECONDS_MAP[this.currentInterval] || 3600;
     }
 
-    // FIX #8: «чистые» варианты с явным интервалом — нужны в fetchKlines(), где
-    // интервал запроса является параметром и в общем случае может отличаться от
-    // currentInterval (а также для _healDataGaps).
     _getIntervalSecondsFor(interval) {
         return INTERVAL_SECONDS_MAP[interval] || 3600;
     }
@@ -770,7 +865,6 @@ class ChartManager {
         return timeSec + this._getIntervalSecondsFor(interval);
     }
 
-    // FIX D: используем константу модуля вместо литерала, создаваемого на каждый вызов.
     _alignTimeToInterval(nowSec) {
         return this._alignTimeForInterval(nowSec, this.currentInterval);
     }
@@ -852,7 +946,6 @@ class ChartManager {
         }
     }
 
-    // Периодически (раз в 30с) подтягивает последние 3 свечи с REST и мержит с локальными.
     async _syncRecentCandles() {
         if (this._isScrolling || this._isScrollingFast) return;
 
@@ -876,9 +969,9 @@ class ChartManager {
 
             let changed = false;
             let olderCandlesChanged = false;
-            // FIX #7: флаг «обнаружен разрыв» — вместо дырявого пуша делегируем
-            // догрузку _catchUpMissedCandles()
             let needsCatchUp = false;
+            let needsFullRedraw = false;
+            const pushedMissing = [];
 
             for (let i = currentData.length - 1; i >= Math.max(0, currentData.length - 3); i--) {
                 const cur = currentData[i];
@@ -923,8 +1016,6 @@ class ChartManager {
                         };
 
                         this._updateVisibleSeries(updateData);
-
-                        // FIX #2: безопасное обновление объёма (самолечение при рассинхроне)
                         this._safeVolumeBarUpdate(
                             safeTime,
                             cur.quoteVolume || cur.volume || 0,
@@ -939,25 +1030,8 @@ class ChartManager {
                 }
             }
 
-            if (olderCandlesChanged && this._isChartValid()) {
-                if (this.candleSeries) this.candleSeries.setData(currentData);
-                if (this.barSeries) this.barSeries.setData(currentData);
-
-                if (this.volumeSeries) {
-                    this._volumeDataCache = null;
-                    this._volumeDataDirty = true;
-                    this._lastVolumeUpdateIndex = -1;
-                    this._updateVolumeOptimized();
-                    this._applyVolumeScaleOptions();
-                }
-            }
-
             if (freshMap.size > 0) {
                 const missing = Array.from(freshMap.values()).sort((a, b) => a.time - b.time);
-                let needsFullRedraw = false;
-                // FIX #7: сюда попадают только реально запушенные свечи —
-                // инкрементальный update() допустим лишь для них
-                const pushedMissing = [];
 
                 for (const candle of missing) {
                     candle.quoteVolume = candle.quoteVolume || candle.volume || 0;
@@ -966,10 +1040,6 @@ class ChartManager {
                     if (isNaN(safeTime) || safeTime <= 0) continue;
 
                     if (currentData.length > 0 && safeTime <= currentData[currentData.length - 1].time) {
-                        // FIX B: раньше свеча, корректирующая уже существующую (не
-                        // последнюю) запись, здесь просто терялась (continue без
-                        // применения данных). Теперь мержим её в существующую свечу
-                        // по индексу из _candleTimeMap перед полной перерисовкой.
                         const idx = this._candleTimeMap.get(safeTime);
                         const existing = (idx !== undefined) ? currentData[idx] : undefined;
 
@@ -995,11 +1065,6 @@ class ChartManager {
                         continue;
                     }
 
-                    // FIX #7: пушим только если свеча строго продолжает текущую
-                    // последнюю (без дыр). Раньше пропуск нескольких периодов
-                    // (например, при кратковременной потере WS) приводил к «дыре»
-                    // в chartData: бары на графике слипались, индикаторы считались
-                    // по разорванным данным.
                     if (currentData.length > 0) {
                         const lastTimeNow = currentData[currentData.length - 1].time;
                         const expectedNext = this._getNextIntervalTime(lastTimeNow);
@@ -1016,41 +1081,26 @@ class ChartManager {
                     pushedMissing.push(candle);
                 }
 
-                if (needsFullRedraw && this._isChartValid()) {
+                if (needsFullRedraw) {
                     currentData.sort((a, b) => a.time - b.time);
                     this._rebuildTimeMap();
-
-                    if (this.candleSeries) this.candleSeries.setData(currentData);
-                    if (this.barSeries) this.barSeries.setData(currentData);
-
-                    if (this.volumeSeries) {
-                        this._volumeDataCache = null;
-                        this._volumeDataDirty = true;
-                        this._updateVolumeOptimized();
-                        this._applyVolumeScaleOptions();
-                    }
-                } else if (pushedMissing.length > 0) {
-                    // FIX #19: атомарная перерисовка вместо пошагового update()
-                    // по каждой добавленной свече (без «дорисовывания» на экране)
-                    if (this._isChartValid()) {
-                        if (this.candleSeries) this.candleSeries.setData(currentData);
-                        if (this.barSeries) this.barSeries.setData(currentData);
-
-                        this._volumeDataCache = null;
-                        this._volumeDataDirty = true;
-                        this._lastVolumeUpdateIndex = -1;
-                        this._updateVolumeOptimized();
-                        this._applyVolumeScaleOptions();
-                    }
                 }
 
                 this.lastCandle = currentData[currentData.length - 1];
                 changed = true;
 
-                // FIX #7: разрыв всё-таки есть — догружаем недостающий диапазон
                 if (needsCatchUp) {
                     this._catchUpMissedCandles().catch(() => {});
                 }
+            }
+
+            // FIX SMOOTH: full setData — только при реальной структурной поломке
+            // (правка НЕпоследней свечи). Обычный догон — через _applyAppendOnly,
+            // это устраняет «перерисовку» всех свечей на каждом 30-сек синке.
+            if (needsFullRedraw || olderCandlesChanged) {
+                this._applyDataAtomically();
+            } else if (pushedMissing.length > 0) {
+                this._applyAppendOnly(pushedMissing);
             }
 
             if (changed) {
@@ -1058,19 +1108,16 @@ class ChartManager {
                 this._syncLineColor();
 
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                // FIX #13: безопасный доступ — lastCandle теоретически может быть null
                 const lastClose = this.lastCandle?.close ?? currentData[currentData.length - 1]?.close;
                 if (this.timerManager && lastClose != null) this.timerManager.updatePrice(lastClose);
             }
 
-            // FIX #10: дешёвая проверка внутренних дыр в данных (троттлинг внутри)
             this._healDataGaps().catch(() => {});
         } catch (e) {
             console.warn('⚠️ Ошибка периодической синхронизации:', e);
         }
     }
 
-    // Полная догоняющая синхронизация (500 последних свечей) при возврате на вкладку.
     async refreshCandlesAfterTabHidden() {
         if (!this._isChartValid() || this._switchingSymbol || this._isSwitchingInterval) return;
         if (this._isScrolling || this._isScrollingFast) return;
@@ -1078,10 +1125,6 @@ class ChartManager {
 
         this._refreshingAfterHidden = true;
 
-        // FIX A: captured "истинное" предыдущее состояние только если карантин от
-        // прошлого вызова ещё не активен — иначе на быстром hide/show внутри
-        // карантина мы захватили бы wasSuspended=true (артефакт карантина) и потом
-        // навсегда заморозили бы _updatesSuspended=true.
         if (!this._quarantineTimeout) {
             this._preHiddenSuspendedState = this._updatesSuspended;
         }
@@ -1157,6 +1200,8 @@ class ChartManager {
             newCandles.sort((a, b) => a.time - b.time);
 
             let dataChanged = false;
+            let appendOnly = false;
+            const pushed = [];
 
             if (!hasStructuralChange) {
                 if (lastCandleFresh) {
@@ -1178,7 +1223,6 @@ class ChartManager {
                         oldLastCandle.quoteVolume = fresh.quoteVolume || fresh.volume;
 
                         this._stampCandle(oldLastCandle, fresh._source, fresh._receivedAt);
-
                         oldLastCandle._isPlaceholder = false;
 
                         if (typeof fresh._closed === 'boolean') {
@@ -1194,8 +1238,6 @@ class ChartManager {
                         };
 
                         this._updateVisibleSeries(updateData);
-
-                        // FIX #2: безопасное обновление объёма
                         this._safeVolumeBarUpdate(
                             oldLastCandle.time,
                             oldLastCandle.quoteVolume || oldLastCandle.volume || 0,
@@ -1206,10 +1248,6 @@ class ChartManager {
                     }
                 }
 
-                // FIX #12: пушим только непрерывную цепочку новых свечей. Если между
-                // oldLastTime и первой свежей свечой разрыв (вкладка была скрыта дольше,
-                // чем покрывает лимит 500), делегируем догрузку catch-up + heal, а не
-                // создаём дыру в данных.
                 let cursorTime = oldLastTime;
                 let tailGapDetected = false;
 
@@ -1234,6 +1272,7 @@ class ChartManager {
 
                     currentData.push(candle);
                     this._addToTimeMap(candle.time, currentData.length - 1);
+                    pushed.push(candle);
                     cursorTime = candle.time;
 
                     dataChanged = true;
@@ -1244,23 +1283,15 @@ class ChartManager {
                 }
 
                 if (dataChanged) {
-                    // FIX #19: ЕДИНАЯ атомарная перерисовка вместо пошагового
-                    // update() по каждой свече. Раньше на возврате во вкладку
-                    // свечи «дорисовывались» на глазах по одной (каждая со
-                    // сдвигом вьюпорта) — теперь график меняется одной кадровой
-                    // операцией и появляется сразу полностью отрисованным.
-                    if (this._isChartValid()) {
-                        if (this.candleSeries) this.candleSeries.setData(currentData);
-                        if (this.barSeries) this.barSeries.setData(currentData);
-
-                        this._volumeDataCache = null;
-                        this._volumeDataDirty = true;
-                        this._lastVolumeUpdateIndex = -1;
-                        this._updateVolumeOptimized();
-                        this._applyVolumeScaleOptions();
-                    }
-
                     this.lastCandle = currentData[currentData.length - 1];
+
+                    if (lastCandleFresh && pushed.length === 0) {
+                        // только что обновили последнюю — уже сделано инкрементально
+                    } else if (pushed.length > 0) {
+                        appendOnly = true;
+                    } else {
+                        this._applyDataAtomically();
+                    }
                 }
             } else {
                 const updatedData = [];
@@ -1311,20 +1342,13 @@ class ChartManager {
                     this._rebuildTimeMap();
                     this.lastCandle = this.chartData[this.chartData.length - 1];
 
-                    if (this.candleSeries) this.candleSeries.setData(this.chartData);
-                    if (this.barSeries) this.barSeries.setData(this.chartData);
+                    this._applyDataAtomically();
                 }
+            }
 
-                if (this.volumeSeries && this.chartData.length > 0) {
-                    this._volumeDataCache = null;
-                    this._volumeDataDirty = false;
-                    this._lastVolumeUpdateIndex = this.chartData.length - 1;
-
-                    const volumeData = this._buildVolumeData(this.chartData);
-                    this.volumeSeries.setData(volumeData);
-
-                    this._applyVolumeScaleOptions();
-                }
+            // FIX SMOOTH: append-only — обновляем только новые свечи, без setData.
+            if (appendOnly && pushed.length > 0) {
+                this._applyAppendOnly(pushed);
             }
 
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -1341,7 +1365,7 @@ class ChartManager {
                 }
             }
 
-            if (this.timerManager) {
+            if (this.timerManager && this.lastCandle) {
                 this.timerManager.start(this.currentInterval);
                 this.timerManager.updatePrice(this.lastCandle.close);
             }
@@ -1357,10 +1381,6 @@ class ChartManager {
                 this._forceRedrawAll();
             }
         } finally {
-            // FIX A: _refreshingAfterHidden теперь снимается только по истечении
-            // карантина (в setTimeout ниже), а не сразу здесь — иначе повторный
-            // вызов внутри карантина мог бы захватить временное suspended=true
-            // как "истинное" состояние и навсегда заморозить обновления.
             if (this._quarantineTimeout) clearTimeout(this._quarantineTimeout);
 
             const restoreState = this._preHiddenSuspendedState;
@@ -1370,11 +1390,6 @@ class ChartManager {
                 this._quarantineTimeout = null;
                 this._refreshingAfterHidden = false;
 
-                // FIX #11: во время карантина (1с) _updatesSuspended=true глушил
-                // входящие WS-события — часть обновлений последней свечи терялась,
-                // и свеча могла остаться «неправильной» до следующего 30с-синка.
-                // Компенсируем немедленной сверкой, а ПОСЛЕ неё (последовательно,
-                // чтобы лечение дыр сканировало уже свежие данные) — heal (FIX #10/#16).
                 if (!restoreState && !document.hidden && this._isChartValid()) {
                     this._syncRecentCandles().catch(() => {}).finally(() => {
                         this._lastGapHealAttempt = 0;
@@ -1422,6 +1437,8 @@ class ChartManager {
         }
 
         const check = () => {
+            if (this._destroyed) return;
+
             if (document.hidden) {
                 this._candleCheckerTimeout = setTimeout(check, 2000);
                 return;
@@ -1469,9 +1486,6 @@ class ChartManager {
         const interval = this.currentInterval;
 
         try {
-            // FIX #6: запрашиваем столько свечей, сколько реально не хватает
-            // (раньше было жёстко 10 — при отставании больше чем на 10 свечей
-            // в данных навсегда оставалась дыра).
             const lastLocalBefore = this.chartData.length > 0
                 ? this.chartData[this.chartData.length - 1]
                 : null;
@@ -1500,10 +1514,6 @@ class ChartManager {
             const candidates = freshCandles.filter(c => c.time > lastLocalTime && this._isValidCandle(c));
 
             if (candidates.length > 0) {
-                // FIX #6: пушим только непрерывную цепочку, строго продолжающую
-                // последнюю локальную свечу. Если локальные данные отстали сильнее,
-                // чем покрыл запрос (или в середине есть пропуски) — переходим на
-                // свежие данные, а дыру отдаём _healDataGaps().
                 const expectedFirst = lastLocalTime
                     ? this._getNextIntervalTimeFor(lastLocalTime, interval)
                     : candidates[0].time;
@@ -1526,15 +1536,11 @@ class ChartManager {
                         cursor = c.time;
                     }
                 } else {
-                    // Локальный хвост безнадежно отстал: показываем свежие данные
-                    // сразу, историческая дыра будет заполнена _healDataGaps().
                     holeDetected = true;
                     toPush = candidates;
                 }
 
                 if (toPush.length > 0) {
-                    // FIX #6: предыдущая свеча больше не может получать обновления —
-                    // закрываем её, чтобы тики/плейсхолдеры не модифицировали прошлое.
                     const lastLocal = this.chartData.length > 0
                         ? this.chartData[this.chartData.length - 1]
                         : null;
@@ -1550,23 +1556,19 @@ class ChartManager {
 
                     this._rebuildTimeMap();
 
-                    this._volumeDataDirty = true;
-                    this._lastVolumeUpdateIndex = -1;
-
-                    if (this.candleSeries) this.candleSeries.setData(this.chartData);
-                    if (this.barSeries) this.barSeries.setData(this.chartData);
-
-                    this._updateVolumeOptimized();
-                    this._applyVolumeScaleOptions();
-
                     this.lastCandle = this.chartData[this.chartData.length - 1];
+
+                    // FIX SMOOTH: если вся пачка строго продолжает хвост — append-only.
+                    // Полный setData нужен только когда был разрыв и мы «перепрыгнули».
+                    if (!holeDetected) {
+                        this._applyAppendOnly(toPush);
+                    } else {
+                        this._applyDataAtomically();
+                    }
 
                     this._syncLineColor();
 
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-
-                    // FIX #6: не выдёргиваем вьюпорт, если пользователь смотрит историю
-                    if (!this._isViewingHistory) this.scrollToLast();
                 }
 
                 if (holeDetected) {
@@ -1591,13 +1593,10 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9b. ЛЕЧЕНИЕ ВНУТРЕННИХ ДЫР В ДАННЫХ (FIX #10)
+    // 9b. ЛЕЧЕНИЕ ВНУТРЕННИХ ДЫР В ДАННЫХ
     // =================================================================================
-    // Сканирует chartData на разрывы последовательности (отсутствующие периоды между
-    // соседними свечами) и догружает пропущенный диапазон отдельным REST-запросом с
-    // endTime. Вызывается после catch-up / возврата на вкладку / периодического синка;
-    // внутри троттлинг 30с, поэтому регулярный скан практически бесплатен.
     async _healDataGaps() {
+        if (this._destroyed) return;
         if (!this._isChartValid() || !this.currentSymbol || !this.currentInterval) return;
         if (this._healingGaps || this._isTrimming || this.isLoadingMore) return;
         if (this._switchingSymbol || this._isSwitchingInterval || this._updatesSuspended) return;
@@ -1616,8 +1615,6 @@ class ChartManager {
         const interval = this.currentInterval;
 
         try {
-            // Ищем первый внутренний разрыв (хвостовой «разрыв» — зона ответственности
-            // _startNewCandleChecker/_catchUpMissedCandles, здесь его не трогаем).
             let gapIndex = -1;
             let gapFromTime = 0;
             let gapToTime = 0;
@@ -1626,8 +1623,6 @@ class ChartManager {
                 const expected = this._getNextIntervalTimeFor(data[i - 1].time, interval);
 
                 if (data[i].time > expected) {
-                    // Пропускаем дыры, которые биржа уже один раз не смогла заполнить
-                    // (торговая пауза, делистинг) — иначе бесконечные пустые запросы
                     if (this._unhealableGaps.has(data[i - 1].time + ':' + data[i].time)) continue;
 
                     gapIndex = i;
@@ -1651,7 +1646,6 @@ class ChartManager {
             if (!fetched || fetched.length === 0) return;
             if (this._activeGeneration !== genId || this.currentInterval !== interval) return;
             if (!this._isChartValid()) return;
-            // Пока ждали ответ, данные могли заменить (switchSymbol/trim) — не трогаем
             if (this.chartData !== data) return;
 
             const missing = fetched.filter(c =>
@@ -1661,7 +1655,6 @@ class ChartManager {
             );
 
             if (missing.length === 0) {
-                // Биржа не имеет данных за этот период — запоминаем и больше не лечим
                 if (this._unhealableGaps.size > 50) this._unhealableGaps.clear();
                 this._unhealableGaps.add(gapKey);
                 return;
@@ -1674,23 +1667,14 @@ class ChartManager {
             this.chartData.splice(gapIndex, 0, ...missing);
             this._rebuildTimeMap();
 
-            this._volumeDataDirty = true;
-            this._volumeDataCache = null;
-            this._lastVolumeUpdateIndex = -1;
-
-            if (this.candleSeries) this.candleSeries.setData(this.chartData);
-            if (this.barSeries) this.barSeries.setData(this.chartData);
-
-            this._updateVolumeOptimized();
-            this._applyVolumeScaleOptions();
+            this._applyDataAtomically();
 
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
 
             this.requestDrawingsRedraw();
 
-            // Дыр может быть несколько — планируем следующую итерацию
-            // (сброс троттлинга, чтобы не ждать 30с между проходами).
             setTimeout(() => {
+                if (this._destroyed) return;
                 this._lastGapHealAttempt = 0;
                 this._healDataGaps().catch(() => {});
             }, 500);
@@ -1736,9 +1720,6 @@ class ChartManager {
 
                 if (this._pendingBarSpacing && this._pendingBarSpacing !== this._lastSavedBarSpacing) {
                     this._lastSavedBarSpacing = this._pendingBarSpacing;
-                    // PERF: держим this._savedBarSpacing в памяти синхронно с записью,
-                    // чтобы scrollToLast()/positionAfterDataApplied() не читали
-                    // localStorage на каждый вызов (см. #8).
                     this._savedBarSpacing = this._pendingBarSpacing;
                     localStorage.setItem('chartBarSpacing', this._pendingBarSpacing);
                 }
@@ -1757,9 +1738,6 @@ class ChartManager {
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
                 const panels = this.indicatorManager.panelManager.panels;
 
-                // PERF (#10): не планировать rAF ради синхронизации панелей, если
-                // панелей вообще нет — раньше requestAnimationFrame создавался
-                // безусловно на каждое изменение видимого диапазона.
                 if (panels && panels.length > 0 && !this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
                         this._isSyncing = true;
@@ -1800,12 +1778,6 @@ class ChartManager {
 
             resizeTimeout = setTimeout(() => {
                 if (this._isChartValid()) {
-                    // PERF (#12): пропускаем дорогой пересчёт (высоты, панели,
-                    // индикаторы, перерисовка объектов), если размеры контейнера
-                    // фактически не изменились (resize сработал "вхолостую",
-                    // например из-за появления/исчезновения полосы прокрутки на
-                    // другом элементе страницы). this._lastWidth/_lastHeight уже
-                    // заводились в конструкторе, но раньше нигде не использовались.
                     const newWidth = this.chartContainer.clientWidth;
                     const newHeight = this.chartContainer.clientHeight;
 
@@ -1916,24 +1888,24 @@ class ChartManager {
         localStorage.setItem('chartType', type);
 
         if (type === 'candle') {
-            // PERF (#1): т.к. в горячих путях (тики цены/свечи) теперь обновляется
-            // только ВИДИМАЯ серия (_updateVisibleSeries), серия, ставшая активной
-            // при переключении типа, могла отстать от this.chartData (единственного
-            // источника истины). Поэтому перед показом досинхронизируем её полным
-            // setData — это разовая операция только в момент явного переключения
-            // пользователем типа графика, а не на каждый тик.
-            if (previousType !== 'candle' && this.candleSeries && this.chartData.length) {
+            // FIX SMOOTH: пересобираем невидимую серию, только если она реально
+            // отстала (флаг _invisibleSeriesDirty выставляется в hot-path).
+            if ((previousType !== 'candle' || this._invisibleSeriesDirty) &&
+                this.candleSeries && this.chartData.length) {
                 this.candleSeries.setData(this.chartData);
             }
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
             if (this.barSeries) this.barSeries.applyOptions({ visible: false });
         } else if (type === 'bar') {
-            if (previousType !== 'bar' && this.barSeries && this.chartData.length) {
+            if ((previousType !== 'bar' || this._invisibleSeriesDirty) &&
+                this.barSeries && this.chartData.length) {
                 this.barSeries.setData(this.chartData);
             }
             if (this.barSeries) this.barSeries.applyOptions({ visible: true });
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
         }
+
+        this._invisibleSeriesDirty = false;
 
         if (this.volumeSeries) this._applyVolumeScaleOptions();
 
@@ -2025,9 +1997,6 @@ class ChartManager {
         }
     }
 
-    // PERF (#2): читает точность из localStorage только когда меняется ключ
-    // (символ/биржа/рынок), а не на каждый вызов. Раньше _performUpdate() дёргал
-    // синхронный localStorage.getItem() на каждом rAF-тике обновления графика.
     _getCachedPrecision(symbol, exchange, marketType) {
         const key = `precision_${symbol}_${exchange}_${marketType}`;
 
@@ -2059,13 +2028,36 @@ class ChartManager {
             this.currentSymbol, this.currentExchange, this.currentMarketType
         );
 
+        // FIX PERF: если в localStorage точности нет, кэшируем inferred-значение,
+        // чтобы не дёргать applyPriceFormat на каждом rAF. Раньше при отсутствии
+        // кэша (а это происходит при каждом новом инструменте до ответа
+        // getPrecisionFromExchange) applyOptions на series+priceScale вызывался
+        // на КАЖДЫЙ кадр анимации.
+        let precisionToApply;
+        let precisionStr;
+
         if (cachedPrecision) {
-            if (this._lastAppliedPrecision !== cachedPrecision) {
-                this.applyPriceFormat(parseInt(cachedPrecision));
-                this._lastAppliedPrecision = cachedPrecision;
-            }
+            precisionToApply = parseInt(cachedPrecision, 10);
+            precisionStr = cachedPrecision;
         } else {
-            this.applyPriceFormat(this._inferPrecisionFromData());
+            precisionToApply = this._inferPrecisionFromData();
+            precisionStr = String(precisionToApply);
+
+            if (this._lastInferredPrecision !== precisionStr) {
+                this._lastInferredPrecision = precisionStr;
+            }
+        }
+
+        if (this._lastAppliedPrecision !== precisionStr) {
+            this.applyPriceFormat(precisionToApply);
+            this._lastAppliedPrecision = precisionStr;
+
+            if (!cachedPrecision) {
+                this._setCachedPrecision(
+                    this.currentSymbol, this.currentExchange,
+                    this.currentMarketType, precisionToApply
+                );
+            }
         }
 
         if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
@@ -2088,7 +2080,7 @@ class ChartManager {
             this.timerManager.start(this.currentInterval);
 
             if (price !== null) this.timerManager.updatePrice(price);
-            else this.timerManager.updatePrice(lastCandle.close);
+            else if (lastCandle) this.timerManager.updatePrice(lastCandle.close);
         }
 
         this.scheduleUpdatePosition();
@@ -2156,22 +2148,15 @@ class ChartManager {
 
         const intervalSec = this._getIntervalSeconds();
 
-        // FIX #4: tickTime может приходить как в секундах, так и в миллисекундах
-        // (зависит от вызывающего кода). Раньше Math.floor(tickTime) слепо
-        // интерпретировался как секунды: миллисекундная метка давала «границу
-        // периода» на миллиарды секунд в будущем -> каждый тик провоцировал
-        // _catchUpMissedCandles (REST-спам), а свечи переставали обновляться.
         let nowSec = Math.floor(Date.now() / 1000);
 
         if (tickTime !== null && tickTime !== undefined) {
             let t = Number(tickTime);
 
             if (!isNaN(t) && t > 0) {
-                if (t > 1e11) t = Math.floor(t / 1000); // очевидно миллисекунды
+                if (t > 1e11) t = Math.floor(t / 1000);
                 else t = Math.floor(t);
 
-                // Используем время тика только если оно правдоподобно; иначе —
-                // локальные часы. Защита от отката часов и мусорных меток.
                 if (t >= lastCandle.time - intervalSec * 2 && t <= nowSec + intervalSec * 2) {
                     nowSec = t;
                 }
@@ -2180,9 +2165,6 @@ class ChartManager {
 
         const currentCandleStart = this._alignTimeToInterval(nowSec);
 
-        // -------------------------------------------------------------------
-        // A. Тик внутри текущей (последней) свечи — обычное обновление OHLC
-        // -------------------------------------------------------------------
         if (lastCandle.time === currentCandleStart) {
             if (lastCandle._closed === true) return;
 
@@ -2210,7 +2192,6 @@ class ChartManager {
                 close: lastCandle.close
             });
 
-            // FIX #2: безопасное обновление объёма
             this._safeVolumeBarUpdate(
                 lastCandle.time,
                 lastCandle.quoteVolume || lastCandle.volume || 0,
@@ -2234,16 +2215,10 @@ class ChartManager {
             return;
         }
 
-        // -------------------------------------------------------------------
-        // B. Тик уже из СЛЕДУЮЩЕГО периода: закрываем последнюю свечу и
-        //    создаём placeholder нового периода
-        // -------------------------------------------------------------------
         if (currentCandleStart > lastCandle.time) {
             const expectedNextTime = this._getNextIntervalTime(lastCandle.time);
 
             if (currentCandleStart > expectedNextTime) {
-                // Пропущен целый период(ы) — догружаем с REST, а не плодим
-                // placeholder'ы через дыру
                 if (!this._catchingUpMissed) {
                     setTimeout(() => {
                         this._catchUpMissedCandles().catch(() => {});
@@ -2279,7 +2254,6 @@ class ChartManager {
                 close: newCandle.close
             });
 
-            // FIX #2: безопасное обновление объёма
             this._safeVolumeBarUpdate(newCandle.time, 0, this.bullishColor || '#26a69a');
 
             const lineColor = this._getLineColor();
@@ -2293,18 +2267,7 @@ class ChartManager {
             return;
         }
 
-        // -------------------------------------------------------------------
-        // C. FIX #3: currentCandleStart < lastCandle.time — «опоздавший» тик
-        //    (тик прошлого периода, доставленный с задержкой, или откат локальных
-        //    часов). Раньше этот случай попадал в ветку создания новой свечи:
-        //      - в chartData пушилась свеча СО ВРЕМЕНЕМ СТАРЕЕ последней
-        //        (нарушалась сортировка -> series.update() бросал исключение ->
-        //        свечи отрисовывались неправильно);
-        //      - либо через _candleTimeMap обновлялась НЕпоследняя свеча вызовом
-        //        update() (тоже исключение) и lastCandle подменялся несуществующим
-        //        «последним».
-        //    Теперь структуру данных не трогаем — обновляем только price line/UI.
-        // -------------------------------------------------------------------
+        // C. Опоздавший тик — не трогаем структуру
         this.currentRealPrice = price;
 
         const lineColor = this._getLineColor();
@@ -2326,7 +2289,6 @@ class ChartManager {
         }
 
         if (meta && (
-            // FIX #13: защита от null/undefined currentSymbol (TypeError вне try/catch)
             (meta.symbol && meta.symbol.toUpperCase() !== (this.currentSymbol || '').toUpperCase()) ||
             (meta.interval && meta.interval !== this.currentInterval)
         )) {
@@ -2343,10 +2305,6 @@ class ChartManager {
         }
 
         const nowSec = Math.floor(Date.now() / 1000);
-        // FIX #14: допуск +2 интервала вместо +1: если локальные часы ОТСТАЮТ от
-        // биржи больше чем на интервал, прежняя граница отклоняла бы ВСЕ легитимные
-        // WS-свечи текущего периода (график «замерзал»). Настоящий «будущий» мусор
-        // (дальше чем на 2 периода) по-прежнему отсекается.
         const maxAllowedTime = this._alignTimeToInterval(nowSec) + intervalSeconds * 2;
 
         if (candle.time > maxAllowedTime) {
@@ -2356,21 +2314,12 @@ class ChartManager {
         const hasEventTime = (eventTime !== null && eventTime !== undefined && !isNaN(eventTime));
 
         if (hasEventTime) {
-            // FIX #5: отклоняем только СТРОГО более старые события. Раньше условие
-            // `eventTime <= _lastKlineEventTime` отбрасывало и события с тем же E
-            // (Binance может прислать несколько kline-событий за одну миллисекунду) —
-            // в том числе финальное событие закрытия свечи (x=true). Свеча оставалась
-            // «открытой», и последующие тики продолжали менять уже закрытый период.
             if (this._lastKlineEventTime && eventTime < this._lastKlineEventTime) return;
             if (eventTime > this._lastKlineEventTime) this._lastKlineEventTime = eventTime;
         }
 
-        // FIX #1: единая база «свежести» — локальное время получения обновления.
-        // Биржевое eventTime используется отдельно (порядок внутри WS-потока).
         const receivedAt = Date.now();
 
-        // Порядок внутри WS-потока авторитетно определяется биржевым eventTime;
-        // для кросс-источниковых сравнений (ws vs rest/cache) — _isFresherUpdate.
         const isFresherWs = (existing) => {
             if (!existing) return true;
 
@@ -2432,8 +2381,6 @@ class ChartManager {
                 this.lastCandle = currentLastCandle;
 
                 this._updateVisibleSeries(updateData);
-
-                // FIX #2: безопасное обновление объёма
                 this._safeVolumeBarUpdate(
                     currentLastCandle.time,
                     currentLastCandle.quoteVolume || currentLastCandle.volume || 0,
@@ -2461,18 +2408,8 @@ class ChartManager {
 
                 this._stampCandle(existingCandle, 'ws', receivedAt, eventTime);
 
-                if (this._isChartValid()) {
-                    if (this.candleSeries) this.candleSeries.setData(this.chartData);
-                    if (this.barSeries) this.barSeries.setData(this.chartData);
-
-                    if (this.volumeSeries) {
-                        this._volumeDataCache = null;
-                        this._volumeDataDirty = true;
-                        this._lastVolumeUpdateIndex = -1;
-                        this._updateVolumeOptimized();
-                        this._applyVolumeScaleOptions();
-                    }
-                }
+                // Правка НЕпоследней свечи — только через полный setData.
+                this._applyDataAtomically();
 
                 this._volumeDataDirty = true;
                 return;
@@ -2501,8 +2438,6 @@ class ChartManager {
                 this.lastCandle = candle;
 
                 this._updateVisibleSeries(updateData);
-
-                // FIX #2: безопасное обновление объёма
                 this._safeVolumeBarUpdate(
                     candle.time,
                     candle.quoteVolume || candle.volume || 0,
@@ -2629,8 +2564,6 @@ class ChartManager {
         };
 
         this._updateVisibleSeries(updateData);
-
-        // FIX #2: безопасное обновление объёма
         this._safeVolumeBarUpdate(candle.time, 0, this.bullishColor || '#26a69a');
 
         if (this.volumeSeries) {
@@ -2673,10 +2606,9 @@ class ChartManager {
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1;
             this._isTrimming = false;
+            this._invisibleSeriesDirty = false;
+            this._lastInferredPrecision = null;
 
-            // FIX #9b: сбрасываем trim-намерения, оставшиеся от СТАРЫХ данных —
-            // их индексы бессмысленны для нового датасета (отложенный debounce
-            // мог бы отрезать половину только что загруженного графика).
             if (this._trimDebounceTimeout) {
                 clearTimeout(this._trimDebounceTimeout);
                 this._trimDebounceTimeout = null;
@@ -2684,9 +2616,6 @@ class ChartManager {
             this._pendingTrimParams = null;
             this._unhealableGaps.clear();
 
-            // FIX #8b: страховочное выравнивание времён ДО дедупликации — данные
-            // могут прийти из кэша старого формата или из внешнего кода;
-            // невыровненная свеча ломала бы _candleTimeMap и плодила дубликаты.
             for (const c of data) {
                 if (c && typeof c.time === 'number' && !isNaN(c.time)) {
                     const aligned = this._alignTimeForInterval(c.time, interval);
@@ -2740,6 +2669,8 @@ class ChartManager {
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
 
+            this._invisibleSeriesDirty = false;
+
             if (this.volumeSeries && this.chartData.length > 0) {
                 const volumeData = this._buildVolumeData(this.chartData);
                 this.volumeSeries.setData(volumeData);
@@ -2750,10 +2681,6 @@ class ChartManager {
                 this._applyVolumeScaleOptions();
             }
 
-            // FIX E: единственная точка вызова _ensureCurrentCandle для сценариев
-            // switchSymbol/switchInterval — оба идут через setDataQuick, поэтому
-            // повторные вызовы в finishSwitch()/switchInterval() были избыточны
-            // (метод идемпотентен, но не бесплатен) и убраны оттуда.
             this._ensureCurrentCandle('rest');
 
             const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -2769,7 +2696,7 @@ class ChartManager {
             const inferredPrecision = this._inferPrecisionFromData();
 
             if (cachedPrecision) {
-                this.applyPriceFormat(parseInt(cachedPrecision));
+                this.applyPriceFormat(parseInt(cachedPrecision, 10));
                 this._lastAppliedPrecision = cachedPrecision;
             } else {
                 this.applyPriceFormat(inferredPrecision);
@@ -2792,9 +2719,6 @@ class ChartManager {
                 }
 
                 const timeScale = this.chart.timeScale();
-                // PERF (#8): используем закэшированное в памяти значение вместо
-                // localStorage.getItem() — актуально всегда синхронизировано через
-                // scheduleUpdate-обработчик скролла (см. setupOptimizedSubscriptions).
                 const savedBarSpacing = this._savedBarSpacing || 25;
 
                 timeScale.applyOptions({ barSpacing: savedBarSpacing });
@@ -2950,7 +2874,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 18. ПРИОСТАНОВКА/ВОЗОБНОВЛЕНИЕ ОБНОВЛЕНИЙ И ОЧЕРЕДЬ ОТЛОЖЕННОГО ПЕРЕКЛЮЧЕНИЯ
+    // 18. ПРИОСТАНОВКА/ВОЗОБНОВЛЕНИЕ ОБНОВЛЕНИЙ
     // =================================================================================
 
     _suspendAllUpdates() {
@@ -3029,9 +2953,6 @@ class ChartManager {
             this._switchingSymbol = false;
             this._resumeAllUpdates(generationId);
 
-            // FIX E: повторный this._ensureCurrentCandle('rest') здесь убран —
-            // он уже выполняется внутри setDataQuick() перед вызовом onReady.
-
             this._hideSymbolSwitchOverlay();
 
             this._startPeriodicSync();
@@ -3094,16 +3015,13 @@ class ChartManager {
 
             const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
 
-            if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision));
+            if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
 
             if (!this._isChartValid()) {
                 finishSwitch();
                 return;
             }
 
-            // FIX #18: при попадании в кэш затемнение снимается ТОЛЬКО после
-            // завершения фонового досвежения (не более 2.5с) — иначе досылка
-            // недостающих свечей происходила на глазах и дёргала вьюпорт.
             let cacheRefreshPromise = null;
             if (isFromCache) {
                 cacheRefreshPromise = Promise.race([
@@ -3170,7 +3088,6 @@ class ChartManager {
             this._historyFetchController = null;
         }
 
-        // FIX #16: прерываем и лечение дыр — оно привязано к старым данным
         if (this._healFetchController) {
             this._healFetchController.abort();
             this._healFetchController = null;
@@ -3179,6 +3096,7 @@ class ChartManager {
         this._lastKlineEventTime = 0;
         this._catchingUpMissed = false;
         this._lastCatchUpAttempt = 0;
+        this._lastInferredPrecision = null;
 
         if (window.wsManager?.clearKlineQueue) {
             window.wsManager.clearKlineQueue();
@@ -3230,15 +3148,6 @@ class ChartManager {
             }
 
             if (isFromCache) {
-                // FIX #18: кэш может быть устаревшим (до 5 мин). Раньше фоновое
-                // досвежение выполнялось УЖЕ ПОСЛЕ снятия затемнения: добавление
-                // недостающих свечей сдвигало вьюпорт (shiftVisibleRangeOnNewBar)
-                // + scrollToLast() → видимый «резкий скачок» сразу после
-                // переключения (особенно на повторных переключениях, когда кэш
-                // уже сохранён — первое-то переключение идёт через REST и без
-                // скачка). Теперь досвежение дожидается ПОД затемнением (не
-                // более 2.5с, чтобы не висеть на плохой сети). Итоговое
-                // состояние идентично прежнему — исчез только скачок.
                 await Promise.race([
                     this.refreshCandlesInBackground(
                         this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
@@ -3256,9 +3165,6 @@ class ChartManager {
 
             if (this._activeGeneration === generationId) {
                 this._resumeAllUpdates(generationId);
-
-                // FIX E: повторный this._ensureCurrentCandle('rest') здесь убран —
-                // он уже выполняется внутри setDataQuick() перед resolve().
 
                 this._startPeriodicSync();
                 this._startNewCandleChecker();
@@ -3279,17 +3185,19 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 19b. ПЕРВОНАЧАЛЬНАЯ ЗАГРУЗКА ДАННЫХ (FIX #17) — «как в TradingView»
+    // 19b. ПЕРВОНАЧАЛЬНАЯ ЗАГРУЗКА ДАННЫХ
     // =================================================================================
-    // Мгновенная отрисовка при открытии графика: СНАЧАЛА рисуем свечи из кэша
-    // IndexedDB (без ожидания сети — обычно <50мс), текущий период сразу
-    // дополняется placeholder'ом (внутри setDataQuick → _ensureCurrentCandle),
-    // затем фон обновляется с REST и кэш перезаписывается.
-    //
-    // Вызывайте из AppCoordinator (или другого бутстрапа) ВМЕСТО пары
-    // fetchKlines()+setDataQuick():
-    //   await chartManager.loadInitialData(symbol, exchange, marketType, interval);
     async loadInitialData(symbol, exchange, marketType, interval, onReady = null) {
+        // FIX RACE: если параллельно идёт switchSymbol/switchInterval — не влезаем.
+        if (this._switchingSymbol || this._isSwitchingInterval) {
+            if (onReady) onReady();
+            return;
+        }
+        if (this._destroyed) {
+            if (onReady) onReady();
+            return;
+        }
+
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
 
@@ -3332,7 +3240,6 @@ class ChartManager {
             if (this._activeGeneration !== generationId) { finish(); return; }
 
             if (isFromCache) {
-                // Кэш нарисован мгновенно — фоном досвежаем последними данными
                 this.refreshCandlesInBackground(
                     this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
                 ).catch(() => {});
@@ -3375,10 +3282,6 @@ class ChartManager {
             return;
         }
 
-        // PERF (#9): если время под курсором совпадает с предыдущей отрисованной
-        // свечой (курсор просто чуть сдвинулся по X внутри той же свечи),
-        // не пересчитываем change%/volume заново — берём готовые значения и
-        // обновляем только координату X, необходимую для позиционирования.
         if (this._latestCrosshairData && this._latestCrosshairData.visible &&
             this._latestCrosshairData.time === param.time) {
             this._latestCrosshairData.pointX = param.point.x;
@@ -3570,9 +3473,6 @@ class ChartManager {
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
 
-            // PERF (#8): значение уже актуально держится в памяти (this._savedBarSpacing),
-            // синхронизируется при каждом изменении в setupOptimizedSubscriptions —
-            // не нужно читать localStorage синхронно на каждый вызов scrollToLast().
             const savedBarSpacing = this._savedBarSpacing || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
@@ -3727,13 +3627,6 @@ class ChartManager {
             if (price !== null && price !== undefined && !isNaN(price)) {
                 return price;
             }
-
-            // FIX C: убран fallback вида
-            //   this.priceManager.getPrice(this.currentSymbol)
-            // без exchange/marketType — он мог вернуть цену с ДРУГОЙ биржи или
-            // рынка (например, спотовую цену при просмотре фьючерса) на короткое
-            // время, если основной запрос временно не находил цену (например, во
-            // время прогрева подписки). Вместо этого падаем на chart-local цену.
         }
 
         if (this.currentRealPrice !== null && this.currentRealPrice !== undefined && !isNaN(this.currentRealPrice)) {
@@ -3838,8 +3731,6 @@ class ChartManager {
     // =================================================================================
 
     _subscribeToPrice() {
-        // FIX #15: не ретраим после destroy() — раньше цикл setTimeout(100мс)
-        // крутился вечно, если priceManager так и не появлялся
         if (this._destroyed) return;
 
         if (!this.priceManager) {
@@ -3959,12 +3850,7 @@ class ChartManager {
 
         if (typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return false;
 
-        // PERF (#6): позволяет вызывающему коду (например, циклу фильтрации
-        // батча свечей в fetchKlines) передать уже вычисленный nowSec один раз
-        // на весь батч вместо повторного Date.now() на каждую свечу.
         const nowSec = nowSecHint !== null ? nowSecHint : Math.floor(Date.now() / 1000);
-        // FIX #14: допуск +2 интервала — терпимость к отставанию локальных часов
-        // (см. updateLastCandle); реально «будущие» свечи всё равно отсекаются.
         const maxAllowedTime = nowSec + this._getIntervalSeconds() * 2;
 
         if (candle.time > maxAllowedTime) return false;
@@ -3997,7 +3883,6 @@ class ChartManager {
         const clean = { ...candle };
 
         const nowSec = Math.floor(Date.now() / 1000);
-        // FIX #14: тот же допуск +2 интервала, что и в _isValidCandle/updateLastCandle
         const maxAllowedTime = nowSec + this._getIntervalSeconds() * 2;
 
         if (clean.time > maxAllowedTime) return null;
@@ -4044,7 +3929,6 @@ class ChartManager {
 
         const nowSec = Math.floor(Date.now() / 1000);
         const intervalSeconds = this._getIntervalSeconds();
-        // FIX #14: единый допуск +2 интервала (см. updateLastCandle)
         const maxAllowedTime = this._alignTimeToInterval(nowSec) + intervalSeconds * 2;
 
         if (candle.time > maxAllowedTime) return;
@@ -4063,8 +3947,6 @@ class ChartManager {
 
         if (!candle.quoteVolume && candle.volume) candle.quoteVolume = candle.volume;
 
-        // FIX #1/#13: _receivedAt — локальное время получения; биржевое eventTime
-        // сохраняется отдельно в _eventTime (единая база сравнения «свежести»).
         this._stampCandle(candle, 'ws', Date.now(), eventTime);
 
         this.chartData.push(candle);
@@ -4088,7 +3970,6 @@ class ChartManager {
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (activeSeries) this._applyPriceLineColor(activeSeries, lineColor);
 
-        // FIX #2: безопасное обновление объёма
         this._safeVolumeBarUpdate(
             candle.time,
             candle.quoteVolume || candle.volume || 0,
@@ -4148,7 +4029,6 @@ class ChartManager {
             const lastCandle = this.chartData[this.chartData.length - 1];
             const isBullish = lastCandle.close >= lastCandle.open;
 
-            // FIX #2: безопасное обновление (при рассинхроне — полный setData)
             this._safeVolumeBarUpdate(
                 lastCandle.time,
                 lastCandle.quoteVolume || lastCandle.volume || 0,
@@ -4185,11 +4065,6 @@ class ChartManager {
             this._historyFetchController = new AbortController();
             controller = this._historyFetchController;
         } else if (requestType === 'heal') {
-            // FIX #16: отдельный канал для лечения дыр (_healDataGaps). Раньше
-            // heal шёл через 'background' и взаимно абортировался с
-            // периодическим синком/catch-up: запрос лечения обрывался на
-            // середине, дыра оставалась видимой до следующего 30с-цикла —
-            // «гэпы при возврате на вкладку».
             if (this._healFetchController) this._healFetchController.abort();
 
             this._healFetchController = new AbortController();
@@ -4209,17 +4084,14 @@ class ChartManager {
         const signal = controller.signal;
         const timeoutId = setTimeout(() => controller.abort(), this._fetchTimeoutMs);
 
+        // FIX 2H: добавлен '2h': '120' — иначе Bybit-запрос уходил с interval=2h
+        // и возвращал ошибку.
         const bybitIntervalMap = {
             '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
-            '1h': '60', '4h': '240', '6h': '360', '12h': '720',
+            '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
             '1d': 'D', '1w': 'W', '1M': 'M'
         };
 
-        // FIX #8: принудительно выравниваем openTime по границе интервала ЗАПРОСА.
-        // Если хоть одна свеча приходит с невыровненным временем, lookup в
-        // _candleTimeMap по выровненной границе не срабатывает — на графике
-        // появляются дубликаты/«призрачные» свечи в одном слоте (особенно
-        // заметно на 5m). Для корректных данных биржи выравнивание идемпотентно.
         const alignTime = (t) => this._alignTimeForInterval(t, interval);
 
         let url;
@@ -4287,22 +4159,15 @@ class ChartManager {
 
             if (signal.aborted) return null;
 
-            // FIX #8: дедупликация по времени с сохранением ПОСЛЕДНЕГО вхождения
-            // (после выравнивания две соседние «кривые» свечи могут попасть в один
-            // слот — оставляем более полную/позднюю).
             const dedupMap = new Map();
             for (const c of rawCandles) dedupMap.set(c.time, c);
             const noDupes = Array.from(dedupMap.values());
 
-            // PERF (#6): nowSec вычисляется один раз на весь батч и передаётся в
-            // _isValidCandle(), вместо повторного Date.now() на каждую свечу внутри filter().
             const batchNowSec = Math.floor(Date.now() / 1000);
             const validCandles = noDupes.filter(c => this._isValidCandle(c, batchNowSec));
 
             validCandles.sort((a, b) => a.time - b.time);
 
-            // FIX #8: граница текущего периода — по интервалу ЗАПРОСА, а не по
-            // currentInterval (в общем случае они могут отличаться).
             const currentStart = this._alignTimeForInterval(batchNowSec, interval);
 
             for (const c of validCandles) {
@@ -4531,8 +4396,6 @@ class ChartManager {
     }
 
     destroy() {
-        // FIX #15: флаг уничтожения — останавливает фоновые циклы
-        // (ретраи _subscribeToPrice, рекурсию _healDataGaps и т.п.)
         this._destroyed = true;
 
         if (this._bgTitleInterval) {
@@ -4572,8 +4435,6 @@ class ChartManager {
             this._priceUpdateRafId = null;
         }
 
-        // FIX #15: отменяем и остальные зависшие rAF, чтобы их колбэки не
-        // выполнялись после chart.remove()
         if (this._crosshairRafId) {
             cancelAnimationFrame(this._crosshairRafId);
             this._crosshairRafId = null;
@@ -4685,7 +4546,7 @@ class ChartManager {
         const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
 
         if (cachedPrecision) {
-            this.applyPriceFormat(parseInt(cachedPrecision));
+            this.applyPriceFormat(parseInt(cachedPrecision, 10));
             return;
         }
 
@@ -4800,7 +4661,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 35. ПОДГРУЗКА ИСТОРИИ ПРИ СКРОЛЛЕ ВЛЕВО, ОБРЕЗКА (TRIM) СТАРЫХ ДАННЫХ В ПАМЯТИ
+    // 35. ПОДГРУЗКА ИСТОРИИ И ОБРЕЗКА (TRIM)
     // =================================================================================
 
     onVisibleLogicalRangeChange(range) {
@@ -4847,11 +4708,6 @@ class ChartManager {
         const keepFrom = Math.max(0, Math.floor(fromIndex - (this._leftBuffer * 1.5)));
         let keepTo = Math.min(this.chartData.length, Math.ceil(toIndex + (this._rightBuffer * 1.5)));
 
-        // FIX #9: никогда не отрезаем «живой хвост» — последние N свечей и свечи
-        // текущего/предыдущего периода. Раньше при просмотре старой истории trim
-        // мог удалить ТЕКУЩУЮ свечу: следующий тик/kline добавлял её обратно, trim
-        // снова отрезал — REST-спам, мерцание и неправильно отрисованная последняя
-        // свеча (особенно на коротких ТФ вроде 5m).
         const minKeepRight = Math.min(this.chartData.length, 120);
         keepTo = Math.max(keepTo, this.chartData.length - minKeepRight);
 
@@ -4867,7 +4723,6 @@ class ChartManager {
         const rightTrim = this.chartData.length - keepTo;
 
         if (leftTrim === 0 && rightTrim === 0) return;
-        // FIX #9: защита от «схлопывания» диапазона (пустой slice убил бы данные)
         if (keepFrom >= keepTo) return;
 
         this._isTrimming = true;
@@ -4885,6 +4740,8 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
+            // FIX SMOOTH: усечение в памяти — setData на обеих сериях, чтобы
+            // невидимая тоже не осталась с устаревшим диапазоном.
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
 
@@ -4988,6 +4845,7 @@ class ChartManager {
                 priceScale.applyOptions({ autoScale: false });
 
                 if (activeSeries) activeSeries.setData(this.chartData);
+                this._invisibleSeriesDirty = true;
 
                 this._updateVolumeOptimized();
                 this._applyVolumeScaleOptions();
@@ -5070,8 +4928,6 @@ class ChartManager {
                     };
 
                     this._updateVisibleSeries(updateData);
-
-                    // FIX #2: безопасное обновление объёма
                     this._safeVolumeBarUpdate(
                         lc.time,
                         lc.quoteVolume || lc.volume || 0,
@@ -5083,8 +4939,6 @@ class ChartManager {
             let newCandles = freshCandles.filter(c => c.time > lastCachedTime);
 
             if (newCandles.length > 0) {
-                // FIX #12: пушим только непрерывную цепочку; при разрыве —
-                // переход на свежие данные + лечение дыры (_healDataGaps).
                 const expectedFirst = lastCachedTime
                     ? this._getNextIntervalTime(lastCachedTime)
                     : newCandles[0].time;
@@ -5123,20 +4977,13 @@ class ChartManager {
                     this.chartData.push(...newCandles);
                     this._rebuildTimeMap();
 
-                    // FIX #19: ЕДИНАЯ атомарная перерисовка (раньше свечи
-                    // добавлялись по одной через update() — визуально это
-                    // выглядело как «дорисовывание» графика по частям)
-                    this._volumeDataCache = null;
-                    this._volumeDataDirty = true;
-                    this._lastVolumeUpdateIndex = -1;
-
-                    if (this._isChartValid()) {
-                        if (this.candleSeries) this.candleSeries.setData(this.chartData);
-                        if (this.barSeries) this.barSeries.setData(this.chartData);
+                    // FIX SMOOTH: если цепочка непрерывна — только append-only,
+                    // без полного setData.
+                    if (!holeDetected) {
+                        this._applyAppendOnly(newCandles);
+                    } else {
+                        this._applyDataAtomically();
                     }
-
-                    this._updateVolumeOptimized();
-                    this._applyVolumeScaleOptions();
                 }
 
                 if (holeDetected) {
