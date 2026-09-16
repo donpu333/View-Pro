@@ -619,6 +619,20 @@ class WebSocketManager {
     }
 
     forceReconnect() {
+        // W-FIX #8: не убиваем ЖИВОЕ соединение. ChartManager вызывает
+        // forceReconnect() при каждом возврате на вкладку; пересоздание живых
+        // сокетов давало «слепое окно» (сотни мс), в котором терялись kline-
+        // события. Если сокеты живы, но данные протухли (сон машины, half-open
+        // TCP) — это покрывает _onTabVisible(): нет данных >10с -> полный
+        // реконнект.
+        const alive = (ws) => ws &&
+            (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+
+        if (alive(this.wsKline) && alive(this.wsTrade) && !this._closedByUser) {
+            console.log('🔄 forceReconnect: соединение живо, сокеты не пересоздаём');
+            return;
+        }
+
         console.log('🔄 Принудительное переподключение...');
         this.connect(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
     }
