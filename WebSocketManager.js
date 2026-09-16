@@ -1,5 +1,4 @@
 
-
 class WebSocketManager {
     constructor(chartManager) {
         this.chartManager = chartManager;
