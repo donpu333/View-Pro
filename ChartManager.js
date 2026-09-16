@@ -79,6 +79,7 @@ class ChartManager {
         this._currentFetchController = null;
         this._historyFetchController = null;
         this._backgroundFetchController = null;
+        this._healFetchController = null; // FIX #16: отдельный канал лечения дыр
         this._updateTimeout = null;
         this._autoScalePending = false;
         this._isVerticalZooming = false;
@@ -1383,11 +1384,13 @@ class ChartManager {
                 // FIX #11: во время карантина (1с) _updatesSuspended=true глушил
                 // входящие WS-события — часть обновлений последней свечи терялась,
                 // и свеча могла остаться «неправильной» до следующего 30с-синка.
-                // Компенсируем немедленной сверкой + лечим возможные дыры (FIX #10).
+                // Компенсируем немедленной сверкой, а ПОСЛЕ неё (последовательно,
+                // чтобы лечение дыр сканировало уже свежие данные) — heal (FIX #10/#16).
                 if (!restoreState && !document.hidden && this._isChartValid()) {
-                    this._lastGapHealAttempt = 0;
-                    this._healDataGaps().catch(() => {});
-                    this._syncRecentCandles().catch(() => {});
+                    this._syncRecentCandles().catch(() => {}).finally(() => {
+                        this._lastGapHealAttempt = 0;
+                        this._healDataGaps().catch(() => {});
+                    });
                 }
             }, 1000);
         }
@@ -1653,7 +1656,7 @@ class ChartManager {
 
             const fetched = await this.fetchKlines(
                 this.currentSymbol, this.currentExchange, this.currentMarketType,
-                interval, limit, (gapToTime * 1000) - 1, 'background'
+                interval, limit, (gapToTime * 1000) - 1, 'heal'
             );
 
             if (!fetched || fetched.length === 0) return;
@@ -3163,6 +3166,12 @@ class ChartManager {
             this._historyFetchController = null;
         }
 
+        // FIX #16: прерываем и лечение дыр — оно привязано к старым данным
+        if (this._healFetchController) {
+            this._healFetchController.abort();
+            this._healFetchController = null;
+        }
+
         this._lastKlineEventTime = 0;
         this._catchingUpMissed = false;
         this._lastCatchUpAttempt = 0;
@@ -3249,6 +3258,78 @@ class ChartManager {
             window.alertLineManager?.loadAlerts?.(),
             window.textManager?.loadTexts?.()
         ]).then(() => this.requestDrawingsRedraw());
+    }
+
+    // =================================================================================
+    // 19b. ПЕРВОНАЧАЛЬНАЯ ЗАГРУЗКА ДАННЫХ (FIX #17) — «как в TradingView»
+    // =================================================================================
+    // Мгновенная отрисовка при открытии графика: СНАЧАЛА рисуем свечи из кэша
+    // IndexedDB (без ожидания сети — обычно <50мс), текущий период сразу
+    // дополняется placeholder'ом (внутри setDataQuick → _ensureCurrentCandle),
+    // затем фон обновляется с REST и кэш перезаписывается.
+    //
+    // Вызывайте из AppCoordinator (или другого бутстрапа) ВМЕСТО пары
+    // fetchKlines()+setDataQuick():
+    //   await chartManager.loadInitialData(symbol, exchange, marketType, interval);
+    async loadInitialData(symbol, exchange, marketType, interval, onReady = null) {
+        const generationId = ++this._generationCounter;
+        this._activeGeneration = generationId;
+
+        if (symbol) this.currentSymbol = symbol;
+        if (exchange) this.currentExchange = exchange;
+        if (marketType) this.currentMarketType = marketType;
+        if (interval) this.currentInterval = interval;
+
+        const finish = () => { if (onReady) onReady(); };
+
+        try {
+            let candles = await this.loadCandlesFromCache(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+            );
+
+            const isFromCache = !!(candles && candles.length > 0);
+
+            if (!isFromCache) {
+                candles = await this.fetchKlines(
+                    this.currentSymbol, this.currentExchange, this.currentMarketType,
+                    this.currentInterval, 1000
+                );
+            }
+
+            if (this._activeGeneration !== generationId) { finish(); return; }
+
+            if (!candles || candles.length === 0) {
+                console.warn('⚠️ loadInitialData: нет данных (ни кэш, ни REST)');
+                finish();
+                return;
+            }
+
+            await new Promise((resolve) => {
+                this.setDataQuick(
+                    candles, this.currentInterval, this.currentSymbol,
+                    this.currentExchange, this.currentMarketType, true, resolve
+                );
+            });
+
+            if (this._activeGeneration !== generationId) { finish(); return; }
+
+            if (isFromCache) {
+                // Кэш нарисован мгновенно — фоном досвежаем последними данными
+                this.refreshCandlesInBackground(
+                    this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval
+                ).catch(() => {});
+            } else {
+                this.saveCandlesToCache(
+                    this.currentSymbol, this.currentExchange, this.currentMarketType,
+                    this.currentInterval, candles
+                ).catch(() => {});
+            }
+
+            finish();
+        } catch (error) {
+            console.error('❌ Ошибка первоначальной загрузки данных:', error);
+            finish();
+        }
     }
 
     // =================================================================================
@@ -4085,6 +4166,16 @@ class ChartManager {
 
             this._historyFetchController = new AbortController();
             controller = this._historyFetchController;
+        } else if (requestType === 'heal') {
+            // FIX #16: отдельный канал для лечения дыр (_healDataGaps). Раньше
+            // heal шёл через 'background' и взаимно абортировался с
+            // периодическим синком/catch-up: запрос лечения обрывался на
+            // середине, дыра оставалась видимой до следующего 30с-цикла —
+            // «гэпы при возврате на вкладку».
+            if (this._healFetchController) this._healFetchController.abort();
+
+            this._healFetchController = new AbortController();
+            controller = this._healFetchController;
         } else if (requestType === 'background') {
             if (this._backgroundFetchController) this._backgroundFetchController.abort();
 
@@ -4213,6 +4304,8 @@ class ChartManager {
 
             if (requestType === 'history' && this._historyFetchController?.signal === signal) {
                 this._historyFetchController = null;
+            } else if (requestType === 'heal' && this._healFetchController?.signal === signal) {
+                this._healFetchController = null;
             } else if (requestType === 'background' && this._backgroundFetchController?.signal === signal) {
                 this._backgroundFetchController = null;
             } else if (requestType === 'user' && this._currentFetchController?.signal === signal) {
@@ -4390,6 +4483,11 @@ class ChartManager {
         if (this._backgroundFetchController) {
             this._backgroundFetchController.abort();
             this._backgroundFetchController = null;
+        }
+
+        if (this._healFetchController) {
+            this._healFetchController.abort();
+            this._healFetchController = null;
         }
 
         if (this._updateTimeout) {
@@ -5150,102 +5248,3 @@ class ChartManager {
             }
         } catch (error) {}
     }
-
-    // =================================================================================
-    // 38. ОЖИДАНИЕ ГОТОВНОСТИ
-    // =================================================================================
-
-    async waitForReady() {
-        let attempts = 0;
-        const maxAttempts = 50;
-
-        while (attempts < maxAttempts) {
-            if (this._isChartValid() && this.chartData && this.chartData.length > 0 &&
-                this.chart.timeScale()?.getVisibleRange()) {
-                return true;
-            }
-
-            await new Promise(r => setTimeout(r, 100));
-            attempts++;
-        }
-
-        return false;
-    }
-
-    async waitForSeriesReady() {
-        return this.waitForReady();
-    }
-
-    // =================================================================================
-    // 39. ПЛАНИРОВАНИЕ ПЕРЕРИСОВКИ ОБЪЕКТОВ РИСОВАНИЯ
-    // =================================================================================
-
-    manualAutoScale() {
-        this.autoScale();
-    }
-
-    scheduleDrawingsUpdate(forceHighPriority = false) {
-        if (document.hidden || !this._isChartValid()) return;
-        if (this._isVerticalZooming) return;
-
-        const now = performance.now();
-
-        let delay;
-
-        if (forceHighPriority) delay = 0;
-        else if (this._isScrollingFast) delay = 50;
-        else if (this._isScrolling) delay = 100;
-        else delay = 150;
-
-        if (now - (this._lastDrawingsCall || 0) < delay) {
-            if (!this._drawingsFinalUpdateTimeout) {
-                this._drawingsFinalUpdateTimeout = setTimeout(() => {
-                    this._drawingsFinalUpdateTimeout = null;
-
-                    if (window.renderDrawings) {
-                        window.renderDrawings();
-                    }
-                }, delay);
-            }
-
-            return;
-        }
-
-        this._lastDrawingsCall = now;
-
-        if (this._drawingsUpdateRafId === null && window.renderDrawings) {
-            this._drawingsUpdateRafId = requestAnimationFrame(() => {
-                window.renderDrawings();
-                this._drawingsUpdateRafId = null;
-            });
-        }
-    }
-
-    requestDrawingsRedraw() {
-        if (document.hidden || !this._isChartValid()) return;
-
-        if (this._isScrolling || this._isScrollingFast) {
-            this._pendingDrawingsRedraw = true;
-            return;
-        }
-
-        if (this._drawingsRafId !== null) return;
-
-        this._drawingsRafId = requestAnimationFrame(() => {
-            this._drawingsRafId = null;
-            this._performDrawingsRedraw();
-        });
-    }
-
-    _performDrawingsRedraw() {
-        if (window.rayManager?._applyRedrawIfNeeded) window.rayManager._applyRedrawIfNeeded();
-        if (window.trendLineManager?._requestRedraw) window.trendLineManager._requestRedraw();
-        if (window.rulerLineManager?._requestRedraw) window.rulerLineManager._requestRedraw();
-        if (window.alertLineManager?._applyRedrawsIfNeeded) window.alertLineManager._applyRedrawsIfNeeded();
-        if (window.textManager?._requestRedraw) window.textManager._requestRedraw();
-    }
-}
-
-if (typeof window !== 'undefined') {
-    window.ChartManager = ChartManager;
-}
