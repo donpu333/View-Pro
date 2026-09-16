@@ -526,6 +526,18 @@ class ChartManager {
         return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
     }
 
+    // PERF: единая точка обновления «горячих» тиков цены/свечи. Раньше почти
+    // каждый апдейт вызывался на ОБЕИХ сериях (candle + bar), хотя в любой
+    // момент времени видна только одна (вторая имеет visible:false) — то есть
+    // LightweightCharts тратил вдвое больше работы на пересчёт/рендер на
+    // каждый тик. Теперь обновляется только видимая серия; при переключении
+    // типа графика (setChartType) вновь становящаяся видимой серия принудительно
+    // синхронизируется через setData(this.chartData), так что она никогда не
+    // окажется "устаревшей" — единственным источником истины остаётся this.chartData.
+    _updateVisibleSeries(updateData) {
+        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        if (series) series.update(updateData);
+    }
 
     _showSymbolSwitchOverlay() {
         if (this._symbolSwitchOverlay) {
@@ -807,8 +819,7 @@ class ChartManager {
                             close: cur.close
                         };
 
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
+                        this._updateVisibleSeries(updateData);
 
                         if (this.volumeSeries) {
                             const isBullish = cur.close >= cur.open;
@@ -909,8 +920,7 @@ class ChartManager {
                             close: candle.close
                         };
 
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
+                        this._updateVisibleSeries(updateData);
 
                         if (this.volumeSeries) {
                             const isBullish = candle.close >= candle.open;
@@ -1063,8 +1073,7 @@ class ChartManager {
                             close: oldLastCandle.close
                         };
 
-                        if (this.candleSeries) this.candleSeries.update(updateData);
-                        if (this.barSeries) this.barSeries.update(updateData);
+                        this._updateVisibleSeries(updateData);
 
                         if (this.volumeSeries) {
                             const isBullish = oldLastCandle.close >= oldLastCandle.open;
@@ -1103,8 +1112,7 @@ class ChartManager {
                         close: candle.close
                     };
 
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
+                    this._updateVisibleSeries(updateData);
 
                     if (this.volumeSeries) {
                         const isBullish = candle.close >= candle.open;
@@ -1596,13 +1604,26 @@ class ChartManager {
             this._chartTypeSwitchTimeout = null;
         }
 
+        const previousType = this.currentChartType;
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
 
         if (type === 'candle') {
+            // PERF (#1): т.к. в горячих путях (тики цены/свечи) теперь обновляется
+            // только ВИДИМАЯ серия (_updateVisibleSeries), серия, ставшая активной
+            // при переключении типа, могла отстать от this.chartData (единственного
+            // источника истины). Поэтому перед показом досинхронизируем её полным
+            // setData — это разовая операция только в момент явного переключения
+            // пользователем типа графика, а не на каждый тик.
+            if (previousType !== 'candle' && this.candleSeries && this.chartData.length) {
+                this.candleSeries.setData(this.chartData);
+            }
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
             if (this.barSeries) this.barSeries.applyOptions({ visible: false });
         } else if (type === 'bar') {
+            if (previousType !== 'bar' && this.barSeries && this.chartData.length) {
+                this.barSeries.setData(this.chartData);
+            }
             if (this.barSeries) this.barSeries.applyOptions({ visible: true });
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
         }
@@ -1852,8 +1873,7 @@ class ChartManager {
                     close: currentCandle.close
                 };
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     const isBullish = currentCandle.close >= currentCandle.open;
@@ -1906,8 +1926,7 @@ class ChartManager {
                     close: newCandle.close
                 };
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     this.volumeSeries.update({
@@ -1955,8 +1974,7 @@ class ChartManager {
             close: lastCandle.close
         };
 
-        if (this.candleSeries) this.candleSeries.update(updateData);
-        if (this.barSeries) this.barSeries.update(updateData);
+        this._updateVisibleSeries(updateData);
 
         if (this.volumeSeries) {
             const isBullish = lastCandle.close >= lastCandle.open;
@@ -2072,8 +2090,7 @@ class ChartManager {
                 this._stampCandle(currentLastCandle, 'ws', receivedAt);
                 this.lastCandle = currentLastCandle;
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     const isBullish = currentLastCandle.close >= currentLastCandle.open;
@@ -2145,8 +2162,7 @@ class ChartManager {
                 this._addToTimeMap(candle.time, this.chartData.length - 1);
                 this.lastCandle = candle;
 
-                if (this.candleSeries) this.candleSeries.update(updateData);
-                if (this.barSeries) this.barSeries.update(updateData);
+                this._updateVisibleSeries(updateData);
 
                 if (this.volumeSeries) {
                     const isBullish = candle.close >= candle.open;
@@ -2275,8 +2291,7 @@ class ChartManager {
             close: candle.close
         };
 
-        if (this.candleSeries) this.candleSeries.update(updateData);
-        if (this.barSeries) this.barSeries.update(updateData);
+        this._updateVisibleSeries(updateData);
 
         if (this.volumeSeries) {
             this.volumeSeries.update({
@@ -3597,8 +3612,7 @@ class ChartManager {
             close: candle.close
         };
 
-        if (this.candleSeries) this.candleSeries.update(updateData);
-        if (this.barSeries) this.barSeries.update(updateData);
+        this._updateVisibleSeries(updateData);
 
         const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (activeSeries) this._applyPriceLineColor(activeSeries, lineColor);
@@ -4523,8 +4537,7 @@ class ChartManager {
                         time: lc.time, open: lc.open, high: lc.high, low: lc.low, close: lc.close
                     };
 
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
+                    this._updateVisibleSeries(updateData);
 
                     if (this.volumeSeries) {
                         const isBullish = lc.close >= lc.open;
@@ -4556,8 +4569,7 @@ class ChartManager {
                         time: c.time, open: c.open, high: c.high, low: c.low, close: c.close
                     };
 
-                    if (this.candleSeries) this.candleSeries.update(updateData);
-                    if (this.barSeries) this.barSeries.update(updateData);
+                    this._updateVisibleSeries(updateData);
                 }
 
                 this._updateVolumeOptimized();
