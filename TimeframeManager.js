@@ -593,3 +593,46 @@ class TimeframeManager {
             document.body.removeChild(ta);
         };
 
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(text).then(done).catch(legacyCopy);
+        } else {
+            legacyCopy();
+        }
+    }
+
+    loadStarredTimeframes() {
+        const starred = JSON.parse(localStorage.getItem('starredTimeframes') || '[]');
+        document.querySelectorAll('.tf-star').forEach(s => {
+            s.classList.toggle('starred', starred.includes(s.dataset.tf));
+        });
+        this.updateStarredDisplay(starred);
+    }
+
+    saveStarredTimeframes() {
+        const starred = Array.from(document.querySelectorAll('.tf-star.starred'), s => s.dataset.tf);
+        localStorage.setItem('starredTimeframes', JSON.stringify(starred));
+        this.updateStarredDisplay(starred);
+    }
+
+    updateStarredDisplay(starred) {
+        const container = document.getElementById('starredTimeframes');
+        if (!container) return;
+        container.innerHTML = '';
+        starred.forEach(tf => {
+            const label = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[tf] : null) || tf;
+            const item = document.createElement('div');
+            item.className = 'starred-item' + (tf === this.currentInterval ? ' active' : '');
+            item.dataset.tf = tf;
+            item.innerHTML = `<span class="tf-name">${label}</span>`;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.switchToTimeframe(tf);
+            });
+            container.appendChild(item);
+        });
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.TimeframeManager = TimeframeManager;
+}
