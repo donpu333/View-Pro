@@ -1,5 +1,4 @@
 
-
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval(), чтобы не
@@ -100,6 +99,8 @@ class ChartManager {
         this._pendingPriceValue = null;
         this._pendingPriceUpdate = null;
         this._candleTimeMap = new Map();
+        // FIX #15: признак уничтоженного экземпляра
+        this._destroyed = false;
         // FIX #2/#10: состояние самолечения серий и заполнения дыр в данных
         this._lastSeriesResyncAt = 0;
         this._healingGaps = false;
@@ -2349,7 +2350,11 @@ class ChartManager {
         }
 
         const nowSec = Math.floor(Date.now() / 1000);
-        const maxAllowedTime = this._alignTimeToInterval(nowSec) + intervalSeconds;
+        // FIX #14: допуск +2 интервала вместо +1: если локальные часы ОТСТАЮТ от
+        // биржи больше чем на интервал, прежняя граница отклоняла бы ВСЕ легитимные
+        // WS-свечи текущего периода (график «замерзал»). Настоящий «будущий» мусор
+        // (дальше чем на 2 периода) по-прежнему отсекается.
+        const maxAllowedTime = this._alignTimeToInterval(nowSec) + intervalSeconds * 2;
 
         if (candle.time > maxAllowedTime) {
             return;
@@ -2685,6 +2690,16 @@ class ChartManager {
             }
             this._pendingTrimParams = null;
             this._unhealableGaps.clear();
+
+            // FIX #8b: страховочное выравнивание времён ДО дедупликации — данные
+            // могут прийти из кэша старого формата или из внешнего кода;
+            // невыровненная свеча ломала бы _candleTimeMap и плодила дубликаты.
+            for (const c of data) {
+                if (c && typeof c.time === 'number' && !isNaN(c.time)) {
+                    const aligned = this._alignTimeForInterval(c.time, interval);
+                    if (c.time !== aligned) c.time = aligned;
+                }
+            }
 
             const seenTimes = new Set();
 
@@ -3723,6 +3738,10 @@ class ChartManager {
     // =================================================================================
 
     _subscribeToPrice() {
+        // FIX #15: не ретраим после destroy() — раньше цикл setTimeout(100мс)
+        // крутился вечно, если priceManager так и не появлялся
+        if (this._destroyed) return;
+
         if (!this.priceManager) {
             this.priceManager = window.priceManagerInstance || null;
 
@@ -3844,7 +3863,9 @@ class ChartManager {
         // батча свечей в fetchKlines) передать уже вычисленный nowSec один раз
         // на весь батч вместо повторного Date.now() на каждую свечу.
         const nowSec = nowSecHint !== null ? nowSecHint : Math.floor(Date.now() / 1000);
-        const maxAllowedTime = nowSec + this._getIntervalSeconds();
+        // FIX #14: допуск +2 интервала — терпимость к отставанию локальных часов
+        // (см. updateLastCandle); реально «будущие» свечи всё равно отсекаются.
+        const maxAllowedTime = nowSec + this._getIntervalSeconds() * 2;
 
         if (candle.time > maxAllowedTime) return false;
 
@@ -3876,7 +3897,8 @@ class ChartManager {
         const clean = { ...candle };
 
         const nowSec = Math.floor(Date.now() / 1000);
-        const maxAllowedTime = nowSec + this._getIntervalSeconds();
+        // FIX #14: тот же допуск +2 интервала, что и в _isValidCandle/updateLastCandle
+        const maxAllowedTime = nowSec + this._getIntervalSeconds() * 2;
 
         if (clean.time > maxAllowedTime) return null;
 
@@ -3922,7 +3944,8 @@ class ChartManager {
 
         const nowSec = Math.floor(Date.now() / 1000);
         const intervalSeconds = this._getIntervalSeconds();
-        const maxAllowedTime = this._alignTimeToInterval(nowSec) + intervalSeconds;
+        // FIX #14: единый допуск +2 интервала (см. updateLastCandle)
+        const maxAllowedTime = this._alignTimeToInterval(nowSec) + intervalSeconds * 2;
 
         if (candle.time > maxAllowedTime) return;
 
@@ -4391,6 +4414,10 @@ class ChartManager {
     }
 
     destroy() {
+        // FIX #15: флаг уничтожения — останавливает фоновые циклы
+        // (ретраи _subscribeToPrice, рекурсию _healDataGaps и т.п.)
+        this._destroyed = true;
+
         if (this._bgTitleInterval) {
             clearInterval(this._bgTitleInterval);
             this._bgTitleInterval = null;
@@ -4426,6 +4453,21 @@ class ChartManager {
         if (this._priceUpdateRafId) {
             cancelAnimationFrame(this._priceUpdateRafId);
             this._priceUpdateRafId = null;
+        }
+
+        // FIX #15: отменяем и остальные зависшие rAF, чтобы их колбэки не
+        // выполнялись после chart.remove()
+        if (this._crosshairRafId) {
+            cancelAnimationFrame(this._crosshairRafId);
+            this._crosshairRafId = null;
+        }
+        if (this._drawingsRafId) {
+            cancelAnimationFrame(this._drawingsRafId);
+            this._drawingsRafId = null;
+        }
+        if (this._panelsSyncRafId) {
+            cancelAnimationFrame(this._panelsSyncRafId);
+            this._panelsSyncRafId = null;
         }
 
         if (this._globalMouseUpHandler) {
@@ -5112,97 +5154,4 @@ class ChartManager {
     // 38. ОЖИДАНИЕ ГОТОВНОСТИ
     // =================================================================================
 
-    async waitForReady() {
-        let attempts = 0;
-        const maxAttempts = 50;
-
-        while (attempts < maxAttempts) {
-            if (this._isChartValid() && this.chartData && this.chartData.length > 0 &&
-                this.chart.timeScale()?.getVisibleRange()) {
-                return true;
-            }
-
-            await new Promise(r => setTimeout(r, 100));
-            attempts++;
-        }
-
-        return false;
-    }
-
-    async waitForSeriesReady() {
-        return this.waitForReady();
-    }
-
-    // =================================================================================
-    // 39. ПЛАНИРОВАНИЕ ПЕРЕРИСОВКИ ОБЪЕКТОВ РИСОВАНИЯ
-    // =================================================================================
-
-    manualAutoScale() {
-        this.autoScale();
-    }
-
-    scheduleDrawingsUpdate(forceHighPriority = false) {
-        if (document.hidden || !this._isChartValid()) return;
-        if (this._isVerticalZooming) return;
-
-        const now = performance.now();
-
-        let delay;
-
-        if (forceHighPriority) delay = 0;
-        else if (this._isScrollingFast) delay = 50;
-        else if (this._isScrolling) delay = 100;
-        else delay = 150;
-
-        if (now - (this._lastDrawingsCall || 0) < delay) {
-            if (!this._drawingsFinalUpdateTimeout) {
-                this._drawingsFinalUpdateTimeout = setTimeout(() => {
-                    this._drawingsFinalUpdateTimeout = null;
-
-                    if (window.renderDrawings) {
-                        window.renderDrawings();
-                    }
-                }, delay);
-            }
-
-            return;
-        }
-
-        this._lastDrawingsCall = now;
-
-        if (this._drawingsUpdateRafId === null && window.renderDrawings) {
-            this._drawingsUpdateRafId = requestAnimationFrame(() => {
-                window.renderDrawings();
-                this._drawingsUpdateRafId = null;
-            });
-        }
-    }
-
-    requestDrawingsRedraw() {
-        if (document.hidden || !this._isChartValid()) return;
-
-        if (this._isScrolling || this._isScrollingFast) {
-            this._pendingDrawingsRedraw = true;
-            return;
-        }
-
-        if (this._drawingsRafId !== null) return;
-
-        this._drawingsRafId = requestAnimationFrame(() => {
-            this._drawingsRafId = null;
-            this._performDrawingsRedraw();
-        });
-    }
-
-    _performDrawingsRedraw() {
-        if (window.rayManager?._applyRedrawIfNeeded) window.rayManager._applyRedrawIfNeeded();
-        if (window.trendLineManager?._requestRedraw) window.trendLineManager._requestRedraw();
-        if (window.rulerLineManager?._requestRedraw) window.rulerLineManager._requestRedraw();
-        if (window.alertLineManager?._applyRedrawsIfNeeded) window.alertLineManager._applyRedrawsIfNeeded();
-        if (window.textManager?._requestRedraw) window.textManager._requestRedraw();
-    }
-}
-
-if (typeof window !== 'undefined') {
-    window.ChartManager = ChartManager;
-}
+ 
