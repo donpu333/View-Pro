@@ -8624,7 +8624,12 @@ class TradeLevel {
         this.symbol = options.symbol || null;
         this.exchange = options.exchange || null;
         this.marketType = options.marketType || null;
-        
+
+        // НОВЫЙ: Риск на сделку в долларах (используется для расчёта объёма позиции). По умолчанию $10.
+        this.riskAmount = (options.riskAmount !== undefined && options.riskAmount !== null && !isNaN(options.riskAmount))
+            ? Number(options.riskAmount)
+            : 10;
+
         this.options = {
             slColor: options.slColor || '#f23645',
             tpColor: options.tpColor || '#00ff88',
@@ -8633,23 +8638,24 @@ class TradeLevel {
             showPlechi: options.showPlechi !== undefined ? options.showPlechi : true,
             showTP2: options.showTP2 !== undefined ? options.showTP2 : true, // НОВЫЙ: Показывать второй тейк
         };
-        
+
         const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
         const defaultVisibility = {};
         ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
         this.timeframeVisibility = options.timeframeVisibility || defaultVisibility;
-        
+
         this.selected = false;
         this.hovered = false;
         this.dragging = false;
         this.showDragPoints = false;
+        this.showVolumeLabel = false; // НОВЫЙ: показывать плашку объёма (появляется при наведении на ТВХ)
         this.updateTP();
     }
 
     updateTP() {
         const risk = Math.abs(this.entryPrice - this.stopLossPrice);
         if (isNaN(risk) || risk === 0) return;
-        
+
         // Обновление первого тейка
         if (!this.manualTP || this.takeProfitPrice === null || isNaN(this.takeProfitPrice)) {
             const multiplier = this.riskRewardRatio || 3;
@@ -8659,7 +8665,7 @@ class TradeLevel {
                 this.takeProfitPrice = this.entryPrice - (risk * multiplier);
             }
         }
-        
+
         // Обновление второго тейка (по умолчанию 5к1)
         if (!this.manualTP2 || this.takeProfitPrice2 === null || isNaN(this.takeProfitPrice2)) {
             const multiplier2 = this.riskRewardRatio2 || 5;
@@ -8674,6 +8680,21 @@ class TradeLevel {
     update() {
         this.direction = this.stopLossPrice > this.entryPrice ? 'short' : 'long';
         this.updateTP();
+    }
+
+    // НОВЫЙ: Объём позиции (в единицах базового актива), рассчитанный из риска в долларах и дистанции до стопа
+    getPositionSize() {
+        const risk = Math.abs(this.entryPrice - this.stopLossPrice);
+        const riskAmount = (this.riskAmount !== undefined && this.riskAmount !== null && !isNaN(this.riskAmount)) ? this.riskAmount : 10;
+        if (!risk || isNaN(risk) || risk === 0) return 0;
+        return riskAmount / risk;
+    }
+
+    // НОВЫЙ: Стоимость позиции в долларах (объём * цена входа) — ориентировочный размер позиции без учёта плеча
+    getPositionValue() {
+        const size = this.getPositionSize();
+        if (!size || isNaN(size) || this.entryPrice === null || isNaN(this.entryPrice)) return 0;
+        return size * this.entryPrice;
     }
 
     isVisibleOnTimeframe(timeframe) {
@@ -8699,6 +8720,23 @@ class TradeLevelRenderer {
     _formatPrice(price) {
         if (price === null || price === undefined || isNaN(price)) return '';
         return Number(price).toFixed(this._getPrecision());
+    }
+
+    // НОВЫЙ: Форматирование объёма позиции с адаптивной точностью
+    _formatQty(qty) {
+        if (qty === null || qty === undefined || isNaN(qty)) return '0';
+        if (qty === 0) return '0';
+        const abs = Math.abs(qty);
+        let decimals;
+        if (abs < 1) decimals = 6;
+        else if (abs < 10) decimals = 4;
+        else if (abs < 1000) decimals = 2;
+        else decimals = 0;
+        let str = qty.toFixed(decimals);
+        if (str.indexOf('.') !== -1) {
+            str = str.replace(/0+$/, '').replace(/\.$/, '');
+        }
+        return str === '' || str === '-' ? '0' : str;
     }
 
     draw(target) {
@@ -8755,6 +8793,25 @@ class TradeLevelRenderer {
                 ctx.restore();
 
                 this._drawLabel(ctx, scope, `ТВХ ${this._formatPrice(trade.entryPrice)}`, entry, entryColor);
+
+                // НОВЫЙ: Отдельная плашка с объёмом позиции (в монетах и в $), появляется только при наведении на ТВХ
+                if (trade.showVolumeLabel) {
+                    const posSize = (typeof trade.getPositionSize === 'function') ? trade.getPositionSize() : 0;
+                    const posValue = (typeof trade.getPositionValue === 'function') ? trade.getPositionValue() : 0;
+                    if (posSize > 0 && isFinite(posSize) && isFinite(posValue)) {
+                        const coinSymbol = (trade.symbol || '').replace(/(USDT|BUSD|USDC|USD)$/i, '');
+                        const qtyStr = this._formatQty(posSize);
+                        const volText = coinSymbol
+                            ? `Объём: ${qtyStr} ${coinSymbol} (~$${posValue.toFixed(2)})`
+                            : `Объём: ${qtyStr} (~$${posValue.toFixed(2)})`;
+                        const fontSize = 10 * scope.horizontalPixelRatio;
+                        const padding = 6 * scope.horizontalPixelRatio;
+                        const labelHeight = fontSize + padding * 2;
+                        const gap = 4 * scope.horizontalPixelRatio;
+                        const volY = entry + labelHeight + gap;
+                        this._drawLabel(ctx, scope, volText, volY, '#4A90E2');
+                    }
+                }
             }
 
             const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
@@ -8983,6 +9040,10 @@ class TradeLevelManager {
         this._lastMouseClientX = 0;
         this._lastMouseClientY = 0;
         this._tempTrade = null;
+        this._defaultRiskAmount = 10; // НОВЫЙ: Риск на сделку по умолчанию, $
+        this._volumeHoverTrade = null; // НОВЫЙ: сделка, для которой сейчас показана плашка объёма
+        this._volumeHideTimeout = null; // НОВЫЙ: таймер отложенного скрытия плашки объёма
+        this._volumeHideDelayMs = 1000; // НОВЫЙ: задержка скрытия плашки объёма после ухода курсора
 
         if (window.drawingLoaderCoordinator) window.drawingLoaderCoordinator.register(this, 'tradelevel');
 
@@ -9025,6 +9086,23 @@ class TradeLevelManager {
     _formatPrice(price) {
         if (price === null || price === undefined || isNaN(price)) return '';
         return Number(price).toFixed(this._getChartPrecision());
+    }
+
+    // НОВЫЙ: Форматирование объёма позиции с адаптивной точностью (для панели настроек)
+    _formatQty(qty) {
+        if (qty === null || qty === undefined || isNaN(qty)) return '0';
+        if (qty === 0) return '0';
+        const abs = Math.abs(qty);
+        let decimals;
+        if (abs < 1) decimals = 6;
+        else if (abs < 10) decimals = 4;
+        else if (abs < 1000) decimals = 2;
+        else decimals = 0;
+        let str = qty.toFixed(decimals);
+        if (str.indexOf('.') !== -1) {
+            str = str.replace(/0+$/, '').replace(/\.$/, '');
+        }
+        return str === '' || str === '-' ? '0' : str;
     }
 
     _updateStep() {
@@ -9072,6 +9150,7 @@ class TradeLevelManager {
                         existing.trade.riskRewardRatio2 = rec.data.riskRewardRatio2; // НОВЫЙ
                         existing.trade.manualTP = rec.data.manualTP || false;
                         existing.trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
+                        existing.trade.riskAmount = (rec.data.riskAmount !== undefined && rec.data.riskAmount !== null && !isNaN(rec.data.riskAmount)) ? rec.data.riskAmount : (existing.trade.riskAmount ?? this._defaultRiskAmount); // НОВЫЙ
                         existing.trade.entryTime = rec.data.entryTime;
                         existing.trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
                         existing.trade.options = { ...existing.trade.options, ...rec.data.options }; // Обновляет showTP2 и другие опции
@@ -9098,6 +9177,7 @@ class TradeLevelManager {
                     trade.riskRewardRatio2 = rec.data.riskRewardRatio2; // НОВЫЙ
                     trade.manualTP = rec.data.manualTP || false;
                     trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
+                    trade.riskAmount = (rec.data.riskAmount !== undefined && rec.data.riskAmount !== null && !isNaN(rec.data.riskAmount)) ? rec.data.riskAmount : this._defaultRiskAmount; // НОВЫЙ
                     trade.entryTime = rec.data.entryTime;
                     trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
                     trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
@@ -9133,6 +9213,7 @@ class TradeLevelManager {
                 data: {
                     entryPrice: trade.entryPrice, stopLossPrice: trade.stopLossPrice, takeProfitPrice: trade.takeProfitPrice, takeProfitPrice2: trade.takeProfitPrice2, // НОВЫЙ
                     direction: trade.direction, riskRewardRatio: trade.riskRewardRatio, riskRewardRatio2: trade.riskRewardRatio2, manualTP: trade.manualTP, manualTP2: trade.manualTP2, // НОВЫЙ
+                    riskAmount: trade.riskAmount, // НОВЫЙ: сохраняем риск на сделку ($)
                     entryTime: trade.entryTime, anchorTime: trade.anchorTime ?? trade.entryTime,
                     options: trade.options, // Содержит showTP2
                     timeframeVisibility: trade.timeframeVisibility,
@@ -9167,7 +9248,9 @@ class TradeLevelManager {
         const exchange = (this._chartManager.currentExchange || 'binance').toLowerCase();
         const marketType = (this._chartManager.currentMarketType || 'futures').toLowerCase();
         const trade = new TradeLevel(entryPrice, stopLossPrice, {
-            ...options, time: options.time || Date.now() / 1000, symbolKey: `${cleanSymbol}:${exchange}:${marketType}`, symbol: cleanSymbol, exchange, marketType
+            riskAmount: this._defaultRiskAmount, // НОВЫЙ: значение по умолчанию, может быть переопределено options ниже
+            ...options,
+            time: options.time || Date.now() / 1000, symbolKey: `${cleanSymbol}:${exchange}:${marketType}`, symbol: cleanSymbol, exchange, marketType
         });
         if (trade.takeProfitPrice === null || isNaN(trade.takeProfitPrice)) trade.updateTP();
         const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
@@ -9225,6 +9308,34 @@ class TradeLevelManager {
     }
 
     setMagnetEnabled(enabled) { this._magnetEnabled = enabled; }
+
+    // НОВЫЙ: Показать плашку объёма для сделки немедленно (отменяет отложенное скрытие)
+    _showVolumeLabelFor(trade) {
+        if (this._volumeHideTimeout) {
+            clearTimeout(this._volumeHideTimeout);
+            this._volumeHideTimeout = null;
+        }
+        if (this._volumeHoverTrade && this._volumeHoverTrade !== trade) {
+            this._volumeHoverTrade.showVolumeLabel = false;
+        }
+        this._volumeHoverTrade = trade;
+        if (!trade.showVolumeLabel) {
+            trade.showVolumeLabel = true;
+            this._requestRedraw();
+        }
+    }
+
+    // НОВЫЙ: Запланировать скрытие плашки объёма через 1 секунду после ухода курсора с ТВХ
+    _scheduleHideVolumeLabel() {
+        if (!this._volumeHoverTrade || this._volumeHideTimeout) return;
+        const tradeToHide = this._volumeHoverTrade;
+        this._volumeHideTimeout = setTimeout(() => {
+            tradeToHide.showVolumeLabel = false;
+            this._volumeHideTimeout = null;
+            if (this._volumeHoverTrade === tradeToHide) this._volumeHoverTrade = null;
+            this._requestRedraw();
+        }, this._volumeHideDelayMs);
+    }
 
     hitTest(x, y) {
         if (this._selectedTrade) {
@@ -9400,6 +9511,14 @@ class TradeLevelManager {
                 if (this._hoveredTrade) this._hoveredTrade.hovered = true;
                 this._requestRedraw();
             }
+
+            // НОВЫЙ: Плашка объёма появляется только при наведении на линию/точку ТВХ, скрывается через 1с после ухода курсора
+            const isEntryHover = !!(hit && (hit.type === 'entry' || hit.type === 'entry-line'));
+            if (isEntryHover) {
+                this._showVolumeLabelFor(hit.trade);
+            } else {
+                this._scheduleHideVolumeLabel();
+            }
         });
 
         container.addEventListener('mouseup', (e) => {
@@ -9425,6 +9544,7 @@ class TradeLevelManager {
                 this._hoveredTrade = null;
                 this._requestRedraw();
             }
+            this._scheduleHideVolumeLabel(); // НОВЫЙ: скрыть плашку объёма через 1с после ухода курсора с графика
         });
 
         container.addEventListener('contextmenu', (e) => { this._handleContextMenu(e); });
@@ -9537,6 +9657,55 @@ class TradeLevelManager {
         });
     }
 
+    // НОВЫЙ: Создаёт (если ещё не создано) поле ввода риска на сделку ($) в панели настроек
+    _ensureRiskInput(panel) {
+        let container = panel.querySelector('#riskAmountContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'riskAmountContainer';
+            container.className = 'setting-row';
+            container.style.marginTop = '10px';
+            container.innerHTML = `
+                <label style="display:flex; flex-direction:column; gap:4px; color:#E0E0E0; font-size:12px; width:100%;">
+                    <span>Риск на сделку ($)</span>
+                    <input type="number" id="tradeRiskAmountInput" min="0" step="0.01"
+                        style="background:#2D2D2D;border:1px solid #404040;color:#fff;padding:6px 8px;border-radius:4px;width:100%;box-sizing:border-box;">
+                </label>
+            `;
+            const rrInput = panel.querySelector('#tradeRRInput');
+            const anchor = rrInput ? (rrInput.closest('.setting-row') || rrInput.parentElement) : null;
+            if (anchor && anchor.parentElement) {
+                anchor.parentElement.insertBefore(container, anchor.nextSibling);
+            } else {
+                panel.appendChild(container);
+            }
+        }
+        return container.querySelector('#tradeRiskAmountInput');
+    }
+
+    // НОВЫЙ: Создаёт (если ещё не создано) строку предпросмотра объёма позиции
+    _ensurePositionPreview(panel) {
+        let el = panel.querySelector('#tradePreviewPosition');
+        if (!el) {
+            const rewardEl = document.getElementById('tradePreviewReward');
+            const row = document.createElement('div');
+            row.id = 'tradePreviewPositionRow';
+            row.style.marginTop = '6px';
+            row.style.fontSize = '12px';
+            row.style.color = '#B0B0B0';
+            row.innerHTML = `<span>Объём позиции: </span><span id="tradePreviewPosition" style="color:#E0E0E0; font-weight:600;">—</span>`;
+            if (rewardEl && rewardEl.parentElement) {
+                rewardEl.parentElement.parentElement
+                    ? rewardEl.closest('.setting-row')?.parentElement?.insertBefore(row, rewardEl.closest('.setting-row').nextSibling)
+                    : rewardEl.parentElement.insertBefore(row, rewardEl.nextSibling);
+            } else {
+                panel.appendChild(row);
+            }
+            el = row.querySelector('#tradePreviewPosition');
+        }
+        return el;
+    }
+
     _showSettings(trade = null) {
         const panel = document.getElementById('tradeCreatePanel');
         if (!panel) return;
@@ -9548,11 +9717,17 @@ class TradeLevelManager {
         const tpInput = document.getElementById('tradeTPInput');
         const rrInput = document.getElementById('tradeRRInput');
         const createBtn = document.getElementById('tradeCreateBtn');
+
+        // НОВЫЙ: поле ввода риска на сделку ($)
+        const riskInput = this._ensureRiskInput(panel);
+        this._ensurePositionPreview(panel);
+
         if (trade) {
             entryInput.value = this._formatPrice(trade.entryPrice);
             slInput.value = this._formatPrice(trade.stopLossPrice);
             if (tpInput) tpInput.value = this._formatPrice(trade.takeProfitPrice);
             if (rrInput) rrInput.value = trade.riskRewardRatio.toFixed(2);
+            if (riskInput) riskInput.value = ((trade.riskAmount !== undefined && trade.riskAmount !== null && !isNaN(trade.riskAmount)) ? trade.riskAmount : this._defaultRiskAmount).toFixed(2);
             this._setDirection(trade.direction);
             if (createBtn) createBtn.textContent = 'Сохранить';
             this._tpManuallySet = trade.manualTP || false;
@@ -9561,11 +9736,12 @@ class TradeLevelManager {
             slInput.value = '';
             if (tpInput) tpInput.value = '';
             if (rrInput) rrInput.value = '3.00';
+            if (riskInput) riskInput.value = this._defaultRiskAmount.toFixed(2); // НОВЫЙ: по умолчанию $10
             this._setDirection('long');
             if (createBtn) createBtn.textContent = 'Создать';
             this._tpManuallySet = false;
         }
-        [entryInput, slInput, tpInput, rrInput].forEach(inp => { if (inp) inp.oncontextmenu = (e) => e.stopPropagation(); });
+        [entryInput, slInput, tpInput, rrInput, riskInput].forEach(inp => { if (inp) inp.oncontextmenu = (e) => e.stopPropagation(); });
         panel.onmousedown = (e) => e.stopPropagation();
         panel.onmousemove = (e) => e.stopPropagation();
         panel.onmouseup = (e) => e.stopPropagation();
@@ -9574,6 +9750,7 @@ class TradeLevelManager {
         slInput.oninput = () => { this._tpManuallySet = false; this._updateStep(); this._updatePreview(); };
         if (rrInput) rrInput.oninput = () => { this._tpManuallySet = false; this._updatePreview(); };
         if (tpInput) tpInput.oninput = () => { this._tpManuallySet = true; this._updatePreview(); };
+        if (riskInput) riskInput.oninput = () => { this._updatePreview(); }; // НОВЫЙ
         const longBtn = document.getElementById('tradeDirectionLong');
         const shortBtn = document.getElementById('tradeDirectionShort');
         if (longBtn) longBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('long'); this._updatePreview(); };
@@ -9592,7 +9769,7 @@ class TradeLevelManager {
         this._makeDraggable(panel);
         this._updateStep();
         this._updatePreview();
-        
+
         this._renderTimeframeCheckboxes(trade);
         const stylePanel = panel.querySelector('#stylePanel');
         const visibilityPanel = panel.querySelector('#visibilityPanel');
@@ -9646,7 +9823,7 @@ class TradeLevelManager {
         switchTab('style');
         if (tabStyle) tabStyle.onclick = (e) => { e.stopPropagation(); switchTab('style'); };
         if (tabVisibility) tabVisibility.onclick = (e) => { e.stopPropagation(); switchTab('visibility'); };
-        
+
         setTimeout(() => entryInput.focus(), 100);
     }
 
@@ -9742,14 +9919,19 @@ class TradeLevelManager {
         const slInput = document.getElementById('tradeSLInput');
         const tpInput = document.getElementById('tradeTPInput');
         const rrInput = document.getElementById('tradeRRInput');
+        const riskInput = document.getElementById('tradeRiskAmountInput'); // НОВЫЙ
         const createBtn = document.getElementById('tradeCreateBtn');
+        const positionEl = document.getElementById('tradePreviewPosition'); // НОВЫЙ
         const direction = this._selectedDirection || 'long';
         const entry = parseFloat(entryInput?.value);
         const sl = parseFloat(slInput?.value);
+        const riskAmount = riskInput ? (parseFloat(riskInput.value) || 0) : this._defaultRiskAmount; // НОВЫЙ
+
         if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
             document.getElementById('tradePreviewTP').textContent = '—';
             document.getElementById('tradePreviewRisk').textContent = '—';
             document.getElementById('tradePreviewReward').textContent = '—';
+            if (positionEl) positionEl.textContent = '—'; // НОВЫЙ
             if (rrInput) rrInput.value = '3.00';
             if (createBtn) { createBtn.disabled = false; createBtn.style.opacity = '1'; }
             return;
@@ -9757,6 +9939,18 @@ class TradeLevelManager {
         if (direction === 'long' && sl >= entry) { this._showPanelError('Для Long SL должен быть НИЖЕ Entry'); return; }
         if (direction === 'short' && sl <= entry) { this._showPanelError('Для Short SL должен быть ВЫШЕ Entry'); return; }
         const risk = Math.abs(entry - sl);
+
+        // НОВЫЙ: расчёт объёма позиции по риску ($) и дистанции до стопа
+        if (positionEl) {
+            if (risk > 0 && riskAmount > 0) {
+                const positionSize = riskAmount / risk;
+                const positionValue = positionSize * entry;
+                positionEl.textContent = `${this._formatQty(positionSize)} (~$${positionValue.toFixed(2)})`;
+            } else {
+                positionEl.textContent = '—';
+            }
+        }
+
         const tpValue = tpInput ? tpInput.value.trim() : '';
         const tp = tpValue !== '' ? parseFloat(tpValue) : null;
         let rr = rrInput ? (parseFloat(rrInput.value) || 2) : 2;
@@ -9782,12 +9976,14 @@ class TradeLevelManager {
         const slInput = document.getElementById('tradeSLInput');
         const tpInput = document.getElementById('tradeTPInput');
         const rrInput = document.getElementById('tradeRRInput');
+        const riskInput = document.getElementById('tradeRiskAmountInput'); // НОВЫЙ
         const entry = parseFloat(entryInput.value);
         const sl = parseFloat(slInput.value);
         const direction = this._selectedDirection || 'long';
         const tpValue = tpInput ? tpInput.value.trim() : '';
         const tp = tpValue !== '' ? parseFloat(tpValue) : null;
         const rr = rrInput ? (parseFloat(rrInput.value) || 2) : 2;
+        const riskAmount = riskInput ? (parseFloat(riskInput.value) || 0) : this._defaultRiskAmount; // НОВЫЙ
         if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) { this._showPanelError('Введите корректные цены'); return; }
         if (entry === sl) { this._showPanelError('Цена входа и стоп-лосс не могут быть равны'); return; }
         if (direction === 'long' && sl >= entry) { this._showPanelError('Для Long стоп-лосс должен быть НИЖЕ цены входа'); return; }
@@ -9801,6 +9997,7 @@ class TradeLevelManager {
             this._editingTrade.entryPrice = entry;
             this._editingTrade.stopLossPrice = sl;
             this._editingTrade.direction = direction;
+            this._editingTrade.riskAmount = riskAmount; // НОВЫЙ
             if (tp !== null && !isNaN(tp)) {
                 this._editingTrade.takeProfitPrice = tp;
                 this._editingTrade.manualTP = true;
@@ -9813,7 +10010,7 @@ class TradeLevelManager {
             this._editingTrade = null;
         } else {
             const tradeTime = this._pendingTradeTime || Date.now() / 1000;
-            const trade = this.createTrade(entry, sl, { riskRewardRatio: rr, direction: direction, time: tradeTime });
+            const trade = this.createTrade(entry, sl, { riskRewardRatio: rr, direction: direction, time: tradeTime, riskAmount: riskAmount }); // НОВЫЙ: riskAmount
             if (tp !== null && !isNaN(tp)) {
                 trade.takeProfitPrice = tp;
                 trade.manualTP = true;
@@ -9825,6 +10022,7 @@ class TradeLevelManager {
         }
         this._pendingTradeTime = null;
         this._closePanel();
+        this._saveTrades(); // НОВЫЙ: гарантированное сохранение обновлённого riskAmount
     }
 
     _closePanel() {
