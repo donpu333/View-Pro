@@ -105,23 +105,11 @@ class ChartManager {
         this._healingGaps = false;
         this._lastGapHealAttempt = 0;
         this._unhealableGaps = new Set();
-
         // FIX SMOOTH: невидимая серия (candle/bar) помечается как "требующая
         // синхронизации" — setData применяется только к видимой, а невидимая
         // досинхронизируется в setChartType. Это убирает двойной setData в
         // горячих путях и убирает визуальные "перерисовки" при синхронизациях.
         this._invisibleSeriesDirty = false;
-
-        // FIX AUTOSCALE: трекер взаимодействия пользователя с графиком.
-        // Пока пользователь таскает/зумит/крутит колесо (и короткий хвост
-        // после), autoScale() и внутренний авто-фит в setDataQuick() пропускаются.
-        // Без этого при активном взаимодействии LWCharts'у заново применялось
-        // autoScale:true, и уже выровненная шкала «дёргалась».
-        this._userInteracting = false;
-        this._userInteractionTimer = null;
-        this._markUserInteracting = null;
-        this._userInteractionListeners = [];
-
         this._isScrolling = false;
         this._isScrollingFast = false;
         this._lastDrawingsCall = 0;
@@ -488,26 +476,6 @@ class ChartManager {
             return;
         }
 
-        // FIX AUTOSCALE: защита от ситуации, когда по какой-то причине
-        // priceScale('volume') возвращает ТУ ЖЕ шкалу, что и 'right'. Если бы
-        // мы применили к ней autoScale:true, автоскейл срабатывал бы при
-        // каждом взаимодействии с графиком. Если это правая шкала — не
-        // трогаем её autoScale вовсе.
-        let rightScale = null;
-        try { rightScale = this.chart.priceScale('right'); } catch (e) {}
-
-        if (rightScale && volumeScale === rightScale) {
-            console.warn('⚠️ priceScale("volume") вернул правую шкалу — пропускаем autoScale для неё');
-            try {
-                volumeScale.applyOptions({
-                    scaleMargins: this._volumeScaleMargins,
-                    visible: true,
-                    borderVisible: true
-                });
-            } catch (e) {}
-            return;
-        }
-
         volumeScale.applyOptions({
             scaleMargins: this._volumeScaleMargins,
             visible: true,
@@ -597,6 +565,16 @@ class ChartManager {
     // =================================================================================
     // FIX #20 + FIX SMOOTH: АТОМАРНОЕ ПРИМЕНЕНИЕ ДАННЫХ С СОХРАНЕНИЕМ ВЬЮПОРТА
     // =================================================================================
+    // Ключевые изменения против предыдущей версии:
+    //   1) setData применяется ТОЛЬКО к видимой серии; невидимая помечается
+    //      _invisibleSeriesDirty и синхронизируется в setChartType. Это устраняет
+    //      двойную работу на каждом обновлении и мигание, которое появлялось,
+    //      когда setData на невидимой серии провоцировал лишний пересчёт.
+    //   2) Вьюпорт восстанавливается по anchor'у — ВРЕМЕНИ первой видимой свечи.
+    //      Раньше использовался getVisibleRange()/setVisibleRange() с абсолютными
+    //      time-границами; на неполных интервалах они «плавали», и после каждого
+    //      setData график заметно дёргался.
+    //   3) Не плодим rAF/scrollToRealTime, если это не нужно.
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
 
@@ -661,6 +639,9 @@ class ChartManager {
     }
 
     // FIX SMOOTH: лёгкий путь для случая "новые свечи строго продолжают хвост".
+    // Никакого setData, только series.update() на каждую новую свечу. Это
+    // основной сценарий live-догона: WS-свеча/периодический sync/REST-catchup
+    // дописали 1..N баров в конец — их не нужно перерисовывать через setData.
     _applyAppendOnly(newCandles) {
         if (!this._isChartValid() || !newCandles || newCandles.length === 0) return;
 
@@ -741,6 +722,10 @@ class ChartManager {
         this._syncRecentCandles().catch(() => {});
     }
 
+    // FIX SMOOTH: стаб DOM-элемента дополнен методами classList.contains/toggle,
+    // иначе _applyCrosshairDOMOptimized() падал с TypeError, если элемента
+    // candleStatsOverlay нет в DOM (штатный сценарий — именно для этого и
+    // существует стаб).
     _safeElement(id) {
         const el = document.getElementById(id);
         if (el) return el;
@@ -1109,6 +1094,9 @@ class ChartManager {
                 }
             }
 
+            // FIX SMOOTH: full setData — только при реальной структурной поломке
+            // (правка НЕпоследней свечи). Обычный догон — через _applyAppendOnly,
+            // это устраняет «перерисовку» всех свечей на каждом 30-сек синке.
             if (needsFullRedraw || olderCandlesChanged) {
                 this._applyDataAtomically();
             } else if (pushedMissing.length > 0) {
@@ -1358,6 +1346,7 @@ class ChartManager {
                 }
             }
 
+            // FIX SMOOTH: append-only — обновляем только новые свечи, без setData.
             if (appendOnly && pushed.length > 0) {
                 this._applyAppendOnly(pushed);
             }
@@ -1569,6 +1558,8 @@ class ChartManager {
 
                     this.lastCandle = this.chartData[this.chartData.length - 1];
 
+                    // FIX SMOOTH: если вся пачка строго продолжает хвост — append-only.
+                    // Полный setData нужен только когда был разрыв и мы «перепрыгнули».
                     if (!holeDetected) {
                         this._applyAppendOnly(toPush);
                     } else {
@@ -1777,26 +1768,6 @@ class ChartManager {
         };
 
         this.chartContainer.addEventListener('wheel', this._wheelHandler, { passive: true });
-
-        // FIX AUTOSCALE: трекер взаимодействия пользователя с графиком.
-        // Пока пользователь таскает/зумит (и короткий хвост после), autoScale()
-        // и внутренний авто-фит в setDataQuick() пропускаются. Без этого LWCharts
-        // получал autoScale:true поверх уже выровненной шкалы и «дёргал» её.
-        this._markUserInteracting = () => {
-            this._userInteracting = true;
-            if (this._userInteractionTimer) clearTimeout(this._userInteractionTimer);
-            this._userInteractionTimer = setTimeout(() => {
-                this._userInteracting = false;
-                this._userInteractionTimer = null;
-            }, 400);
-        };
-
-        this._userInteractionListeners = ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'touchstart', 'touchmove'];
-        this._userInteractionListeners.forEach(evt => {
-            try {
-                this.chartContainer.addEventListener(evt, this._markUserInteracting, { passive: true });
-            } catch (e) {}
-        });
     }
 
     setupEventListeners() {
@@ -1917,6 +1888,8 @@ class ChartManager {
         localStorage.setItem('chartType', type);
 
         if (type === 'candle') {
+            // FIX SMOOTH: пересобираем невидимую серию, только если она реально
+            // отстала (флаг _invisibleSeriesDirty выставляется в hot-path).
             if ((previousType !== 'candle' || this._invisibleSeriesDirty) &&
                 this.candleSeries && this.chartData.length) {
                 this.candleSeries.setData(this.chartData);
@@ -2055,6 +2028,11 @@ class ChartManager {
             this.currentSymbol, this.currentExchange, this.currentMarketType
         );
 
+        // FIX PERF: если в localStorage точности нет, кэшируем inferred-значение,
+        // чтобы не дёргать applyPriceFormat на каждом rAF. Раньше при отсутствии
+        // кэша (а это происходит при каждом новом инструменте до ответа
+        // getPrecisionFromExchange) applyOptions на series+priceScale вызывался
+        // на КАЖДЫЙ кадр анимации.
         let precisionToApply;
         let precisionStr;
 
@@ -2785,12 +2763,7 @@ class ChartManager {
 
                 const priceScale = this.chart.priceScale('right');
 
-                // FIX AUTOSCALE: если пользователь прямо сейчас взаимодействует
-                // с графиком — пропускаем autoScale:true, чтобы не «дёрнуть»
-                // уже выровненную шкалу. finalizeAfterRescale всё равно
-                // выставит autoScale:false и вызовет onReady, так что данные
-                // применятся корректно.
-                if (priceScale && !this._userInteracting) {
+                if (priceScale) {
                     priceScale.applyOptions({ autoScale: true });
                     requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
                 } else {
@@ -3215,6 +3188,7 @@ class ChartManager {
     // 19b. ПЕРВОНАЧАЛЬНАЯ ЗАГРУЗКА ДАННЫХ
     // =================================================================================
     async loadInitialData(symbol, exchange, marketType, interval, onReady = null) {
+        // FIX RACE: если параллельно идёт switchSymbol/switchInterval — не влезаем.
         if (this._switchingSymbol || this._isSwitchingInterval) {
             if (onReady) onReady();
             return;
@@ -3561,14 +3535,6 @@ class ChartManager {
             return;
         }
 
-        // FIX AUTOSCALE: пока пользователь взаимодействует с графиком —
-        // не пересчитываем автомасштаб, иначе шкала «прыгает» поверх уже
-        // выровненного состояния.
-        if (this._userInteracting) {
-            if (onComplete) onComplete();
-            return;
-        }
-
         if (this._autoScalePending) {
             if (onComplete) onComplete();
             return;
@@ -3580,14 +3546,6 @@ class ChartManager {
 
         setTimeout(() => {
             if (this._activeGeneration !== genId || !this._isChartValid()) {
-                this._autoScalePending = false;
-                if (onComplete) onComplete();
-                return;
-            }
-
-            // FIX AUTOSCALE: перепроверяем — пользователь мог начать
-            // взаимодействовать за время setTimeout.
-            if (this._userInteracting) {
                 this._autoScalePending = false;
                 if (onComplete) onComplete();
                 return;
@@ -3620,9 +3578,6 @@ class ChartManager {
 
                         if (onComplete) onComplete();
                     }, 100);
-                } else {
-                    this._autoScalePending = false;
-                    if (onComplete) onComplete();
                 }
             } catch (e) {
                 this._autoScalePending = false;
@@ -4129,6 +4084,8 @@ class ChartManager {
         const signal = controller.signal;
         const timeoutId = setTimeout(() => controller.abort(), this._fetchTimeoutMs);
 
+        // FIX 2H: добавлен '2h': '120' — иначе Bybit-запрос уходил с interval=2h
+        // и возвращал ошибку.
         const bybitIntervalMap = {
             '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
             '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
@@ -4491,20 +4448,6 @@ class ChartManager {
             this._panelsSyncRafId = null;
         }
 
-        // FIX AUTOSCALE: очищаем таймер взаимодействия и снимаем слушатели.
-        if (this._userInteractionTimer) {
-            clearTimeout(this._userInteractionTimer);
-            this._userInteractionTimer = null;
-        }
-
-        if (this._markUserInteracting && this.chartContainer && this._userInteractionListeners.length) {
-            this._userInteractionListeners.forEach(evt => {
-                try { this.chartContainer.removeEventListener(evt, this._markUserInteracting); } catch (e) {}
-            });
-        }
-        this._userInteractionListeners = [];
-        this._markUserInteracting = null;
-
         if (this._globalMouseUpHandler) {
             window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
         }
@@ -4797,6 +4740,8 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
+            // FIX SMOOTH: усечение в памяти — setData на обеих сериях, чтобы
+            // невидимая тоже не осталась с устаревшим диапазоном.
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
 
@@ -5032,6 +4977,8 @@ class ChartManager {
                     this.chartData.push(...newCandles);
                     this._rebuildTimeMap();
 
+                    // FIX SMOOTH: если цепочка непрерывна — только append-only,
+                    // без полного setData.
                     if (!holeDetected) {
                         this._applyAppendOnly(newCandles);
                     } else {
