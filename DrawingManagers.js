@@ -8628,7 +8628,7 @@ class TradeLevel {
         // НОВЫЙ: Риск на сделку в долларах (используется для расчёта объёма позиции). По умолчанию $10.
         this.riskAmount = (options.riskAmount !== undefined && options.riskAmount !== null && !isNaN(options.riskAmount))
             ? Number(options.riskAmount)
-            : 10;
+            : 20;
 
         this.options = {
             slColor: options.slColor || '#f23645',
@@ -8685,7 +8685,7 @@ class TradeLevel {
     // НОВЫЙ: Объём позиции (в единицах базового актива), рассчитанный из риска в долларах и дистанции до стопа
     getPositionSize() {
         const risk = Math.abs(this.entryPrice - this.stopLossPrice);
-        const riskAmount = (this.riskAmount !== undefined && this.riskAmount !== null && !isNaN(this.riskAmount)) ? this.riskAmount : 10;
+        const riskAmount = (this.riskAmount !== undefined && this.riskAmount !== null && !isNaN(this.riskAmount)) ? this.riskAmount : 20;
         if (!risk || isNaN(risk) || risk === 0) return 0;
         return riskAmount / risk;
     }
@@ -9040,7 +9040,7 @@ class TradeLevelManager {
         this._lastMouseClientX = 0;
         this._lastMouseClientY = 0;
         this._tempTrade = null;
-        this._defaultRiskAmount = 10; // НОВЫЙ: Риск на сделку по умолчанию, $
+        this._defaultRiskAmount = 20; // НОВЫЙ: Риск на сделку по умолчанию, $
         this._volumeHoverTrade = null; // НОВЫЙ: сделка, для которой сейчас показана плашка объёма
         this._volumeHideTimeout = null; // НОВЫЙ: таймер отложенного скрытия плашки объёма
         this._volumeHideDelayMs = 1000; // НОВЫЙ: задержка скрытия плашки объёма после ухода курсора
@@ -10226,7 +10226,362 @@ document.addEventListener('mousedown', function(e) {
         });
     });
 })();
+// ============================================================================
+// iPad / Touch support — превращает касания в mouse-события для всех
+// менеджеров рисования. Существующий код НЕ трогаем — только добавляем мост.
+// ============================================================================
+(function setupIPadTouchBridge() {
+    'use strict';
 
+    const CONTAINER_ID          = 'chart-container';
+    const LONG_PRESS_MS         = 550;
+    const DRAG_THRESHOLD_PX     = 4;    // после этого движение = drag рисунка
+    const DOUBLE_TAP_MS         = 350;
+    const DOUBLE_TAP_DIST_PX    = 30;
+
+    let container       = null;
+    let activePointer   = null;         // { id, startX, startY, lastX, lastY, startTime, isDragging, longPressFired, longPressTimer }
+    let lastTapTime     = 0;
+    let lastTapX        = 0;
+    let lastTapY        = 0;
+
+    // ------------------------------------------------------------------------
+    // Утилиты
+    // ------------------------------------------------------------------------
+    function getManagers() {
+        return [
+            window.rayManager,
+            window.trendLineManager,
+            window.rulerLineManager,
+            window.alertLineManager,
+            window.textManager,
+            window.tradeLevelManager,
+            window.tradeManager
+        ].filter(Boolean);
+    }
+
+    function isDrawingModeActive() {
+        return getManagers().some(m => m._isDrawingMode === true);
+    }
+
+    function isPointerOverDrawing(clientX, clientY) {
+        if (!container) return false;
+        const rect = container.getBoundingClientRect();
+        const pixelRatio = window.devicePixelRatio || 1;
+        const x = (clientX - rect.left) * pixelRatio;
+        const y = (clientY - rect.top)  * pixelRatio;
+
+        for (const m of getManagers()) {
+            if (typeof m.hitTest !== 'function') continue;
+            try {
+                const hit = m.hitTest(x, y);
+                if (hit) return true;
+            } catch (_) { /* менеджер ещё не готов — не наша проблема */ }
+        }
+        return false;
+    }
+
+    function isInteractiveElement(el) {
+        if (!el || !el.tagName) return false;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' ||
+            tag === 'button' || tag === 'a' || tag === 'label') return true;
+        if (el.isContentEditable) return true;
+        // Не перехватываем тапы внутри всплывающих панелей и меню
+        if (el.closest) {
+            if (el.closest('[id$="ContextMenu"]')) return true;
+            if (el.closest('[id$="Settings"]'))    return true;
+            if (el.closest('[id$="Panel"]'))       return true;
+            if (el.closest('.drawing-context-menu')) return true;
+            if (el.closest('.drawing-settings-panel')) return true;
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------------------
+    // Синтез mouse-событий. Диспатчим на container, чтобы события НЕ уходили
+    // вниз (Lightweight Charts слушает на своём canvas — он их не увидит,
+    // а менеджеры, слушающие на container, увидят).
+    // ------------------------------------------------------------------------
+    function fireMouse(type, touch, extra) {
+        const evt = new MouseEvent(type, Object.assign({
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            screenX: touch.screenX || touch.clientX,
+            screenY: touch.screenY || touch.clientY,
+            button: 0,
+            buttons: (type === 'mouseup' || type === 'click') ? 0 : 1
+        }, extra || {}));
+        container.dispatchEvent(evt);
+        return evt;
+    }
+
+    function fireContextMenu(x, y) {
+        const evt = new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: x, clientY: y,
+            button: 2, buttons: 2
+        });
+        container.dispatchEvent(evt);
+    }
+
+    function fireMouseLeave() {
+        // mouseleave НЕ всплывает, поэтому диспатчим прямо на container —
+        // менеджеры слушают именно его.
+        const evt = new MouseEvent('mouseleave', {
+            bubbles: false, cancelable: false, view: window
+        });
+        container.dispatchEvent(evt);
+    }
+
+    // ------------------------------------------------------------------------
+    // Обработчики touch
+    // ------------------------------------------------------------------------
+    function onTouchStart(e) {
+        if (e.touches.length !== 1) return;   // мультитач (pinch) не трогаем
+        if (activePointer) return;
+
+        const touch = e.touches[0];
+
+        if (isInteractiveElement(e.target)) return;
+        if (!isDrawingModeActive() && !isPointerOverDrawing(touch.clientX, touch.clientY)) {
+            return; // не наше касание — пусть LWC панорамирует
+        }
+
+        // Перехватываем касание: блокируем LWC и дефолтное поведение браузера
+        e.stopPropagation();
+        e.preventDefault();
+
+        activePointer = {
+            id: touch.identifier,
+            startX: touch.clientX,
+            startY: touch.clientY,
+            lastX: touch.clientX,
+            lastY: touch.clientY,
+            startTime: Date.now(),
+            isDragging: false,
+            longPressFired: false,
+            longPressTimer: null
+        };
+
+        // Долгое нажатие → contextmenu
+        activePointer.longPressTimer = setTimeout(() => {
+            if (!activePointer || activePointer.isDragging || activePointer.longPressFired) return;
+            activePointer.longPressFired = true;
+            fireContextMenu(activePointer.lastX, activePointer.lastY);
+            if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
+        }, LONG_PRESS_MS);
+    }
+
+    function onTouchMove(e) {
+        if (!activePointer) return;
+
+        let touch = null;
+        for (let i = 0; i < e.touches.length; i++) {
+            if (e.touches[i].identifier === activePointer.id) {
+                touch = e.touches[i];
+                break;
+            }
+        }
+        if (!touch) return;
+
+        activePointer.lastX = touch.clientX;
+        activePointer.lastY = touch.clientY;
+
+        const dx = touch.clientX - activePointer.startX;
+        const dy = touch.clientY - activePointer.startY;
+        const dist = Math.hypot(dx, dy);
+
+        if (activePointer.longPressTimer && dist > DRAG_THRESHOLD_PX) {
+            clearTimeout(activePointer.longPressTimer);
+            activePointer.longPressTimer = null;
+        }
+
+        if (activePointer.longPressFired) {
+            e.stopPropagation();
+            e.preventDefault();
+            return;
+        }
+
+        // Превращаем в drag после порога
+        if (!activePointer.isDragging && dist > DRAG_THRESHOLD_PX) {
+            activePointer.isDragging = true;
+            fireMouse('mousedown', {
+                clientX: activePointer.startX,
+                clientY: activePointer.startY
+            });
+        }
+
+        e.stopPropagation();
+        if (activePointer.isDragging) e.preventDefault();
+
+        fireMouse('mousemove', touch);
+    }
+
+    function onTouchEnd(e) {
+        if (!activePointer) return;
+
+        let touch = null;
+        if (e.changedTouches) {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    touch = e.changedTouches[i];
+                    break;
+                }
+            }
+        }
+
+        const state = activePointer;
+        activePointer = null;
+
+        if (state.longPressTimer) {
+            clearTimeout(state.longPressTimer);
+            state.longPressTimer = null;
+        }
+
+        e.stopPropagation();
+
+        if (!touch) return;
+
+        if (state.longPressFired) {
+            e.preventDefault();
+            return;
+        }
+
+        if (state.isDragging) {
+            e.preventDefault();
+            fireMouse('mouseup', touch);
+            fireMouseLeave();
+            return;
+        }
+
+        // Тап без движения
+        const movedDist = Math.hypot(touch.clientX - state.startX, touch.clientY - state.startY);
+        if (movedDist >= DRAG_THRESHOLD_PX) return;
+
+        e.preventDefault();
+        fireMouse('mousedown', { clientX: state.startX, clientY: state.startY });
+        fireMouse('mouseup',   touch);
+        fireMouse('click',     touch, { buttons: 0, detail: 1 });
+
+        // Двойной тап → dblclick
+        const now = Date.now();
+        const dt  = now - lastTapTime;
+        const dd  = Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY);
+
+        if (dt < DOUBLE_TAP_MS && dd < DOUBLE_TAP_DIST_PX) {
+            const dblEvt = new MouseEvent('dblclick', {
+                bubbles: true, cancelable: true, view: window,
+                clientX: touch.clientX, clientY: touch.clientY,
+                button: 0, buttons: 0, detail: 2
+            });
+            container.dispatchEvent(dblEvt);
+            lastTapTime = 0;
+        } else {
+            lastTapTime = now;
+            lastTapX = touch.clientX;
+            lastTapY = touch.clientY;
+        }
+    }
+
+    function onTouchCancel(e) {
+        if (!activePointer) return;
+
+        let touch = null;
+        if (e.changedTouches) {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    touch = e.changedTouches[i];
+                    break;
+                }
+            }
+        }
+
+        const state = activePointer;
+        activePointer = null;
+        if (state.longPressTimer) clearTimeout(state.longPressTimer);
+
+        if (state.isDragging && touch) {
+            fireMouse('mouseup', touch);
+            fireMouseLeave();
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Инициализация (с ретраем, если контейнер появится позже)
+    // ------------------------------------------------------------------------
+    function init() {
+        // Критично для iPad: отключаем скролл и зум жесты на контейнере
+        container.style.touchAction     = 'none';
+        container.style.webkitUserSelect = 'none';
+        container.style.userSelect       = 'none';
+        if ('webkitTouchCallout' in container.style) {
+            container.style.webkitTouchCallout = 'none';
+        }
+
+        // capture:true — чтобы успеть перехватить до Lightweight Charts и
+        // при необходимости остановить всплытие (stopPropagation).
+        container.addEventListener('touchstart',  onTouchStart,  { passive: false, capture: true });
+        container.addEventListener('touchmove',   onTouchMove,   { passive: false, capture: true });
+        container.addEventListener('touchend',    onTouchEnd,    { passive: false, capture: true });
+        container.addEventListener('touchcancel', onTouchCancel, { passive: false, capture: true });
+
+        // Страховка на случай, если палец ушёл за пределы контейнера во время drag
+        document.addEventListener('touchend', function (e) {
+            if (!activePointer || !e.changedTouches) return;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    onTouchEnd(e);
+                    return;
+                }
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchcancel', function (e) {
+            if (!activePointer || !e.changedTouches) return;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    onTouchCancel(e);
+                    return;
+                }
+            }
+        }, { passive: false });
+
+        // Блокируем системный pinch-zoom на контейнере
+        container.addEventListener('gesturestart',  e => e.preventDefault(), { passive: false });
+        container.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+        container.addEventListener('gestureend',    e => e.preventDefault(), { passive: false });
+
+        // Блокируем double-tap-zoom iOS (он приходит отдельно от наших dblclick)
+        let lastEnd = 0;
+        container.addEventListener('touchend', function (e) {
+            const now = Date.now();
+            if (now - lastEnd <= 300) e.preventDefault();
+            lastEnd = now;
+        }, { passive: false });
+
+        console.log('✅ [iPad] Touch-to-mouse bridge ready');
+    }
+
+    function tryInit() {
+        container = document.getElementById(CONTAINER_ID);
+        if (!container) { setTimeout(tryInit, 200); return; }
+        if (container.dataset.__touchBridgeReady === '1') return;
+        container.dataset.__touchBridgeReady = '1';
+        init();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryInit);
+    } else {
+        tryInit();
+    }
+})();
 if (typeof window !== 'undefined') {
     window.HorizontalRayManager = HorizontalRayManager;
     window.TrendLineManager = TrendLineManager;
