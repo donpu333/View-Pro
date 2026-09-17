@@ -3,10 +3,6 @@ const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 // FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval().
 // FIX 2H: добавлен '2h': 7200 — без него _getNextIntervalTimeFor('2h')
 // возвращал +3600 (1 час), и каждая 2h-свеча трактовалась как дыра.
-// FIX RIGHT-OFFSET: единая точка правды для правого отступа (в БАРАХ).
-// Используется и в опциях timeScale, и при позиционировании после загрузки.
-const RIGHT_OFFSET_BARS = 15;
-
 const INTERVAL_SECONDS_MAP = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
     '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
@@ -244,7 +240,7 @@ class ChartManager {
                 minBarSpacing: 1,
                 fixLeftEdge: false,
                 fixRightEdge: false,
-                rightOffset: RIGHT_OFFSET_BARS,
+                rightOffset: 15,
                 shiftVisibleRangeOnNewBar: true,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
@@ -2621,14 +2617,13 @@ class ChartManager {
     //     перескакивала после того, как LW сам выведет precision из данных;
     //   - ширина для расчёта позиции берётся через timeScale.width(), а не
     //     clientWidth контейнера (иначе не учитываем шкалу цены и таймскейл);
-    //   - barSpacing фиксируется после setVisibleLogicalRange;
-    //   - scrollToRealTime() не вызывается — он перебивает установленный
-    //     диапазон и растягивает отступ в пикселях;
-    //   - FIX SHORT-SERIES: если from уходит в минус (свечей меньше, чем
-    //     влезает на экран), setVisibleLogicalRange не работает — LC клампит
-    //     from к 0, из-за чего правый отступ раздувается в 2–3 раза. В этом
-    //     случае ставим правый край через scrollToPosition, который уважает
-    //     rightOffset и не зависит от количества свечей в памяти.
+    //   - позиционирование правого края выполняется ТОЛЬКО через
+    //     timeScale.scrollToRealTime(). Это единственный метод LW, который
+    //     гарантированно даёт rightOffset баров справа от последней свечи
+    //     на серии ЛЮБОЙ длины. setVisibleLogicalRange({from, to}) и
+    //     scrollToPosition клампятся на коротких сериях (from уходит в
+    //     минус → LW прижимает from к 0 и раздувает правый отступ в 2–3
+    //     раза), поэтому они здесь не используются.
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) {
@@ -2778,58 +2773,29 @@ class ChartManager {
                     return;
                 }
 
-                // FIX WIDTH: берём РЕАЛЬНУЮ ширину области баров. timeScale.width()
-                // возвращает ширину без правой шкалы цены. Если недоступно —
-                // вычитаем ширину price scale из clientWidth контейнера.
-                let width = 0;
-                try { width = timeScale.width() || 0; } catch (e) {}
-
-                if (!width || width < 50) {
-                    const ps = this.chart.priceScale('right');
-                    let psWidth = 0;
-                    try { psWidth = ps?.width?.() || 0; } catch (e) {}
-                    width = Math.max(50, (this.chartContainer.clientWidth || 800) - psWidth - 8);
-                }
-
                 const savedBarSpacing = this._savedBarSpacing || 25;
-                const visibleBars = width / savedBarSpacing;
-                const rightOffset = RIGHT_OFFSET_BARS;
+                const rightOffset = 15;
 
-                const lastIndex = this.chartData.length - 1;
-
-                // Правый край ВСЕГДА на lastIndex + rightOffset. Левый — правый
-                // минус ширина окна.
-                const to = lastIndex + rightOffset;
-                const from = to - visibleBars;
-
-                // FIX SHORT-SERIES v2 (главная причина «раздутого» отступа):
-                //   timeScale.scrollToPosition(x) — это НЕ «логическая позиция
-                //   правого края», а ПРАВЫЙ ОТСУП В БАРАХ. Внутри библиотеки:
-                //     scrollToPosition(p, false) -> model.setRightOffset(p)
-                //     scrollPosition()           -> timeScale.rightOffset()
-                //   Прежняя ветка `if (from < 0) scrollToPosition(to, false)`
-                //   ставила rightOffset = lastIndex + 15, т.е. пустое поле
-                //   справа было на lastIndex баров больше задуманного
-                //   (30 свечей -> 44 бара вместо 15), и упиралось в кламп
-                //   maxRightOffset = width / barSpacing - 2.
-                //
-                //   При этом setVisibleLogicalRange() отрицательный from
-                //   обрабатывает корректно и НИЧЕГО не клампит к нулю:
-                //     barSpacing  = width / (to - from + 1)
-                //     rightOffset = to - lastIndex
-                //   поэтому отдельная ветка для коротких серий не нужна вовсе.
-                try {
-                    timeScale.setVisibleLogicalRange({ from, to });
-                } catch (e) {}
-
-                // Фиксируем шаг бара И отступ одним вызовом: в applyOptions
-                // barSpacing применяется до rightOffset, так что результат
-                // детерминирован и не зависит от длины серии.
+                // FIX SHORT-SERIES: фиксируем barSpacing и rightOffset в опциях.
+                // scrollToRealTime() берёт ИМЕННО эти значения — если их не
+                // выставить заранее, LW применит rightOffset к тому barSpacing,
+                // который мог пересчитать сам после setData.
                 try {
                     timeScale.applyOptions({
                         barSpacing: savedBarSpacing,
                         rightOffset: rightOffset
                     });
+                } catch (e) {}
+
+                // FIX SHORT-SERIES: единственный метод LW, который корректно
+                // даёт rightOffset баров справа на серии ЛЮБОЙ длины.
+                // setVisibleLogicalRange({from, to}) и scrollToPosition на
+                // коротких сериях клампятся (from < 0 → LW прижимает from к 0
+                // и раздувает правый отступ). scrollToRealTime работает иначе:
+                // он скроллит относительно последнего бара с учётом rightOffset
+                // и barSpacing, без клампинга.
+                try {
+                    timeScale.scrollToRealTime();
                 } catch (e) {}
 
                 const finalizeAfterRescale = () => {
@@ -2945,13 +2911,8 @@ class ChartManager {
             if (scale.logical) {
                 const currentDataLength = this.chartData.length;
 
-                // FIX: to ограничивали длиной данных, из-за чего правый
-                // отступ (lastIndex + 15) обрезался до 0 и график «прилипал»
-                // к правой границе. Разрешаем выходить за lastIndex.
-                const maxTo = currentDataLength - 1 + RIGHT_OFFSET_BARS;
-
                 let from = Math.max(0, Math.floor(scale.logical.from));
-                let to = Math.min(maxTo, Math.ceil(scale.logical.to));
+                let to = Math.min(currentDataLength, Math.ceil(scale.logical.to));
 
                 if (from >= currentDataLength || to <= 0 || from >= to) {
                     this.scrollToLast();
@@ -2959,7 +2920,7 @@ class ChartManager {
                 }
 
                 from = Math.max(0, Math.min(from, currentDataLength - 2));
-                to = Math.max(from + 2, Math.min(to, maxTo));
+                to = Math.max(from + 2, Math.min(to, currentDataLength));
 
                 timeScale.setVisibleLogicalRange({ from, to });
             }
@@ -3575,13 +3536,11 @@ class ChartManager {
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
             if (enableRealTime) {
-                // scrollToRealTime() = scrollToOffsetAnimated(options.rightOffset)
                 timeScale.scrollToRealTime();
             } else {
-                // FIX: scrollToPosition() принимает ПРАВЫЙ ОТСУП В БАРАХ,
-                // а не абсолютный логический индекс (lastIndex + 15).
-                timeScale.applyOptions({ rightOffset: RIGHT_OFFSET_BARS });
-                timeScale.scrollToPosition(RIGHT_OFFSET_BARS, true);
+                const lastIndex = this.chartData.length - 1;
+                const targetPosition = lastIndex + 15;
+                timeScale.scrollToPosition(targetPosition, true);
             }
 
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
