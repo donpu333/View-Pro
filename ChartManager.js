@@ -2778,68 +2778,73 @@ class ChartManager {
                 }
             }, 0);
 
-            const positionAfterDataApplied = () => {
-                if (!this._isChartValid()) {
-                    this._disableAutoScroll();
-                    if (onReady) onReady();
-                    return;
-                }
+         const positionAfterDataApplied = () => {
+    if (!this._isChartValid()) {
+        this._disableAutoScroll();
+        if (onReady) onReady();
+        return;
+    }
 
-                const timeScale = this.chart.timeScale();
-                const savedBarSpacing = this._savedBarSpacing || 25;
+    const timeScale = this.chart.timeScale();
+    const savedBarSpacing = this._savedBarSpacing || 25;
 
-                timeScale.applyOptions({ barSpacing: savedBarSpacing });
+    timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
-                const lastIndex = this.chartData.length - 1;
-                const containerWidth = this.chartContainer.clientWidth || 800;
-                const visibleBars = Math.floor(containerWidth / savedBarSpacing);
-                const rightOffset = 25;
+    const lastIndex = this.chartData.length - 1;
+    const containerWidth = this.chartContainer.clientWidth || 800;
+    const visibleBars = Math.max(10, Math.floor(containerWidth / savedBarSpacing));
 
-                let from = Math.max(0, lastIndex - visibleBars + rightOffset);
-                let to = lastIndex + rightOffset;
+    // Хотим 25 баров справа. Но если свечей мало — сжимаем отступ,
+    // чтобы не отдавать пустоте половину экрана.
+    const desiredRightOffset = 25;
+    const minVisibleCandles = Math.min(this.chartData.length, Math.ceil(visibleBars * 0.5));
+    const maxAllowedRightOffset = Math.max(0, visibleBars - minVisibleCandles);
+    const rightOffset = Math.min(desiredRightOffset, maxAllowedRightOffset);
 
-                if (from >= to || lastIndex < visibleBars) {
-                    from = Math.max(0, lastIndex - Math.floor(visibleBars / 2));
-                    to = lastIndex + Math.floor(visibleBars / 2);
-                }
+    let from = lastIndex + rightOffset - visibleBars;
+    let to = lastIndex + rightOffset;
 
-                timeScale.setVisibleLogicalRange({ from, to });
+    // Свечей так мало, что даже без отступа ничего не влезает справа —
+    // прижимаем к левому краю и расширяем вьюпорт до visibleBars.
+    if (from < 0) {
+        from = -0.5;
+        to = Math.max(visibleBars - 0.5, lastIndex + rightOffset + 0.5);
+    }
 
-                try {
-                    timeScale.scrollToRealTime();
-                } catch (e) {}
+    try {
+        timeScale.setVisibleLogicalRange({ from, to });
+    } catch (e) {}
 
-                const finalizeAfterRescale = () => {
-                    if (this._isChartValid()) {
-                        const ps = this.chart.priceScale('right');
+    // scrollToRealTime() НЕ вызываем — он перебивает диапазон выше
+    // и растягивает отступ в пикселях, потому что barSpacing уже изменён.
 
-                        if (ps) {
-                            try { ps.applyOptions({ autoScale: false }); } catch (e) {}
-                        }
+    const finalizeAfterRescale = () => {
+        if (this._isChartValid()) {
+            const ps = this.chart.priceScale('right');
+            if (ps) {
+                try { ps.applyOptions({ autoScale: false }); } catch (e) {}
+            }
+            this._applyVolumeScaleOptions();
+        }
 
-                        this._applyVolumeScaleOptions();
-                    }
+        if (this.timerManager && this._isChartValid() && this.lastCandle) {
+            this.timerManager.start(this.currentInterval);
+            this.timerManager.updatePrice(this.lastCandle.close);
+        }
 
-                    if (this.timerManager && this._isChartValid() && this.lastCandle) {
-                        this.timerManager.start(this.currentInterval);
-                        this.timerManager.updatePrice(this.lastCandle.close);
-                    }
+        this._disableAutoScroll();
+        if (onReady) onReady();
+    };
 
-                    // FIX AUTOSCROLL: позиционирование завершено — закрываем окно.
-                    this._disableAutoScroll();
+    const priceScale = this.chart.priceScale('right');
 
-                    if (onReady) onReady();
-                };
-
-                const priceScale = this.chart.priceScale('right');
-
-                if (priceScale) {
-                    priceScale.applyOptions({ autoScale: true });
-                    requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
-                } else {
-                    finalizeAfterRescale();
-                }
-            };
+    if (priceScale) {
+        priceScale.applyOptions({ autoScale: true });
+        requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
+    } else {
+        finalizeAfterRescale();
+    }
+};
 
             requestAnimationFrame(() => requestAnimationFrame(positionAfterDataApplied));
 
