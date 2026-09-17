@@ -106,6 +106,8 @@ class ChartManager {
         this._lastGapHealAttempt = 0;
         this._unhealableGaps = new Set();
 
+        // FIX AUTOSCROLL: скролл к realtime разрешён только в окне после
+        // открытия тикера / смены ТФ.
         this._autoScrollEnabled = false;
         this._autoScrollTimeout = null;
 
@@ -238,7 +240,7 @@ class ChartManager {
                 minBarSpacing: 1,
                 fixLeftEdge: false,
                 fixRightEdge: false,
-                rightOffset: 25,
+                rightOffset: 15,
                 shiftVisibleRangeOnNewBar: true,
                 tickMarkFormatter: (time) => {
                     const date = new Date(time * 1000);
@@ -264,6 +266,9 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: false,
                 entireTextOnly: true,
+                // FIX WIDTH: фиксируем минимальную ширину шкалы цены. Без этого
+                // при смене precision (2 → 6 знаков) шкала расширяется и
+                // пересчитывает barSpacing → вся картинка и отступ «прыгают».
                 minimumWidth: 80,
             },
             localization: {
@@ -462,7 +467,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 1b. ОКНО РАЗРЕШЁННОГО АВТОСКРОЛЛА
+    // 1b. FIX AUTOSCROLL: ОКНО РАЗРЕШЁННОГО АВТОСКРОЛЛА
     // =================================================================================
     _enableAutoScroll(durationMs = 2000) {
         this._autoScrollEnabled = true;
@@ -588,7 +593,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // FIX #20 + FIX SMOOTH + FIX DRIFT: АТОМАРНОЕ ПРИМЕНЕНИЕ ДАННЫХ
+    // FIX #20 + FIX SMOOTH + FIX DRIFT + FIX AUTOSCROLL
     // =================================================================================
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
@@ -799,7 +804,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 6. ЦЕНОВАЯ ЛИНИЯ ПО ПОСЛЕДНЕЙ СВЕЧЕ
+    // 6. ЦЕНОВАЯ ЛИНИЯ (line color) ПО ПОСЛЕДНЕЙ СВЕЧЕ
     // =================================================================================
 
     _getLineColor() {
@@ -912,7 +917,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 8. ФОНОВОЕ ОБНОВЛЕНИЕ ЗАГОЛОВКА И ПЕРИОДИЧЕСКАЯ СИНХРОНИЗАЦИЯ
+    // 8. ФОНОВОЕ ОБНОВЛЕНИЕ ЗАГОЛОВКА, ПЕРИОДИЧЕСКАЯ И ДОГОНЯЮЩАЯ СИНХРОНИЗАЦИЯ
     // =================================================================================
 
     _startBackgroundTitleUpdate() {
@@ -979,6 +984,7 @@ class ChartManager {
             const freshMap = new Map(fresh.map(c => [c.time, c]));
 
             let changed = false;
+            let olderCandlesChanged = false;
             let needsCatchUp = false;
             let needsFullRedraw = false;
             const pushedMissing = [];
@@ -1033,6 +1039,7 @@ class ChartManager {
                             cur.close >= cur.open ? this.bullishColor : this.bearishColor
                         );
                     } else {
+                        olderCandlesChanged = true;
                         touchedMidCandles.push(cur);
                     }
 
@@ -1889,7 +1896,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 11. ПЕРЕКЛЮЧЕНИЕ ТИПА ГРАФИКА
+    // 11. ПЕРЕКЛЮЧЕНИЕ ТИПА ГРАФИКА (свечи / бары)
     // =================================================================================
 
     setChartType(type) {
@@ -1984,7 +1991,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 12. ПЛАНОВОЕ ОБНОВЛЕНИЕ
+    // 12. ПЛАНОВОЕ ОБНОВЛЕНИЕ (rAF-throttled)
     // =================================================================================
 
     scheduleUpdate() {
@@ -2099,7 +2106,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 13. СИНХРОНИЗАЦИЯ ЦЕНОВОЙ ЛИНИИ И ТИКОВ
+    // 13. СИНХРОНИЗАЦИЯ ЦЕНОВОЙ ЛИНИИ И ОБРАБОТКА ВХОДЯЩИХ ТИКОВ ЦЕНЫ
     // =================================================================================
 
     _syncPriceLine(priceOrObj) {
@@ -2279,6 +2286,7 @@ class ChartManager {
             return;
         }
 
+        // C. Опоздавший тик — не трогаем структуру
         this.currentRealPrice = price;
 
         const lineColor = this._getLineColor();
@@ -2290,7 +2298,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 14. ОБНОВЛЕНИЕ ПОСЛЕДНЕЙ/ТЕКУЩЕЙ СВЕЧИ ИЗ WS
+    // 14. ОБНОВЛЕНИЕ ПОСЛЕДНЕЙ/ТЕКУЩЕЙ СВЕЧИ ИЗ WS-СОБЫТИЯ KLINE
     // =================================================================================
 
     updateLastCandle(candle, eventTime = null, meta = null) {
@@ -2604,14 +2612,19 @@ class ChartManager {
     // =================================================================================
     // 16. УСТАНОВКА ПОЛНОГО НАБОРА ДАННЫХ И ПОЗИЦИОНИРОВАНИЕ
     // =================================================================================
-    // FIX POSITION: используем scrollToRealTime() с явно установленными
-    // barSpacing и rightOffset. Это ЕДИНСТВЕННЫЙ правильный способ задать
-    // отступ — LW сам расставит бары и оставит ровно rightOffset баров
-    // пустого места справа, вне зависимости от количества свечей.
-    //
-    // setVisibleLogicalRange ЗАПРЕЩЕНО использовать для позиционирования —
-    // он пересчитывает barSpacing по ширине контейнера, из-за чего отступ
-    // в пикселях "плавает" при разном количестве свечей.
+    // FIX WIDTH + FIX PRECISION + FIX POSITION + FIX SHORT-SERIES OFFSET:
+    //   - precision применяется ДО setData, чтобы ширина шкалы цены не
+    //     перескакивала после того, как LW сам выведет precision из данных;
+    //   - ширина для расчёта позиции берётся через timeScale.width(), а не
+    //     clientWidth контейнера (иначе не учитываем шкалу цены и таймскейл);
+    //   - barSpacing фиксируется после setVisibleLogicalRange;
+    //   - scrollToRealTime() не вызывается — он перебивает установленный
+    //     диапазон и растягивает отступ в пикселях;
+    //   - FIX SHORT-SERIES: если from уходит в минус (свечей меньше, чем
+    //     влезает на экран), setVisibleLogicalRange не работает — LC клампит
+    //     from к 0, из-за чего правый отступ раздувается в 2–3 раза. В этом
+    //     случае ставим правый край через scrollToPosition, который уважает
+    //     rightOffset и не зависит от количества свечей в памяти.
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) {
@@ -2698,10 +2711,10 @@ class ChartManager {
             this._historyEndTime = data[0].time;
             this.lastCandle = data[data.length - 1];
 
-            // FIX PRECISION: применяем priceFormat ДО setData, чтобы ширина
-            // шкалы цены не перескакивала после того, как LW выведет точность
-            // из данных. Иначе шкала меняет ширину → область баров меняет
-            // ширину → barSpacing пересчитывается → отступ прыгает.
+            // FIX PRECISION: применяем priceFormat ДО setData. Иначе LW выведет
+            // свою точность из данных, шкала цены изменит ширину, и после
+            // setData придётся всё пересчитывать — визуально это выглядит как
+            // «дёрганье шкалы» и меняет ширину области баров.
             const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
             const inferredPrecision = this._inferPrecisionFromData();
             const prec = cachedPrecision ? parseInt(cachedPrecision, 10) : inferredPrecision;
@@ -2747,9 +2760,6 @@ class ChartManager {
                 }
             }, 0);
 
-            // =========================================================================
-            // POSITIONING: scrollToRealTime + явные barSpacing/rightOffset
-            // =========================================================================
             const positionAfterDataApplied = () => {
                 if (!this._isChartValid()) {
                     this._disableAutoScroll();
@@ -2764,57 +2774,52 @@ class ChartManager {
                     return;
                 }
 
+                // FIX WIDTH: берём РЕАЛЬНУЮ ширину области баров. timeScale.width()
+                // возвращает ширину без правой шкалы цены. Если недоступно —
+                // вычитаем ширину price scale из clientWidth контейнера.
+                let width = 0;
+                try { width = timeScale.width() || 0; } catch (e) {}
+
+                if (!width || width < 50) {
+                    const ps = this.chart.priceScale('right');
+                    let psWidth = 0;
+                    try { psWidth = ps?.width?.() || 0; } catch (e) {}
+                    width = Math.max(50, (this.chartContainer.clientWidth || 800) - psWidth - 8);
+                }
+
                 const savedBarSpacing = this._savedBarSpacing || 25;
-                const RIGHT_OFFSET_BARS = 25;
+                const visibleBars = width / savedBarSpacing;
+                const rightOffset = 15;
 
-                // Шаг 1: жёстко устанавливаем barSpacing и rightOffset.
-                // rightOffset — это опция в БАРАХ: сколько пустого места
-                // оставлять справа при скролле к realtime.
+                const lastIndex = this.chartData.length - 1;
+
+                // Правый край ВСЕГДА на lastIndex + rightOffset. Левый — правый
+                // минус ширина окна.
+                const to = lastIndex + rightOffset;
+                const from = to - visibleBars;
+
                 try {
-                    timeScale.applyOptions({
-                        barSpacing: savedBarSpacing,
-                        rightOffset: RIGHT_OFFSET_BARS
-                    });
-                } catch (e) {}
-
-                // Шаг 2: scrollToRealTime — это ЕДИНСТВЕННАЯ правильная
-                // операция для «показать последнюю свечу с rightOffset баров
-                // пустого места справа». Она использует текущий barSpacing
-                // и текущий rightOffset, и работает одинаково для 10 свечей
-                // и для 10000.
-                try {
-                    timeScale.scrollToRealTime();
-                } catch (e) {}
-
-                // Шаг 3: страховка. Если по какой-то причине LW сместил
-                // диапазон (например, из-за недостатка свечей слева),
-                // выравниваем вручную — но НЕ через setVisibleLogicalRange
-                // с пересчётом span, а через прямое выставление правого края
-                // с сохранением текущего span.
-                try {
-                    const lastIndex = this.chartData.length - 1;
-
-                    if (lastIndex >= 0) {
-                        const lr = timeScale.getVisibleLogicalRange();
-
-                        if (lr) {
-                            const actualOffset = lr.to - lastIndex;
-
-                            if (Math.abs(actualOffset - RIGHT_OFFSET_BARS) > 0.5) {
-                                const span = lr.to - lr.from;
-
-                                timeScale.setVisibleLogicalRange({
-                                    from: lastIndex + RIGHT_OFFSET_BARS - span,
-                                    to: lastIndex + RIGHT_OFFSET_BARS
-                                });
-
-                                // Восстанавливаем barSpacing после возможного
-                                // пересчёта внутри setVisibleLogicalRange.
-                                timeScale.applyOptions({ barSpacing: savedBarSpacing });
-                            }
-                        }
+                    if (from < 0) {
+                        // FIX SHORT-SERIES: свечей меньше, чем влезает на экран.
+                        // LC клампит from к 0 и раздувает правый отступ. Поэтому
+                        // явно ставим правый край через scrollToPosition — этот
+                        // вызов уважает rightOffset и не зависит от длины серии.
+                        timeScale.scrollToPosition(to, false);
+                    } else {
+                        timeScale.setVisibleLogicalRange({ from, to });
                     }
                 } catch (e) {}
+
+                // Дополнительно фиксируем barSpacing. LW может его пересчитать,
+                // если span не совпадает ровно с width / barSpacing из-за
+                // дробной точности. Этот вызов возвращает всё на место.
+                try {
+                    timeScale.applyOptions({ barSpacing: savedBarSpacing });
+                } catch (e) {}
+
+                // scrollToRealTime() НЕ вызываем — он берёт rightOffset из
+                // опций и применяет его к ТЕКУЩЕМУ barSpacing, который уже
+                // мог быть пересчитан. Это и давало «слишком большой отступ».
 
                 const finalizeAfterRescale = () => {
                     if (this._isChartValid()) {
@@ -3551,19 +3556,13 @@ class ChartManager {
             if (!timeScale) return false;
 
             const savedBarSpacing = this._savedBarSpacing || 25;
-
-            // Восстанавливаем barSpacing и rightOffset — иначе LW может
-            // применить текущий (изменённый) и отступ уедет.
-            timeScale.applyOptions({
-                barSpacing: savedBarSpacing,
-                rightOffset: 25
-            });
+            timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
             if (enableRealTime) {
                 timeScale.scrollToRealTime();
             } else {
                 const lastIndex = this.chartData.length - 1;
-                const targetPosition = lastIndex + 25;
+                const targetPosition = lastIndex + 15;
                 timeScale.scrollToPosition(targetPosition, true);
             }
 
@@ -3810,7 +3809,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 25. ПОДПИСКА НА ЖИВУЮ ЦЕНУ
+    // 25. ПОДПИСКА НА ЖИВУЮ ЦЕНУ (priceManager)
     // =================================================================================
 
     _subscribeToPrice() {
@@ -3877,7 +3876,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 26. ТОЧНОСТЬ ЦЕНЫ
+    // 26. ТОЧНОСТЬ ЦЕНЫ (precision/priceFormat)
     // =================================================================================
 
     _inferPrecisionFromData() {
@@ -4134,7 +4133,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 30. ЗАГРУЗКА СВЕЧЕЙ С БИРЖИ
+    // 30. ЗАГРУЗКА СВЕЧЕЙ С БИРЖИ (Binance/Bybit REST)
     // =================================================================================
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
@@ -4325,7 +4324,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 32. ОБНОВЛЕНИЕ ЦВЕТОВ
+    // 32. ОБНОВЛЕНИЕ ЦВЕТОВ ПО НАСТРОЙКАМ ПОЛЬЗОВАТЕЛЯ
     // =================================================================================
 
     updateColorsForSettings(bullishColor, bearishColor) {
@@ -4382,7 +4381,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 33. ОСТАНОВКА ВСЕХ ФОНОВЫХ ПРОЦЕССОВ И УНИЧТОЖЕНИЕ
+    // 33. ОСТАНОВКА ВСЕХ ФОНОВЫХ ПРОЦЕССОВ И ПОЛНОЕ УНИЧТОЖЕНИЕ ГРАФИКА
     // =================================================================================
 
     _abortAllProcesses() {
@@ -4582,7 +4581,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 34. СОХРАНЕНИЕ ПОЗИЦИИ И КООРДИНАТНЫЕ ПРЕОБРАЗОВАНИЯ
+    // 34. СОХРАНЕНИЕ/ВОССТАНОВЛЕНИЕ ПОЗИЦИИ ПО ВРЕМЕНИ И КООРДИНАТНЫЕ ПРЕОБРАЗОВАНИЯ
     // =================================================================================
 
     saveCurrentTimePosition() {
@@ -4745,7 +4744,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 35. ПОДГРУЗКА ИСТОРИИ И ОБРЕЗКА
+    // 35. ПОДГРУЗКА ИСТОРИИ И ОБРЕЗКА (TRIM)
     // =================================================================================
 
     onVisibleLogicalRangeChange(range) {
