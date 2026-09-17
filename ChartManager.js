@@ -107,16 +107,10 @@ class ChartManager {
         this._unhealableGaps = new Set();
 
         // FIX AUTOSCROLL: скролл к realtime разрешён только в окне после
-        // открытия тикера / смены ТФ. Все фоновые процессы (_syncRecentCandles,
-        // _healDataGaps, _catchUpMissedCandles, refreshCandlesInBackground)
-        // гейтятся этим флагом и не перебивают вьюпорт пользователя.
+        // открытия тикера / смены ТФ.
         this._autoScrollEnabled = false;
         this._autoScrollTimeout = null;
 
-        // FIX SMOOTH: невидимая серия (candle/bar) помечается как "требующая
-        // синхронизации" — setData применяется только к видимой, а невидимая
-        // досинхронизируется в setChartType. Это убирает двойной setData в
-        // горячих путях и убирает визуальные "перерисовки" при синхронизациях.
         this._invisibleSeriesDirty = false;
         this._isScrolling = false;
         this._isScrollingFast = false;
@@ -138,8 +132,6 @@ class ChartManager {
 
         this._cachedPrecisionKey = null;
         this._cachedPrecisionValue = null;
-        // FIX PERF: кэш "выведенной" точности — чтобы _performUpdate не дёргал
-        // applyPriceFormat на каждом rAF, пока не пришёл ответ getPrecisionFromExchange.
         this._lastInferredPrecision = null;
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -274,6 +266,10 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: false,
                 entireTextOnly: true,
+                // FIX WIDTH: фиксируем минимальную ширину шкалы цены. Без этого
+                // при смене precision (2 → 6 знаков) шкала расширяется и
+                // пересчитывает barSpacing → вся картинка и отступ «прыгают».
+                minimumWidth: 80,
             },
             localization: {
                 timeFormatter: (time) => {
@@ -473,8 +469,6 @@ class ChartManager {
     // =================================================================================
     // 1b. FIX AUTOSCROLL: ОКНО РАЗРЕШЁННОГО АВТОСКРОЛЛА
     // =================================================================================
-    // Скролл к realtime разрешён ТОЛЬКО на время открытия тикера / смены ТФ.
-    // Всё остальное время фоновые процессы не должны перебивать вьюпорт юзера.
     _enableAutoScroll(durationMs = 2000) {
         this._autoScrollEnabled = true;
 
@@ -599,17 +593,8 @@ class ChartManager {
     }
 
     // =================================================================================
-    // FIX #20 + FIX SMOOTH + FIX DRIFT: АТОМАРНОЕ ПРИМЕНЕНИЕ ДАННЫХ
+    // FIX #20 + FIX SMOOTH + FIX DRIFT + FIX AUTOSCROLL
     // =================================================================================
-    // Ключевые изменения против предыдущей версии:
-    //   1) setData применяется ТОЛЬКО к видимой серии; невидимая помечается
-    //      _invisibleSeriesDirty и синхронизируется в setChartType.
-    //   2) Вьюпорт восстанавливается по anchor'у — ВРЕМЕНИ первой видимой свечи,
-    //      С ДРОБНОЙ ЧАСТЬЮ. Раньше терялась дробная часть lr.from, и каждый
-    //      setData сдвигал вьюпорт на 0.0..1.0 бара. За десяток фоновых вызовов
-    //      набегал заметный дрейф — визуально «график ползёт влево».
-    //   3) FIX AUTOSCROLL: scrollToRealTime() вызывается ТОЛЬКО когда
-    //      _autoScrollEnabled === true (окно после открытия тикера / смены ТФ).
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
 
@@ -663,8 +648,6 @@ class ChartManager {
         }
 
         try {
-            // FIX AUTOSCROLL: принудительный скролл к realtime — только в окне
-            // после открытия тикера / смены ТФ.
             if (atRightEdge && this._autoScrollEnabled) {
                 ts.scrollToRealTime();
             } else if (anchorTime != null) {
@@ -679,8 +662,6 @@ class ChartManager {
         } catch (e) {}
     }
 
-    // FIX SMOOTH: лёгкий путь для случая "новые свечи строго продолжают хвост".
-    // Никакого setData, только series.update() на каждую новую свечу.
     _applyAppendOnly(newCandles) {
         if (!this._isChartValid() || !newCandles || newCandles.length === 0) return;
 
@@ -761,7 +742,6 @@ class ChartManager {
         this._syncRecentCandles().catch(() => {});
     }
 
-    // FIX SMOOTH: стаб DOM-элемента дополнен методами classList.contains/toggle.
     _safeElement(id) {
         const el = document.getElementById(id);
         if (el) return el;
@@ -1060,10 +1040,6 @@ class ChartManager {
                         );
                     } else {
                         olderCandlesChanged = true;
-                        // FIX DRIFT: запоминаем для точечного update вместо
-                        // полного setData. Раньше на каждой правке середины
-                        // делали _applyDataAtomically → setData всех свечей,
-                        // что приводило к визуальному миганию и дрейфу вьюпорта.
                         touchedMidCandles.push(cur);
                     }
 
@@ -1138,12 +1114,6 @@ class ChartManager {
                 }
             }
 
-            // FIX DRIFT + FIX SMOOTH:
-            //   - needsFullRedraw → реальная структурная поломка (состав/порядок),
-            //     нужен setData.
-            //   - olderCandlesChanged → только поля изменились у середины,
-            //     состав тот же → точечные series.update() без setData.
-            //   - pushedMissing → append в хвост → _applyAppendOnly.
             if (needsFullRedraw) {
                 this._applyDataAtomically();
             } else if (touchedMidCandles.length > 0) {
@@ -1485,7 +1455,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9. ПРОВЕРКА НОВЫХ СВЕЧЕЙ И ДОГОНЯЮЩАЯ ДОКАЧКА ПРОПУЩЕННЫХ (WS "молчит")
+    // 9. ПРОВЕРКА НОВЫХ СВЕЧЕЙ И ДОГОНЯЮЩАЯ ДОКАЧКА ПРОПУЩЕННЫХ
     // =================================================================================
 
     _startNewCandleChecker() {
@@ -2457,8 +2427,6 @@ class ChartManager {
 
                 this._stampCandle(existingCandle, 'ws', receivedAt, eventTime);
 
-                // Правка НЕпоследней свечи — точечный update вместо setData,
-                // чтобы не мигать и не дрейфовать вьюпорт.
                 this._updateVisibleSeries({
                     time: existingCandle.time,
                     open: existingCandle.open,
@@ -2644,7 +2612,14 @@ class ChartManager {
     // =================================================================================
     // 16. УСТАНОВКА ПОЛНОГО НАБОРА ДАННЫХ И ПОЗИЦИОНИРОВАНИЕ
     // =================================================================================
-
+    // FIX WIDTH + FIX PRECISION + FIX POSITION:
+    //   - precision применяется ДО setData, чтобы ширина шкалы цены не
+    //     перескакивала после того, как LW сам выведет precision из данных;
+    //   - ширина для расчёта позиции берётся через timeScale.width(), а не
+    //     clientWidth контейнера (иначе не учитываем шкалу цены и таймскейл);
+    //   - barSpacing фиксируется после setVisibleLogicalRange;
+    //   - scrollToRealTime() не вызывается — он перебивает установленный
+    //     диапазон и растягивает отступ в пикселях.
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) {
@@ -2657,7 +2632,6 @@ class ChartManager {
                 return;
             }
 
-            // FIX AUTOSCROLL: открываем окно разрешённого автоскролла.
             this._enableAutoScroll(2000);
 
             if (this.timerManager) this.timerManager.hideImmediately();
@@ -2732,6 +2706,21 @@ class ChartManager {
             this._historyEndTime = data[0].time;
             this.lastCandle = data[data.length - 1];
 
+            // FIX PRECISION: применяем priceFormat ДО setData. Иначе LW выведет
+            // свою точность из данных, шкала цены изменит ширину, и после
+            // setData придётся всё пересчитывать — визуально это выглядит как
+            // «дёрганье шкалы» и меняет ширину области баров.
+            const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
+            const inferredPrecision = this._inferPrecisionFromData();
+            const prec = cachedPrecision ? parseInt(cachedPrecision, 10) : inferredPrecision;
+
+            this.applyPriceFormat(prec);
+            this._lastAppliedPrecision = String(prec);
+
+            if (!cachedPrecision) {
+                this._setCachedPrecision(symbol, exchange, marketType, inferredPrecision);
+            }
+
             if (this.candleSeries) this.candleSeries.setData(this.chartData);
             if (this.barSeries) this.barSeries.setData(this.chartData);
 
@@ -2758,18 +2747,6 @@ class ChartManager {
                 this._applyPriceLineColor(series, lineColor);
             }
 
-            const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
-            const inferredPrecision = this._inferPrecisionFromData();
-
-            if (cachedPrecision) {
-                this.applyPriceFormat(parseInt(cachedPrecision, 10));
-                this._lastAppliedPrecision = cachedPrecision;
-            } else {
-                this.applyPriceFormat(inferredPrecision);
-                this._setCachedPrecision(symbol, exchange, marketType, inferredPrecision);
-                this._lastAppliedPrecision = String(inferredPrecision);
-            }
-
             setTimeout(() => {
                 if (this.indicatorManager && this._isChartValid()) {
                     this.indicatorManager.restorePendingIndicators();
@@ -2778,65 +2755,90 @@ class ChartManager {
                 }
             }, 0);
 
-         const positionAfterDataApplied = () => {
-    if (!this._isChartValid()) {
-        this._disableAutoScroll();
-        if (onReady) onReady();
-        return;
-    }
+            const positionAfterDataApplied = () => {
+                if (!this._isChartValid()) {
+                    this._disableAutoScroll();
+                    if (onReady) onReady();
+                    return;
+                }
 
-    const timeScale = this.chart.timeScale();
-    const savedBarSpacing = this._savedBarSpacing || 25;
+                const timeScale = this.chart.timeScale();
+                if (!timeScale) {
+                    this._disableAutoScroll();
+                    if (onReady) onReady();
+                    return;
+                }
 
-    // 1) Жёстко фиксируем barSpacing. Это ключевой момент: если setVisibleLogicalRange
-    //    получает span, не равный width / barSpacing, LW сам пересчитывает barSpacing,
-    //    и все "25 баров отступа" в пикселях превращаются в чёрт знает что.
-    timeScale.applyOptions({ barSpacing: savedBarSpacing });
+                // FIX WIDTH: берём РЕАЛЬНУЮ ширину области баров. timeScale.width()
+                // возвращает ширину без правой шкалы цены. Если недоступно —
+                // вычитаем ширину price scale из clientWidth контейнера.
+                let width = 0;
+                try { width = timeScale.width() || 0; } catch (e) {}
 
-    const lastIndex = this.chartData.length - 1;
-    const width = this.chartContainer.clientWidth || 800;
-    const visibleBars = width / savedBarSpacing;
-    const rightOffset = 25;
+                if (!width || width < 50) {
+                    const ps = this.chart.priceScale('right');
+                    let psWidth = 0;
+                    try { psWidth = ps?.width?.() || 0; } catch (e) {}
+                    width = Math.max(50, (this.chartContainer.clientWidth || 800) - psWidth - 8);
+                }
 
-    // 2) Правый край ВСЕГДА на lastIndex + 25.
-    //    Левый — просто правый минус ширина окна. Если получится < 0 —
-    //    так и оставляем (пустое место слева, но отступ справа не меняется).
-    const to = lastIndex + rightOffset;
-    const from = to - visibleBars;
+                const savedBarSpacing = this._savedBarSpacing || 25;
+                const visibleBars = width / savedBarSpacing;
+                const rightOffset = 25;
 
-    // 3) Один-единственный setVisibleLogicalRange. Никаких scrollToRealTime,
-    //    setVisibleRange и прочих "докруток" — они перебивают диапазон выше.
-    try {
-        timeScale.setVisibleLogicalRange({ from, to });
-    } catch (e) {}
+                const lastIndex = this.chartData.length - 1;
 
-    const finalizeAfterRescale = () => {
-        if (this._isChartValid()) {
-            const ps = this.chart.priceScale('right');
-            if (ps) {
-                try { ps.applyOptions({ autoScale: false }); } catch (e) {}
-            }
-            this._applyVolumeScaleOptions();
-        }
+                // Правый край ВСЕГДА на lastIndex + rightOffset. Левый — правый
+                // минус ширина окна. Если from уходит в минус — так и оставляем:
+                // это просто пустое место слева, отступ справа от этого не зависит.
+                const to = lastIndex + rightOffset;
+                const from = to - visibleBars;
 
-        if (this.timerManager && this._isChartValid() && this.lastCandle) {
-            this.timerManager.start(this.currentInterval);
-            this.timerManager.updatePrice(this.lastCandle.close);
-        }
+                try {
+                    timeScale.setVisibleLogicalRange({ from, to });
+                } catch (e) {}
 
-        this._disableAutoScroll();
-        if (onReady) onReady();
-    };
+                // Дополнительно фиксируем barSpacing. LW может его пересчитать,
+                // если span не совпадает ровно с width / barSpacing из-за
+                // дробной точности. Этот вызов возвращает всё на место.
+                try {
+                    timeScale.applyOptions({ barSpacing: savedBarSpacing });
+                } catch (e) {}
 
-    const priceScale = this.chart.priceScale('right');
+                // scrollToRealTime() НЕ вызываем — он берёт rightOffset из
+                // опций и применяет его к ТЕКУЩЕМУ barSpacing, который уже
+                // мог быть пересчитан. Это и давало «слишком большой отступ».
 
-    if (priceScale) {
-        priceScale.applyOptions({ autoScale: true });
-        requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
-    } else {
-        finalizeAfterRescale();
-    }
-};
+                const finalizeAfterRescale = () => {
+                    if (this._isChartValid()) {
+                        const ps = this.chart.priceScale('right');
+
+                        if (ps) {
+                            try { ps.applyOptions({ autoScale: false }); } catch (e) {}
+                        }
+
+                        this._applyVolumeScaleOptions();
+                    }
+
+                    if (this.timerManager && this._isChartValid() && this.lastCandle) {
+                        this.timerManager.start(this.currentInterval);
+                        this.timerManager.updatePrice(this.lastCandle.close);
+                    }
+
+                    this._disableAutoScroll();
+
+                    if (onReady) onReady();
+                };
+
+                const priceScale = this.chart.priceScale('right');
+
+                if (priceScale) {
+                    priceScale.applyOptions({ autoScale: true });
+                    requestAnimationFrame(() => requestAnimationFrame(finalizeAfterRescale));
+                } else {
+                    finalizeAfterRescale();
+                }
+            };
 
             requestAnimationFrame(() => requestAnimationFrame(positionAfterDataApplied));
 
@@ -4634,10 +4636,6 @@ class ChartManager {
     forceRedraw() {
         if (!this._isChartValid() || !this.chartData.length) return;
 
-        // FIX DRIFT: раньше здесь был двойной chart.resize(width±1, height),
-        // который заставлял LW Charts полностью пересчитать лэйаут, и визуально
-        // это выглядело как мелкое дрожание. Достаточно обновить индикаторы и
-        // попросить таймскейл перерисоваться — LW сам сделает invalidate.
         if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
 
         try {
@@ -4813,8 +4811,6 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
-            // FIX SMOOTH: setData только на видимую серию; невидимая помечается
-            // dirty и досинхронизируется в setChartType.
             const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (visibleSeries) visibleSeries.setData(this.chartData);
             this._invisibleSeriesDirty = true;
@@ -5072,11 +5068,6 @@ class ChartManager {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             }
 
-            // FIX AUTOSCROLL: раньше здесь был безусловный scrollToLast() при
-            // появлении новых свечей — он и был «вторым прыжком» после
-            // открытия/переключения. Теперь скролл делает только LW Charts
-            // через shiftVisibleRangeOnNewBar, и только если пользователь
-            // у правого края.
             if (this._autoScrollEnabled && !this._isViewingHistory && newCandles.length > 0) {
                 this.scrollToLast();
             }
