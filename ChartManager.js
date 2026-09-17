@@ -456,7 +456,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 1b. FIX AUTOSCROLL: ОКНО РАЗРЕШЁННОГО АВТОСКРОЛЛА
+    // 1b. AUTOSCROLL
     // =================================================================================
     _enableAutoScroll(durationMs = 2000) {
         this._autoScrollEnabled = true;
@@ -482,14 +482,16 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 1c. FIX SCROLLTORETIME: ЕДИНЫЙ ХЕЛПЕР ПРАВОГО КРАЯ
+    // 1c. ЕДИНЫЙ ХЕЛПЕР ПРАВОГО КРАЯ
     // =================================================================================
-    // В версии LW, которая используется в проекте, timeScale().scrollToRealTime()
-    // не соблюдает rightOffset: он ставит правый край по внутреннему «real time»
-    // индексу, который может быть больше lastIndex (из-за чего правый отступ
-    // раздувается в 3-5 раз на коротких сериях). Единственный надёжный способ —
-    // вычислить from/to вручную через lastIndex + rightOffset и вызвать
-    // setVisibleLogicalRange({from, to}). Проверено в консоли.
+    // FIX: В этой версии LW timeScale().scrollToRealTime() не соблюдает
+    // rightOffset (даёт 70+ баров вместо 15). setVisibleLogicalRange работает
+    // корректно на любой длине серии.
+    //
+    // ВАЖНО: этот метод вызывается ТОЛЬКО при:
+    //   - открытии тикера / смене ТФ  (setDataQuick → positionAfterDataApplied)
+    //   - явном действии "прокрутить к последней свече" (scrollToLast)
+    // Больше НИОТКУДА — иначе вид дёргается на каждом WS-тике.
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
 
@@ -498,6 +500,16 @@ class ChartManager {
 
         const lastIndex = this.chartData.length - 1;
         const rightOffset = 15;
+
+        // Если отступ уже правильный — не трогаем. Это устраняет визуальные
+        // дёргания при повторных вызовах.
+        try {
+            const cur = ts.getVisibleLogicalRange();
+            if (cur) {
+                const curOffset = cur.to - lastIndex;
+                if (Math.abs(curOffset - rightOffset) < 0.5) return;
+            }
+        } catch (e) {}
 
         let barSpacing = this._savedBarSpacing || ts.options().barSpacing || 25;
         if (!barSpacing || barSpacing <= 0) barSpacing = 25;
@@ -526,7 +538,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 2. ЦВЕТА, ТЕКСТОВЫЙ КОНТРАСТ, ЦЕНОВАЯ ШКАЛА ОБЪЁМА
+    // 2. ЦВЕТА / ШКАЛА ОБЪЁМА
     // =================================================================================
 
     _applyVolumeScaleOptions() {
@@ -534,10 +546,7 @@ class ChartManager {
 
         const volumeScale = this.chart.priceScale('volume');
 
-        if (!volumeScale) {
-            console.warn('⚠️ Volume price scale not found');
-            return;
-        }
+        if (!volumeScale) return;
 
         volumeScale.applyOptions({
             scaleMargins: this._volumeScaleMargins,
@@ -595,7 +604,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 3. ВАЛИДНОСТЬ ГРАФИКА И ОВЕРЛЕЙ ПЕРЕКЛЮЧЕНИЯ СИМВОЛА
+    // 3. ВАЛИДНОСТЬ / ОВЕРЛЕЙ
     // =================================================================================
 
     _isChartValid() {
@@ -625,6 +634,9 @@ class ChartManager {
         } catch (e) {}
     }
 
+    // FIX: из _applyDataAtomically убран вызов _scrollToRightEdgeWithOffset.
+    // Здесь только сохраняем «якорь» (первую видимую свечу) при работе в
+    // истории. На правом краю LW сам сдвигает вид через shiftVisibleRangeOnNewBar.
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
 
@@ -659,8 +671,6 @@ class ChartManager {
             if (visibleSeries) visibleSeries.setData(this.chartData);
         } catch (e) {}
 
-        // FIX TIMELINE POLLUTION: невидимая серия обязана иметь тот же набор
-        // времён, иначе LW расширяет таймлайн и все расчёты отступа ломаются.
         try {
             if (otherSeries) otherSeries.setData(this.chartData);
         } catch (e) {}
@@ -684,9 +694,10 @@ class ChartManager {
         }
 
         try {
-            if (atRightEdge && this._autoScrollEnabled) {
-                this._scrollToRightEdgeWithOffset();
-            } else if (anchorTime != null) {
+            // FIX: на правом краю НЕ дёргаем отступ. Если юзер смотрит на
+            // последний бар, LW сам удержит правый край через
+            // shiftVisibleRangeOnNewBar. Если мы в истории — сохраняем «якорь».
+            if (!atRightEdge && anchorTime != null) {
                 const newIdx = this._candleTimeMap.get(anchorTime);
                 if (newIdx !== undefined) {
                     ts.setVisibleLogicalRange({
@@ -717,8 +728,6 @@ class ChartManager {
                 break;
             }
 
-            // FIX TIMELINE POLLUTION: невидимая серия тоже получает новые бары,
-            // иначе её хвост отстаёт и расширяет модель таймскейла.
             try {
                 if (other) other.update(point);
             } catch (e) {
@@ -802,7 +811,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 4. КАРТА "ВРЕМЯ СВЕЧИ → ИНДЕКС В МАССИВЕ"
+    // 4. TIME MAP
     // =================================================================================
 
     _rebuildTimeMap() {
@@ -818,7 +827,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 5. "СВЕЖЕСТЬ" ДАННЫХ СВЕЧИ
+    // 5. "СВЕЖЕСТЬ"
     // =================================================================================
 
     _stampCandle(candle, source, receivedAt, eventTime = null) {
@@ -890,7 +899,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 7. РАСЧЁТ ГРАНИЦ ИНТЕРВАЛОВ
+    // 7. ГРАНИЦЫ ИНТЕРВАЛОВ
     // =================================================================================
 
     _getIntervalSeconds() {
@@ -959,7 +968,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 8. ФОНОВОЕ ОБНОВЛЕНИЕ ЗАГОЛОВКА, ПЕРИОДИЧЕСКАЯ И ДОГОНЯЮЩАЯ СИНХРОНИЗАЦИЯ
+    // 8. ФОНОВОЕ ОБНОВЛЕНИЕ ЗАГОЛОВКА / ПЕРИОДИЧЕСКИЙ СИНК
     // =================================================================================
 
     _startBackgroundTitleUpdate() {
@@ -1495,7 +1504,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9. ПРОВЕРКА НОВЫХ СВЕЧЕЙ И ДОГОНЯЮЩАЯ ДОКАЧКА
+    // 9. NEW CANDLE CHECKER
     // =================================================================================
 
     _startNewCandleChecker() {
@@ -1659,7 +1668,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9b. ЛЕЧЕНИЕ ДЫР
+    // 9b. HEAL GAPS
     // =================================================================================
     async _healDataGaps() {
         if (this._destroyed) return;
@@ -2146,7 +2155,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 13. СИНХРОНИЗАЦИЯ ЦЕНОВОЙ ЛИНИИ
+    // 13. ЦЕНОВАЯ ЛИНИЯ
     // =================================================================================
 
     _syncPriceLine(priceOrObj) {
@@ -2539,7 +2548,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 15. ОЖИДАНИЕ ГОТОВНОСТИ
+    // 15. ОЖИДАНИЕ / CURRENT CANDLE
     // =================================================================================
 
     async waitForChartReady() {
@@ -2789,9 +2798,8 @@ class ChartManager {
                     return;
                 }
 
-                // FIX: вместо scrollToRealTime() используем наш хелпер —
-                // он ставит правый край ровно на lastIndex + 15 независимо
-                // от длины серии и внутренних оффсетов LW.
+                // FIX: единственный вызов отступа при открытии тикера / смене ТФ.
+                // Больше ниоткуда _scrollToRightEdgeWithOffset не дёргается.
                 this._scrollToRightEdgeWithOffset();
 
                 const finalizeAfterRescale = () => {
@@ -2930,7 +2938,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 18. ПРИОСТАНОВКА/ВОЗОБНОВЛЕНИЕ
+    // 18. SUSPEND/RESUME
     // =================================================================================
 
     _suspendAllUpdates() {
@@ -2986,7 +2994,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 19. ПЕРЕКЛЮЧЕНИЕ СИМВОЛА И ИНТЕРВАЛА
+    // 19. SWITCH SYMBOL / INTERVAL
     // =================================================================================
 
     async switchSymbol(symbol, exchange, marketType) {
@@ -3507,7 +3515,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 21. ПОЗИЦИОНИРОВАНИЕ/СКРОЛЛ
+    // 21. СКРОЛЛ
     // =================================================================================
 
     updateRealPrice(price) {
@@ -3528,8 +3536,8 @@ class ChartManager {
             const savedBarSpacing = this._savedBarSpacing || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
-            // FIX: вместо scrollToRealTime() — наш хелпер с явным
-            // setVisibleLogicalRange, чтобы отступ справа был ровно 15 баров.
+            // scrollToLast — «прокрутить к последней свече». Использует тот же
+            // хелпер, что и setDataQuick → отступ ровно 15.
             this._scrollToRightEdgeWithOffset();
 
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -3775,7 +3783,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 25. ПОДПИСКА НА ЖИВУЮ ЦЕНУ
+    // 25. PRICE MANAGER
     // =================================================================================
 
     _subscribeToPrice() {
@@ -3887,7 +3895,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 27. ВАЛИДАЦИЯ СВЕЧЕЙ
+    // 27. ВАЛИДАЦИЯ
     // =================================================================================
 
     _isValidCandle(candle, nowSecHint = null) {
@@ -3959,7 +3967,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 28. РУЧНОЕ СОЗДАНИЕ НОВОЙ СВЕЧИ
+    // 28. НОВАЯ СВЕЧА
     // =================================================================================
 
     _createNewCandle(candle, eventTime = null) {
@@ -4096,7 +4104,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 30. ЗАГРУЗКА С БИРЖИ
+    // 30. FETCH KLINES
     // =================================================================================
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
@@ -4344,7 +4352,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 33. ОСТАНОВКА И УНИЧТОЖЕНИЕ
+    // 33. ABORT / DESTROY
     // =================================================================================
 
     _abortAllProcesses() {
@@ -4544,7 +4552,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 34. КООРДИНАТНЫЕ ПРЕОБРАЗОВАНИЯ
+    // 34. КООРДИНАТЫ
     // =================================================================================
 
     saveCurrentTimePosition() {
@@ -4707,7 +4715,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 35. ПОДГРУЗКА ИСТОРИИ И TRIM
+    // 35. ПОДГРУЗКА ИСТОРИИ / TRIM
     // =================================================================================
 
     onVisibleLogicalRangeChange(range) {
@@ -4786,7 +4794,6 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
-            // FIX TIMELINE POLLUTION: обе серии получают одинаковый набор данных.
             try { if (this.candleSeries) this.candleSeries.setData(this.chartData); } catch (e) {}
             try { if (this.barSeries) this.barSeries.setData(this.chartData); } catch (e) {}
             this._invisibleSeriesDirty = false;
@@ -4888,7 +4895,6 @@ class ChartManager {
                 const priceScale = this.chart.priceScale('right');
                 priceScale.applyOptions({ autoScale: false });
 
-                // FIX TIMELINE POLLUTION: обе серии обновляются.
                 try { if (this.candleSeries) this.candleSeries.setData(this.chartData); } catch (e) {}
                 try { if (this.barSeries) this.barSeries.setData(this.chartData); } catch (e) {}
                 this._invisibleSeriesDirty = false;
@@ -4928,7 +4934,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 36. ФОНОВОЕ ДОДОБНОВЛЕНИЕ
+    // 36. BACKGROUND REFRESH
     // =================================================================================
 
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
@@ -5043,15 +5049,11 @@ class ChartManager {
 
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             }
-
-            if (this._autoScrollEnabled && !this._isViewingHistory && newCandles.length > 0) {
-                this.scrollToLast();
-            }
         } catch (error) {}
     }
 
     // =================================================================================
-    // 37. КЭШ
+    // 37. CACHE
     // =================================================================================
 
     async _waitForDb(timeoutMs = 2000) {
@@ -5160,7 +5162,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 38. ОЖИДАНИЕ ГОТОВНОСТИ
+    // 38. WAIT READY
     // =================================================================================
 
     async waitForReady() {
