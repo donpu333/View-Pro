@@ -105,6 +105,14 @@ class ChartManager {
         this._healingGaps = false;
         this._lastGapHealAttempt = 0;
         this._unhealableGaps = new Set();
+
+        // FIX AUTOSCROLL: скролл к realtime разрешён только в окне после
+        // открытия тикера / смены ТФ. Все фоновые процессы (_syncRecentCandles,
+        // _healDataGaps, _catchUpMissedCandles, refreshCandlesInBackground)
+        // гейтятся этим флагом и не перебивают вьюпорт пользователя.
+        this._autoScrollEnabled = false;
+        this._autoScrollTimeout = null;
+
         // FIX SMOOTH: невидимая серия (candle/bar) помечается как "требующая
         // синхронизации" — setData применяется только к видимой, а невидимая
         // досинхронизируется в setChartType. Это убирает двойной setData в
@@ -463,6 +471,34 @@ class ChartManager {
     }
 
     // =================================================================================
+    // 1b. FIX AUTOSCROLL: ОКНО РАЗРЕШЁННОГО АВТОСКРОЛЛА
+    // =================================================================================
+    // Скролл к realtime разрешён ТОЛЬКО на время открытия тикера / смены ТФ.
+    // Всё остальное время фоновые процессы не должны перебивать вьюпорт юзера.
+    _enableAutoScroll(durationMs = 2000) {
+        this._autoScrollEnabled = true;
+
+        if (this._autoScrollTimeout) {
+            clearTimeout(this._autoScrollTimeout);
+            this._autoScrollTimeout = null;
+        }
+
+        this._autoScrollTimeout = setTimeout(() => {
+            this._autoScrollEnabled = false;
+            this._autoScrollTimeout = null;
+        }, durationMs);
+    }
+
+    _disableAutoScroll() {
+        this._autoScrollEnabled = false;
+
+        if (this._autoScrollTimeout) {
+            clearTimeout(this._autoScrollTimeout);
+            this._autoScrollTimeout = null;
+        }
+    }
+
+    // =================================================================================
     // 2. ЦВЕТА, ТЕКСТОВЫЙ КОНТРАСТ, ЦЕНОВАЯ ШКАЛА ОБЪЁМА
     // =================================================================================
 
@@ -574,7 +610,10 @@ class ChartManager {
     //      Раньше использовался getVisibleRange()/setVisibleRange() с абсолютными
     //      time-границами; на неполных интервалах они «плавали», и после каждого
     //      setData график заметно дёргался.
-    //   3) Не плодим rAF/scrollToRealTime, если это не нужно.
+    //   3) FIX AUTOSCROLL: scrollToRealTime() вызывается ТОЛЬКО когда
+    //      _autoScrollEnabled === true (окно после открытия тикера / смены ТФ).
+    //      Все фоновые процессы (синк, heal, catchup, refresh) не перебивают
+    //      вьюпорт пользователя — вьюпорт восстанавливается по anchor'у.
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
 
@@ -624,7 +663,10 @@ class ChartManager {
         }
 
         try {
-            if (atRightEdge) {
+            // FIX AUTOSCROLL: принудительный скролл к realtime — только в окне
+            // после открытия тикера / смены ТФ. Иначе — восстанавливаем вьюпорт
+            // по anchor'у, чтобы фоновый setData не сдвигал вид пользователя.
+            if (atRightEdge && this._autoScrollEnabled) {
                 ts.scrollToRealTime();
             } else if (anchorTime != null) {
                 const newIdx = this._candleTimeMap.get(anchorTime);
@@ -2595,6 +2637,14 @@ class ChartManager {
                 return;
             }
 
+            // FIX AUTOSCROLL: открываем окно разрешённого автоскролла.
+            // Всё, что делает positionAfterDataApplied (scrollToRealTime,
+            // setVisibleLogicalRange), а также любые фоновые setData в течение
+            // этого окна — смогут подвинуть вьюпорт к realtime. Дальше окно
+            // закроется (либо по _disableAutoScroll() в finalizeAfterRescale,
+            // либо по страховочному таймауту).
+            this._enableAutoScroll(2000);
+
             if (this.timerManager) this.timerManager.hideImmediately();
 
             this.chart.applyOptions({ handleScroll: false, handleScale: false });
@@ -2637,6 +2687,7 @@ class ChartManager {
 
             if (data.length === 0) {
                 this.chart.applyOptions({ handleScroll: true, handleScale: true });
+                this._disableAutoScroll();
                 if (onReady) onReady();
                 return;
             }
@@ -2714,6 +2765,7 @@ class ChartManager {
 
             const positionAfterDataApplied = () => {
                 if (!this._isChartValid()) {
+                    this._disableAutoScroll();
                     if (onReady) onReady();
                     return;
                 }
@@ -2757,6 +2809,11 @@ class ChartManager {
                         this.timerManager.start(this.currentInterval);
                         this.timerManager.updatePrice(this.lastCandle.close);
                     }
+
+                    // FIX AUTOSCROLL: позиционирование завершено — закрываем окно.
+                    // Все последующие фоновые процессы больше не будут тянуть
+                    // вьюпорт к realtime.
+                    this._disableAutoScroll();
 
                     if (onReady) onReady();
                 };
@@ -2813,6 +2870,8 @@ class ChartManager {
             if (this.chart) {
                 this.chart.applyOptions({ handleScroll: true, handleScale: true });
             }
+
+            this._disableAutoScroll();
 
             if (onReady) onReady();
         }
@@ -4448,6 +4507,11 @@ class ChartManager {
             this._panelsSyncRafId = null;
         }
 
+        if (this._autoScrollTimeout) {
+            clearTimeout(this._autoScrollTimeout);
+            this._autoScrollTimeout = null;
+        }
+
         if (this._globalMouseUpHandler) {
             window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
         }
@@ -5000,7 +5064,13 @@ class ChartManager {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             }
 
-            if (!this._isViewingHistory && newCandles.length > 0) {
+            // FIX AUTOSCROLL: раньше здесь был безусловный scrollToLast() при
+            // появлении новых свечей — он и был «вторым прыжком» после
+            // открытия/переключения. Теперь скролл делает только LW Charts
+            // через shiftVisibleRangeOnNewBar, и только если пользователь
+            // у правого края. Принудительный скролл — только в окне после
+            // открытия тикера / смены ТФ.
+            if (this._autoScrollEnabled && !this._isViewingHistory && newCandles.length > 0) {
                 this.scrollToLast();
             }
         } catch (error) {}
