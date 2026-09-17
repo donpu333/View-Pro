@@ -252,14 +252,14 @@ class ChartManager {
                     });
                 }
             },
-            rightPriceScale: {
-                borderColor: '#333333',
-                borderVisible: true,
-                scaleMargins: { top: 0.1, bottom: 0.25 },
-                autoScale: false,
-                entireTextOnly: true,
-                minimumWidth: 80,
-            },
+       rightPriceScale: {
+    borderColor: '#333333',
+    borderVisible: true,
+    scaleMargins: { top: 0.1, bottom: 0.25 },
+    autoScale: false,
+    entireTextOnly: false,
+    minimumWidth: 0,
+},
             localization: {
                 timeFormatter: (time) => {
                     return new Date(time * 1000).toLocaleString('ru-RU', {
