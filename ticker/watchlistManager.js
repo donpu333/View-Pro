@@ -16,17 +16,13 @@ class WatchlistManager {
         this._destroyed = false;
         this._outsideClickListener = null;
         this._escapeDiv = document.createElement('div');
-        this._activateToken = 0; // ✅ НОВОЕ: токен поколения для activateList (защита от гонки быстрых переключений)
+        this._activateToken = 0;
     }
 
     async _waitForDBAndLoad() {
         if (!window.db || !window.dbReady) {
             console.log('⏳ WatchlistManager: жду IndexedDB...');
             await new Promise((resolve) => {
-                // ✅ ФИКС: сохраняем id внешнего таймаута и чистим его в обоих путях
-                // завершения (успех через интервал / истечение времени). Раньше при
-                // быстром успехе interval сам себя чистил и резолвил промис, но
-                // внешний 10-секундный setTimeout продолжал висеть впустую до срабатывания.
                 const check = setInterval(() => {
                     if (this._destroyed) { clearInterval(check); clearTimeout(fallback); resolve(); return; }
                     if (window.db && window.dbReady) { clearInterval(check); clearTimeout(fallback); resolve(); }
@@ -58,24 +54,24 @@ class WatchlistManager {
                 this.lists = new Map(Object.entries(saved.lists));
                 this.listOrder = saved.listOrder || ['default'];
                 this.activeListId = saved.activeListId || 'default';
-                
+
                 if (saved.listSorts) {
                     this._listSorts = new Map(Object.entries(saved.listSorts));
                 }
-                
+
                 for (const [id, list] of this.lists) {
                     if (!list.flags) list.flags = {};
                     if (!list.favorites) list.favorites = [];
                 }
-                
+
                 if (this.lists.has('default')) {
                     const defaultList = this.lists.get('default');
-                    
+
                     if (saved.globalFlags && Object.keys(defaultList.flags).length === 0) {
                         defaultList.flags = saved.globalFlags;
                         console.log(`🔄 Миграция флагов: ${Object.keys(saved.globalFlags).length} шт.`);
                     }
-                    
+
                     if (saved.globalFavorites && defaultList.favorites.length === 0) {
                         defaultList.favorites = saved.globalFavorites;
                         console.log(`🔄 Миграция звёзд: ${saved.globalFavorites.length} шт.`);
@@ -85,10 +81,10 @@ class WatchlistManager {
         } catch (e) {}
 
         if (!this.lists.has('default')) {
-            this.lists.set('default', { 
-                name: 'Основной', 
-                symbols: [], 
-                isDefault: true, 
+            this.lists.set('default', {
+                name: 'Основной',
+                symbols: [],
+                isDefault: true,
                 flags: {},
                 favorites: []
             });
@@ -134,7 +130,7 @@ class WatchlistManager {
 
     async _saveNow() {
         if (!this._loaded || this._destroyed) return;
-        
+
         const activeList = this.lists.get(this.activeListId);
         if (activeList) {
             this.tickerPanel.state.customSymbols = [...activeList.symbols];
@@ -142,9 +138,9 @@ class WatchlistManager {
             activeList.flags = { ...this.tickerPanel.state.flags };
             activeList.favorites = [...this.tickerPanel.state.favorites];
         }
-        
+
         const listSortsObj = Object.fromEntries(this._listSorts);
-        
+
         await this._saveToDB({
             lists: Object.fromEntries(this.lists),
             listOrder: this.listOrder,
@@ -169,9 +165,9 @@ class WatchlistManager {
     async createList(name) {
         await this._initPromise;
         const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        this.lists.set(id, { 
-            name: name || `Список ${this.lists.size}`, 
-            symbols: [], 
+        this.lists.set(id, {
+            name: name || `Список ${this.lists.size}`,
+            symbols: [],
             isDefault: false,
             flags: {},
             favorites: []
@@ -219,11 +215,6 @@ class WatchlistManager {
         if (!this.lists.has(listId)) return;
         if (this.activeListId === listId) { this.closeDropdown(); return; }
 
-        // ✅ ФИКС: токен поколения. Если пользователь успевает кликнуть по второму
-        // списку до того, как обработка первого клика полностью завершится, старый
-        // (обогнанный) вызов обнаружит несовпадение токена и прекратит работу, не
-        // трогая состояние — иначе он мог дописать в НОВЫЙ активный список данные,
-        // относящиеся к промежуточному/старому состоянию tickerPanel, испортив его.
         const myToken = ++this._activateToken;
 
         if (this.activeListId) {
@@ -249,8 +240,8 @@ class WatchlistManager {
         }
 
         this.loadSymbolsFromList(listId);
-        
-        if (this._activateToken !== myToken) return; // ✅ обогнан более новым переключением — молча выходим
+
+        if (this._activateToken !== myToken) return;
 
         this._restoreSortForList(listId);
 
@@ -271,7 +262,7 @@ class WatchlistManager {
                     this.tickerPanel.coordinator.chartManager.switchSymbol(symbol, exchange, marketType);
                 }
                 setTimeout(() => {
-                    if (this._activateToken !== myToken) return; // ✅ на случай, если переключение произошло за эти 100мс
+                    if (this._activateToken !== myToken) return;
                     this.tickerPanel.focusOnSymbol?.(symbol, exchange, marketType);
                 }, 100);
             }
@@ -282,28 +273,49 @@ class WatchlistManager {
 
     _saveSortForList(listId) {
         if (!this._listSorts) this._listSorts = new Map();
+        // ✅ ФИКС: сохраняем null как null (а не «отсутствие сортировки»),
+        // чтобы явное выключение сортировки пользователем не превращалось
+        // при следующем переключении обратно в volume/desc.
         this._listSorts.set(listId, {
-            sortBy: this.tickerPanel.state.sortBy,
-            sortDirection: this.tickerPanel.state.sortDirection
+            sortBy: this.tickerPanel.state.sortBy ?? null,
+            sortDirection: this.tickerPanel.state.sortDirection ?? null
         });
     }
 
     _restoreSortForList(listId) {
         if (!this._listSorts) this._listSorts = new Map();
-        const saved = this._listSorts.get(listId);
-        
-        if (saved && saved.sortBy) {
-            this.tickerPanel.state.sortBy = saved.sortBy;
-            this.tickerPanel.state.sortDirection = saved.sortDirection;
+
+        // ✅ ФИКС: различаем «для списка нет сохранённой сортировки вообще»
+        // и «сохранена сортировка = null (выключена)». Раньше обе ситуации
+        // попадали в else и сортировка принудительно сбрасывалась на volume/desc.
+        const hasSaved = this._listSorts.has(listId);
+        const saved = hasSaved ? this._listSorts.get(listId) : null;
+
+        if (hasSaved && saved) {
+            this.tickerPanel.state.sortBy = saved.sortBy ?? null;
+            this.tickerPanel.state.sortDirection = saved.sortDirection ?? null;
         } else {
             this.tickerPanel.state.sortBy = 'volume';
             this.tickerPanel.state.sortDirection = 'desc';
             this._listSorts.set(listId, { sortBy: 'volume', sortDirection: 'desc' });
         }
-        
+
+        // ✅ ФИКС (главный): синхронизируем глобальный localStorage с per-list
+        // сортировкой. Иначе после переключения списка localStorage хранит
+        // сортировку ПРЕДЫДУЩЕГО списка, и при перезагрузке страницы
+        // setupHeaderSorting() подставит её в state — а initializeWithPriority()
+        // мог пропустить восстановление per-list сортировки (см. ниже),
+        // из-за чего активный список визуально сортировался «не тем» полем.
+        localStorage.setItem('tickerSortBy', this.tickerPanel.state.sortBy || '');
+        localStorage.setItem('tickerSortDir', this.tickerPanel.state.sortDirection || '');
+
         this.tickerPanel.filterCache = null;
+        // ✅ ФИКС: сбрасываем сигнатуру состава — гарантия, что getFilteredTickers()
+        // не отдаст закэшированный result от предыдущего списка даже если
+        // наборы символов случайно совпали по длине/краям.
+        this.tickerPanel._lastSymbolsSig = null;
         this._updateHeaderIcons();
-        
+
         if (this.tickerPanel._scheduleRender) {
             this.tickerPanel._scheduleRender();
         } else {
@@ -314,14 +326,14 @@ class WatchlistManager {
     _updateHeaderIcons() {
         const sortBy = this.tickerPanel.state.sortBy;
         const sortDirection = this.tickerPanel.state.sortDirection;
-        
+
         document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
             icon.className = 'fas fa-sort';
             icon.style.display = 'inline-block';
         });
-        
+
         if (!sortBy) return;
-        
+
         const activeHeader = document.querySelector(`.table-header span[data-sort="${sortBy}"]`);
         if (activeHeader) {
             const icon = activeHeader.querySelector('i');
@@ -347,7 +359,7 @@ class WatchlistManager {
         if (this.tickerPanel?._suppressWatchlistLoad) return false;
         const activeList = this.lists.get(this.activeListId);
         if (!activeList || activeList.symbols.length === 0) return false;
-        
+
         if (this.tickerPanel?.pollRestData) {
             this.tickerPanel.pollRestData().catch(e => console.warn('pollRestData:', e));
         }
@@ -358,11 +370,6 @@ class WatchlistManager {
         const list = this.lists.get(listId);
         if (!list) return;
 
-        // ✅ ФИКС: отписываемся от PriceManager для ВСЕХ ранее подписанных символов
-        // ДО очистки tickersMap. Раньше этого не делалось вообще — старые подписки
-        // навсегда оставались висеть внутри PriceManager.subscribers (утечка),
-        // продолжая молча получать и отбрасывать обновления для уже не отображаемых
-        // тикеров (см. ранний return в TickerPanel._onPriceUpdate по "!ticker").
         if (window.priceManagerInstance && this.tickerPanel._pmPriceHandler) {
             for (const key of this.tickerPanel._subscribedSymbols) {
                 window.priceManagerInstance.unsubscribe(key, this.tickerPanel._pmPriceHandler);
@@ -370,17 +377,19 @@ class WatchlistManager {
         }
         this.tickerPanel._subscribedSymbols.clear();
 
-        // ✅ ФИКС: мутируем массив на месте вместо this.tickerPanel.tickers = [].
-        // Переприсваивание рвёт общую ссылку с storage.tickers (см. предыдущий аудит TickerPanel).
         this.tickerPanel.tickers.length = 0;
         this.tickerPanel.tickersMap.clear();
         this.tickerPanel.tickerElements?.clear();
-        
-        this.tickerPanel._rowDomCache?.clear(); 
-        
+        this.tickerPanel._rowDomCache?.clear();
+
         this.tickerPanel.renderer.displayedTickers = [];
         this.tickerPanel.renderer.totalItems = list.symbols.length;
         this.tickerPanel.filterCache = null;
+        // ✅ ФИКС: сбрасываем сигнатуру состава. Состав customSymbols ниже
+        // меняется — проверка в getFilteredTickers() это поймает и так, но
+        // явный сброс исключает любые «залипшие» кэши при совпадении наборов
+        // между двумя вотчлистами (например, одинаковые монеты, разный порядок).
+        this.tickerPanel._lastSymbolsSig = null;
         this.tickerPanel.state.customSymbols = [...list.symbols];
         this.tickerPanel.state.flags = { ...(list.flags || {}) };
         this.tickerPanel.state.favorites = [...(list.favorites || [])];
@@ -401,15 +410,6 @@ class WatchlistManager {
             this.tickerPanel.tickers.push(t);
             this.tickerPanel.tickersMap.set(symbolKey, t);
 
-            // ✅ ГЛАВНЫЙ ФИКС: подписываем каждый новый тикер на PriceManager.
-            // Раньше loadSymbolsFromList создавал тикеры напрямую в обход
-            // addSymbol()/addSymbolsBatch() — единственных мест, где реально вызывался
-            // priceManagerInstance.subscribe(). А глобальная разовая подписка
-            // _syncToPriceManager() срабатывает только один раз при самом первом
-            // запуске startTickerPanelPriceEngine(). В итоге любой список, загруженный
-            // через переключение вотчлиста, НАВСЕГДА оставался без живых WS-обновлений
-            // цен — только редкий часовой REST-поллинг. Баг был полностью незаметен
-            // внешне (цены всё равно менялись, просто с огромной задержкой).
             if (window.priceManagerInstance) {
                 window.priceManagerInstance.subscribe(symbolKey, this.tickerPanel._pmPriceHandler);
                 this.tickerPanel._subscribedSymbols.add(symbolKey);
@@ -448,12 +448,12 @@ class WatchlistManager {
         const key = `${symbol}:${exchange}:${marketType}`;
         const before = list.symbols.length;
         list.symbols = list.symbols.filter(s => s !== key);
-        
+
         if (list.flags && list.flags[key]) delete list.flags[key];
         if (list.favorites) {
             list.favorites = list.favorites.filter(s => s !== symbol);
         }
-        
+
         if (list.symbols.length !== before) {
             this.renderCache.delete(this.activeListId);
             this.saveToStorage();
@@ -483,10 +483,19 @@ class WatchlistManager {
         if (activeList && activeList.symbols.length > 0) {
             if (!panelHasTickers || this.tickerPanel.tickers.length !== activeList.symbols.length) {
                 await this.loadSymbolsFromList(this.activeListId);
-                this._restoreSortForList(this.activeListId);
             } else {
                 this._schedulePriceLoadForList(activeList.symbols);
             }
+
+            // ✅ ФИКС (главный): ВСЕГДА восстанавливаем сортировку для активного
+            // списка. Раньше вызов стоял только внутри if-ветки (когда список
+            // символов пересобирался). Если панель уже содержала тикеры из
+            // IndexedDB и их количество совпадало со списком, сортировка НЕ
+            // восстанавливалась — state.sortBy оставался тем, что выставил
+            // setupHeaderSorting() из глобального localStorage (значение
+            // ПРЕДЫДУЩЕГО списка). Визуально: список отсортирован «не тем» полем,
+            // стрелка в шапке не соответствует реальному порядку.
+            this._restoreSortForList(this.activeListId);
         }
     }
 
