@@ -182,24 +182,21 @@
 </button>
 </div>
 <div class="chart-type-selector" id="chartTypeSelector">
-<button class="alert-history-btn active" id="candleBtn" data-type="candle" title="Японские свечи">
-<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
-<path d="M280-160v-80h-80v-480h80v-80h80v80h80v480h-80v80h-80Zm0-160h80v-320h-80v320Z" fill="currentColor"/>
-<path d="M200-640h80v-80h-80v80Zm0 480h80v-80h-80v80Z" fill="currentColor" opacity="0.5"/>
-<path d="M600-160v-200h-80v-280h80v-160h80v160h80v280h-80v200h-80Zm0-280h80v-120h-80v120Z" fill="currentColor"/>
-<path d="M520-640h80v-80h-80v80Zm0 480h80v-80h-80v80Z" fill="currentColor" opacity="0.5"/>
-</svg>
-</button>
-<button class="alert-history-btn" id="barBtn" data-type="bar" title="Бары OHLC">
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<line x1="6" y1="4" x2="6" y2="20" stroke="currentColor" stroke-width="3"/>
-<line x1="1" y1="15" x2="6" y2="15" stroke="currentColor" stroke-width="3"/>
-<line x1="6" y1="9" x2="11" y2="9" stroke="currentColor" stroke-width="3"/>
-<line x1="18" y1="4" x2="18" y2="20" stroke="currentColor" stroke-width="3"/>
-<line x1="13" y1="9" x2="18" y2="9" stroke="currentColor" stroke-width="3"/>
-<line x1="18" y1="15" x2="23" y2="15" stroke="currentColor" stroke-width="3"/>
-</svg>
-</button>
+  <button class="alert-history-btn active" id="candleBtn" data-type="candle" title="Японские свечи">
+    <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
+      <path d="M280-160v-80h-80v-480h80v-80h80v80h80v480h-80v80h-80Zm0-160h80v-320h-80v320Zm320 160v-200h-80v-280h80v-160h80v160h80v280h-80v200h-80Zm0-280h80v-120h-80v120Zm-280-40Zm320-20Z" fill="currentColor"/>
+    </svg>
+  </button>
+  <button class="alert-history-btn" id="barBtn" data-type="bar" title="Бары OHLC">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <line x1="6" y1="4" x2="6" y2="20" stroke="currentColor" stroke-width="3"/>
+      <line x1="1" y1="15" x2="6" y2="15" stroke="currentColor" stroke-width="3"/>
+      <line x1="6" y1="9" x2="11" y2="9" stroke="currentColor" stroke-width="3"/>
+      <line x1="18" y1="4" x2="18" y2="20" stroke="currentColor" stroke-width="3"/>
+      <line x1="13" y1="9" x2="18" y2="9" stroke="currentColor" stroke-width="3"/>
+      <line x1="18" y1="15" x2="23" y2="15" stroke="currentColor" stroke-width="3"/>
+    </svg>
+  </button>
 </div>
 <!-- ПАНЕЛЬ НАСТРОЕК ГРАФИКА - С COLOR PICKER'АМИ -->
 <div class="drawing-settings-panel" id="chartColorPanel" style="display: none; position: fixed; background: #2D2D2D; border: 1px solid #404040; border-radius: 8px; padding: 15px; color: #B0B0B0; font-size: 12px; z-index: 10002; width: 400px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); left: 50%; top: 50%; transform: translate(-50%, -50%);">
@@ -1250,16 +1247,26 @@ let toolbarRafId = null; // Для плавности
 // ========== DRAG ПАНЕЛИ РИСОВАЛОК (ИСПРАВЛЕННАЯ ВЕРСИЯ) ==========
 (function() {
     const toolbar = document.getElementById('drawingToolbar');
-    const header = document.getElementById('toolbarHeader');
+    const header  = document.getElementById('toolbarHeader');
     const toggleBtn = document.getElementById('toolbarToggle');
-    
+
     if (!toolbar || !header) return;
 
     // 1. ВОССТАНОВЛЕНИЕ ПОЗИЦИИ
     const savedLeft = localStorage.getItem('drawingToolbarLeft');
-    const savedTop = localStorage.getItem('drawingToolbarTop');
+    const savedTop  = localStorage.getItem('drawingToolbarTop');
     if (savedLeft) toolbar.style.left = savedLeft;
-    if (savedTop) toolbar.style.top = savedTop;
+    if (savedTop)  toolbar.style.top  = savedTop;
+
+    // 🔥 iPad: отключаем скролл/зум/long-press на хедере, чтобы жест
+    // перехватывался нами, а не Safari
+    header.style.touchAction = 'none';
+    header.style.webkitUserSelect = 'none';
+    header.style.userSelect = 'none';
+    if ('webkitTouchCallout' in header.style) {
+        header.style.webkitTouchCallout = 'none';
+    }
+    header.style.cursor = 'grab';
 
     let isDragging = false;
     let startX = 0, startY = 0;
@@ -1267,134 +1274,212 @@ let toolbarRafId = null; // Для плавности
     let containerWidth = 0, containerHeight = 0;
     let toolbarWidth = 0, toolbarHeight = 0;
     let rafId = null;
-    
-    // Ссылка на ResizeObserver, чтобы отключать его во время драга
-    let resizeObserver = null; 
+    let lastClientX = 0, lastClientY = 0;
+    let activePointerId = null;
 
-    // 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ
-    header.addEventListener('mousedown', (e) => {
+    let resizeObserver = null;
+
+    // ============================================================
+    // 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ (pointerdown — общий для мыши и пальца)
+    // ============================================================
+    header.addEventListener('pointerdown', (e) => {
         // Игнорируем клики по кнопкам управления
         if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) return;
-        
+
+        // Игнорируем правую/среднюю кнопку мыши
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+
         isDragging = true;
-        
-        // Фиксируем начальные координаты курсора
+        activePointerId = e.pointerId;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+
         startX = e.clientX;
         startY = e.clientY;
-        
-        // ✅ ИСПРАВЛЕНИЕ: Используем offsetLeft/offsetTop вместо getBoundingClientRect
-        // Это дает координаты относительно позиционированного родителя, 
-        // что совпадает с системой координат style.left/top
+
         startLeft = toolbar.offsetLeft;
-        startTop = toolbar.offsetTop;
-        
-        // Кэшируем размеры один раз при старте, чтобы не вызывать reflow на каждом движении
+        startTop  = toolbar.offsetTop;
+
+        // Кэшируем размеры один раз при старте
         const parent = toolbar.offsetParent || document.body;
-        containerWidth = parent.clientWidth;
+        containerWidth  = parent.clientWidth;
         containerHeight = parent.clientHeight;
-        toolbarWidth = toolbar.offsetWidth;
-        toolbarHeight = toolbar.offsetHeight;
-        
-        // Блокируем выделение текста и меняем курсор
+        toolbarWidth    = toolbar.offsetWidth;
+        toolbarHeight   = toolbar.offsetHeight;
+
         document.body.style.userSelect = 'none';
         document.body.style.webkitUserSelect = 'none';
         header.style.cursor = 'grabbing';
-        
-        // ✅ Отключаем ResizeObserver, чтобы он не мешал перетаскиванию
-        if (resizeObserver) {
-            resizeObserver.disconnect();
-        }
-        
+
+        if (resizeObserver) resizeObserver.disconnect();
+
+        // 🔥 Ключевой момент для iPad: захватываем палец на хедере.
+        // Теперь pointermove/pointerup будут приходить хедеру, даже если
+        // палец физически вышел за его пределы.
+        try {
+            header.setPointerCapture(e.pointerId);
+        } catch (_) { /* старые браузеры — не критично */ }
+
         e.preventDefault();
     });
 
-    // 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ
-    document.addEventListener('mousemove', (e) => {
+    // ============================================================
+    // 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ (pointermove на хедере, а не на document,
+    //    потому что pointer capture перенаправляет события в хедер)
+    // ============================================================
+    function onPointerMove(e) {
         if (!isDragging) return;
-        
-        // Используем RAF для плавности, но без пропуска кадров через флаг
-        if (rafId) cancelAnimationFrame(rafId);
-        
-        rafId = requestAnimationFrame(() => {
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
-            
-            let newLeft = startLeft + deltaX;
-            let newTop = startTop + deltaY;
-            
-            // Ограничение границами контейнера (с небольшим отступом 5px)
-            const maxLeft = containerWidth - toolbarWidth - 5;
-            const maxTop = containerHeight - toolbarHeight - 5;
-            
-            newLeft = Math.max(5, Math.min(maxLeft, newLeft));
-            newTop = Math.max(5, Math.min(maxTop, newTop));
-            
-            toolbar.style.left = newLeft + 'px';
-            toolbar.style.top = newTop + 'px';
-        });
-    });
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
 
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+
+        if (rafId) cancelAnimationFrame(rafId);
+
+        rafId = requestAnimationFrame(() => {
+            const deltaX = lastClientX - startX;
+            const deltaY = lastClientY - startY;
+
+            let newLeft = startLeft + deltaX;
+            let newTop  = startTop  + deltaY;
+
+            const maxLeft = containerWidth  - toolbarWidth  - 5;
+            const maxTop  = containerHeight - toolbarHeight - 5;
+
+            newLeft = Math.max(5, Math.min(maxLeft, newLeft));
+            newTop  = Math.max(5, Math.min(maxTop,  newTop));
+
+            toolbar.style.left = newLeft + 'px';
+            toolbar.style.top  = newTop  + 'px';
+        });
+
+        // Критично: на touch нужно остановить прокрутку страницы
+        if (e.cancelable) e.preventDefault();
+    }
+
+    // ============================================================
     // 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ
-    document.addEventListener('mouseup', () => {
+    // ============================================================
+    function onPointerUp(e) {
         if (!isDragging) return;
-        
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
+
         isDragging = false;
+        activePointerId = null;
         header.style.cursor = 'grab';
         document.body.style.userSelect = '';
         document.body.style.webkitUserSelect = '';
-        
+
         if (rafId) {
             cancelAnimationFrame(rafId);
             rafId = null;
         }
-        
-        // Сохраняем позицию
+
         localStorage.setItem('drawingToolbarLeft', toolbar.style.left);
-        localStorage.setItem('drawingToolbarTop', toolbar.style.top);
-        
-        // ✅ Включаем ResizeObserver обратно
+        localStorage.setItem('drawingToolbarTop',  toolbar.style.top);
+
+        try {
+            header.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+
         if (resizeObserver && toolbar.offsetParent) {
             resizeObserver.observe(toolbar.offsetParent);
         }
-    });
+    }
 
-    // 5. СВОРАЧИВАНИЕ ПАНЕЛИ
+    // Вешаем pointermove/up/cancel прямо на header — это работает
+    // благодаря setPointerCapture и мыши, и на касаниях.
+    header.addEventListener('pointermove',  onPointerMove);
+    header.addEventListener('pointerup',    onPointerUp);
+    header.addEventListener('pointercancel', onPointerUp);
+    header.addEventListener('lostpointercapture', onPointerUp);
+
+    // 🔥 Страховка для очень старых iOS (если Pointer Events не поддерживаются),
+    // отдельно обрабатываем touch. В современных Safari это не понадобится,
+    // но безопасно и ничего не ломает.
+    if (!window.PointerEvent) {
+        header.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            const t = e.touches[0];
+            const synth = new PointerEvent('pointerdown', {
+                bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch',
+                clientX: t.clientX, clientY: t.clientY, button: 0, buttons: 1
+            });
+            header.dispatchEvent(synth);
+            e.preventDefault();
+        }, { passive: false });
+
+        header.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            const t = e.touches[0];
+            if (!t) return;
+            const synth = new PointerEvent('pointermove', {
+                bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch',
+                clientX: t.clientX, clientY: t.clientY, buttons: 1
+            });
+            header.dispatchEvent(synth);
+            e.preventDefault();
+        }, { passive: false });
+
+        header.addEventListener('touchend', (e) => {
+            if (!isDragging) return;
+            const synth = new PointerEvent('pointerup', {
+                bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch',
+                clientX: lastClientX, clientY: lastClientY, button: 0, buttons: 0
+            });
+            header.dispatchEvent(synth);
+            e.preventDefault();
+        }, { passive: false });
+
+        header.addEventListener('touchcancel', (e) => {
+            if (!isDragging) return;
+            const synth = new PointerEvent('pointerup', {
+                bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch',
+                clientX: lastClientX, clientY: lastClientY, button: 0, buttons: 0
+            });
+            header.dispatchEvent(synth);
+        }, { passive: false });
+    }
+
+    // ============================================================
+    // 5. СВОРАЧИВАНИЕ ПАНЕЛИ (pointerup, чтобы работало и на тач)
+    // ============================================================
     if (toggleBtn) {
+        toggleBtn.style.touchAction = 'none';
         toggleBtn.addEventListener('click', () => {
             toolbar.classList.toggle('collapsed');
             toggleBtn.textContent = toolbar.classList.contains('collapsed') ? '▶' : '◀';
-            // Обновляем кэш размеров после анимации сворачивания
             setTimeout(() => {
-                toolbarWidth = toolbar.offsetWidth;
+                toolbarWidth  = toolbar.offsetWidth;
                 toolbarHeight = toolbar.offsetHeight;
             }, 300);
         });
     }
 
+    // ============================================================
     // 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА
-    // ✅ Создаем Observer здесь, чтобы иметь ссылку для отключения в mousedown
+    // ============================================================
     if (window.ResizeObserver && toolbar.offsetParent) {
         resizeObserver = new ResizeObserver(() => {
-            if (isDragging) return; // Не трогаем во время драга
-            
+            if (isDragging) return;
+
             const parent = toolbar.offsetParent || document.body;
             const cW = parent.clientWidth;
             const cH = parent.clientHeight;
             const tW = toolbar.offsetWidth;
             const tH = toolbar.offsetHeight;
-            
+
             let curLeft = parseFloat(toolbar.style.left) || 20;
-            let curTop = parseFloat(toolbar.style.top) || 60;
-            
-            // Корректируем только если панель вылезла за границы
+            let curTop  = parseFloat(toolbar.style.top)  || 60;
+
             const newLeft = Math.max(5, Math.min(cW - tW - 5, curLeft));
-            const newTop = Math.max(5, Math.min(cH - tH - 5, curTop));
-            
+            const newTop  = Math.max(5, Math.min(cH - tH - 5, curTop));
+
             if (newLeft !== curLeft || newTop !== curTop) {
                 toolbar.style.left = newLeft + 'px';
-                toolbar.style.top = newTop + 'px';
+                toolbar.style.top  = newTop  + 'px';
                 localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
-                localStorage.setItem('drawingToolbarTop', newTop + 'px');
+                localStorage.setItem('drawingToolbarTop',  newTop  + 'px');
             }
         });
         resizeObserver.observe(toolbar.offsetParent);
