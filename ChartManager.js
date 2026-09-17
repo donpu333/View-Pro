@@ -2788,35 +2788,27 @@ class ChartManager {
     const timeScale = this.chart.timeScale();
     const savedBarSpacing = this._savedBarSpacing || 25;
 
+    // 1) Жёстко фиксируем barSpacing. Это ключевой момент: если setVisibleLogicalRange
+    //    получает span, не равный width / barSpacing, LW сам пересчитывает barSpacing,
+    //    и все "25 баров отступа" в пикселях превращаются в чёрт знает что.
     timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
     const lastIndex = this.chartData.length - 1;
-    const containerWidth = this.chartContainer.clientWidth || 800;
-    const visibleBars = Math.max(10, Math.floor(containerWidth / savedBarSpacing));
+    const width = this.chartContainer.clientWidth || 800;
+    const visibleBars = width / savedBarSpacing;
+    const rightOffset = 25;
 
-    // Хотим 25 баров справа. Но если свечей мало — сжимаем отступ,
-    // чтобы не отдавать пустоте половину экрана.
-    const desiredRightOffset = 25;
-    const minVisibleCandles = Math.min(this.chartData.length, Math.ceil(visibleBars * 0.5));
-    const maxAllowedRightOffset = Math.max(0, visibleBars - minVisibleCandles);
-    const rightOffset = Math.min(desiredRightOffset, maxAllowedRightOffset);
+    // 2) Правый край ВСЕГДА на lastIndex + 25.
+    //    Левый — просто правый минус ширина окна. Если получится < 0 —
+    //    так и оставляем (пустое место слева, но отступ справа не меняется).
+    const to = lastIndex + rightOffset;
+    const from = to - visibleBars;
 
-    let from = lastIndex + rightOffset - visibleBars;
-    let to = lastIndex + rightOffset;
-
-    // Свечей так мало, что даже без отступа ничего не влезает справа —
-    // прижимаем к левому краю и расширяем вьюпорт до visibleBars.
-    if (from < 0) {
-        from = -0.5;
-        to = Math.max(visibleBars - 0.5, lastIndex + rightOffset + 0.5);
-    }
-
+    // 3) Один-единственный setVisibleLogicalRange. Никаких scrollToRealTime,
+    //    setVisibleRange и прочих "докруток" — они перебивают диапазон выше.
     try {
         timeScale.setVisibleLogicalRange({ from, to });
     } catch (e) {}
-
-    // scrollToRealTime() НЕ вызываем — он перебивает диапазон выше
-    // и растягивает отступ в пикселях, потому что barSpacing уже изменён.
 
     const finalizeAfterRescale = () => {
         if (this._isChartValid()) {
