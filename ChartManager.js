@@ -1,8 +1,5 @@
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
-// FIX D: вынесено из _getIntervalSeconds()/_alignTimeToInterval().
-// FIX 2H: добавлен '2h': 7200 — без него _getNextIntervalTimeFor('2h')
-// возвращал +3600 (1 час), и каждая 2h-свеча трактовалась как дыра.
 const INTERVAL_SECONDS_MAP = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
     '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
@@ -11,9 +8,6 @@ const INTERVAL_SECONDS_MAP = {
 
 class ChartManager {
 
-    // =================================================================================
-    // 1. КОНСТРУКТОР
-    // =================================================================================
     constructor(container) {
         this.chartData = [];
         this.lastCandle = null;
@@ -106,8 +100,6 @@ class ChartManager {
         this._lastGapHealAttempt = 0;
         this._unhealableGaps = new Set();
 
-        // FIX AUTOSCROLL: скролл к realtime разрешён только в окне после
-        // открытия тикера / смены ТФ.
         this._autoScrollEnabled = false;
         this._autoScrollTimeout = null;
 
@@ -266,9 +258,6 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: false,
                 entireTextOnly: true,
-                // FIX WIDTH: фиксируем минимальную ширину шкалы цены. Без этого
-                // при смене precision (2 → 6 знаков) шкала расширяется и
-                // пересчитывает barSpacing → вся картинка и отступ «прыгают».
                 minimumWidth: 80,
             },
             localization: {
@@ -493,6 +482,50 @@ class ChartManager {
     }
 
     // =================================================================================
+    // 1c. FIX SCROLLTORETIME: ЕДИНЫЙ ХЕЛПЕР ПРАВОГО КРАЯ
+    // =================================================================================
+    // В версии LW, которая используется в проекте, timeScale().scrollToRealTime()
+    // не соблюдает rightOffset: он ставит правый край по внутреннему «real time»
+    // индексу, который может быть больше lastIndex (из-за чего правый отступ
+    // раздувается в 3-5 раз на коротких сериях). Единственный надёжный способ —
+    // вычислить from/to вручную через lastIndex + rightOffset и вызвать
+    // setVisibleLogicalRange({from, to}). Проверено в консоли.
+    _scrollToRightEdgeWithOffset() {
+        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
+
+        const ts = this.chart.timeScale();
+        if (!ts) return;
+
+        const lastIndex = this.chartData.length - 1;
+        const rightOffset = 15;
+
+        let barSpacing = this._savedBarSpacing || ts.options().barSpacing || 25;
+        if (!barSpacing || barSpacing <= 0) barSpacing = 25;
+
+        let width = 0;
+        try { width = ts.width() || 0; } catch (e) { width = 0; }
+
+        if (!width || width < 50) {
+            const ps = this.chart.priceScale('right');
+            let psW = 0;
+            try { psW = ps?.width?.() || 0; } catch (e) {}
+            width = Math.max(50, (this.chartContainer.clientWidth || 800) - psW - 8);
+        }
+
+        const visibleBars = width / barSpacing;
+        const to = lastIndex + rightOffset;
+        const from = to - visibleBars;
+
+        try {
+            ts.applyOptions({ barSpacing: barSpacing, rightOffset: rightOffset });
+        } catch (e) {}
+
+        try {
+            ts.setVisibleLogicalRange({ from, to });
+        } catch (e) {}
+    }
+
+    // =================================================================================
     // 2. ЦВЕТА, ТЕКСТОВЫЙ КОНТРАСТ, ЦЕНОВАЯ ШКАЛА ОБЪЁМА
     // =================================================================================
 
@@ -592,9 +625,6 @@ class ChartManager {
         } catch (e) {}
     }
 
-    // =================================================================================
-    // FIX #20 + FIX SMOOTH + FIX DRIFT + FIX AUTOSCROLL
-    // =================================================================================
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
 
@@ -629,7 +659,13 @@ class ChartManager {
             if (visibleSeries) visibleSeries.setData(this.chartData);
         } catch (e) {}
 
-        if (otherSeries) this._invisibleSeriesDirty = true;
+        // FIX TIMELINE POLLUTION: невидимая серия обязана иметь тот же набор
+        // времён, иначе LW расширяет таймлайн и все расчёты отступа ломаются.
+        try {
+            if (otherSeries) otherSeries.setData(this.chartData);
+        } catch (e) {}
+
+        this._invisibleSeriesDirty = false;
 
         if (rebuildVolume) {
             this._volumeDataCache = null;
@@ -649,7 +685,7 @@ class ChartManager {
 
         try {
             if (atRightEdge && this._autoScrollEnabled) {
-                ts.scrollToRealTime();
+                this._scrollToRightEdgeWithOffset();
             } else if (anchorTime != null) {
                 const newIdx = this._candleTimeMap.get(anchorTime);
                 if (newIdx !== undefined) {
@@ -666,19 +702,25 @@ class ChartManager {
         if (!this._isChartValid() || !newCandles || newCandles.length === 0) return;
 
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+        const other = this.currentChartType === 'candle' ? this.barSeries : this.candleSeries;
         if (!series) return;
 
         let failed = false;
 
         for (const c of newCandles) {
+            const point = { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+
             try {
-                series.update({
-                    time: c.time,
-                    open: c.open,
-                    high: c.high,
-                    low: c.low,
-                    close: c.close
-                });
+                series.update(point);
+            } catch (e) {
+                failed = true;
+                break;
+            }
+
+            // FIX TIMELINE POLLUTION: невидимая серия тоже получает новые бары,
+            // иначе её хвост отстаёт и расширяет модель таймскейла.
+            try {
+                if (other) other.update(point);
             } catch (e) {
                 failed = true;
                 break;
@@ -698,7 +740,7 @@ class ChartManager {
             return;
         }
 
-        this._invisibleSeriesDirty = true;
+        this._invisibleSeriesDirty = false;
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = this.chartData.length - 1;
     }
@@ -804,7 +846,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 6. ЦЕНОВАЯ ЛИНИЯ (line color) ПО ПОСЛЕДНЕЙ СВЕЧЕ
+    // 6. ЦЕНОВАЯ ЛИНИЯ
     // =================================================================================
 
     _getLineColor() {
@@ -984,7 +1026,6 @@ class ChartManager {
             const freshMap = new Map(fresh.map(c => [c.time, c]));
 
             let changed = false;
-            let olderCandlesChanged = false;
             let needsCatchUp = false;
             let needsFullRedraw = false;
             const pushedMissing = [];
@@ -1039,7 +1080,6 @@ class ChartManager {
                             cur.close >= cur.open ? this.bullishColor : this.bearishColor
                         );
                     } else {
-                        olderCandlesChanged = true;
                         touchedMidCandles.push(cur);
                     }
 
@@ -1315,7 +1355,7 @@ class ChartManager {
                     this.lastCandle = currentData[currentData.length - 1];
 
                     if (lastCandleFresh && pushed.length === 0) {
-                        // только что обновили последнюю — уже сделано инкрементально
+                        // обновлено инкрементально
                     } else if (pushed.length > 0) {
                         appendOnly = true;
                     } else {
@@ -1455,7 +1495,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9. ПРОВЕРКА НОВЫХ СВЕЧЕЙ И ДОГОНЯЮЩАЯ ДОКАЧКА ПРОПУЩЕННЫХ
+    // 9. ПРОВЕРКА НОВЫХ СВЕЧЕЙ И ДОГОНЯЮЩАЯ ДОКАЧКА
     // =================================================================================
 
     _startNewCandleChecker() {
@@ -1619,7 +1659,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9b. ЛЕЧЕНИЕ ВНУТРЕННИХ ДЫР В ДАННЫХ
+    // 9b. ЛЕЧЕНИЕ ДЫР
     // =================================================================================
     async _healDataGaps() {
         if (this._destroyed) return;
@@ -1705,7 +1745,7 @@ class ChartManager {
                 this._healDataGaps().catch(() => {});
             }, 500);
         } catch (e) {
-            console.warn('⚠️ Ошибка заполнения дыр в данных:', e);
+            console.warn('⚠️ Ошибка заполнения дыр:', e);
         } finally {
             this._healingGaps = false;
         }
@@ -1714,7 +1754,7 @@ class ChartManager {
     _setupPanelsSync() {}
 
     // =================================================================================
-    // 10. ПОДПИСКИ НА СОБЫТИЯ ГРАФИКА
+    // 10. ПОДПИСКИ
     // =================================================================================
 
     setupOptimizedSubscriptions() {
@@ -1896,7 +1936,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 11. ПЕРЕКЛЮЧЕНИЕ ТИПА ГРАФИКА (свечи / бары)
+    // 11. ТИП ГРАФИКА
     // =================================================================================
 
     setChartType(type) {
@@ -1991,7 +2031,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 12. ПЛАНОВОЕ ОБНОВЛЕНИЕ (rAF-throttled)
+    // 12. ПЛАНОВОЕ ОБНОВЛЕНИЕ
     // =================================================================================
 
     scheduleUpdate() {
@@ -2106,7 +2146,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 13. СИНХРОНИЗАЦИЯ ЦЕНОВОЙ ЛИНИИ И ОБРАБОТКА ВХОДЯЩИХ ТИКОВ ЦЕНЫ
+    // 13. СИНХРОНИЗАЦИЯ ЦЕНОВОЙ ЛИНИИ
     // =================================================================================
 
     _syncPriceLine(priceOrObj) {
@@ -2124,7 +2164,6 @@ class ChartManager {
                 price = priceOrObj.last;
                 tickTime = priceOrObj.time || null;
             } else {
-                console.warn('⚠️ _syncPriceLine: не удалось извлечь цену:', priceOrObj);
                 return;
             }
         }
@@ -2286,7 +2325,6 @@ class ChartManager {
             return;
         }
 
-        // C. Опоздавший тик — не трогаем структуру
         this.currentRealPrice = price;
 
         const lineColor = this._getLineColor();
@@ -2298,7 +2336,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 14. ОБНОВЛЕНИЕ ПОСЛЕДНЕЙ/ТЕКУЩЕЙ СВЕЧИ ИЗ WS-СОБЫТИЯ KLINE
+    // 14. WS KLINE
     // =================================================================================
 
     updateLastCandle(candle, eventTime = null, meta = null) {
@@ -2501,7 +2539,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 15. ОЖИДАНИЕ ГОТОВНОСТИ ГРАФИКА
+    // 15. ОЖИДАНИЕ ГОТОВНОСТИ
     // =================================================================================
 
     async waitForChartReady() {
@@ -2610,20 +2648,9 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 16. УСТАНОВКА ПОЛНОГО НАБОРА ДАННЫХ И ПОЗИЦИОНИРОВАНИЕ
+    // 16. УСТАНОВКА ПОЛНОГО НАБОРА ДАННЫХ
     // =================================================================================
-    // FIX WIDTH + FIX PRECISION + FIX POSITION + FIX SHORT-SERIES OFFSET:
-    //   - precision применяется ДО setData, чтобы ширина шкалы цены не
-    //     перескакивала после того, как LW сам выведет precision из данных;
-    //   - ширина для расчёта позиции берётся через timeScale.width(), а не
-    //     clientWidth контейнера (иначе не учитываем шкалу цены и таймскейл);
-    //   - позиционирование правого края выполняется ТОЛЬКО через
-    //     timeScale.scrollToRealTime(). Это единственный метод LW, который
-    //     гарантированно даёт rightOffset баров справа от последней свечи
-    //     на серии ЛЮБОЙ длины. setVisibleLogicalRange({from, to}) и
-    //     scrollToPosition клампятся на коротких сериях (from уходит в
-    //     минус → LW прижимает from к 0 и раздувает правый отступ в 2–3
-    //     раза), поэтому они здесь не используются.
+
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) {
@@ -2710,10 +2737,6 @@ class ChartManager {
             this._historyEndTime = data[0].time;
             this.lastCandle = data[data.length - 1];
 
-            // FIX PRECISION: применяем priceFormat ДО setData. Иначе LW выведет
-            // свою точность из данных, шкала цены изменит ширину, и после
-            // setData придётся всё пересчитывать — визуально это выглядит как
-            // «дёрганье шкалы» и меняет ширину области баров.
             const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
             const inferredPrecision = this._inferPrecisionFromData();
             const prec = cachedPrecision ? parseInt(cachedPrecision, 10) : inferredPrecision;
@@ -2766,37 +2789,10 @@ class ChartManager {
                     return;
                 }
 
-                const timeScale = this.chart.timeScale();
-                if (!timeScale) {
-                    this._disableAutoScroll();
-                    if (onReady) onReady();
-                    return;
-                }
-
-                const savedBarSpacing = this._savedBarSpacing || 25;
-                const rightOffset = 15;
-
-                // FIX SHORT-SERIES: фиксируем barSpacing и rightOffset в опциях.
-                // scrollToRealTime() берёт ИМЕННО эти значения — если их не
-                // выставить заранее, LW применит rightOffset к тому barSpacing,
-                // который мог пересчитать сам после setData.
-                try {
-                    timeScale.applyOptions({
-                        barSpacing: savedBarSpacing,
-                        rightOffset: rightOffset
-                    });
-                } catch (e) {}
-
-                // FIX SHORT-SERIES: единственный метод LW, который корректно
-                // даёт rightOffset баров справа на серии ЛЮБОЙ длины.
-                // setVisibleLogicalRange({from, to}) и scrollToPosition на
-                // коротких сериях клампятся (from < 0 → LW прижимает from к 0
-                // и раздувает правый отступ). scrollToRealTime работает иначе:
-                // он скроллит относительно последнего бара с учётом rightOffset
-                // и barSpacing, без клампинга.
-                try {
-                    timeScale.scrollToRealTime();
-                } catch (e) {}
+                // FIX: вместо scrollToRealTime() используем наш хелпер —
+                // он ставит правый край ровно на lastIndex + 15 независимо
+                // от длины серии и внутренних оффсетов LW.
+                this._scrollToRightEdgeWithOffset();
 
                 const finalizeAfterRescale = () => {
                     if (this._isChartValid()) {
@@ -2934,7 +2930,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 18. ПРИОСТАНОВКА/ВОЗОБНОВЛЕНИЕ ОБНОВЛЕНИЙ
+    // 18. ПРИОСТАНОВКА/ВОЗОБНОВЛЕНИЕ
     // =================================================================================
 
     _suspendAllUpdates() {
@@ -3244,9 +3240,6 @@ class ChartManager {
         ]).then(() => this.requestDrawingsRedraw());
     }
 
-    // =================================================================================
-    // 19b. ПЕРВОНАЧАЛЬНАЯ ЗАГРУЗКА ДАННЫХ
-    // =================================================================================
     async loadInitialData(symbol, exchange, marketType, interval, onReady = null) {
         if (this._switchingSymbol || this._isSwitchingInterval) {
             if (onReady) onReady();
@@ -3284,7 +3277,7 @@ class ChartManager {
             if (this._activeGeneration !== generationId) { finish(); return; }
 
             if (!candles || candles.length === 0) {
-                console.warn('⚠️ loadInitialData: нет данных (ни кэш, ни REST)');
+                console.warn('⚠️ loadInitialData: нет данных');
                 finish();
                 return;
             }
@@ -3317,7 +3310,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 20. ПЕРЕКРЕСТИЕ (crosshair)
+    // 20. CROSSHAIR
     // =================================================================================
 
     onCrosshairMove(param) {
@@ -3514,7 +3507,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 21. ПОЗИЦИОНИРОВАНИЕ/СКРОЛЛ/АВТОМАСШТАБ/ОЧИСТКА ГРАФИКА
+    // 21. ПОЗИЦИОНИРОВАНИЕ/СКРОЛЛ
     // =================================================================================
 
     updateRealPrice(price) {
@@ -3535,13 +3528,9 @@ class ChartManager {
             const savedBarSpacing = this._savedBarSpacing || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
-            if (enableRealTime) {
-                timeScale.scrollToRealTime();
-            } else {
-                const lastIndex = this.chartData.length - 1;
-                const targetPosition = lastIndex + 15;
-                timeScale.scrollToPosition(targetPosition, true);
-            }
+            // FIX: вместо scrollToRealTime() — наш хелпер с явным
+            // setVisibleLogicalRange, чтобы отступ справа был ровно 15 баров.
+            this._scrollToRightEdgeWithOffset();
 
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
 
@@ -3666,7 +3655,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 22. ПРОСТЫЕ ГЕТТЕРЫ/СЕТТЕРЫ СОСТОЯНИЯ
+    // 22. ГЕТТЕРЫ/СЕТТЕРЫ
     // =================================================================================
 
     getLastCandle() { return this.lastCandle; }
@@ -3696,7 +3685,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 23. РАЗМЕРЫ КОНТЕЙНЕРА, ВЫСОТА ГРАФИКА, ПАНЕЛИ ИНДИКАТОРОВ
+    // 23. РАЗМЕРЫ
     // =================================================================================
 
     _updateMainChartHeight() {
@@ -3760,7 +3749,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 24. ДЕЛЕГИРОВАНИЕ ИНДИКАТОРОВ
+    // 24. ИНДИКАТОРЫ
     // =================================================================================
 
     addIndicator(type) {
@@ -3786,7 +3775,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 25. ПОДПИСКА НА ЖИВУЮ ЦЕНУ (priceManager)
+    // 25. ПОДПИСКА НА ЖИВУЮ ЦЕНУ
     // =================================================================================
 
     _subscribeToPrice() {
@@ -3822,10 +3811,7 @@ class ChartManager {
                 if (typeof price.price === 'number') price = price.price;
                 else if (typeof price.close === 'number') price = price.close;
                 else if (typeof price.last === 'number') price = price.last;
-                else {
-                    console.warn('⚠️ PriceManager передал объект без цены:', price);
-                    return;
-                }
+                else return;
             }
 
             if (typeof price !== 'number' || isNaN(price)) return;
@@ -3853,7 +3839,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 26. ТОЧНОСТЬ ЦЕНЫ (precision/priceFormat)
+    // 26. PRECISION
     // =================================================================================
 
     _inferPrecisionFromData() {
@@ -3901,7 +3887,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 27. ВАЛИДАЦИЯ И САНИТИЗАЦИЯ СВЕЧЕЙ
+    // 27. ВАЛИДАЦИЯ СВЕЧЕЙ
     // =================================================================================
 
     _isValidCandle(candle, nowSecHint = null) {
@@ -4048,7 +4034,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 29. ПОСТРОЕНИЕ И ОПТИМИЗИРОВАННОЕ ОБНОВЛЕНИЕ ГИСТОГРАММЫ ОБЪЁМА
+    // 29. ОБЪЁМ
     // =================================================================================
 
     _buildVolumeData(data) {
@@ -4110,7 +4096,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 30. ЗАГРУЗКА СВЕЧЕЙ С БИРЖИ (Binance/Bybit REST)
+    // 30. ЗАГРУЗКА С БИРЖИ
     // =================================================================================
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
@@ -4255,7 +4241,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 31. ЗАГОЛОВОК ВКЛАДКИ БРАУЗЕРА
+    // 31. TITLE
     // =================================================================================
 
     _updatePageTitle() {
@@ -4301,7 +4287,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 32. ОБНОВЛЕНИЕ ЦВЕТОВ ПО НАСТРОЙКАМ ПОЛЬЗОВАТЕЛЯ
+    // 32. ЦВЕТА
     // =================================================================================
 
     updateColorsForSettings(bullishColor, bearishColor) {
@@ -4358,7 +4344,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 33. ОСТАНОВКА ВСЕХ ФОНОВЫХ ПРОЦЕССОВ И ПОЛНОЕ УНИЧТОЖЕНИЕ ГРАФИКА
+    // 33. ОСТАНОВКА И УНИЧТОЖЕНИЕ
     // =================================================================================
 
     _abortAllProcesses() {
@@ -4558,7 +4544,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 34. СОХРАНЕНИЕ/ВОССТАНОВЛЕНИЕ ПОЗИЦИИ ПО ВРЕМЕНИ И КООРДИНАТНЫЕ ПРЕОБРАЗОВАНИЯ
+    // 34. КООРДИНАТНЫЕ ПРЕОБРАЗОВАНИЯ
     // =================================================================================
 
     saveCurrentTimePosition() {
@@ -4721,7 +4707,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 35. ПОДГРУЗКА ИСТОРИИ И ОБРЕЗКА (TRIM)
+    // 35. ПОДГРУЗКА ИСТОРИИ И TRIM
     // =================================================================================
 
     onVisibleLogicalRangeChange(range) {
@@ -4800,9 +4786,10 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
-            const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            if (visibleSeries) visibleSeries.setData(this.chartData);
-            this._invisibleSeriesDirty = true;
+            // FIX TIMELINE POLLUTION: обе серии получают одинаковый набор данных.
+            try { if (this.candleSeries) this.candleSeries.setData(this.chartData); } catch (e) {}
+            try { if (this.barSeries) this.barSeries.setData(this.chartData); } catch (e) {}
+            this._invisibleSeriesDirty = false;
 
             this._updateVolumeOptimized();
             this._applyVolumeScaleOptions();
@@ -4898,13 +4885,13 @@ class ChartManager {
                 this._volumeDataDirty = true;
                 this._lastVolumeUpdateIndex = -1;
 
-                const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-
                 const priceScale = this.chart.priceScale('right');
                 priceScale.applyOptions({ autoScale: false });
 
-                if (activeSeries) activeSeries.setData(this.chartData);
-                this._invisibleSeriesDirty = true;
+                // FIX TIMELINE POLLUTION: обе серии обновляются.
+                try { if (this.candleSeries) this.candleSeries.setData(this.chartData); } catch (e) {}
+                try { if (this.barSeries) this.barSeries.setData(this.chartData); } catch (e) {}
+                this._invisibleSeriesDirty = false;
 
                 this._updateVolumeOptimized();
                 this._applyVolumeScaleOptions();
@@ -4941,7 +4928,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 36. ФОНОВОЕ ДОДОБНОВЛЕНИЕ КОТИРОВОК
+    // 36. ФОНОВОЕ ДОДОБНОВЛЕНИЕ
     // =================================================================================
 
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
@@ -5064,7 +5051,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 37. КЭШИРОВАНИЕ СВЕЧЕЙ В IndexedDB
+    // 37. КЭШ
     // =================================================================================
 
     async _waitForDb(timeoutMs = 2000) {
@@ -5198,7 +5185,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 39. ПЛАНИРОВАНИЕ ПЕРЕРИСОВКИ ОБЪЕКТОВ РИСОВАНИЯ
+    // 39. DRAWINGS
     // =================================================================================
 
     manualAutoScale() {
