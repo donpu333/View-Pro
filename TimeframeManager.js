@@ -361,9 +361,6 @@ class TimeframeManager {
             return;
         }
 
-        // switchInterval у ChartManager глотает ошибки — определяем неудачу
-        // по факту: currentInterval не сменился. Иначе UI показывал бы новый
-        // ТФ, а на графике были бы старые данные.
         if (this.chartManager.currentInterval !== tf) {
             console.warn('⚠️ switchInterval не сменил интервал (вероятно, ошибка загрузки)');
             this._rollbackTimeframe(previousInterval);
@@ -371,17 +368,11 @@ class TimeframeManager {
             return;
         }
 
-        // Синхронизируем локальное состояние из ChartManager — он источник
-        // истины. Независимо от signal.aborted: switchInterval уже отработал,
-        // и chartManager.currentInterval теперь равен tf. Раньше при aborted
-        // мы выходили, оставив this.currentInterval устаревшим.
         this.currentInterval = this.chartManager.currentInterval;
         localStorage.setItem('lastTimeframe', this.currentInterval);
         this.chartManager.setCurrentInterval(this.currentInterval);
 
-        // wsManager.updateSymbolAndTimeframe здесь УДАЛЁН: его уже вызвал
-        // ChartManager.switchInterval. Повторный вызов давал двойной реконнект
-        // WS на каждое переключение ТФ (в логах — два 🔌 KLINE подряд).
+       
 
         this.timerManager.start(this.currentInterval);
 
@@ -397,12 +388,7 @@ class TimeframeManager {
             }
         });
 
-        this.chartManager.autoScale();
-
-        // Восстановление позиции истории после смены ТФ не выполняется:
-        // ChartManager всегда позиционирует вьюпорт у правого края под
-        // затемняющей подложкой. restorePosition() оставлен как публичный
-        // API для внешнего вызова.
+      
 
         requestAnimationFrame(() => {
             if (this._destroyed) return;
