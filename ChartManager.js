@@ -456,7 +456,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 1b. AUTOSCROLL
+    // AUTOSCROLL
     // =================================================================================
     _enableAutoScroll(durationMs = 2000) {
         this._autoScrollEnabled = true;
@@ -482,7 +482,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 1c. ЕДИНЫЙ ХЕЛПЕР ПРАВОГО КРАЯ
+    // ХЕЛПЕР ПРАВОГО КРАЯ
     // =================================================================================
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
@@ -532,8 +532,8 @@ class ChartManager {
     // =================================================================================
 
     // FIX LW-NULL: LWCharts падает с "Value is null", если в bar попадёт
-    // null/undefined/строка/NaN хоть в одно из time/open/high/low/close.
-    // Возвращает чистый bar-объект или null, если свечу использовать нельзя.
+    // невалидное поле или нарушены OHLC-инварианты. Возвращает чистый bar
+    // или null.
     _toLwBar(c) {
         if (!c || typeof c !== 'object') return null;
 
@@ -543,11 +543,20 @@ class ChartManager {
         const l = c.low;
         const cl = c.close;
 
-        if (typeof t !== 'number' || !isFinite(t) || t <= 0) return null;
-        if (typeof o !== 'number' || !isFinite(o)) return null;
-        if (typeof h !== 'number' || !isFinite(h)) return null;
-        if (typeof l !== 'number' || !isFinite(l)) return null;
-        if (typeof cl !== 'number' || !isFinite(cl)) return null;
+        // time: ЦЕЛЫЕ секунды в разумном диапазоне (UTCTimestamp).
+        if (typeof t !== 'number') return null;
+        if (!isFinite(t)) return null;
+        if (!Number.isInteger(t)) return null;
+        if (t <= 0 || t > 4102444800) return null; // > 2100-01-01 не бывает
+
+        if (typeof o !== 'number' || !isFinite(o) || o <= 0) return null;
+        if (typeof h !== 'number' || !isFinite(h) || h <= 0) return null;
+        if (typeof l !== 'number' || !isFinite(l) || l <= 0) return null;
+        if (typeof cl !== 'number' || !isFinite(cl) || cl <= 0) return null;
+
+        if (h < l) return null;
+        if (o > h || o < l) return null;
+        if (cl > h || cl < l) return null;
 
         return { time: t, open: o, high: h, low: l, close: cl };
     }
@@ -579,14 +588,13 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 2. ЦВЕТА / ШКАЛА ОБЪЁМА
+    // ЦВЕТА / ШКАЛА ОБЪЁМА
     // =================================================================================
 
     _applyVolumeScaleOptions() {
         if (!this.chart) return;
 
         const volumeScale = this.chart.priceScale('volume');
-
         if (!volumeScale) return;
 
         volumeScale.applyOptions({
@@ -645,7 +653,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 3. ВАЛИДНОСТЬ / ОВЕРЛЕЙ
+    // ВАЛИДНОСТЬ / ОВЕРЛЕЙ
     // =================================================================================
 
     _isChartValid() {
@@ -653,32 +661,27 @@ class ChartManager {
     }
 
     _updateVisibleSeries(updateData) {
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        if (!series) return;
-
-        // FIX LW-NULL: не пускаем в LWCharts ничего, кроме валидного бара.
-        const safe = this._toLwBar(updateData);
-        if (!safe) {
-            console.warn('🚨 LW-NULL: _updateVisibleSeries получил невалидные данные', updateData);
-            this._resyncSeriesFromData();
-            return;
-        }
-
         try {
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            if (!series) return;
+
+            const safe = this._toLwBar(updateData);
+            if (!safe) return;
+
             series.update(safe);
         } catch (e) {
-            this._resyncSeriesFromData();
+            try { this._resyncSeriesFromData(); } catch (e2) {}
         }
     }
 
     _resyncSeriesFromData() {
-        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
-
-        const now = Date.now();
-        if (this._lastSeriesResyncAt && now - this._lastSeriesResyncAt < 250) return;
-        this._lastSeriesResyncAt = now;
-
         try {
+            if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
+
+            const now = Date.now();
+            if (this._lastSeriesResyncAt && now - this._lastSeriesResyncAt < 250) return;
+            this._lastSeriesResyncAt = now;
+
             this._applyDataAtomically();
         } catch (e) {}
     }
@@ -713,19 +716,23 @@ class ChartManager {
         const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         const otherSeries = this.currentChartType === 'candle' ? this.barSeries : this.candleSeries;
 
-        // FIX LW-NULL: строим чистый массив LW-баров. Всё, что не проходит
-        // валидацию (null/строка/NaN), отсеивается ДО setData.
         const lwBars = this._toLwBarsArray(this.chartData);
 
         try {
             if (visibleSeries) visibleSeries.setData(lwBars);
         } catch (e) {
-            console.warn('🚨 LW-NULL: setData упал в _applyDataAtomically', e);
+            console.warn('🚨 LW-NULL: visibleSeries.setData упал, len=' + lwBars.length, e);
+            try { visibleSeries.setData([]); } catch (e2) {}
+            try { visibleSeries.setData(lwBars); } catch (e2) {}
         }
 
         try {
             if (otherSeries) otherSeries.setData(lwBars);
-        } catch (e) {}
+        } catch (e) {
+            console.warn('🚨 LW-NULL: otherSeries.setData упал', e);
+            try { otherSeries.setData([]); } catch (e2) {}
+            try { otherSeries.setData(lwBars); } catch (e2) {}
+        }
 
         this._invisibleSeriesDirty = false;
 
@@ -768,12 +775,8 @@ class ChartManager {
         let failed = false;
 
         for (const c of newCandles) {
-            // FIX LW-NULL: фильтруем каждую свечу перед update.
             const point = this._toLwBar(c);
-            if (!point) {
-                console.warn('🚨 LW-NULL: _applyAppendOnly пропустил невалидную свечу', c);
-                continue;
-            }
+            if (!point) continue;
 
             try {
                 series.update(point);
@@ -799,6 +802,8 @@ class ChartManager {
         }
 
         if (failed) {
+            try { series.setData([]); } catch (e) {}
+            try { if (other) other.setData([]); } catch (e) {}
             this._resyncSeriesFromData();
             return;
         }
@@ -814,7 +819,7 @@ class ChartManager {
         const t = Number(time);
         const v = Number(value);
 
-        if (!isFinite(t) || t <= 0) return;
+        if (!isFinite(t) || !Number.isInteger(t) || t <= 0) return;
         if (!isFinite(v) || v < 0) return;
 
         try {
@@ -871,7 +876,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 4. TIME MAP
+    // TIME MAP
     // =================================================================================
 
     _rebuildTimeMap() {
@@ -887,7 +892,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 5. "СВЕЖЕСТЬ"
+    // "СВЕЖЕСТЬ"
     // =================================================================================
 
     _stampCandle(candle, source, receivedAt, eventTime = null) {
@@ -915,7 +920,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 6. ЦЕНОВАЯ ЛИНИЯ
+    // ЦЕНОВАЯ ЛИНИЯ
     // =================================================================================
 
     _getLineColor() {
@@ -959,7 +964,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 7. ГРАНИЦЫ ИНТЕРВАЛОВ
+    // ГРАНИЦЫ ИНТЕРВАЛОВ
     // =================================================================================
 
     _getIntervalSeconds() {
@@ -1028,7 +1033,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 8. ФОНОВОЕ ОБНОВЛЕНИЕ ЗАГОЛОВКА / ПЕРИОДИЧЕСКИЙ СИНК
+    // ФОНОВОЕ ОБНОВЛЕНИЕ ЗАГОЛОВКА / ПЕРИОДИЧЕСКИЙ СИНК
     // =================================================================================
 
     _startBackgroundTitleUpdate() {
@@ -1564,7 +1569,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9. NEW CANDLE CHECKER
+    // NEW CANDLE CHECKER
     // =================================================================================
 
     _startNewCandleChecker() {
@@ -1728,7 +1733,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 9b. HEAL GAPS
+    // HEAL GAPS
     // =================================================================================
     async _healDataGaps() {
         if (this._destroyed) return;
@@ -1823,7 +1828,7 @@ class ChartManager {
     _setupPanelsSync() {}
 
     // =================================================================================
-    // 10. ПОДПИСКИ
+    // ПОДПИСКИ
     // =================================================================================
 
     setupOptimizedSubscriptions() {
@@ -2005,7 +2010,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 11. ТИП ГРАФИКА
+    // ТИП ГРАФИКА
     // =================================================================================
 
     setChartType(type) {
@@ -2100,7 +2105,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 12. ПЛАНОВОЕ ОБНОВЛЕНИЕ
+    // ПЛАНОВОЕ ОБНОВЛЕНИЕ
     // =================================================================================
 
     scheduleUpdate() {
@@ -2215,7 +2220,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 13. ЦЕНОВАЯ ЛИНИЯ
+    // ЦЕНОВАЯ ЛИНИЯ (тики)
     // =================================================================================
 
     _syncPriceLine(priceOrObj) {
@@ -2405,7 +2410,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 14. WS KLINE
+    // WS KLINE
     // =================================================================================
 
     updateLastCandle(candle, eventTime = null, meta = null) {
@@ -2608,7 +2613,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 15. ОЖИДАНИЕ / CURRENT CANDLE
+    // ОЖИДАНИЕ / CURRENT CANDLE
     // =================================================================================
 
     async waitForChartReady() {
@@ -2652,30 +2657,20 @@ class ChartManager {
                     this._catchUpMissedCandles().catch(() => {});
                 }, 0);
             }
-
             return false;
         }
 
-        // FIX LW-NULL: getCurrentPrice() мог вернуть СТРОКУ (priceManager
-        // отдаёт сырое значение), и isNaN("65000") === false пропускал её.
-        // Приводим к числу явно.
-        let price = null;
+        // FIX: currentStart ОБЯЗАН быть целым числом (UTCTimestamp для LWCharts).
+        if (!Number.isInteger(currentStart) || currentStart <= 0) return false;
 
-        try {
-            price = this.getCurrentPrice();
-        } catch (e) {
-            price = null;
-        }
+        let price = null;
+        try { price = this.getCurrentPrice(); } catch (e) { price = null; }
 
         if (typeof price === 'string') price = Number(price);
-
         if (price === null || price === undefined ||
             typeof price !== 'number' || !isFinite(price) || isNaN(price) || price <= 0) {
             price = lastCandle.close;
         }
-
-        if (typeof price === 'string') price = Number(price);
-
         if (typeof price !== 'number' || !isFinite(price) || isNaN(price) || price <= 0) {
             return false;
         }
@@ -2726,7 +2721,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 16. УСТАНОВКА ПОЛНОГО НАБОРА ДАННЫХ
+    // УСТАНОВКА ПОЛНОГО НАБОРА ДАННЫХ
     // =================================================================================
 
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
@@ -2826,7 +2821,6 @@ class ChartManager {
                 this._setCachedPrecision(symbol, exchange, marketType, inferredPrecision);
             }
 
-            // FIX LW-NULL: конвертируем в чистые LW-бары перед setData.
             const lwBars = this._toLwBarsArray(this.chartData);
 
             if (lwBars.length === 0) {
@@ -2839,25 +2833,35 @@ class ChartManager {
 
             try {
                 if (this.candleSeries) this.candleSeries.setData(lwBars);
+            } catch (e) {
+                console.error('❌ candleSeries.setData упал. Длина:', lwBars.length,
+                    'Первые 3:', JSON.stringify(lwBars.slice(0, 3)));
+                try { this.candleSeries.setData([]); } catch (e2) {}
+                try { this.candleSeries.setData(lwBars); } catch (e3) {}
+            }
+
+            try {
                 if (this.barSeries) this.barSeries.setData(lwBars);
             } catch (e) {
-                console.error('❌ setDataQuick: setData упал', e);
-                this.chart.applyOptions({ handleScroll: true, handleScale: true });
-                this._disableAutoScroll();
-                if (onReady) onReady();
-                return;
+                console.error('❌ barSeries.setData упал', e);
+                try { this.barSeries.setData([]); } catch (e2) {}
+                try { this.barSeries.setData(lwBars); } catch (e3) {}
             }
 
             this._invisibleSeriesDirty = false;
 
             if (this.volumeSeries && this.chartData.length > 0) {
-                const volumeData = this._buildVolumeData(this.chartData);
-                this.volumeSeries.setData(volumeData);
+                try {
+                    const volumeData = this._buildVolumeData(this.chartData);
+                    this.volumeSeries.setData(volumeData);
 
-                this._volumeDataDirty = false;
-                this._lastVolumeUpdateIndex = this.chartData.length - 1;
+                    this._volumeDataDirty = false;
+                    this._lastVolumeUpdateIndex = this.chartData.length - 1;
 
-                this._applyVolumeScaleOptions();
+                    this._applyVolumeScaleOptions();
+                } catch (e) {
+                    console.error('❌ volumeSeries.setData упал', e);
+                }
             }
 
             this._ensureCurrentCandle('rest');
@@ -2969,7 +2973,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 17. СОХРАНЕНИЕ/ВОССТАНОВЛЕНИЕ МАСШТАБА
+    // СОХРАНЕНИЕ/ВОССТАНОВЛЕНИЕ МАСШТАБА
     // =================================================================================
 
     _captureScale() {
@@ -3024,7 +3028,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 18. SUSPEND/RESUME
+    // SUSPEND/RESUME
     // =================================================================================
 
     _suspendAllUpdates() {
@@ -3080,7 +3084,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 19. SWITCH SYMBOL / INTERVAL
+    // SWITCH SYMBOL / INTERVAL
     // =================================================================================
 
     async switchSymbol(symbol, exchange, marketType) {
@@ -3404,7 +3408,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 20. CROSSHAIR
+    // CROSSHAIR
     // =================================================================================
 
     onCrosshairMove(param) {
@@ -3601,7 +3605,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 21. СКРОЛЛ
+    // СКРОЛЛ
     // =================================================================================
 
     updateRealPrice(price) {
@@ -3627,13 +3631,10 @@ class ChartManager {
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
 
             if (activeSeries && this.lastCandle) {
-                activeSeries.update({
-                    time: this.lastCandle.time,
-                    open: this.lastCandle.open,
-                    high: this.lastCandle.high,
-                    low: this.lastCandle.low,
-                    close: this.lastCandle.close
-                });
+                const safe = this._toLwBar(this.lastCandle);
+                if (safe) {
+                    try { activeSeries.update(safe); } catch (e) {}
+                }
             }
 
             if (this.timerManager?._primitive?.isEnabled()) {
@@ -3718,6 +3719,9 @@ class ChartManager {
 
                         if (onComplete) onComplete();
                     }, 100);
+                } else {
+                    this._autoScalePending = false;
+                    if (onComplete) onComplete();
                 }
             } catch (e) {
                 this._autoScalePending = false;
@@ -3747,7 +3751,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 22. ГЕТТЕРЫ/СЕТТЕРЫ
+    // ГЕТТЕРЫ/СЕТТЕРЫ
     // =================================================================================
 
     getLastCandle() { return this.lastCandle; }
@@ -3764,7 +3768,6 @@ class ChartManager {
                 price = null;
             }
 
-            // FIX LW-NULL: priceManager может отдать объект или строку.
             if (price && typeof price === 'object') {
                 if (typeof price.price === 'number') price = price.price;
                 else if (typeof price.close === 'number') price = price.close;
@@ -3790,7 +3793,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 23. РАЗМЕРЫ
+    // РАЗМЕРЫ
     // =================================================================================
 
     _updateMainChartHeight() {
@@ -3854,7 +3857,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 24. ИНДИКАТОРЫ
+    // ИНДИКАТОРЫ
     // =================================================================================
 
     addIndicator(type) {
@@ -3880,7 +3883,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 25. PRICE MANAGER
+    // PRICE MANAGER
     // =================================================================================
 
     _subscribeToPrice() {
@@ -3946,7 +3949,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 26. PRECISION
+    // PRECISION
     // =================================================================================
 
     _inferPrecisionFromData() {
@@ -3968,12 +3971,14 @@ class ChartManager {
 
     applyPriceFormat(precision) {
         try {
-            if (precision === null || precision === undefined || isNaN(precision) || precision < 0) {
-                precision = this._inferPrecisionFromData();
-            }
+            let p = Number(precision);
+            if (!isFinite(p) || isNaN(p)) p = this._inferPrecisionFromData();
+            p = Math.floor(p);
+            if (p < 0) p = 0;
+            if (p > 8) p = 8;
 
-            const minMove = Math.pow(10, -precision);
-            const priceFormat = { type: 'price', precision: precision, minMove: minMove };
+            const minMove = Math.pow(10, -p);
+            const priceFormat = { type: 'price', precision: p, minMove: minMove };
 
             if (this.candleSeries) this.candleSeries.applyOptions({ priceFormat });
             if (this.barSeries) this.barSeries.applyOptions({ priceFormat });
@@ -3987,20 +3992,21 @@ class ChartManager {
                 this.timerManager._primitive.requestRedraw();
             }
 
-            return precision;
+            return p;
         } catch (error) {
-            return this._inferPrecisionFromData();
+            return 2;
         }
     }
 
     // =================================================================================
-    // 27. ВАЛИДАЦИЯ
+    // ВАЛИДАЦИЯ
     // =================================================================================
 
     _isValidCandle(candle, nowSecHint = null) {
         if (!candle || typeof candle !== 'object') return false;
 
         if (typeof candle.time !== 'number' || isNaN(candle.time) || candle.time <= 0) return false;
+        if (!Number.isInteger(candle.time)) return false;
 
         const nowSec = nowSecHint !== null ? nowSecHint : Math.floor(Date.now() / 1000);
         const maxAllowedTime = nowSec + this._getIntervalSeconds() * 2;
@@ -4012,7 +4018,7 @@ class ChartManager {
         for (const field of ohlcFields) {
             const val = candle[field];
 
-            if (typeof val !== 'number' || isNaN(val) || !isFinite(val)) return false;
+            if (typeof val !== 'number' || isNaN(val) || !isFinite(val) || val <= 0) return false;
         }
 
         if (candle.high < candle.low) return false;
@@ -4066,7 +4072,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 28. НОВАЯ СВЕЧА
+    // НОВАЯ СВЕЧА
     // =================================================================================
 
     _createNewCandle(candle, eventTime = null) {
@@ -4141,38 +4147,46 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 29. ОБЪЁМ
+    // ОБЪЁМ
     // =================================================================================
 
     _buildVolumeData(data) {
-        const bullishColor = this.bullishColor || CONFIG?.colors?.bullish || '#26a69a';
-        const bearishColor = this.bearishColor || CONFIG?.colors?.bearish || '#ef5350';
+        const bullishColor = this.bullishColor || (typeof CONFIG !== 'undefined' && CONFIG.colors && CONFIG.colors.bullish) || '#26a69a';
+        const bearishColor = this.bearishColor || (typeof CONFIG !== 'undefined' && CONFIG.colors && CONFIG.colors.bearish) || '#ef5350';
 
         if (this._volumeDataCache && !this._volumeDataDirty && data === this.chartData) {
             return this._volumeDataCache;
         }
 
         const volumeData = [];
+        let dropped = 0;
 
         for (let i = 0; i < data.length; i++) {
             const c = data[i];
+            if (!c || typeof c !== 'object') { dropped++; continue; }
 
-            const t = Number(c.time);
-            if (!isFinite(t) || t <= 0) continue;
+            const t = c.time;
+            if (typeof t !== 'number' || !isFinite(t) || !Number.isInteger(t) || t <= 0) { dropped++; continue; }
 
-            // FIX LW-NULL: c.quoteVolume/c.volume мог быть строкой или NaN —
-            // LWCharts на HistogramSeries тоже падает на null/NaN value.
-            let volume = Number(c.quoteVolume);
+            let volume = (typeof c.quoteVolume === 'number') ? c.quoteVolume : Number(c.quoteVolume);
             if (!isFinite(volume) || volume < 0) {
-                volume = Number(c.volume);
+                volume = (typeof c.volume === 'number') ? c.volume : Number(c.volume);
                 if (!isFinite(volume) || volume < 0) volume = 0;
             }
+
+            const o = typeof c.open === 'number' ? c.open : Number(c.open);
+            const cl = typeof c.close === 'number' ? c.close : Number(c.close);
+            const isBull = (isFinite(o) && isFinite(cl)) ? (cl >= o) : true;
 
             volumeData.push({
                 time: t,
                 value: volume,
-                color: c.close >= c.open ? bullishColor : bearishColor
+                color: isBull ? bullishColor : bearishColor
             });
+        }
+
+        if (dropped > 0) {
+            console.warn('🚨 LW-NULL: _buildVolumeData отбросил', dropped, 'элементов');
         }
 
         if (data === this.chartData) {
@@ -4213,7 +4227,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 30. FETCH KLINES
+    // FETCH KLINES
     // =================================================================================
 
     async fetchKlines(symbol, exchange, marketType, interval, limit = 1000, endTime = null, requestType = 'user') {
@@ -4358,7 +4372,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 31. TITLE
+    // TITLE
     // =================================================================================
 
     _updatePageTitle() {
@@ -4404,7 +4418,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 32. ЦВЕТА
+    // ЦВЕТА
     // =================================================================================
 
     updateColorsForSettings(bullishColor, bearishColor) {
@@ -4461,7 +4475,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 33. ABORT / DESTROY
+    // ABORT / DESTROY
     // =================================================================================
 
     _abortAllProcesses() {
@@ -4661,7 +4675,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 34. КООРДИНАТЫ
+    // КООРДИНАТЫ
     // =================================================================================
 
     saveCurrentTimePosition() {
@@ -4824,7 +4838,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 35. ПОДГРУЗКА ИСТОРИИ / TRIM
+    // ПОДГРУЗКА ИСТОРИИ / TRIM
     // =================================================================================
 
     onVisibleLogicalRangeChange(range) {
@@ -5045,7 +5059,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 36. BACKGROUND REFRESH
+    // BACKGROUND REFRESH
     // =================================================================================
 
     async refreshCandlesInBackground(symbol, exchange, marketType, interval) {
@@ -5164,7 +5178,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 37. CACHE
+    // CACHE
     // =================================================================================
 
     async _waitForDb(timeoutMs = 2000) {
@@ -5191,15 +5205,13 @@ class ChartManager {
         const CACHE_VERSION = '2';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
 
-        // FIX LW-NULL: чистим данные ПЕРЕД сохранением, чтобы в IndexedDB
-        // не попали битые свечи, которые потом снова уронят setData.
         const cleanCandles = candles.filter(c =>
             c && typeof c === 'object' &&
-            typeof c.time === 'number' && isFinite(c.time) && c.time > 0 &&
-            typeof c.open === 'number' && isFinite(c.open) &&
-            typeof c.high === 'number' && isFinite(c.high) &&
-            typeof c.low === 'number' && isFinite(c.low) &&
-            typeof c.close === 'number' && isFinite(c.close)
+            typeof c.time === 'number' && isFinite(c.time) && Number.isInteger(c.time) && c.time > 0 &&
+            typeof c.open === 'number' && isFinite(c.open) && c.open > 0 &&
+            typeof c.high === 'number' && isFinite(c.high) && c.high > 0 &&
+            typeof c.low === 'number' && isFinite(c.low) && c.low > 0 &&
+            typeof c.close === 'number' && isFinite(c.close) && c.close > 0
         );
 
         if (cleanCandles.length === 0) return;
@@ -5246,15 +5258,13 @@ class ChartManager {
 
             if (!Array.isArray(cached.data)) return null;
 
-            // FIX LW-NULL: cached.data не валидировался — повреждённая запись
-            // из IndexedDB уходила прямо в setData и валила LWCharts.
             const valid = cached.data.filter(c =>
                 c && typeof c === 'object' &&
-                typeof c.time === 'number' && isFinite(c.time) && c.time > 0 &&
-                typeof c.open === 'number' && isFinite(c.open) &&
-                typeof c.high === 'number' && isFinite(c.high) &&
-                typeof c.low === 'number' && isFinite(c.low) &&
-                typeof c.close === 'number' && isFinite(c.close)
+                typeof c.time === 'number' && isFinite(c.time) && Number.isInteger(c.time) && c.time > 0 &&
+                typeof c.open === 'number' && isFinite(c.open) && c.open > 0 &&
+                typeof c.high === 'number' && isFinite(c.high) && c.high > 0 &&
+                typeof c.low === 'number' && isFinite(c.low) && c.low > 0 &&
+                typeof c.close === 'number' && isFinite(c.close) && c.close > 0
             );
 
             if (valid.length === 0) {
@@ -5309,7 +5319,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 38. WAIT READY
+    // WAIT READY
     // =================================================================================
 
     async waitForReady() {
@@ -5334,7 +5344,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // 39. DRAWINGS
+    // DRAWINGS
     // =================================================================================
 
     manualAutoScale() {
