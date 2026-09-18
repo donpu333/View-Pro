@@ -99,6 +99,7 @@ class ChartManager {
         this._healingGaps = false;
         this._lastGapHealAttempt = 0;
         this._unhealableGaps = new Set();
+        this._priceScaleWidthLocked = false;
 
         this._autoScrollEnabled = false;
         this._autoScrollTimeout = null;
@@ -257,8 +258,7 @@ class ChartManager {
                 borderVisible: true,
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: false,
-                entireTextOnly: false,
-                minimumWidth: 0,
+                entireTextOnly: true,
             },
             localization: {
                 timeFormatter: (time) => {
@@ -528,6 +528,41 @@ class ChartManager {
     }
 
     // =================================================================================
+    // ШИРИНА ЦЕНОВОЙ ШКАЛЫ
+    // =================================================================================
+    // FIX: LWCharts сам считает ширину шкалы ТОЧНО под ценовые метки.
+    // Наша задача — дать ему дорисовать, ЗАМЕРИТЬ реальную ширину и
+    // зафиксировать через minimumWidth. Никаких самодельных формул —
+    // они всегда дают либо пустоту, либо обрезку.
+
+    _lockPriceScaleWidth() {
+        if (!this._isChartValid()) return;
+
+        try {
+            const ps = this.chart.priceScale('right');
+            if (!ps) return;
+
+            const w = ps.width();
+
+            if (w && w > 0) {
+                ps.applyOptions({ minimumWidth: w });
+                this._priceScaleWidthLocked = true;
+            }
+        } catch (e) {}
+    }
+
+    _unlockPriceScaleWidth() {
+        // Сбрасываем фиксацию, чтобы LWCharts мог пересчитать ширину
+        // под новый символ / новый precision.
+        try {
+            const ps = this.chart.priceScale('right');
+            if (ps) ps.applyOptions({ minimumWidth: 0 });
+        } catch (e) {}
+
+        this._priceScaleWidthLocked = false;
+    }
+
+    // =================================================================================
     // LW-NULL GUARDS
     // =================================================================================
 
@@ -557,10 +592,6 @@ class ChartManager {
         return { time: t, open: o, high: h, low: l, close: cl };
     }
 
-    // FIX: КЛЮЧЕВОЙ ФИКС. Раньше невыровненное на границу интервала time
-    // (например, 1789529940 для 1d вместо 1789516800) проходил проверки
-    // _toLwBar (число, целое, > 0), но LWCharts при рендере строил Invalid
-    // Date и падал с "Value is null". Теперь выравниваем time + дедуп.
     _toLwBarsArray(arr) {
         if (!Array.isArray(arr)) return [];
         const interval = this.currentInterval;
@@ -580,13 +611,10 @@ class ChartManager {
             const b = this._toLwBar(candidate);
             if (!b) continue;
 
-            // Дедуп: при выравнивании две разные свечи могли схлопнуться в одну.
-            // Оставляем последнюю (она свежее).
             byTime.set(alignedT, b);
         }
 
-        const out = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
-        return out;
+        return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
     }
 
     // =================================================================================
@@ -667,7 +695,6 @@ class ChartManager {
             const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (!series) return;
 
-            // FIX: выравниваем time на границу интервала ДО отправки в LW.
             let data = updateData;
             const rawT = data && data.time;
             if (typeof rawT === 'number' && Number.isInteger(rawT) && rawT > 0) {
@@ -2744,6 +2771,7 @@ class ChartManager {
             }
 
             this._enableAutoScroll(2000);
+            this._unlockPriceScaleWidth();
 
             if (this.timerManager) this.timerManager.hideImmediately();
 
@@ -2766,9 +2794,6 @@ class ChartManager {
             this._pendingTrimParams = null;
             this._unhealableGaps.clear();
 
-            // FIX: выравниваем time каждой свечи на границу интервала
-            // ПЕРЕД дедупликацией — иначе две невыровненные свечи, попадающие
-            // в один слот после выравнивания, становятся дубликатами.
             for (const c of data) {
                 if (c && typeof c.time === 'number' && Number.isInteger(c.time) && c.time > 0) {
                     const aligned = this._alignTimeForInterval(c.time, interval);
@@ -2910,6 +2935,13 @@ class ChartManager {
                         }
 
                         this._applyVolumeScaleOptions();
+
+                        // FIX: LWCharts уже нарисовал метки — замеряем ширину
+                        // и фиксируем через minimumWidth. Никаких формул —
+                        // только точное значение, чтобы не было пустоты.
+                        requestAnimationFrame(() => requestAnimationFrame(() => {
+                            this._lockPriceScaleWidth();
+                        }));
                     }
 
                     if (this.timerManager && this._isChartValid() && this.lastCandle) {
@@ -3104,6 +3136,7 @@ class ChartManager {
 
         this._switchingSymbol = true;
         this._showSymbolSwitchOverlay();
+        this._unlockPriceScaleWidth();
 
         if (this.timerManager) this.timerManager.stop();
 
@@ -3229,6 +3262,7 @@ class ChartManager {
 
         this._isSwitchingInterval = true;
         this._showSymbolSwitchOverlay();
+        this._unlockPriceScaleWidth();
 
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
@@ -4001,6 +4035,13 @@ class ChartManager {
                 this.timerManager._primitive.requestRedraw();
             }
 
+            // После смены precision LWCharts должен пересчитать ширину меток.
+            // Сначала снимаем блокировку, потом — через 2 кадра — снова замеряем.
+            this._unlockPriceScaleWidth();
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                this._lockPriceScaleWidth();
+            }));
+
             return p;
         } catch (error) {
             return 2;
@@ -4344,7 +4385,6 @@ class ChartManager {
 
             if (signal.aborted) return null;
 
-            // Дедуп по выровненному времени
             const dedupMap = new Map();
             for (const c of rawCandles) {
                 const aligned = alignTime(c.time);
@@ -5194,7 +5234,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // CACHE — версия '3', чтобы старый мусорный кэш автоматически сбросился
+    // CACHE
     // =================================================================================
 
     async _waitForDb(timeoutMs = 2000) {
@@ -5221,7 +5261,6 @@ class ChartManager {
         const CACHE_VERSION = '3';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
 
-        // FIX: выравниваем time и чистим перед сохранением.
         const byTime = new Map();
 
         for (const c of candles) {
@@ -5292,7 +5331,6 @@ class ChartManager {
                 if (typeof c.low !== 'number' || !isFinite(c.low) || c.low <= 0) continue;
                 if (typeof c.close !== 'number' || !isFinite(c.close) || c.close <= 0) continue;
 
-                // FIX: выравниваем time ПЕРЕД сохранением в chartData.
                 const aligned = this._alignTimeForInterval(c.time, interval);
                 if (!Number.isInteger(aligned) || aligned <= 0) continue;
 
