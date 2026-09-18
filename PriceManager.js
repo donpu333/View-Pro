@@ -1,4 +1,59 @@
-
+/**
+ * PriceManager v20.
+ *
+ * ДОБАВЛЕНО СВЕРХ v19 (по логам «binance:spot ЗОМБИ! Нет данных 32с»):
+ *  A. Binance больше не тянет !ticker@arr (весь рынок раз в секунду). Вместо этого —
+ *     combined-стрим только по тем символам, на которые реально есть подписчики.
+ *     Наблюдаемое поведение то же (v19 и так фильтровал arr по подписчикам до _setPrice),
+ *     но трафик и JSON.parse в основном потоке падают на порядки.
+ *     Откат на старое поведение: new PriceManager({ useCombinedStreams: false }).
+ *  B. _checkHeartbeats устойчив к сну/окклюзии вкладки: если сам таймер сработал с
+ *     опозданием > 15с, страница была заморожена, отсчёты сокетов бессмысленны —
+ *     перетариваем метки и проверяем на следующем тике вместо немедленного разрыва.
+ *     Плюс не дёргаем сокеты при navigator.onLine === false.
+ *  C. Обработка события serverShutdown — Binance сам предупреждает о перезапуске
+ *     WS-сервера, переподключаемся превентивно, а не по факту обрыва.
+ *  D. Живые SUBSCRIBE/UNSUBSCRIBE на открытом сокете с троттлингом: у Binance SPOT
+ *     лимит 5 входящих сообщений/с (futures — 10/с), за превышение соединение рвут,
+ *     а повторяющиеся IP банят.
+ *
+ * ---------------------------------------------------------------------------
+ * PriceManager v19 — исправленная версия.
+ *
+ * Что починено относительно v18 (номера соответствуют pm/REVIEW.md):
+ *   1. change приведён к ОДНОЙ единице (проценты) для всех источников
+ *   2. Bybit delta-сообщения больше не обнуляют change/volume («нет поля» = «не изменилось»)
+ *   3. trades по Bybit не выдумывается из несуществующего поля count
+ *   4. _restPollInFlight — REST-опросы не накладываются друг на друга
+ *   5. fetch с AbortController-таймаутом + учёт Retry-After, обработка 418
+ *   6. REST: spot — батчи symbols[] (weight 2), futures — поsymbol'но до 30 (weight 1),
+ *      иначе полный дамп (weight 40). Bybit — точечно до 10 символов
+ *   7. _normKey(): подписки в любом регистре/с дефисами больше не «мёртвые»
+ *   8. один колбэк не дёргается дважды на одно и то же событие
+ *   9. pagehide вместо beforeunload + start() — менеджер больше не умирает необратимо
+ *  10. Bybit-сокет закрывается, когда подписок не осталось
+ *  11. _stopPing вызывается явно при принудительном реконнекте (общий _forceReconnect)
+ *  12. subscribe-батчи размазаны во времени (защита от rate-limit disconnect)
+ *  13. NaN больше не ломает дедупликацию
+ *  14. backoff честно начинается с reconnectDelay
+ *  15. close() чистит connections/state — getStatus() не врёт
+ *  16. sweeper: prices не растёт бесконечно
+ *  17. кэш-колбэк полный (volume/trades) и отменяется при unsubscribe
+ *  18. fetchPrice использует общий retry/парсинг
+ *  19. _connectionState выставляется и для Bybit
+ *  20. JSON.parse отделён от бизнес-хэндлера, ошибки больше не глотаются молча
+ *  +  реконнект по событию online
+ *
+ * ⚠️ Единственное изменение контракта для потребителей: payload.change может быть
+ *    `undefined` до первого snapshot (раньше там был 0/NaN). На практике и Binance,
+ *    и Bybit всегда отдают это поле в первом же сообщении, так что окно очень короткое.
+ *    Если UI делает change.toFixed(2) — добавьте `?? 0`.
+ *
+ * ℹ️ URL wss://fstream.binance.com/market/ws/!ticker@arr — КОРРЕКТНЫЙ.
+ *    Binance в 2026 перевёл Futures WS на маршрутизацию /public, /market, /private;
+ *    !ticker@arr относится к категории Market. Legacy /ws выведен из эксплуатации
+ *    2026-04-23. Не «чинить»!
+ */
 
 class PriceManager {
     // «нет поля» в delta-сообщении ≠ 0. Возвращаем undefined, чтобы _setPrice сохранил старое.
@@ -28,6 +83,12 @@ class PriceManager {
         this._lastWsMessage = {};
         this._connectionAttempts = {};
         this._bybitSubscriptions = { linear: new Set(), spot: new Set() };
+        this._binanceSubscriptions = { futures: new Set(), spot: new Set() };  // A
+        this._binanceMode = { futures: 'idle', spot: 'idle' };                // idle|combined|arr
+        this._binanceUrlStreams = { futures: new Set(), spot: new Set() };
+        this._binanceSubQueue = { futures: [], spot: [] };                    // D
+        this._binanceSubTimer = { futures: null, spot: null };
+        this._lastHeartbeatTick = 0;                                          // B
         this._connectionState = {};
         this._initInProgress = false;
         this._destroyed = false;
@@ -51,7 +112,12 @@ class PriceManager {
             spotBatchSize: 20,                // fix 6: лимит символов в ?symbols= у spot
             futuresSingleSymbolMax: 30,       // fix 6: 30×weight1 < weight40 полного дампа
             bybitSingleSymbolMax: 10,         // fix 6
-            resubscribeBatchDelay: 120        // fix 12: ~8 сообщений/с
+            resubscribeBatchDelay: 120,       // fix 12: ~8 сообщений/с
+            useCombinedStreams: true,         // A: false = прежнее поведение (!ticker@arr)
+            maxCombinedStreams: 900,          // A: лимит Binance — 1024 потока на соединение
+            binanceSubMsgInterval: 250,       // D: 4 сообщ/с — под лимитом 5/с у SPOT
+            binanceSubBatchSize: 100,         // D: параметров в одном SUBSCRIBE-сообщении
+            heartbeatTickLagMs: 15000         // B: порог «страница была заморожена»
         };
         Object.assign(this.config, options);
 
@@ -73,6 +139,8 @@ class PriceManager {
         if (this._initInProgress || this._destroyed) return;
         this._initInProgress = true;
 
+        // A: при useCombinedStreams соединение создаётся только когда есть подписчики.
+        // При useCombinedStreams:false — как раньше, сразу !ticker@arr.
         [() => this._connectBinanceFutures(), () => this._connectBinanceSpot()]
             .forEach((fn, i) => setTimeout(fn, i * this.config.startupDelay));
 
@@ -95,7 +163,11 @@ class PriceManager {
                 for (const key of Object.keys(this._connectors)) {
                     const ws = this.connections[key];
                     const active = ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
-                    if (!active && this._connectionState[key] !== 'idle') this._forceReconnect(key, 'network online');
+                    if (active) continue;
+                    if (this._connectionState[key] === 'idle') continue;   // слушать нечего — не воскрешаем
+                    const mt = key.split(':')[1];
+                    if (key.indexOf('binance:') === 0 && this._desiredBinanceMode(mt) === 'idle') continue;
+                    this._forceReconnect(key, 'network online');
                 }
                 this._pollAlertPricesViaRest();
             };
@@ -130,7 +202,7 @@ class PriceManager {
             document.addEventListener('visibilitychange', this._visibilityHandler);
         }
 
-        console.log('✅ PriceManager v19 запущен');
+        console.log('✅ PriceManager v20 запущен (combined-стримы + защита от сна вкладки)');
     }
 
     /** fix 9: симметричный close() — позволяет воскресить менеджер вместо перезагрузки вкладки. */
@@ -139,6 +211,7 @@ class PriceManager {
         this._destroyed = false;
         this._initInProgress = false;
         this._connectionAttempts = {};
+        this._lastHeartbeatTick = Date.now();
         this._init();
     }
 
@@ -150,22 +223,7 @@ class PriceManager {
      */
     _forceReconnect(key, reason) {
         if (this._destroyed) return;
-
-        const ws = this.connections[key];
-        if (ws) {
-            ws.onclose = null;
-            ws.onerror = null;
-            ws.onmessage = null;
-            this._stopPing(key);
-            try { ws.close(4000, reason); } catch (e) {}
-            this.connections[key] = null;
-        }
-
-        if (this.reconnectTimers.has(key)) {
-            clearTimeout(this.reconnectTimers.get(key));
-            this.reconnectTimers.delete(key);
-        }
-
+        this._teardownSocket(key, 4000, reason);
         const fn = this._connectors[key];
         if (fn) fn();
     }
@@ -175,6 +233,27 @@ class PriceManager {
         if (typeof document !== 'undefined' && document.hidden) return;
 
         const now = Date.now();
+
+        // B: Если НАШ СОБСТВЕННЫЙ 5-секундный таймер сработал с опозданием > 15с —
+        // страница была заморожена (сон машины, фоновый троттлинг, окклюзия окна).
+        // Chrome при окклюзии окна троттлит страницу, НЕ выставляя document.hidden,
+        // поэтому guard выше не спасает. В таком состоянии отсчёт «нет данных Nс»
+        // бессмыслен: WS-кадры просто не читались. Не убиваем заведомо живые сокеты,
+        // а перетариваем метки и проверяем уже честный интервал на следующем тике.
+        const lag = now - (this._lastHeartbeatTick || now);
+        this._lastHeartbeatTick = now;
+        if (lag > this.config.heartbeatTickLagMs) {
+            console.warn(`⏱️ Страница была заморожена ${Math.round(lag / 1000)}с — отсчёт heartbeat сброшен, сокеты не трогаем`);
+            for (const key in this.connections) {
+                if (this.connections[key]?.readyState === WebSocket.OPEN) this._lastWsMessage[key] = now;
+            }
+            return;
+        }
+
+        // B: сеть физически отсутствует — реконнект сейчас только сожжёт попытки и
+        // упрётся в лимит «300 соединений на 5 минут на IP». Дождёмся события online.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
         for (const key in this.connections) {
             const ws = this.connections[key];
             if (!ws || ws.readyState !== WebSocket.OPEN) continue;
@@ -213,27 +292,205 @@ class PriceManager {
     // =========================================================================
     //  BINANCE
     // =========================================================================
+    // A: три режима на каждый рынок
+    //   'idle'     — подписчиков нет, соединение вообще не создаём
+    //   'combined' — /stream?streams=<sym>@ticker/... только по нужным символам
+    //   'arr'      — !ticker@arr (прежнее поведение): при useCombinedStreams:false
+    //                или когда символов больше maxCombinedStreams (лимит 1024/соединение)
+    _binanceBase(marketType) {
+        // ℹ️ /market — корректный путь после миграции Binance Futures WS 2026 года.
+        return marketType === 'futures' ? 'wss://fstream.binance.com/market' : 'wss://stream.binance.com';
+    }
+
+    _desiredBinanceMode(marketType) {
+        if (!this.config.useCombinedStreams) return 'arr';
+        const n = this._binanceSubscriptions[marketType].size;
+        if (n === 0) return 'idle';
+        return n <= this.config.maxCombinedStreams ? 'combined' : 'arr';
+    }
+
+    _binanceKey(marketType) { return marketType === 'futures' ? 'binance:futures' : 'binance:spot'; }
+
+    _binanceUrl(marketType) {
+        const mode = this._binanceMode[marketType];
+        const base = this._binanceBase(marketType);
+        if (mode === 'combined') {
+            const streams = [...this._binanceSubscriptions[marketType]].map(s => `${s.toLowerCase()}@ticker`);
+            this._binanceUrlStreams[marketType] = new Set(streams);
+            return `${base}/stream?streams=${streams.join('/')}`;
+        }
+        this._binanceUrlStreams[marketType] = new Set();
+        return `${base}/ws/!ticker@arr`;
+    }
+
     _connectBinanceFutures() {
         if (this._destroyed) return;
-        // ℹ️ /market/ws/ — корректный путь после миграции Binance WS 2026 года.
-        this._connectBinance('binance:futures', 'wss://fstream.binance.com/market/ws/!ticker@arr', (data) => {
+        this._binanceMode.futures = this._desiredBinanceMode('futures');
+        if (this._binanceMode.futures === 'idle') { this._teardownSocket('binance:futures'); return; }
+        this._connectBinance('binance:futures', this._binanceUrl('futures'), (data) => {
             this._handleBinanceTickerPayload(data, 'futures');
         });
     }
 
     _connectBinanceSpot() {
         if (this._destroyed) return;
-        this._connectBinance('binance:spot', 'wss://stream.binance.com/ws/!ticker@arr', (data) => {
+        this._binanceMode.spot = this._desiredBinanceMode('spot');
+        if (this._binanceMode.spot === 'idle') { this._teardownSocket('binance:spot'); return; }
+        this._connectBinance('binance:spot', this._binanceUrl('spot'), (data) => {
             this._handleBinanceTickerPayload(data, 'spot');
         });
     }
 
+    /** Пересоздаёт соединение, если желаемый режим/набор символов разошёлся с текущим. */
+    _syncBinanceConnection(marketType) {
+        if (this._destroyed) return;
+        const key = this._binanceKey(marketType);
+        const want = this._desiredBinanceMode(marketType);
+        const ws = this.connections[key];
+        const live = ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+
+        if (want === 'idle') {
+            if (live) {
+                this._binanceMode[marketType] = 'idle';
+                this._teardownSocket(key);
+                console.log(`🔌 ${key} закрыт: подписчиков не осталось`);
+            }
+            this._binanceMode[marketType] = 'idle';
+            return;
+        }
+        if (live && this._binanceMode[marketType] === want) return;   // ничего не изменилось
+        if (marketType === 'futures') this._connectBinanceFutures();
+        else this._connectBinanceSpot();
+    }
+
+    /**
+     * D: живые SUBSCRIBE/UNSUBSCRIBE на уже открытом сокете.
+     * У Binance SPOT лимит 5 входящих сообщений/с (у futures 10/с); за превышение
+     * соединение отключают, а повторяющиеся IP банят — поэтому очередь + троттлинг.
+     */
+    _queueBinanceSub(marketType, method, params) {
+        if (!params?.length) return;
+        this._binanceSubQueue[marketType].push({ method, params });
+        if (this._binanceSubTimer[marketType]) return;
+        this._scheduleBinanceSubFlush(marketType);
+    }
+
+    _scheduleBinanceSubFlush(marketType) {
+        this._binanceSubTimer[marketType] = setTimeout(() => {
+            this._binanceSubTimer[marketType] = null;
+            const queue = this._binanceSubQueue[marketType];
+            this._binanceSubQueue[marketType] = [];
+            if (!queue.length || this._destroyed) return;
+
+            const key = this._binanceKey(marketType);
+            const ws = this.connections[key];
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (this._binanceMode[marketType] !== 'combined') return;   // в режиме arr не нужно
+
+            // Схлопываем одноимённые method и режем на чанки: один SUBSCRIBE на сотни
+            // параметров может упереться в размер WS-кадра, а частота сообщений
+            // ограничена Binance (5/с у spot, 10/с у futures — за превышение рвут
+            // соединение и банят повторяющиеся IP).
+            const grouped = new Map();
+            for (const { method, params } of queue) {
+                if (!grouped.has(method)) grouped.set(method, []);
+                grouped.get(method).push(...params);
+            }
+
+            const jobs = [];
+            for (const [method, all] of grouped) {
+                const uniq = [...new Set(all)];
+                for (let i = 0; i < uniq.length; i += this.config.binanceSubBatchSize) {
+                    jobs.push({ method, params: uniq.slice(i, i + this.config.binanceSubBatchSize) });
+                }
+            }
+
+            let n = 0;
+            const sendNext = () => {
+                this._binanceSubTimer[marketType] = null;
+                if (this._destroyed || n >= jobs.length) return;
+                const w = this.connections[key];
+                if (!w || w.readyState !== WebSocket.OPEN) return;
+                const job = jobs[n++];
+                try { w.send(JSON.stringify({ ...job, id: `${Date.now()}-${n}` })); } catch (e) {}
+                if (n < jobs.length) {
+                    this._binanceSubTimer[marketType] = setTimeout(sendNext, this.config.binanceSubMsgInterval);
+                }
+            };
+            sendNext();
+        }, this.config.binanceSubMsgInterval);
+    }
+
+    /** После onopen добираем символы, добавленные пока сокет ещё только подключался. */
+    _binanceResyncOnOpen(key) {
+        const marketType = key.split(':')[1];
+        if (this._binanceMode[marketType] !== 'combined') return;
+
+        const current = new Set([...this._binanceSubscriptions[marketType]].map(s => `${s.toLowerCase()}@ticker`));
+        const inUrl = this._binanceUrlStreams[marketType] || new Set();
+
+        const toAdd = [...current].filter(s => !inUrl.has(s));
+        const toRemove = [...inUrl].filter(s => !current.has(s));
+        this._binanceUrlStreams[marketType] = current;
+
+        if (toAdd.length) this._queueBinanceSub(marketType, 'SUBSCRIBE', toAdd);
+        if (toRemove.length) this._queueBinanceSub(marketType, 'UNSUBSCRIBE', toRemove);
+    }
+
+    _subscribeBinanceSymbol(symbol, marketType) {
+        if (marketType !== 'futures' && marketType !== 'spot') return;
+        const clean = String(symbol).toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!clean) return;
+
+        const set = this._binanceSubscriptions[marketType];
+        if (set.has(clean)) return;
+
+        const key = this._binanceKey(marketType);
+        const ws = this.connections[key];
+        const liveCombined = ws && ws.readyState === WebSocket.OPEN && this._binanceMode[marketType] === 'combined';
+
+        set.add(clean);
+
+        // сокет открыт и режим не меняется → дописываем поток без переподключения
+        if (liveCombined && this._desiredBinanceMode(marketType) === 'combined') {
+            this._queueBinanceSub(marketType, 'SUBSCRIBE', [`${clean.toLowerCase()}@ticker`]);
+            this._binanceUrlStreams[marketType].add(`${clean.toLowerCase()}@ticker`);
+            return;
+        }
+        this._syncBinanceConnection(marketType);
+    }
+
+    _unsubscribeBinanceSymbol(symbol, marketType) {
+        if (marketType !== 'futures' && marketType !== 'spot') return;
+        const clean = String(symbol).toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const set = this._binanceSubscriptions[marketType];
+        if (!set.has(clean)) return;
+
+        const key = this._binanceKey(marketType);
+        const ws = this.connections[key];
+        const liveCombined = ws && ws.readyState === WebSocket.OPEN && this._binanceMode[marketType] === 'combined';
+
+        set.delete(clean);
+
+        if (liveCombined && this._desiredBinanceMode(marketType) === 'combined') {
+            this._queueBinanceSub(marketType, 'UNSUBSCRIBE', [`${clean.toLowerCase()}@ticker`]);
+            this._binanceUrlStreams[marketType].delete(`${clean.toLowerCase()}@ticker`);
+            return;
+        }
+        this._syncBinanceConnection(marketType);   // при 0 символов закроет сокет
+    }
+
     _handleBinanceTickerPayload(data, marketType) {
+        // A: в combined-режиме полезная нагрузка обёрнута в {"stream":"<name>","data":<payload>}
+        if (data && data.stream !== undefined && data.data !== undefined) data = data.data;
+
         const tickers = Array.isArray(data) ? data : [data];
         for (let i = 0; i < tickers.length; i++) {
             const t = tickers[i];
             if (!t || !t.s) continue;
 
+            // В режиме arr по-прежнему фильтруем весь рынок по подписчикам;
+            // в combined-режиме приходят только наши символы, проверка дешёвая.
             const subKey = `${t.s}:binance:${marketType}`;
             if (!this.subscribers.has(subKey) && !this.subscribers.has(t.s)) continue;
 
@@ -263,7 +520,9 @@ class PriceManager {
             this._lastWsMessage[key] = Date.now();
             this._connectionAttempts[key] = 0;
             this._connectionState[key] = 'open';
-            console.log(`✅ ${key} WebSocket подключен`);
+            this._lastHeartbeatTick = Date.now();        // B: сброс отсчёта «заморозки»
+            console.log(`✅ ${key} WebSocket подключен (${url.split('?')[0].replace('wss://', '')}, ${this._streamsCount(key)})`);
+            this._binanceResyncOnOpen(key);              // A: добираем символы, добавленные во время handshake
         };
 
         ws.onmessage = (event) => {
@@ -273,6 +532,16 @@ class PriceManager {
             // fix 20: парсинг отделён от бизнес-логики — ошибки хэндлера больше не маскируются
             let data;
             try { data = JSON.parse(event.data); } catch (e) { return; }
+
+            // C: Binance присылает serverShutdown перед перезапуском WS-сервера.
+            // Документация прямо просит переподключиться как можно скорее — делаем это
+            // превентивно, а не ждём обрыва и 15-секундного backoff.
+            if (data && (data.e === 'serverShutdown' || data.stream === '!serverShutdown')) {
+                console.warn(`⚠️ ${key}: Binance перезапускает WS-сервер — превентивный реконнект`);
+                this._forceReconnect(key, 'serverShutdown');
+                return;
+            }
+
             try { onMessageHandler(data); }
             catch (e) { console.error(`❌ Ошибка обработчика ${key}:`, e); }
         };
@@ -286,7 +555,10 @@ class PriceManager {
             console.warn(`⚠️ ${key} закрыт (код ${event.code || '?'}), реконнект через ${delay / 1000}с`);
             this.reconnectTimers.set(key, setTimeout(() => {
                 this.reconnectTimers.delete(key);
-                this._connectBinance(key, url, onMessageHandler);
+                // A: зовём коннектор, а не _connectBinance со СТАРЫМ url — за время
+                // дисконнекта набор символов мог измениться, URL нужно пересобрать.
+                const fn = this._connectors[key];
+                if (fn) fn(); else this._connectBinance(key, url, onMessageHandler);
             }, delay));
         };
 
@@ -294,13 +566,29 @@ class PriceManager {
     }
 
     /** fix 14: attempts инкрементируется ДО попытки, поэтому степень — (attempts - 1). */
+    /** Подпись для лога: сколько реально потоков слушает соединение. */
+    _streamsCount(key) {
+        if (key.indexOf('binance:') === 0) {
+            const mt = key.split(':')[1];
+            const mode = this._binanceMode[mt];
+            if (mode === 'combined') return `потоков: ${this._binanceSubscriptions[mt].size}`;
+            if (mode === 'arr') return 'весь рынок (!ticker@arr)';
+            return 'подписок нет';
+        }
+        if (key.indexOf('bybit:') === 0) {
+            const mk = key === 'bybit:linear' ? 'linear' : 'spot';
+            return `топиков: ${this._bybitSubscriptions[mk].size}`;
+        }
+        return '';
+    }
+
     _backoffDelay(key) {
         const attempts = Math.max(0, (this._connectionAttempts[key] || 1) - 1);
         return Math.min(this.config.reconnectDelay * Math.pow(1.5, attempts), this.config.maxReconnectDelay);
     }
 
-    /** Обнуление обработчиков старого сокета ДО close() — иначе он запланирует призрачный реконнект. */
-    _clearSocket(key) {
+    /** Аккуратно гасим сокет: обработчики обнуляются ДО close(), иначе будет призрачный реконнект. */
+    _teardownSocket(key, code = 1000, reason = '') {
         if (this.reconnectTimers.has(key)) {
             clearTimeout(this.reconnectTimers.get(key));
             this.reconnectTimers.delete(key);
@@ -315,10 +603,13 @@ class PriceManager {
             oldWs.onerror = null;
             oldWs.onmessage = null;
             this._stopPing(key);
-            try { oldWs.close(1000); } catch (e) {}
+            try { oldWs.close(code, reason); } catch (e) {}
             this.connections[key] = null;
+            this._connectionState[key] = 'idle';
         }
     }
+
+    _clearSocket(key) { this._teardownSocket(key); }
 
     // =========================================================================
     //  BYBIT
@@ -777,7 +1068,17 @@ class PriceManager {
         this.subscribers.get(key).push(callback);
 
         const parts = key.split(':');
-        if (parts.length === 3 && parts[1] === 'bybit') this.subscribeBybitSymbol(parts[0], parts[2]);
+        if (parts.length === 3) {
+            if (parts[1] === 'bybit') this.subscribeBybitSymbol(parts[0], parts[2]);
+            else if (parts[1] === 'binance') this._subscribeBinanceSymbol(parts[0], parts[2]);  // A
+        } else if (parts.length === 1) {
+            // A: «голый» символ (без биржи/рынка). В v19 он пассивно получал данные из
+            // всегда включённого !ticker@arr обоих Binance-рынков. Чтобы в combined-режиме
+            // семантика не сломалась, регистрируем символ на обоих рынках Binance явно.
+            // Bybit не трогаем — как и в v19, туда нужна подписка с полным ключом.
+            this._subscribeBinanceSymbol(parts[0], 'futures');
+            this._subscribeBinanceSymbol(parts[0], 'spot');
+        }
 
         const cached = this.prices.get(key);
         if (cached) {
@@ -811,7 +1112,13 @@ class PriceManager {
         if (list.length === 0) {
             this.subscribers.delete(key);
             const parts = key.split(':');
-            if (parts.length === 3 && parts[1] === 'bybit') this.unsubscribeBybitSymbol(parts[0], parts[2]);
+            if (parts.length === 3) {
+                if (parts[1] === 'bybit') this.unsubscribeBybitSymbol(parts[0], parts[2]);
+                else if (parts[1] === 'binance') this._unsubscribeBinanceSymbol(parts[0], parts[2]);  // A
+            } else if (parts.length === 1) {
+                this._unsubscribeBinanceSymbol(parts[0], 'futures');
+                this._unsubscribeBinanceSymbol(parts[0], 'spot');
+            }
         }
     }
 
@@ -890,6 +1197,10 @@ class PriceManager {
                 linear: this._bybitSubscriptions.linear.size,
                 spot: this._bybitSubscriptions.spot.size
             },
+            binanceSubscriptions: {
+                futures: { mode: this._binanceMode.futures, symbols: this._binanceSubscriptions.futures.size },
+                spot:    { mode: this._binanceMode.spot,    symbols: this._binanceSubscriptions.spot.size }
+            },
             restPollInFlight: this._restPollInFlight
         };
     }
@@ -915,6 +1226,12 @@ class PriceManager {
         this._cacheTimers.clear();
         for (const tid of this._resubTimers.values()) clearTimeout(tid);
         this._resubTimers.clear();
+
+        for (const mt of ['futures', 'spot']) {          // A/D
+            if (this._binanceSubTimer[mt]) clearTimeout(this._binanceSubTimer[mt]);
+            this._binanceSubTimer[mt] = null;
+            this._binanceSubQueue[mt] = [];
+        }
 
         this._pendingUpdates.clear();
 
@@ -972,6 +1289,7 @@ if (typeof window !== 'undefined') {
         console.table(st.connections);
         console.log(`💰 Цен: ${st.totalPrices} | 👥 Подписчиков: ${st.totalSubscribers}`);
         console.log(`📡 Bybit: linear=${st.bybitSubscriptions.linear}, spot=${st.bybitSubscriptions.spot}`);
+        console.log(`📡 Binance: futures=${st.binanceSubscriptions.futures.symbols} (${st.binanceSubscriptions.futures.mode}), spot=${st.binanceSubscriptions.spot.symbols} (${st.binanceSubscriptions.spot.mode})`);
         console.log(`🛑 destroyed: ${st.destroyed} | REST в полёте: ${st.restPollInFlight}`);
         return st;
     };
