@@ -1,18 +1,17 @@
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
-// Intl.DateTimeFormat дорого создавать на каждый вызов, а tickMarkFormatter/timeFormatter
-// вызываются для каждой метки на каждом кадре при движении графика — кэшируем экземпляры
-const FMT_TICK_DAY = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
-const FMT_TICK_TIME = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
-const FMT_CROSSHAIR = new Intl.DateTimeFormat('ru-RU', {
-    timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-});
-
 const INTERVAL_SECONDS_MAP = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
     '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
     '1d': 86400, '1w': 604800, '1M': 2592000
 };
+
+const FMT_TICK_DAY  = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
+const FMT_TICK_TIME = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
+const FMT_CROSSHAIR = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit',
+    year: 'numeric', hour: '2-digit', minute: '2-digit'
+});
 
 class ChartManager {
 
@@ -114,17 +113,6 @@ class ChartManager {
         this._invisibleSeriesDirty = false;
         this._isScrolling = false;
         this._isScrollingFast = false;
-        this._pointerActive = false;
-        this._heavyAfterScrollPending = false;
-        this._heavyAfterScrollId = null;
-        this._scrollDeferStartedAt = 0;
-        this._pendingIndicatorUpdate = false;
-        this._updateThrottleTimeout = null;
-        this._lastPanelCrosshairSyncAt = 0;
-        this._panelCrosshairSyncScheduled = false;
-        this._lastTitleAt = 0;
-        this._lastTitleSymbol = null;
-        this._titleTimer = null;
         this._lastDrawingsCall = 0;
         this._drawingsFinalUpdateTimeout = null;
         this._scrollStopTimeout = null;
@@ -134,7 +122,7 @@ class ChartManager {
         this._isViewingHistory = false;
         this._historyLoadQueue = [];
         this._preloadThreshold = 400;
-        this._batchSize = 1000; // допустимо для Binance (1000/1500) и Bybit (1000) — реже подгрузки
+        this._batchSize = 1000;
         this._minLoadDelay = 1000;
         this._lastHistoryLoadTime = 0;
         this._pendingHistoryLoad = false;
@@ -236,9 +224,10 @@ class ChartManager {
                 rightOffset: 15,
                 shiftVisibleRangeOnNewBar: true,
                 tickMarkFormatter: (time) => {
-                    const date = new Date(time * 1000);
-                    if (this.currentInterval === '1d' || this.currentInterval === '1w' || this.currentInterval === '1M') return FMT_TICK_DAY.format(date);
-                    return FMT_TICK_TIME.format(date);
+                    const iv = this.currentInterval;
+                    return (iv === '1d' || iv === '1w' || iv === '1M')
+                        ? FMT_TICK_DAY.format(time * 1000)
+                        : FMT_TICK_TIME.format(time * 1000);
                 }
             },
             rightPriceScale: {
@@ -247,11 +236,9 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: false,
                 entireTextOnly: false,
-                // ширина шкалы из прошлого сеанса — график сразу рисуется с финальной шириной
-                minimumWidth: this._getStoredPriceScaleWidth() || 60,
             },
             localization: {
-                timeFormatter: (time) => FMT_CROSSHAIR.format(new Date(time * 1000))
+                timeFormatter: (time) => FMT_CROSSHAIR.format(time * 1000)
             }
         });
 
@@ -435,132 +422,26 @@ class ChartManager {
         try { ts.setVisibleLogicalRange({ from, to }); } catch (e) {}
     }
 
-    // =============== PRICE SCALE WIDTH — LOCKED ONCE ===============
-    _psWidthStorageKey(symbol) {
-        return 'psWidth_' + (symbol || this.currentSymbol || 'default');
+    // =============== PRICE SCALE WIDTH ===============
+    _resetPriceScaleWidth() {
+        if (!this._isChartValid()) return;
+        try { this.chart.priceScale('right').applyOptions({ minimumWidth: 0 }); } catch (e) {}
     }
 
-    _getStoredPriceScaleWidth(symbol) {
-        const valid = (v) => (typeof v === 'number' && isFinite(v) && v >= 30 && v <= 240) ? v : 0;
-        try {
-            const own = valid(parseInt(localStorage.getItem(this._psWidthStorageKey(symbol)), 10));
-            if (own) return own;
-            return valid(parseInt(localStorage.getItem('psWidth_last'), 10));
-        } catch (e) { return 0; }
-    }
-
-    _measurePriceScaleWidth() {
-        if (!this.chartData || this.chartData.length === 0) return 0;
-
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        const precision = series?.options()?.priceFormat?.precision ?? 2;
-
-        // смотрим только «хвост», который будет виден после загрузки, а не всю историю
-        let tail = this.chartData.length;
-        try {
-            const barSpacing = this._savedBarSpacing || this.chart?.timeScale?.()?.options?.()?.barSpacing || 25;
-            const containerW = this.chartContainer?.clientWidth || 800;
-            tail = Math.min(this.chartData.length, Math.ceil(containerW / Math.max(1, barSpacing)) + 60);
-        } catch (e) {}
-
-        let maxPrice = 0;
-        for (let i = this.chartData.length - tail; i < this.chartData.length; i++) {
-            const h = this.chartData[i].high;
-            if (typeof h === 'number' && h > maxPrice) maxPrice = h;
-        }
-        if (maxPrice <= 0) return 0;
-
-        // ярлык ровно в том виде, в каком его рисует библиотека: разделители разрядов + precision знаков
-        let label;
-        try {
-            label = maxPrice.toLocaleString('en-US', { minimumFractionDigits: precision, maximumFractionDigits: precision });
-        } catch (e) { label = maxPrice.toFixed(precision); }
-
-        try {
-            const layout = this.chart?.options?.()?.layout || {};
-            const fontSize = layout.fontSize ?? 12;
-            const fontFamily = layout.fontFamily || "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif";
-            if (!this._psMeasureCtx) this._psMeasureCtx = document.createElement('canvas').getContext('2d');
-            this._psMeasureCtx.font = fontSize + 'px ' + fontFamily;
-            const textW = this._psMeasureCtx.measureText(label).width;
-            // Точная формула библиотеки (lightweight-charts v5, PriceAxisWidget._optimalWidth):
-            // borderSize(1) + tickLength(5) + paddingInner + paddingOuter + LabelOffset(5) + textWidth,
-            // где paddingInner = paddingOuter = fontSize / 12 * 5; затем округление вверх до чётного
-            const pad = (fontSize / 12) * 5;
-            let w = Math.ceil(1 + 5 + pad + pad + 5 + textW);
-            w += w % 2; // suggestPriceScaleWidth — как в библиотеке
-            return Math.max(34, Math.min(w, 240));
-        } catch (e) {
-            return Math.max(34, Math.min(label.length * 7 + 21, 240));
-        }
-    }
-
-    // синхронное применение ширины — в том же кадре, что и данные/формат, без «подстройки после»
-    _applyPriceScaleWidth() {
+    _lockPriceScaleWidth() {
         if (!this._isChartValid()) return;
         try {
             const ps = this.chart.priceScale('right');
-            if (!ps) return;
-            const w = this._measurePriceScaleWidth() || this._getStoredPriceScaleWidth();
-            if (w > 0) ps.applyOptions({ minimumWidth: w, entireTextOnly: false });
+            const w = ps.width();
+            if (w > 0) ps.applyOptions({ minimumWidth: w });
         } catch (e) {}
     }
 
-    // После первой отрисовки: читаем реальную ширину библиотеки (без сброса minimumWidth — без мигания),
-    // фиксируем её и сохраняем для следующего открытия страницы.
-    // Двойной rAF — гарантия, что width() отдаёт свежее значение после всех autoScale-переключений
-    _lockAndPersistPriceScaleWidth() {
-        if (!this._isChartValid()) return;
-        let ps;
-        try { ps = this.chart.priceScale('right'); } catch (e) { return; }
-        if (!ps) return;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-            if (!this._isChartValid()) return;
-            try {
-                let observed = 0;
-                try { observed = ps.width() || 0; } catch (e) {}
-                // minimumWidth к этому моменту сброшен в 0, поэтому observed — честная
-                // ширина, которую вычислила библиотека; формула — только fallback
-                const finalW = (observed >= 30 && observed <= 240) ? observed : this._measurePriceScaleWidth();
-                if (finalW >= 30 && finalW <= 240) {
-                    ps.applyOptions({ minimumWidth: finalW });
-                    try {
-                        localStorage.setItem(this._psWidthStorageKey(), String(finalW));
-                        localStorage.setItem('psWidth_last', String(finalW));
-                    } catch (e) {}
-                }
-            } catch (e) { this._applyPriceScaleWidth(); }
-        }));
-    }
-
-    // Формат подписей изменился после отрисовки (например, пришла точность с биржи):
-    // сбрасываем фиксацию и перефиксируем по факту следующей отрисовки
     _relockPriceScaleWidth() {
-        if (!this._isChartValid()) return;
-        try {
-            const ps = this.chart.priceScale('right');
-            if (ps) ps.applyOptions({ minimumWidth: 0 });
-        } catch (e) {}
-        this._lockAndPersistPriceScaleWidth();
+        this._resetPriceScaleWidth();
+        requestAnimationFrame(() => requestAnimationFrame(() => this._lockPriceScaleWidth()));
     }
 
-    // совместимость со старыми вызовами
-    _applyPriceScaleWidthOnce() { this._applyPriceScaleWidth(); }
-    // Диагностика: вызовите в консоли chartManager.getPriceScaleDebug()
-    getPriceScaleDebug() {
-        try {
-            const ps = this.chart && this.chart.priceScale ? this.chart.priceScale('right') : null;
-            return {
-                storedKey: this._psWidthStorageKey(),
-                stored: this._getStoredPriceScaleWidth(),
-                measured: this._measurePriceScaleWidth(),
-                observedWidth: ps ? ps.width() : null,
-                appliedMinimumWidth: ps && ps.options ? ps.options().minimumWidth : null,
-                dataLength: this.chartData ? this.chartData.length : 0,
-                lwVersion: (typeof window.LightweightCharts?.version === 'function' ? window.LightweightCharts.version() : (window.LightweightCharts?.version || 'unknown')),
-            };
-        } catch (e) { return { error: String(e) }; }
-    }
     // =============== LW-NULL GUARDS ===============
     _toLwBar(c) {
         if (!c || typeof c !== 'object') return null;
@@ -680,7 +561,6 @@ class ChartManager {
         try { if (visibleSeries) visibleSeries.setData(lwBars); }
         catch (e) { try { visibleSeries.setData([]); } catch (e2) {} try { visibleSeries.setData(lwBars); } catch (e2) {} }
 
-        // скрытая серия не обновляется — setChartType заполнит её из chartData
         this._invisibleSeriesDirty = true;
 
         if (rebuildVolume) {
@@ -1371,7 +1251,21 @@ class ChartManager {
             clearTimeout(this._scrollStopTimeout);
             this._pendingDrawingsRedraw = true;
 
-            this._scrollStopTimeout = setTimeout(() => this._onScrollStopped(), 150);
+            this._scrollStopTimeout = setTimeout(() => {
+                this._isScrolling = false;
+                this._isScrollingFast = false;
+                if (this._pendingBarSpacing && this._pendingBarSpacing !== this._lastSavedBarSpacing) {
+                    this._lastSavedBarSpacing = this._pendingBarSpacing;
+                    this._savedBarSpacing = this._pendingBarSpacing;
+                    localStorage.setItem('chartBarSpacing', this._pendingBarSpacing);
+                }
+                this._applyPendingTrim();
+                this.onVisibleLogicalRangeChange(this._lastVisibleRange);
+                if (this._pendingDrawingsRedraw) {
+                    this._pendingDrawingsRedraw = false;
+                    this.requestDrawingsRedraw();
+                }
+            }, 150);
 
             if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
 
@@ -1402,67 +1296,6 @@ class ChartManager {
         this.chartContainer.addEventListener('wheel', this._wheelHandler, { passive: true });
     }
 
-    // =============== SCROLL STOP ===============
-    _onScrollStopped() {
-        // Пока пользователь не отпустил график (кнопка/палец нажаты) — не сбрасываем флаги
-        // и не запускаем тяжёлые задачи: они попадают ровно в середину жеста и дают фриз
-        if (this._pointerActive && !this._destroyed) {
-            if (!this._scrollDeferStartedAt) this._scrollDeferStartedAt = performance.now();
-            if (performance.now() - this._scrollDeferStartedAt < 2000) {
-                this._heavyAfterScrollPending = true;
-                clearTimeout(this._scrollStopTimeout);
-                this._scrollStopTimeout = setTimeout(() => this._onScrollStopped(), 150);
-                return;
-            }
-        }
-        this._heavyAfterScrollPending = false;
-        this._scrollDeferStartedAt = 0;
-        this._isScrolling = false;
-        this._isScrollingFast = false;
-
-        if (this._pendingBarSpacing && this._pendingBarSpacing !== this._lastSavedBarSpacing) {
-            this._lastSavedBarSpacing = this._pendingBarSpacing;
-            this._savedBarSpacing = this._pendingBarSpacing;
-            try { localStorage.setItem('chartBarSpacing', this._pendingBarSpacing); } catch (e) {}
-        }
-
-        // догоняем то, что пропускали во время перетаскивания
-        if (this._pendingIndicatorUpdate) {
-            this._pendingIndicatorUpdate = false;
-            if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-        }
-
-        // тяжёлые задачи — в свободный слот браузера, чтобы не конкурировать с кадрами
-        const runHeavy = () => {
-            this._heavyAfterScrollId = null;
-            if (this._destroyed || !this._isChartValid()) return;
-            this._applyPendingTrim();
-            this.onVisibleLogicalRangeChange(this._lastVisibleRange);
-            if (this._pendingDrawingsRedraw) {
-                this._pendingDrawingsRedraw = false;
-                this.requestDrawingsRedraw();
-            }
-        };
-        if (this._heavyAfterScrollId !== null) {
-            if (window.cancelIdleCallback) window.cancelIdleCallback(this._heavyAfterScrollId);
-            else clearTimeout(this._heavyAfterScrollId);
-            this._heavyAfterScrollId = null;
-        }
-        if (window.requestIdleCallback) this._heavyAfterScrollId = window.requestIdleCallback(runHeavy, { timeout: 300 });
-        else this._heavyAfterScrollId = setTimeout(runHeavy, 0);
-    }
-
-    _applyPendingTrimWhenIdle() {
-        if (this._destroyed) return;
-        if (this._pointerActive) {
-            clearTimeout(this._trimDebounceTimeout);
-            this._trimDebounceTimeout = setTimeout(() => this._applyPendingTrimWhenIdle(), 200);
-            return;
-        }
-        const run = () => { if (!this._destroyed) this._applyPendingTrim(); };
-        if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 300 });
-        else setTimeout(run, 0);
-    }
     setupEventListeners() {
         let resizeTimeout;
         this._resizeHandler = () => {
@@ -1482,21 +1315,6 @@ class ChartManager {
             }, 100);
         };
         window.addEventListener('resize', this._resizeHandler);
-
-        // Отслеживаем, держит ли пользователь график — тяжёлые задачи во время драга не запускаем
-        this._pointerDownHandler = () => { this._pointerActive = true; };
-        this._pointerUpHandler = () => {
-            if (!this._pointerActive) return;
-            this._pointerActive = false;
-            if (this._heavyAfterScrollPending && !this._destroyed) {
-                clearTimeout(this._scrollStopTimeout);
-                this._scrollStopTimeout = setTimeout(() => this._onScrollStopped(), 50);
-            }
-        };
-        if (this.chartContainer) this.chartContainer.addEventListener('pointerdown', this._pointerDownHandler, { passive: true });
-        window.addEventListener('pointerup', this._pointerUpHandler, { passive: true });
-        window.addEventListener('pointercancel', this._pointerUpHandler, { passive: true });
-        window.addEventListener('blur', this._pointerUpHandler, { passive: true });
 
         this._mouseLeaveHandler = () => {
             if (this.overlay) this.overlay.classList.remove('visible');
@@ -1605,18 +1423,6 @@ class ChartManager {
     // =============== SCHEDULED UPDATE ===============
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended || !this._isChartValid()) return;
-        // троттлинг: не чаще раза в 200 мс, иначе каждый WS-тик запускает полный
-        // пересчёт индикаторов и конкурирует за главный поток с отрисовкой
-        const now = Date.now();
-        const since = now - (this._lastUpdateTime || 0);
-        if (since < 200) {
-            if (this._updateThrottleTimeout) return;
-            this._updateThrottleTimeout = setTimeout(() => {
-                this._updateThrottleTimeout = null;
-                this.scheduleUpdate();
-            }, 200 - since);
-            return;
-        }
         this._updateScheduled = true;
         requestAnimationFrame(() => {
             this._performUpdate();
@@ -1673,14 +1479,8 @@ class ChartManager {
             if (!cachedPrecision) this._setCachedPrecision(this.currentSymbol, this.currentExchange, this.currentMarketType, precisionToApply);
         }
 
-        if (this.indicatorManager) {
-            // во время перетаскивания индикаторы не пересчитываем — отложим до остановки
-            if (this._isScrolling || this._isScrollingFast) this._pendingIndicatorUpdate = true;
-            else this.indicatorManager.updateAllIndicators();
-        }
+        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
         const lastCandle = this.chartData[this.chartData.length - 1];
-        // getCurrentPrice() уже возвращает currentRealPrice как fallback,
-        // так что `?? this.currentRealPrice` здесь — мёртвая ветка.
         const price = this.getCurrentPrice();
 
         if (price !== null) this._syncPriceLine(price);
@@ -2041,13 +1841,6 @@ class ChartManager {
             this._lastAppliedPrecision = String(prec);
             if (!cachedPrecision) this._setCachedPrecision(symbol, exchange, marketType, inferredPrecision);
 
-            // Сбрасываем старую фиксацию ширины: пусть библиотека сама выберет ширину
-            // под новые подписи, а мы затем замерим её фактическое значение и зафиксируем
-            try {
-                const psReset = this.chart.priceScale('right');
-                if (psReset) psReset.applyOptions({ autoScale: true, minimumWidth: 0 });
-            } catch (e) {}
-
             const lwBars = this._toLwBarsArray(this.chartData);
             if (lwBars.length === 0) {
                 console.error('❌ setDataQuick: после валидации не осталось свечей');
@@ -2057,11 +1850,18 @@ class ChartManager {
                 return;
             }
 
-            // Кормим только видимую серию — скрытая заполнится из chartData при setChartType
+            // Включаем автомасштаб и сбрасываем угаданную ширину оси ДО setData,
+            // чтобы библиотека сама подобрала нужный размер подписей.
+            try {
+                this.chart.priceScale('right').applyOptions({ autoScale: true, minimumWidth: 0 });
+            } catch (e) {}
+
             const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             try { if (visibleSeries) visibleSeries.setData(lwBars); }
-            catch (e) { try { visibleSeries.setData([]); } catch (e2) {} try { visibleSeries.setData(lwBars); } catch (e3) {} }
-
+            catch (e) {
+                try { visibleSeries.setData([]); } catch (e2) {}
+                try { visibleSeries.setData(lwBars); } catch (e3) {}
+            }
             this._invisibleSeriesDirty = true;
 
             if (this.volumeSeries && this.chartData.length > 0) {
@@ -2097,9 +1897,12 @@ class ChartManager {
                 const finalizeAfterRescale = () => {
                     if (this._isChartValid()) {
                         const ps = this.chart.priceScale('right');
-                        if (ps) { try { ps.applyOptions({ autoScale: false }); } catch (e) {} }
+                        if (ps) {
+                            // Фиксируем фактическую ширину, пока autoScale ещё включён.
+                            this._lockPriceScaleWidth();
+                            try { ps.applyOptions({ autoScale: false }); } catch (e) {}
+                        }
                         this._applyVolumeScaleOptions();
-                        this._lockAndPersistPriceScaleWidth();
                     }
                     if (this.timerManager && this._isChartValid() && this.lastCandle) {
                         this.timerManager.start(this.currentInterval);
@@ -2128,7 +1931,6 @@ class ChartManager {
                         this._setCachedPrecision(symbol, exchange, marketType, precision);
                         this.applyPriceFormat(precision);
                         this._lastAppliedPrecision = String(precision);
-                        // формат подписей изменился уже после отрисовки — перефиксируем ширину
                         if (changed) this._relockPriceScaleWidth();
                     }
                 }).catch(() => {});
@@ -2202,30 +2004,24 @@ class ChartManager {
         this._pendingSwitchRequest = Object.assign({}, base, partial);
     }
 
-   // Синхронный вызов. Рекурсия по стеку здесь ограничена: _pendingSwitchRequest —
-// единственный слот (не очередь), поэтому даже при быстром чередовании
-// переключений цепочка finally → _dispatchPendingSwitch → switchSymbol →
-// finally → ... сворачивается в глубину 1–2 вызова, а не растёт линейно.
-// setTimeout(..., 0) здесь не нужен и вреден: браузер клэмпит его до ~4 мс,
-// а в фоновой вкладке — до 1000 мс, что заметно замедляет переключения.
-_dispatchPendingSwitch() {
-    if (this._pendingSwitchRequest) {
-        const next = this._pendingSwitchRequest;
-        this._pendingSwitchRequest = null;
-        const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
-        const intervalChanged = next.interval !== this.currentInterval;
-        if (!symbolChanged && !intervalChanged) return;
-        if (symbolChanged) {
-            if (intervalChanged) {
-                this.currentInterval = next.interval;
-                localStorage.setItem('lastTimeframe', next.interval);
+    _dispatchPendingSwitch() {
+        if (this._pendingSwitchRequest) {
+            const next = this._pendingSwitchRequest;
+            this._pendingSwitchRequest = null;
+            const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
+            const intervalChanged = next.interval !== this.currentInterval;
+            if (!symbolChanged && !intervalChanged) return;
+            if (symbolChanged) {
+                if (intervalChanged) {
+                    this.currentInterval = next.interval;
+                    localStorage.setItem('lastTimeframe', next.interval);
+                }
+                this.switchSymbol(next.symbol, next.exchange, next.marketType);
+            } else if (intervalChanged) {
+                this.switchInterval(next.interval);
             }
-            this.switchSymbol(next.symbol, next.exchange, next.marketType);
-        } else if (intervalChanged) {
-            this.switchInterval(next.interval);
         }
     }
-}
 
     // =============== SWITCH SYMBOL ===============
     async switchSymbol(symbol, exchange, marketType) {
@@ -2300,9 +2096,6 @@ _dispatchPendingSwitch() {
             console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
         } finally {
             if (this._destroyed) return;
-            // Безусловный cleanup, без generation-guard'а: если generation
-            // сменился, эта операция всё равно остаётся владельцем
-            // _switchingSymbol/_updatesSuspended и снять их может только она.
             this._switchingSymbol = false;
             this._updatesSuspended = false;
             if (this.priceManager) this.priceManager.resume?.();
@@ -2368,7 +2161,6 @@ _dispatchPendingSwitch() {
         } catch (error) { console.error('❌ Ошибка переключения таймфрейма:', error); }
         finally {
             if (this._destroyed) return;
-            // Тот же паттерн, что в switchSymbol: cleanup без generation-guard.
             this._isSwitchingInterval = false;
             this._updatesSuspended = false;
             if (this.priceManager) this.priceManager.resume?.();
@@ -2390,6 +2182,7 @@ _dispatchPendingSwitch() {
         if (this._switchingSymbol || this._isSwitchingInterval) { if (onReady) onReady(); return; }
         if (this._destroyed) { if (onReady) onReady(); return; }
 
+        this._showSymbolSwitchOverlay();
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
         if (symbol) this.currentSymbol = symbol;
@@ -2397,13 +2190,7 @@ _dispatchPendingSwitch() {
         if (marketType) this.currentMarketType = marketType;
         if (interval) this.currentInterval = interval;
 
-        // Первое открытие: прячем график под оверлеем, пока не применятся данные,
-        // точность и финальная ширина шкалы — чтобы промежуточные кадры не были видны
-        const finish = () => {
-            setTimeout(() => this._hideSymbolSwitchOverlay(), 150);
-            if (onReady) onReady();
-        };
-        this._showSymbolSwitchOverlay();
+        const finish = () => { this._hideSymbolSwitchOverlay(); if (onReady) onReady(); };
         try {
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
             const isFromCache = !!(candles && candles.length > 0);
@@ -2476,21 +2263,6 @@ _dispatchPendingSwitch() {
 
     _syncPanelsCrosshairOptimized() {
         if (!this._latestCrosshairData || !this._latestCrosshairData.visible) { this._clearPanelsCrosshair(); return; }
-        // синхронизация кроссхейра панелей = полная перерисовка каждой панели;
-        // ограничиваем частоту ~30 кадрами/с
-        const nowTs = performance.now();
-        if (nowTs - this._lastPanelCrosshairSyncAt < 33) {
-            if (!this._panelCrosshairSyncScheduled) {
-                this._panelCrosshairSyncScheduled = true;
-                setTimeout(() => {
-                    this._panelCrosshairSyncScheduled = false;
-                    this._lastPanelCrosshairSyncAt = 0;
-                    this._syncPanelsCrosshairOptimized();
-                }, 33);
-            }
-            return;
-        }
-        this._lastPanelCrosshairSyncAt = nowTs;
         const panels = this.indicatorManager?.panelManager?.panels;
         if (!panels) return;
         const { time, pointX } = this._latestCrosshairData;
@@ -2600,8 +2372,7 @@ _dispatchPendingSwitch() {
         this._lastVolumeUpdateIndex = -1;
         this._isTrimming = false;
         const priceScale = this.chart.priceScale('right');
-        if (priceScale) priceScale.applyOptions({ autoScale: true, minimumWidth: 0 });
-        this._invisibleSeriesDirty = false;
+        if (priceScale) priceScale.applyOptions({ autoScale: true });
     }
 
     autoScale(onComplete) {
@@ -2795,8 +2566,6 @@ _dispatchPendingSwitch() {
                 const ps = this.chart.priceScale('right');
                 if (ps) ps.applyOptions({ priceFormat });
             }
-            // точность изменилась — ширину пересчитываем в том же кадре, чтобы не было второго скачка
-            this._applyPriceScaleWidth();
             if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
             return p;
         } catch (error) { return 2; }
@@ -3050,16 +2819,8 @@ _dispatchPendingSwitch() {
     }
 
     // =============== TITLE ===============
-    _updatePageTitle(force = false) {
+    _updatePageTitle() {
         const symbol = this.currentSymbol || '';
-        // не перезаписываем document.title чаще 2 раз в секунду
-        const nowT = performance.now();
-        if (!force && this._lastTitleAt && nowT - this._lastTitleAt < 500 && this._lastTitleSymbol === symbol) {
-            if (!this._titleTimer) this._titleTimer = setTimeout(() => { this._titleTimer = null; this._updatePageTitle(true); }, 500);
-            return;
-        }
-        this._lastTitleAt = nowT;
-        this._lastTitleSymbol = symbol;
         let price = this.currentRealPrice;
         if (!price || isNaN(price) || price <= 0) price = this.lastCandle?.close;
         if (!price || isNaN(price) || price <= 0) price = this.chartData?.[this.chartData.length - 1]?.close;
@@ -3157,19 +2918,6 @@ _dispatchPendingSwitch() {
         if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
         if (this._drawingsFinalUpdateTimeout) clearTimeout(this._drawingsFinalUpdateTimeout);
         if (this._scrollStopTimeout) clearTimeout(this._scrollStopTimeout);
-        if (this._pointerDownHandler && this.chartContainer) this.chartContainer.removeEventListener('pointerdown', this._pointerDownHandler);
-        if (this._pointerUpHandler) {
-            window.removeEventListener('pointerup', this._pointerUpHandler);
-            window.removeEventListener('pointercancel', this._pointerUpHandler);
-            window.removeEventListener('blur', this._pointerUpHandler);
-        }
-        if (this._updateThrottleTimeout) { clearTimeout(this._updateThrottleTimeout); this._updateThrottleTimeout = null; }
-        if (this._titleTimer) { clearTimeout(this._titleTimer); this._titleTimer = null; }
-        if (this._heavyAfterScrollId !== null) {
-            if (window.cancelIdleCallback) window.cancelIdleCallback(this._heavyAfterScrollId);
-            else clearTimeout(this._heavyAfterScrollId);
-            this._heavyAfterScrollId = null;
-        }
         if (this._priceUpdateRafId) { cancelAnimationFrame(this._priceUpdateRafId); this._priceUpdateRafId = null; }
         if (this._crosshairRafId) { cancelAnimationFrame(this._crosshairRafId); this._crosshairRafId = null; }
         if (this._drawingsRafId) { cancelAnimationFrame(this._drawingsRafId); this._drawingsRafId = null; }
@@ -3226,10 +2974,9 @@ _dispatchPendingSwitch() {
     updatePricePrecision(symbol, exchange, marketType) {
         const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
         if (cachedPrecision) { this.applyPriceFormat(parseInt(cachedPrecision, 10)); return; }
-        const inferredP = this.applyPriceFormat(this._inferPrecisionFromData());
+        this.applyPriceFormat(this._inferPrecisionFromData());
         if (typeof getPrecisionFromExchange === 'function') {
             getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
-                if (String(precision) !== String(inferredP)) this._relockPriceScaleWidth();
                 this.applyPriceFormat(precision);
                 this._setCachedPrecision(symbol, exchange, marketType, precision);
             }).catch(() => {});
@@ -3297,8 +3044,8 @@ _dispatchPendingSwitch() {
         this._pendingTrimParams = { fromIndex, toIndex };
         if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
         this._trimDebounceTimeout = setTimeout(() => {
+            this._applyPendingTrim();
             this._trimDebounceTimeout = null;
-            this._applyPendingTrimWhenIdle();
         }, this._trimDebounceDelay);
     }
 
@@ -3338,8 +3085,8 @@ _dispatchPendingSwitch() {
             const ps = this.chart.priceScale('right');
             if (ps) ps.applyOptions({ autoScale: false });
             const lwBars = this._toLwBarsArray(this.chartData);
-            const visSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            try { if (visSeries) visSeries.setData(lwBars); } catch (e) {}
+            const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            try { if (visibleSeries) visibleSeries.setData(lwBars); } catch (e) {}
             this._invisibleSeriesDirty = true;
             this._updateVolumeOptimized();
             this._applyVolumeScaleOptions();
@@ -3399,8 +3146,8 @@ _dispatchPendingSwitch() {
                 const ps = this.chart.priceScale('right');
                 if (ps) ps.applyOptions({ autoScale: false });
                 const lwBars = this._toLwBarsArray(this.chartData);
-                const visSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-                try { if (visSeries) visSeries.setData(lwBars); } catch (e) {}
+                const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+                try { if (visibleSeries) visibleSeries.setData(lwBars); } catch (e) {}
                 this._invisibleSeriesDirty = true;
                 this._updateVolumeOptimized();
                 this._applyVolumeScaleOptions();
