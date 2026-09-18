@@ -252,14 +252,14 @@ class ChartManager {
                     });
                 }
             },
-       rightPriceScale: {
-    borderColor: '#333333',
-    borderVisible: true,
-    scaleMargins: { top: 0.1, bottom: 0.25 },
-    autoScale: false,
-    entireTextOnly: false,
-    minimumWidth: 0,
-},
+            rightPriceScale: {
+                borderColor: '#333333',
+                borderVisible: true,
+                scaleMargins: { top: 0.1, bottom: 0.25 },
+                autoScale: false,
+                entireTextOnly: false,
+                minimumWidth: 0,
+            },
             localization: {
                 timeFormatter: (time) => {
                     return new Date(time * 1000).toLocaleString('ru-RU', {
@@ -484,14 +484,6 @@ class ChartManager {
     // =================================================================================
     // 1c. ЕДИНЫЙ ХЕЛПЕР ПРАВОГО КРАЯ
     // =================================================================================
-    // FIX: В этой версии LW timeScale().scrollToRealTime() не соблюдает
-    // rightOffset (даёт 70+ баров вместо 15). setVisibleLogicalRange работает
-    // корректно на любой длине серии.
-    //
-    // ВАЖНО: этот метод вызывается ТОЛЬКО при:
-    //   - открытии тикера / смене ТФ  (setDataQuick → positionAfterDataApplied)
-    //   - явном действии "прокрутить к последней свече" (scrollToLast)
-    // Больше НИОТКУДА — иначе вид дёргается на каждом WS-тике.
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
 
@@ -501,8 +493,6 @@ class ChartManager {
         const lastIndex = this.chartData.length - 1;
         const rightOffset = 15;
 
-        // Если отступ уже правильный — не трогаем. Это устраняет визуальные
-        // дёргания при повторных вызовах.
         try {
             const cur = ts.getVisibleLogicalRange();
             if (cur) {
@@ -535,6 +525,57 @@ class ChartManager {
         try {
             ts.setVisibleLogicalRange({ from, to });
         } catch (e) {}
+    }
+
+    // =================================================================================
+    // LW-NULL GUARDS
+    // =================================================================================
+
+    // FIX LW-NULL: LWCharts падает с "Value is null", если в bar попадёт
+    // null/undefined/строка/NaN хоть в одно из time/open/high/low/close.
+    // Возвращает чистый bar-объект или null, если свечу использовать нельзя.
+    _toLwBar(c) {
+        if (!c || typeof c !== 'object') return null;
+
+        const t = c.time;
+        const o = c.open;
+        const h = c.high;
+        const l = c.low;
+        const cl = c.close;
+
+        if (typeof t !== 'number' || !isFinite(t) || t <= 0) return null;
+        if (typeof o !== 'number' || !isFinite(o)) return null;
+        if (typeof h !== 'number' || !isFinite(h)) return null;
+        if (typeof l !== 'number' || !isFinite(l)) return null;
+        if (typeof cl !== 'number' || !isFinite(cl)) return null;
+
+        return { time: t, open: o, high: h, low: l, close: cl };
+    }
+
+    _toLwBarsArray(arr) {
+        const out = [];
+        let dropped = 0;
+
+        for (let i = 0; i < arr.length; i++) {
+            const b = this._toLwBar(arr[i]);
+            if (b) out.push(b);
+            else {
+                dropped++;
+                if (dropped <= 3) {
+                    console.warn('🚨 LW-NULL: отброшена невалидная свеча [' + i + ']',
+                        arr[i] && {
+                            time: arr[i].time,
+                            open: arr[i].open, high: arr[i].high,
+                            low: arr[i].low, close: arr[i].close,
+                            _source: arr[i]._source,
+                            _isPlaceholder: arr[i]._isPlaceholder
+                        });
+                }
+            }
+        }
+
+        if (dropped > 3) console.warn('🚨 LW-NULL: всего отброшено свечей:', dropped);
+        return out;
     }
 
     // =================================================================================
@@ -615,8 +656,16 @@ class ChartManager {
         const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         if (!series) return;
 
+        // FIX LW-NULL: не пускаем в LWCharts ничего, кроме валидного бара.
+        const safe = this._toLwBar(updateData);
+        if (!safe) {
+            console.warn('🚨 LW-NULL: _updateVisibleSeries получил невалидные данные', updateData);
+            this._resyncSeriesFromData();
+            return;
+        }
+
         try {
-            series.update(updateData);
+            series.update(safe);
         } catch (e) {
             this._resyncSeriesFromData();
         }
@@ -634,9 +683,6 @@ class ChartManager {
         } catch (e) {}
     }
 
-    // FIX: из _applyDataAtomically убран вызов _scrollToRightEdgeWithOffset.
-    // Здесь только сохраняем «якорь» (первую видимую свечу) при работе в
-    // истории. На правом краю LW сам сдвигает вид через shiftVisibleRangeOnNewBar.
     _applyDataAtomically(rebuildVolume = true) {
         if (!this._isChartValid() || !this.chartData.length) return;
 
@@ -667,12 +713,18 @@ class ChartManager {
         const visibleSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         const otherSeries = this.currentChartType === 'candle' ? this.barSeries : this.candleSeries;
 
-        try {
-            if (visibleSeries) visibleSeries.setData(this.chartData);
-        } catch (e) {}
+        // FIX LW-NULL: строим чистый массив LW-баров. Всё, что не проходит
+        // валидацию (null/строка/NaN), отсеивается ДО setData.
+        const lwBars = this._toLwBarsArray(this.chartData);
 
         try {
-            if (otherSeries) otherSeries.setData(this.chartData);
+            if (visibleSeries) visibleSeries.setData(lwBars);
+        } catch (e) {
+            console.warn('🚨 LW-NULL: setData упал в _applyDataAtomically', e);
+        }
+
+        try {
+            if (otherSeries) otherSeries.setData(lwBars);
         } catch (e) {}
 
         this._invisibleSeriesDirty = false;
@@ -694,9 +746,6 @@ class ChartManager {
         }
 
         try {
-            // FIX: на правом краю НЕ дёргаем отступ. Если юзер смотрит на
-            // последний бар, LW сам удержит правый край через
-            // shiftVisibleRangeOnNewBar. Если мы в истории — сохраняем «якорь».
             if (!atRightEdge && anchorTime != null) {
                 const newIdx = this._candleTimeMap.get(anchorTime);
                 if (newIdx !== undefined) {
@@ -719,7 +768,12 @@ class ChartManager {
         let failed = false;
 
         for (const c of newCandles) {
-            const point = { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+            // FIX LW-NULL: фильтруем каждую свечу перед update.
+            const point = this._toLwBar(c);
+            if (!point) {
+                console.warn('🚨 LW-NULL: _applyAppendOnly пропустил невалидную свечу', c);
+                continue;
+            }
 
             try {
                 series.update(point);
@@ -737,9 +791,9 @@ class ChartManager {
 
             if (this.volumeSeries) {
                 this._safeVolumeBarUpdate(
-                    c.time,
+                    point.time,
                     c.quoteVolume || c.volume || 0,
-                    c.close >= c.open ? this.bullishColor : this.bearishColor
+                    point.close >= point.open ? this.bullishColor : this.bearishColor
                 );
             }
         }
@@ -757,8 +811,14 @@ class ChartManager {
     _safeVolumeBarUpdate(time, value, color) {
         if (!this.volumeSeries) return;
 
+        const t = Number(time);
+        const v = Number(value);
+
+        if (!isFinite(t) || t <= 0) return;
+        if (!isFinite(v) || v < 0) return;
+
         try {
-            this.volumeSeries.update({ time, value, color });
+            this.volumeSeries.update({ time: t, value: v, color });
         } catch (e) {
             try {
                 this._volumeDataCache = null;
@@ -1965,14 +2025,14 @@ class ChartManager {
         if (type === 'candle') {
             if ((previousType !== 'candle' || this._invisibleSeriesDirty) &&
                 this.candleSeries && this.chartData.length) {
-                this.candleSeries.setData(this.chartData);
+                try { this.candleSeries.setData(this._toLwBarsArray(this.chartData)); } catch (e) {}
             }
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: true });
             if (this.barSeries) this.barSeries.applyOptions({ visible: false });
         } else if (type === 'bar') {
             if ((previousType !== 'bar' || this._invisibleSeriesDirty) &&
                 this.barSeries && this.chartData.length) {
-                this.barSeries.setData(this.chartData);
+                try { this.barSeries.setData(this._toLwBarsArray(this.chartData)); } catch (e) {}
             }
             if (this.barSeries) this.barSeries.applyOptions({ visible: true });
             if (this.candleSeries) this.candleSeries.applyOptions({ visible: false });
@@ -2596,6 +2656,9 @@ class ChartManager {
             return false;
         }
 
+        // FIX LW-NULL: getCurrentPrice() мог вернуть СТРОКУ (priceManager
+        // отдаёт сырое значение), и isNaN("65000") === false пропускал её.
+        // Приводим к числу явно.
         let price = null;
 
         try {
@@ -2604,11 +2667,16 @@ class ChartManager {
             price = null;
         }
 
-        if (price === null || price === undefined || isNaN(price) || price <= 0) {
+        if (typeof price === 'string') price = Number(price);
+
+        if (price === null || price === undefined ||
+            typeof price !== 'number' || !isFinite(price) || isNaN(price) || price <= 0) {
             price = lastCandle.close;
         }
 
-        if (price === null || price === undefined || isNaN(price) || price <= 0) {
+        if (typeof price === 'string') price = Number(price);
+
+        if (typeof price !== 'number' || !isFinite(price) || isNaN(price) || price <= 0) {
             return false;
         }
 
@@ -2625,7 +2693,8 @@ class ChartManager {
 
         this.lastCandle = candle;
 
-        if (this.currentRealPrice === null || this.currentRealPrice === undefined || isNaN(this.currentRealPrice)) {
+        if (typeof this.currentRealPrice !== 'number' ||
+            !isFinite(this.currentRealPrice) || isNaN(this.currentRealPrice)) {
             this.currentRealPrice = price;
         }
 
@@ -2757,8 +2826,27 @@ class ChartManager {
                 this._setCachedPrecision(symbol, exchange, marketType, inferredPrecision);
             }
 
-            if (this.candleSeries) this.candleSeries.setData(this.chartData);
-            if (this.barSeries) this.barSeries.setData(this.chartData);
+            // FIX LW-NULL: конвертируем в чистые LW-бары перед setData.
+            const lwBars = this._toLwBarsArray(this.chartData);
+
+            if (lwBars.length === 0) {
+                console.error('❌ setDataQuick: после валидации не осталось свечей');
+                this.chart.applyOptions({ handleScroll: true, handleScale: true });
+                this._disableAutoScroll();
+                if (onReady) onReady();
+                return;
+            }
+
+            try {
+                if (this.candleSeries) this.candleSeries.setData(lwBars);
+                if (this.barSeries) this.barSeries.setData(lwBars);
+            } catch (e) {
+                console.error('❌ setDataQuick: setData упал', e);
+                this.chart.applyOptions({ handleScroll: true, handleScale: true });
+                this._disableAutoScroll();
+                if (onReady) onReady();
+                return;
+            }
 
             this._invisibleSeriesDirty = false;
 
@@ -2798,8 +2886,6 @@ class ChartManager {
                     return;
                 }
 
-                // FIX: единственный вызов отступа при открытии тикера / смене ТФ.
-                // Больше ниоткуда _scrollToRightEdgeWithOffset не дёргается.
                 this._scrollToRightEdgeWithOffset();
 
                 const finalizeAfterRescale = () => {
@@ -3536,8 +3622,6 @@ class ChartManager {
             const savedBarSpacing = this._savedBarSpacing || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
 
-            // scrollToLast — «прокрутить к последней свече». Использует тот же
-            // хелпер, что и setDataQuick → отступ ровно 15.
             this._scrollToRightEdgeWithOffset();
 
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -3680,12 +3764,25 @@ class ChartManager {
                 price = null;
             }
 
-            if (price !== null && price !== undefined && !isNaN(price)) {
+            // FIX LW-NULL: priceManager может отдать объект или строку.
+            if (price && typeof price === 'object') {
+                if (typeof price.price === 'number') price = price.price;
+                else if (typeof price.close === 'number') price = price.close;
+                else if (typeof price.last === 'number') price = price.last;
+                else price = null;
+            }
+
+            if (typeof price === 'string') price = Number(price);
+
+            if (typeof price === 'number' && isFinite(price) && !isNaN(price) && price > 0) {
                 return price;
             }
         }
 
-        if (this.currentRealPrice !== null && this.currentRealPrice !== undefined && !isNaN(this.currentRealPrice)) {
+        if (typeof this.currentRealPrice === 'number' &&
+            isFinite(this.currentRealPrice) &&
+            !isNaN(this.currentRealPrice) &&
+            this.currentRealPrice > 0) {
             return this.currentRealPrice;
         }
 
@@ -3822,7 +3919,9 @@ class ChartManager {
                 else return;
             }
 
-            if (typeof price !== 'number' || isNaN(price)) return;
+            if (typeof price === 'string') price = Number(price);
+
+            if (typeof price !== 'number' || isNaN(price) || !isFinite(price)) return;
 
             this.currentRealPrice = price;
             this._updatePageTitle();
@@ -4053,17 +4152,27 @@ class ChartManager {
             return this._volumeDataCache;
         }
 
-        const volumeData = new Array(data.length);
+        const volumeData = [];
 
         for (let i = 0; i < data.length; i++) {
             const c = data[i];
-            const volume = c.quoteVolume || c.volume || 0;
 
-            volumeData[i] = {
-                time: c.time,
+            const t = Number(c.time);
+            if (!isFinite(t) || t <= 0) continue;
+
+            // FIX LW-NULL: c.quoteVolume/c.volume мог быть строкой или NaN —
+            // LWCharts на HistogramSeries тоже падает на null/NaN value.
+            let volume = Number(c.quoteVolume);
+            if (!isFinite(volume) || volume < 0) {
+                volume = Number(c.volume);
+                if (!isFinite(volume) || volume < 0) volume = 0;
+            }
+
+            volumeData.push({
+                time: t,
                 value: volume,
                 color: c.close >= c.open ? bullishColor : bearishColor
-            };
+            });
         }
 
         if (data === this.chartData) {
@@ -4794,8 +4903,9 @@ class ChartManager {
             const priceScale = this.chart.priceScale('right');
             priceScale.applyOptions({ autoScale: false });
 
-            try { if (this.candleSeries) this.candleSeries.setData(this.chartData); } catch (e) {}
-            try { if (this.barSeries) this.barSeries.setData(this.chartData); } catch (e) {}
+            const lwBars = this._toLwBarsArray(this.chartData);
+            try { if (this.candleSeries) this.candleSeries.setData(lwBars); } catch (e) {}
+            try { if (this.barSeries) this.barSeries.setData(lwBars); } catch (e) {}
             this._invisibleSeriesDirty = false;
 
             this._updateVolumeOptimized();
@@ -4895,8 +5005,9 @@ class ChartManager {
                 const priceScale = this.chart.priceScale('right');
                 priceScale.applyOptions({ autoScale: false });
 
-                try { if (this.candleSeries) this.candleSeries.setData(this.chartData); } catch (e) {}
-                try { if (this.barSeries) this.barSeries.setData(this.chartData); } catch (e) {}
+                const lwBars = this._toLwBarsArray(this.chartData);
+                try { if (this.candleSeries) this.candleSeries.setData(lwBars); } catch (e) {}
+                try { if (this.barSeries) this.barSeries.setData(lwBars); } catch (e) {}
                 this._invisibleSeriesDirty = false;
 
                 this._updateVolumeOptimized();
@@ -5080,13 +5191,26 @@ class ChartManager {
         const CACHE_VERSION = '2';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
 
+        // FIX LW-NULL: чистим данные ПЕРЕД сохранением, чтобы в IndexedDB
+        // не попали битые свечи, которые потом снова уронят setData.
+        const cleanCandles = candles.filter(c =>
+            c && typeof c === 'object' &&
+            typeof c.time === 'number' && isFinite(c.time) && c.time > 0 &&
+            typeof c.open === 'number' && isFinite(c.open) &&
+            typeof c.high === 'number' && isFinite(c.high) &&
+            typeof c.low === 'number' && isFinite(c.low) &&
+            typeof c.close === 'number' && isFinite(c.close)
+        );
+
+        if (cleanCandles.length === 0) return;
+
         const cacheData = {
             key, symbol, exchange, marketType, interval,
-            data: candles,
+            data: cleanCandles,
             lastUpdate: Date.now(),
-            firstCandleTime: candles[0].time,
-            lastCandleTime: candles[candles.length - 1].time,
-            count: candles.length,
+            firstCandleTime: cleanCandles[0].time,
+            lastCandleTime: cleanCandles[cleanCandles.length - 1].time,
+            count: cleanCandles.length,
             version: CACHE_VERSION
         };
 
@@ -5120,11 +5244,34 @@ class ChartManager {
 
             if (Date.now() - cached.lastUpdate > CACHE_DURATION) return null;
 
-            for (const c of cached.data) {
+            if (!Array.isArray(cached.data)) return null;
+
+            // FIX LW-NULL: cached.data не валидировался — повреждённая запись
+            // из IndexedDB уходила прямо в setData и валила LWCharts.
+            const valid = cached.data.filter(c =>
+                c && typeof c === 'object' &&
+                typeof c.time === 'number' && isFinite(c.time) && c.time > 0 &&
+                typeof c.open === 'number' && isFinite(c.open) &&
+                typeof c.high === 'number' && isFinite(c.high) &&
+                typeof c.low === 'number' && isFinite(c.low) &&
+                typeof c.close === 'number' && isFinite(c.close)
+            );
+
+            if (valid.length === 0) {
+                await window.db.delete('candles', key);
+                return null;
+            }
+
+            if (valid.length !== cached.data.length) {
+                console.warn('⚠️ loadCandlesFromCache: отброшено невалидных свечей:',
+                    cached.data.length - valid.length);
+            }
+
+            for (const c of valid) {
                 this._stampCandle(c, 'cache', cached.lastUpdate);
             }
 
-            return cached.data;
+            return valid;
         } catch (error) {
             return null;
         }
