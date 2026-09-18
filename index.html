@@ -3520,18 +3520,22 @@ setTimeout(function() {
         const isHidden = document.body.classList.contains('ticker-panel-hidden');
         toggleBtn.innerHTML = isHidden ? '〈' : '〉';
 
-        setTimeout(() => {
-            const cm = window.chartManager || window.chartManagerInstance;
-            if (cm && cm._isChartValid && cm._isChartValid()) {
-                cm.forceRedraw();
-                if (cm.timerManager) {
-                    cm.timerManager._forceUpdate();
-                }
-            }
+     setTimeout(() => {
+    const cm = window.chartManager || window.chartManagerInstance;
+    if (cm && cm._isChartValid && cm._isChartValid()) {
+        cm.forceRedraw();
+        if (cm.timerManager) {
+            // _forceUpdate() в TimerManager не существует.
+            // forceColorUpdate() — публичный метод, сбрасывает кэш цвета
+            // и перерисовывает бейдж таймера в новой позиции.
+            cm.timerManager.forceColorUpdate();
+        }
+    }
+    recalcDrawingToolbar();
+    recalcFooterButtons();
+}, 350);
 
-            recalcDrawingToolbar();
-            recalcFooterButtons();
-        }, 350);
+            
     });
 
     // JS-обработчики наведения больше не нужны, всё идеально работает на чистом CSS :hover
