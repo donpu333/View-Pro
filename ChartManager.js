@@ -419,9 +419,6 @@ class ChartManager {
     }
 
     // =============== PRICE SCALE WIDTH — LOCKED ONCE ===============
-    // Ключевой момент: ширина считается ПО МАКС. ЦЕНЕ ВСЕЙ ИСТОРИИ ×2.
-    // entireTextOnly: false — LWCharts НЕ пытается расшириться, даже если
-    // метка не влезает. Он обрежет её. Значит прыжков не будет НИКОГДА.
     _computePriceScaleWidth() {
         if (!this.chartData || this.chartData.length === 0) return 65;
 
@@ -436,7 +433,6 @@ class ChartManager {
 
         if (maxPrice <= 0) return 65;
 
-        // ×2 запас — покрывает любое движение цены внутри символа.
         const withMargin = maxPrice * 2;
 
         let labelLen;
@@ -447,7 +443,6 @@ class ChartManager {
             labelLen = withMargin.toFixed(precision).length;
         }
 
-        // 7px/символ + 16px на паддинги
         return Math.max(50, Math.min(Math.ceil(labelLen * 7 + 16), 160));
     }
 
@@ -1507,7 +1502,9 @@ class ChartManager {
 
         if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
         const lastCandle = this.chartData[this.chartData.length - 1];
-        const price = this.getCurrentPrice() ?? this.currentRealPrice;
+        // getCurrentPrice() уже возвращает currentRealPrice как fallback,
+        // так что `?? this.currentRealPrice` здесь — мёртвая ветка.
+        const price = this.getCurrentPrice();
 
         if (price !== null) this._syncPriceLine(price);
         else {
@@ -1919,10 +1916,6 @@ class ChartManager {
                         const ps = this.chart.priceScale('right');
                         if (ps) { try { ps.applyOptions({ autoScale: false }); } catch (e) {} }
                         this._applyVolumeScaleOptions();
-
-                        // ШИРИНА ФИКСИРУЕТСЯ ОДИН РАЗ. Больше НИКОГДА не меняется
-                        // внутри этого символа. Ни скролл, ни зум, ни новые свечи
-                        // её не тронут.
                         this._applyPriceScaleWidthOnce();
                     }
                     if (this.timerManager && this._isChartValid() && this.lastCandle) {
@@ -2023,130 +2016,124 @@ class ChartManager {
         this._pendingSwitchRequest = Object.assign({}, base, partial);
     }
 
+    // FIX: откладываем исполнение через setTimeout(0), чтобы цепочка
+    //   finally → _dispatchPendingSwitch → switchSymbol → finally →
+    //   _dispatchPendingSwitch → ...
+    // не разворачивалась в рекурсию по стеку при быстром чередовании
+    // переключений (пользователь кликает символы/таймфреймы быстрее, чем
+    // успевает завершиться предыдущий switch).
     _dispatchPendingSwitch() {
         if (!this._pendingSwitchRequest) return;
-        const next = this._pendingSwitchRequest;
-        this._pendingSwitchRequest = null;
-        const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
-        const intervalChanged = next.interval !== this.currentInterval;
-        if (!symbolChanged && !intervalChanged) return;
-        if (symbolChanged) {
-            if (intervalChanged) {
-                this.currentInterval = next.interval;
-                localStorage.setItem('lastTimeframe', next.interval);
+        setTimeout(() => {
+            if (this._destroyed) return;
+            if (!this._pendingSwitchRequest) return;
+            const next = this._pendingSwitchRequest;
+            this._pendingSwitchRequest = null;
+            const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
+            const intervalChanged = next.interval !== this.currentInterval;
+            if (!symbolChanged && !intervalChanged) return;
+            if (symbolChanged) {
+                if (intervalChanged) {
+                    this.currentInterval = next.interval;
+                    localStorage.setItem('lastTimeframe', next.interval);
+                }
+                this.switchSymbol(next.symbol, next.exchange, next.marketType);
+            } else if (intervalChanged) {
+                this.switchInterval(next.interval);
             }
-            this.switchSymbol(next.symbol, next.exchange, next.marketType);
-        } else if (intervalChanged) {
-            this.switchInterval(next.interval);
+        }, 0);
+    }
+
+    // =============== SWITCH SYMBOL ===============
+    async switchSymbol(symbol, exchange, marketType) {
+        if (this._switchingSymbol || this._isSwitchingInterval) {
+            this._queuePendingSwitch({ symbol, exchange, marketType });
+            return;
+        }
+        this._switchingSymbol = true;
+        this._showSymbolSwitchOverlay();
+        this._suspendAllUpdates();
+
+        const generationId = ++this._generationCounter;
+        this._activeGeneration = generationId;
+        let dataApplied = false;
+
+        try {
+            let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
+            let isFromCache = !!candles;
+            if (!isFromCache) {
+                candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+            }
+            if (this._activeGeneration !== generationId) return;
+            if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
+
+            this.currentRealPrice = null;
+            this.lastCandle = null;
+            this._abortAllProcesses();
+
+            this.chartData = [];
+            this._candleTimeMap.clear();
+            this._lastKlineEventTime = 0;
+            this._pendingTrimParams = null;
+
+            this.currentSymbol = symbol;
+            this.currentExchange = exchange;
+            this.currentMarketType = marketType;
+
+            this._subscribeToPrice();
+            if (window.wsManager?.updateSymbolAndTimeframe) {
+                window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
+            }
+            const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
+            if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
+            if (!this._isChartValid()) return;
+
+            let cacheRefreshPromise = null;
+            if (isFromCache) {
+                cacheRefreshPromise = Promise.race([
+                    this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
+                    new Promise(r => setTimeout(r, 2500))
+                ]);
+            }
+
+            await new Promise((resolve) => {
+                this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, resolve);
+            });
+            dataApplied = true;
+            if (this._activeGeneration !== generationId) return;
+
+            if (cacheRefreshPromise) await cacheRefreshPromise;
+            if (this._activeGeneration !== generationId) return;
+
+            if (!isFromCache) {
+                this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
+            }
+            this.loadDrawingsForCurrentSymbol();
+            localStorage.setItem('lastSymbol', symbol);
+            localStorage.setItem('lastExchange', exchange);
+            localStorage.setItem('lastMarketType', marketType);
+            this._notifySymbolChange();
+        } catch (error) {
+            console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
+        } finally {
+            if (this._destroyed) return;
+            // Безусловный cleanup, без generation-guard'а: если generation
+            // сменился, эта операция всё равно остаётся владельцем
+            // _switchingSymbol/_updatesSuspended и снять их может только она.
+            this._switchingSymbol = false;
+            this._updatesSuspended = false;
+            if (this.priceManager) this.priceManager.resume?.();
+            this._hideSymbolSwitchOverlay();
+            if (dataApplied) {
+                this._startPeriodicSync();
+                this._startNewCandleChecker();
+                this._syncRecentCandles().catch(() => {});
+            }
+            this._dispatchPendingSwitch();
         }
     }
 
-  // =============== SWITCH SYMBOL ===============
-// Схема:
-//   1. Всё, что должно произойти до await, — вне try (единая приостановка).
-//   2. Все ветки выхода (включая `if (generation !== generationId) return`)
-//      проходят через finally — там cleanup выполняется БЕЗУСЛОВНО, без
-//      generation-guard'а. Guard нужен только для того, чтобы не затирать
-//      чужое состояние, но в текущем коде чужого состояния быть не может:
-//      новая операция, увидев _switchingSymbol === true, уходит в очередь
-//      (_queuePendingSwitch) и ждёт, пока ЭТА операция почистит флаги
-//      и вызовет _dispatchPendingSwitch. Guard бы оставил флаги висеть
-//      навсегда — это и есть исходный баг.
-async switchSymbol(symbol, exchange, marketType) {
-    if (this._switchingSymbol || this._isSwitchingInterval) {
-        this._queuePendingSwitch({ symbol, exchange, marketType });
-        return;
-    }
-    this._switchingSymbol = true;
-    this._showSymbolSwitchOverlay();
-    // Единая точка приостановки: priceManager.suspend + timerManager.stop.
-    this._suspendAllUpdates();
-
-    const generationId = ++this._generationCounter;
-    this._activeGeneration = generationId;
-    let dataApplied = false;
-
-    try {
-        let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
-        let isFromCache = !!candles;
-        if (!isFromCache) {
-            candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
-        }
-        if (this._activeGeneration !== generationId) return;
-        if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
-
-        this.currentRealPrice = null;
-        this.lastCandle = null;
-        // _abortAllProcesses уже включает timerManager.stop() и abort
-        // всех fetch-контроллеров — отдельный вызов stop() не нужен.
-        this._abortAllProcesses();
-
-        this.chartData = [];
-        this._candleTimeMap.clear();
-        this._lastKlineEventTime = 0;
-        this._pendingTrimParams = null;
-
-        this.currentSymbol = symbol;
-        this.currentExchange = exchange;
-        this.currentMarketType = marketType;
-
-        this._subscribeToPrice();
-        if (window.wsManager?.updateSymbolAndTimeframe) {
-            window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
-        }
-        const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
-        if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
-        if (!this._isChartValid()) return;
-
-        let cacheRefreshPromise = null;
-        if (isFromCache) {
-            cacheRefreshPromise = Promise.race([
-                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
-                new Promise(r => setTimeout(r, 2500))
-            ]);
-        }
-
-        await new Promise((resolve) => {
-            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, resolve);
-        });
-        dataApplied = true;
-        if (this._activeGeneration !== generationId) return;
-
-        if (cacheRefreshPromise) await cacheRefreshPromise;
-        if (this._activeGeneration !== generationId) return;
-
-        if (!isFromCache) {
-            this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
-        }
-        this.loadDrawingsForCurrentSymbol();
-        localStorage.setItem('lastSymbol', symbol);
-        localStorage.setItem('lastExchange', exchange);
-        localStorage.setItem('lastMarketType', marketType);
-        this._notifySymbolChange();
-    } catch (error) {
-        console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
-    } finally {
-        // Безусловный cleanup. Без generation-guard'а.
-        //
-        // Если generation сменился (в текущем коде это возможно только
-        // когда новая операция — switchSymbol/switchInterval/loadInitialData —
-        // не смогла стартовать из-за _switchingSymbol === true и ушла
-        // в _queuePendingSwitch), то ЭТА операция остаётся единственным
-        // владельцем _switchingSymbol/_updatesSuspended, и снять их может
-        // только она. Guard бы оставил их висеть, и следующий
-        // _dispatchPendingSwitch никогда бы не сработал.
-        this._switchingSymbol = false;
-        this._updatesSuspended = false;
-        if (this.priceManager) this.priceManager.resume?.();
-        this._hideSymbolSwitchOverlay();
-        if (dataApplied) {
-            this._startPeriodicSync();
-            this._startNewCandleChecker();
-            this._syncRecentCandles().catch(() => {});
-        }
-        this._dispatchPendingSwitch();
-    }
-}
+    // =============== SWITCH INTERVAL ===============
     async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) { this._queuePendingSwitch({ interval: newInterval }); return; }
         if (this.currentInterval === newInterval) return;
@@ -2197,13 +2184,14 @@ async switchSymbol(symbol, exchange, marketType) {
             }
         } catch (error) { console.error('❌ Ошибка переключения таймфрейма:', error); }
         finally {
+            if (this._destroyed) return;
+            // Тот же паттерн, что в switchSymbol: cleanup без generation-guard.
             this._isSwitchingInterval = false;
+            this._updatesSuspended = false;
+            if (this.priceManager) this.priceManager.resume?.();
             this._hideSymbolSwitchOverlay();
-            if (this._activeGeneration === generationId) {
-                this._resumeAllUpdates(generationId);
-                this._startPeriodicSync();
-                this._startNewCandleChecker();
-            }
+            this._startPeriodicSync();
+            this._startNewCandleChecker();
             this._dispatchPendingSwitch();
         }
     }
@@ -3119,8 +3107,6 @@ async switchSymbol(symbol, exchange, marketType) {
             const ts = this.chart.timeScale();
             const cr = ts.getVisibleLogicalRange();
             const ps = this.chart.priceScale('right');
-            // FIX: priceScale('right') may return null/undefined (e.g. race
-            // during teardown); guard before calling applyOptions on it.
             if (ps) ps.applyOptions({ autoScale: false });
             const lwBars = this._toLwBarsArray(this.chartData);
             try { if (this.candleSeries) this.candleSeries.setData(lwBars); } catch (e) {}
@@ -3182,7 +3168,6 @@ async switchSymbol(symbol, exchange, marketType) {
                 this._volumeDataDirty = true;
                 this._lastVolumeUpdateIndex = -1;
                 const ps = this.chart.priceScale('right');
-                // FIX: same null-guard as _performTrimNow above.
                 if (ps) ps.applyOptions({ autoScale: false });
                 const lwBars = this._toLwBarsArray(this.chartData);
                 try { if (this.candleSeries) this.candleSeries.setData(lwBars); } catch (e) {}
@@ -3191,8 +3176,6 @@ async switchSymbol(symbol, exchange, marketType) {
                 this._updateVolumeOptimized();
                 this._applyVolumeScaleOptions();
 
-                // Расширяем ширину, если история содержит более высокие цены.
-                // Если ниже — LW оставит старую (большую): минимум не сужается.
                 this._applyPriceScaleWidthOnce();
 
                 const netShift = addedCount - trimmedFromFront;
