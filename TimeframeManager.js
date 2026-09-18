@@ -1,8 +1,50 @@
+/**
+ * TimeframeManager v2 — исправленная версия.
+ *
+ * Что починено (номера соответствуют pm/TIMEFRAMEMANAGER-REVIEW.md):
+ *
+ *  TF1/TF2  Гонка при быстром переключении таймфреймов. Переключения ставятся
+ *           в ОЧЕРЕДЬ с коалесцингом: параллельных switchInterval больше нет,
+ *           устаревший результат не может откатить успешный, побеждает
+ *           ПОСЛЕДНИЙ клик. Раньше: клик «1h» → через 10мс «4h» давали
+ *           badge=15m, WS=15m, localStorage=4h, график=4h — четыре
+ *           рассогласованных источника истины.
+ *  TF3      destroy() останавливает timerManager (раньше таймер тикал вечно).
+ *  TF4      destroy() реально отписывается от _subscribeToSymbolChange
+ *           (возвращаемая функция отписки раньше выбрасывалась).
+ *  TF5      Каждый менеджер в rAF-цепочке синхронизации обёрнут в свой try/catch:
+ *           падение rayManager больше не оставляет АЛЕРТЫ и трендовые линии
+ *           на старом таймфрейме.
+ *  TF6      Восстановление вьюпорта включается опцией restoreViewportOnSwitch.
+ *  TF7      Alt+T защищён от повторного нажатия до завершения switchSymbol;
+ *           работает и с зажатым Shift (event.key === 'T').
+ *  TF8      Зависимости проверяются в конструкторе, timerManager опционален.
+ *
+ *  Публичный API сохранён: constructor(chartManager, wsManager, timerManager),
+ *  switchToTimeframe, restorePosition, saveCurrentPosition, updateInstrumentInfo,
+ *  scrollToLastCandle, autoScaleChart, copyToClipboard, loadStarredTimeframes,
+ *  saveStarredTimeframes, updateStarredDisplay, destroy.
+ *  Добавлен необязательный 4-й аргумент options.
+ */
+
+const DEFAULT_OPTIONS = {
+    restoreViewportOnSwitch: false,  // TF6: по умолчанию поведение прежнее (не восстанавливаем)
+    switchDebounceMs: 100,           // окно коалесцинга быстрых кликов
+    syncManagers: ['rayManager', 'trendLineManager', 'rulerLineManager', 'alertLineManager', 'textManager']
+};
+
 class TimeframeManager {
-    constructor(chartManager, wsManager, timerManager) {
+    constructor(chartManager, wsManager, timerManager, options = {}) {
+        // TF8: раньше init() падал с «Cannot read properties of null (reading 'start')»,
+        // если timerManager не передали, — хотя в switchToTimeframe проверка была.
+        if (!chartManager) {
+            throw new Error('TimeframeManager: chartManager обязателен');
+        }
         this.chartManager = chartManager;
-        this.wsManager = wsManager;
-        this.timerManager = timerManager;
+        this.wsManager = wsManager || null;
+        this.timerManager = timerManager || { start() {}, stop() {}, updatePrice() {} };
+        this.opts = Object.assign({}, DEFAULT_OPTIONS, options || {});
+
         this.currentInterval = this._getInitialInterval();
         console.log('📊 TimeframeManager: таймфрейм =', this.currentInterval);
 
@@ -16,6 +58,14 @@ class TimeframeManager {
         this._destroyed = false;
         this._uiListeners = [];
         this._symbolChangeHandler = null;
+        this._symbolChangeUnsub = null;      // TF4
+
+        // TF1/TF2: очередь переключений
+        this._switchQueued = null;           // последний запрошенный таймфрейм
+        this._switchRunning = false;
+        this._switchDebounceTimer = null;
+        this._switchWaiters = [];            // кто ждёт завершения (см. switchToTimeframe)
+        this._marketSwitchInFlight = false;  // TF7
 
         this._handleDocumentClick = this._handleDocumentClick.bind(this);
         this._handleGlobalClick = this._handleGlobalClick.bind(this);
@@ -32,13 +82,21 @@ class TimeframeManager {
     }
 
     _getInitialInterval() {
-        const saved = localStorage.getItem('lastTimeframe');
+        const saved = this._storageGet('lastTimeframe');
         const defaultInterval = (typeof CONFIG !== 'undefined' && CONFIG.defaultInterval) ? CONFIG.defaultInterval : '15m';
-        return (saved && (typeof TF_LABELS === 'undefined' || TF_LABELS[saved])) ? saved : defaultInterval;
+        return (saved && this._isValidTimeframe(saved)) ? saved : defaultInterval;
     }
 
     _isValidTimeframe(tf) {
         return Boolean(tf && (typeof TF_LABELS === 'undefined' || TF_LABELS[tf]));
+    }
+
+    _storageGet(key) {
+        try { return localStorage.getItem(key); } catch (e) { return null; }   // приватный режим бросает
+    }
+
+    _storageSet(key, value) {
+        try { localStorage.setItem(key, value); } catch (e) {}
     }
 
     init() {
@@ -59,7 +117,12 @@ class TimeframeManager {
                 if (this._destroyed) return;
                 this.updateInstrumentInfo();
             };
-            this.chartManager._subscribeToSymbolChange(this._symbolChangeHandler);
+            // TF4: сохраняем то, что вернула подписка. Раньше возвращаемая
+            // функция отписки просто выбрасывалась, и destroy() лишь обнулял
+            // this._symbolChangeHandler — подписчик навсегда оставался в
+            // ChartManager и копился при каждом пересоздании менеджера.
+            const unsub = this.chartManager._subscribeToSymbolChange(this._symbolChangeHandler);
+            if (typeof unsub === 'function') this._symbolChangeUnsub = unsub;
         }
 
         try {
@@ -98,17 +161,36 @@ class TimeframeManager {
             this._timeScaleUnsubscribe = null;
         }
 
+        // TF4: настоящая отписка
+        if (this._symbolChangeUnsub) {
+            try { this._symbolChangeUnsub(); } catch (e) {}
+            this._symbolChangeUnsub = null;
+        } else if (this._symbolChangeHandler &&
+                   typeof this.chartManager?._unsubscribeFromSymbolChange === 'function') {
+            try { this.chartManager._unsubscribeFromSymbolChange(this._symbolChangeHandler); } catch (e) {}
+        }
         this._symbolChangeHandler = null;
+
+        // TF3: таймер обратного отсчёта до следующей свечи раньше продолжал тикать
+        // после destroy() и трогал уже разобранный график.
+        try { this.timerManager?.stop?.(); } catch (e) {}
 
         if (this._abortController) {
             this._abortController.abort();
             this._abortController = null;
         }
-
         if (this._saveTimeout) {
             cancelAnimationFrame(this._saveTimeout);
             this._saveTimeout = null;
         }
+        if (this._switchDebounceTimer) {                    // TF1/TF2
+            clearTimeout(this._switchDebounceTimer);
+            this._switchDebounceTimer = null;
+        }
+        this._switchQueued = null;
+        const waiters = this._switchWaiters;
+        this._switchWaiters = [];
+        for (const r of waiters) { try { r(); } catch (e) {} }
     }
 
     _handleVisibleRangeChange() {
@@ -139,18 +221,20 @@ class TimeframeManager {
 
             if (fromIndex < toIndex) {
                 const centerIndex = Math.floor((fromIndex + toIndex) / 2);
+                // lightweight-charts допускает time как BusinessDay-объект —
+                // арифметика с ним дала бы NaN и сломала restorePosition.
+                const tFrom = data[fromIndex]?.time;
+                const tTo = data[toIndex]?.time;
+                if (typeof tFrom !== 'number' || typeof tTo !== 'number') return;
+
                 this.savedCenterTime = data[centerIndex].time;
-                this.savedTimeSpan = data[toIndex].time - data[fromIndex].time;
-                // Используем ИНДЕКСЫ в данных — без учёта пустого правого отступа.
-                // Раньше в savedVisibleBars попадал и rightOffset, из-за чего при
-                // восстановлении показывалось на ~25 свечей меньше.
+                this.savedTimeSpan = tTo - tFrom;
+                // ИНДЕКСЫ в данных, без учёта пустого правого отступа (rightOffset).
                 this.savedVisibleBars = Math.max(0, toIndex - fromIndex + 1);
             }
         }
     }
 
-    // Метод оставлен как публичный API для ручного вызова. Автоматически
-    // больше не используется — см. switchToTimeframe.
     restorePosition(force = false) {
         if (this._destroyed) return;
         if (!this.chartManager || !this.chartManager._isChartValid?.()) return;
@@ -177,10 +261,7 @@ class TimeframeManager {
         let left = 0, right = data.length - 1, centerIndex = -1;
         while (left <= right) {
             const mid = Math.floor((left + right) / 2);
-            if (data[mid].time === this.savedCenterTime) {
-                centerIndex = mid;
-                break;
-            }
+            if (data[mid].time === this.savedCenterTime) { centerIndex = mid; break; }
             data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
         }
 
@@ -202,7 +283,6 @@ class TimeframeManager {
                     radius = Math.max(15, Math.min(radius, 250));
                 }
             }
-
             const padding = Math.max(3, Math.floor(radius * 0.15));
             from = centerIndex - radius - padding;
             to = centerIndex + radius + padding;
@@ -239,10 +319,7 @@ class TimeframeManager {
 
         const copyBtn = document.getElementById('copyPairButton');
         if (copyBtn) {
-            this._addListener(copyBtn, 'click', (e) => {
-                e.stopPropagation();
-                this.copyToClipboard();
-            });
+            this._addListener(copyBtn, 'click', (e) => { e.stopPropagation(); this.copyToClipboard(); });
         }
 
         const candleBtn = document.getElementById('candleBtn');
@@ -267,18 +344,11 @@ class TimeframeManager {
     setupControlButtons() {
         const scrollBtn = document.getElementById('scrollToLastCandleButton');
         if (scrollBtn) {
-            this._addListener(scrollBtn, 'click', (e) => {
-                e.stopPropagation();
-                this.scrollToLastCandle();
-            });
+            this._addListener(scrollBtn, 'click', (e) => { e.stopPropagation(); this.scrollToLastCandle(); });
         }
-
         const autoScaleBtn = document.getElementById('autoScaleButton');
         if (autoScaleBtn) {
-            this._addListener(autoScaleBtn, 'click', (e) => {
-                e.stopPropagation();
-                this.autoScaleChart();
-            });
+            this._addListener(autoScaleBtn, 'click', (e) => { e.stopPropagation(); this.autoScaleChart(); });
         }
     }
 
@@ -298,38 +368,97 @@ class TimeframeManager {
     }
 
     _handleGlobalKeydown(event) {
-        if (!event.altKey || event.key !== 't') return;
+        // TF7: 'T' — с зажатым Shift; раньше такой вариант не срабатывал.
+        if (!event.altKey || (event.key !== 't' && event.key !== 'T')) return;
 
-        // Не перехватываем хоткей, если пользователь печатает в поле ввода.
         const tag = (event.target?.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'textarea' || event.target?.isContentEditable) return;
 
         event.preventDefault();
         if (this._destroyed) return;
 
-        const newType = this.chartManager.currentMarketType === 'futures' ? 'spot' : 'futures';
+        // TF7: повторное нажатие до завершения switchSymbol запускало ВТОРОЙ
+        // параллельный переход. Оба вычисляли newType из одного и того же
+        // currentMarketType, поэтому оба переключали в одну сторону — второе
+        // нажатие не отменяло первое и не давало «вернуться назад».
+        if (this._marketSwitchInFlight) {
+            console.log('⏳ Alt+T: смена рынка ещё идёт, повторное нажатие проигнорировано');
+            return;
+        }
 
-        // switchSymbol асинхронный; поля currentMarketType/currentSymbol меняются
-        // внутри процесса. UI обновится через _subscribeToSymbolChange
-        // (см. init) — когда ChartManager реально завершит смену.
-        // Синхронный updateInstrumentInfo() удалён: он читал старое значение
-        // и давал мигание устаревшим PERP/SPOT.
+        const newType = this.chartManager.currentMarketType === 'futures' ? 'spot' : 'futures';
+        this._marketSwitchInFlight = true;
+
         Promise.resolve(this.chartManager.switchSymbol(
             this.chartManager.currentSymbol,
             this.chartManager.currentExchange,
             newType
-        )).catch(() => {});
+        ))
+            .catch((e) => console.warn('⚠️ switchSymbol:', e))
+            .finally(() => { this._marketSwitchInFlight = false; });
     }
 
-    async switchToTimeframe(tf) {
-        if (this._destroyed) return;
-        if (!this._isValidTimeframe(tf) || tf === this.currentInterval) return;
+    /**
+     * TF1/TF2. Публичная точка входа больше НЕ запускает переключение напрямую,
+     * а ставит его в очередь.
+     *
+     * Почему это нужно: прежний код делал `await chartManager.switchInterval(tf)`
+     * без какой-либо сериализации (AbortController создавался, но signal никуда
+     * не передавался — это отмечал и комментарий в самом коде). При двух быстрых
+     * кликах шли ДВА параллельных переключения, и результат зависел от того,
+     * чей await разрешится последним:
+     *   • оба успешны → побеждал ПЕРВЫЙ клик, последний терялся;
+     *   • первый завершался позже и видел «currentInterval !== tf» → вызывал
+     *     _rollbackTimeframe(), который откатывал УЖЕ УСПЕВШЕЕ второе
+     *     переключение и уводил WS-подписку на старый интервал.
+     * Итог того сценария (замер): badge=15m, WS=15m, localStorage=4h, график=4h.
+     *
+     * Очередь с коалесцингом даёт два свойства: параллельных switchInterval не
+     * бывает вовсе, а при серии быстрых кликов выполняется только последний.
+     */
+    switchToTimeframe(tf) {
+        if (this._destroyed || !this._isValidTimeframe(tf)) return Promise.resolve();
+        if (tf === this.currentInterval && !this._switchQueued && !this._switchRunning) return Promise.resolve();
 
-        // AbortController оставлен для обратной совместимости с внешним API,
-        // но реальной отмены не делает: switchInterval всё равно доработает.
-        if (this._abortController) this._abortController.abort();
-        this._abortController = new AbortController();
-        const { signal } = this._abortController;
+        this._switchQueued = tf;
+
+        // Промис резолвится, когда очередь ДОРАБОТАЕТ. При серии быстрых кликов
+        // промежуточные запросы схлопываются в последний; их промисы тоже
+        // резолвятся (иначе вызывающий висел бы вечно), но применён будет
+        // только последний таймфрейм.
+        const promise = new Promise((resolve) => this._switchWaiters.push(resolve));
+
+        if (this._switchRunning) return promise;   // текущая очередь подхватит _switchQueued
+
+        if (this._switchDebounceTimer) clearTimeout(this._switchDebounceTimer);
+        this._switchDebounceTimer = setTimeout(() => {
+            this._switchDebounceTimer = null;
+            this._runSwitchQueue();
+        }, this.opts.switchDebounceMs);
+
+        return promise;
+    }
+
+    async _runSwitchQueue() {
+        if (this._switchRunning) return;
+        this._switchRunning = true;
+        try {
+            while (this._switchQueued && !this._destroyed) {
+                const tf = this._switchQueued;
+                this._switchQueued = null;
+                await this._doSwitch(tf);
+            }
+        } finally {
+            this._switchRunning = false;
+            const waiters = this._switchWaiters;
+            this._switchWaiters = [];
+            for (const r of waiters) { try { r(); } catch (e) {} }
+        }
+    }
+
+    async _doSwitch(tf) {
+        if (this._destroyed) return;
+        if (tf === this.currentInterval) return;
 
         console.log('🔄 Переключение на таймфрейм:', tf);
 
@@ -346,64 +475,57 @@ class TimeframeManager {
         try {
             await this.chartManager.switchInterval(tf);
         } catch (error) {
-            // На случай, если ChartManager когда-нибудь начнёт пробрасывать
-            // ошибки наружу (сейчас — нет, он их глотает внутри себя).
-            if (error?.name !== 'AbortError') {
-                console.error('❌ Ошибка при переключении:', error);
-                this._rollbackTimeframe(previousInterval);
-            }
-            if (this._abortController?.signal === signal) this._abortController = null;
+            console.error('❌ Ошибка при переключении:', error);
+            // Откатываемся, только если пользователь уже не запросил другой таймфрейм.
+            if (!this._switchQueued && !this._destroyed) this._rollbackTimeframe(previousInterval);
             return;
         }
 
-        if (this._destroyed) {
-            if (this._abortController?.signal === signal) this._abortController = null;
-            return;
-        }
+        if (this._destroyed) return;
+
+        // Пока мы ждали, пользователь мог кликнуть ещё раз — не трогаем UI и не
+        // откатываемся, очередь сама обработает следующий запрос.
+        if (this._switchQueued) return;
 
         if (this.chartManager.currentInterval !== tf) {
             console.warn('⚠️ switchInterval не сменил интервал (вероятно, ошибка загрузки)');
             this._rollbackTimeframe(previousInterval);
-            if (this._abortController?.signal === signal) this._abortController = null;
             return;
         }
 
         this.currentInterval = this.chartManager.currentInterval;
-        localStorage.setItem('lastTimeframe', this.currentInterval);
+        this._storageSet('lastTimeframe', this.currentInterval);
         this.chartManager.setCurrentInterval(this.currentInterval);
 
-       
-
-        this.timerManager.start(this.currentInterval);
+        this.timerManager?.start?.(this.currentInterval);
 
         requestAnimationFrame(() => {
             if (this._destroyed) return;
-            if (this.timerManager) {
-                const price = this.chartManager.currentRealPrice
-                    ?? this.chartManager.lastCandle?.close;
-                if (price != null) this.timerManager.updatePrice(price);
-            }
-            if (this.chartManager._applyPriceScaleWidth) {
-                this.chartManager._applyPriceScaleWidth();
-            }
+            const price = this.chartManager.currentRealPrice ?? this.chartManager.lastCandle?.close;
+            if (price != null) this.timerManager?.updatePrice?.(price);
+            try { this.chartManager._applyPriceScaleWidth?.(); } catch (e) { console.error('⚠️ _applyPriceScaleWidth:', e); }
         });
 
-      
-
+        // TF5: раньше это был один блок без try/catch. Исключение в первом же
+        // rayManager обрывало всю цепочку, и trendLine/rulerLine/АЛЕРТЫ/text
+        // оставались на старом таймфрейме, хотя график уже перерисован.
         requestAnimationFrame(() => {
             if (this._destroyed) return;
-            window.rayManager?.syncWithNewTimeframe();
-            window.trendLineManager?.syncWithNewTimeframe();
-            window.rulerLineManager?.syncWithNewTimeframe();
-            window.alertLineManager?.syncWithNewTimeframe();
-            window.textManager?.syncWithNewTimeframe();
+            for (const name of this.opts.syncManagers) {
+                try {
+                    const mgr = (typeof window !== 'undefined') ? window[name] : null;
+                    if (mgr && typeof mgr.syncWithNewTimeframe === 'function') mgr.syncWithNewTimeframe();
+                } catch (e) {
+                    console.error(`⚠️ ${name}.syncWithNewTimeframe() упал — остальные продолжают работать:`, e);
+                }
+            }
         });
+
+        // TF6: восстановление вьюпорта — опционально (по умолчанию выключено,
+        // чтобы не менять текущее поведение).
+        if (this.opts.restoreViewportOnSwitch) this.restorePosition(true);
 
         console.log('✅ Таймфрейм переключен:', tf);
-
-        if (this._abortController?.signal === signal) {
-            this._abortController = null;
-        }
 
         this.updateInstrumentInfo();
         this.loadStarredTimeframes();
@@ -416,9 +538,8 @@ class TimeframeManager {
         this.chartManager.setCurrentInterval(previousInterval);
         this._updateCurrentTfBadge(previousInterval);
 
-        // Оставлено: rollback бывает и ПОСЛЕ того, как switchInterval успел
-        // увести WS-подписку на новый интервал (ветка «currentInterval !== tf»).
-        // В этом случае нужно вернуть WS обратно.
+        // Нужно: rollback бывает и ПОСЛЕ того, как switchInterval успел увести
+        // WS-подписку на новый интервал.
         if (this.wsManager?.updateSymbolAndTimeframe) {
             this.wsManager.updateSymbolAndTimeframe(
                 this.chartManager.currentSymbol, previousInterval,
@@ -435,13 +556,12 @@ class TimeframeManager {
     _updateCurrentTfBadge(tf) {
         const badge = document.getElementById('currentTfBadge');
         if (badge) {
-            const label = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[tf] : null) || tf;
-            badge.textContent = label;
+            badge.textContent = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[tf] : null) || tf;
         }
     }
 
     updateInstrumentInfo() {
-        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
         set('pairDisplay', this.chartManager.currentSymbol);
         set('contractTypeDisplay', this.chartManager.currentMarketType === 'futures' ? 'PERP' : 'SPOT');
         set('exchangeDisplay', this.chartManager.currentExchange === 'binance' ? 'Binance' : 'Bybit');
@@ -481,7 +601,9 @@ class TimeframeManager {
     }
 
     loadStarredTimeframes() {
-        const starred = JSON.parse(localStorage.getItem('starredTimeframes') || '[]');
+        let starred = [];
+        try { starred = JSON.parse(this._storageGet('starredTimeframes') || '[]'); } catch (e) { starred = []; }
+        if (!Array.isArray(starred)) starred = [];
         document.querySelectorAll('.tf-star').forEach(s => {
             s.classList.toggle('starred', starred.includes(s.dataset.tf));
         });
@@ -490,7 +612,7 @@ class TimeframeManager {
 
     saveStarredTimeframes() {
         const starred = Array.from(document.querySelectorAll('.tf-star.starred'), s => s.dataset.tf);
-        localStorage.setItem('starredTimeframes', JSON.stringify(starred));
+        this._storageSet('starredTimeframes', JSON.stringify(starred));
         this.updateStarredDisplay(starred);
     }
 
@@ -498,21 +620,19 @@ class TimeframeManager {
         const container = document.getElementById('starredTimeframes');
         if (!container) return;
         container.innerHTML = '';
-        starred.forEach(tf => {
+        (starred || []).forEach(tf => {
             const label = (typeof TF_LABELS !== 'undefined' ? TF_LABELS[tf] : null) || tf;
             const item = document.createElement('div');
             item.className = 'starred-item' + (tf === this.currentInterval ? ' active' : '');
             item.dataset.tf = tf;
             item.innerHTML = `<span class="tf-name">${label}</span>`;
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.switchToTimeframe(tf);
-            });
+            item.addEventListener('click', (e) => { e.stopPropagation(); this.switchToTimeframe(tf); });
             container.appendChild(item);
         });
     }
 }
 
+if (typeof module !== 'undefined' && module.exports) module.exports = { TimeframeManager };
 if (typeof window !== 'undefined') {
     window.TimeframeManager = TimeframeManager;
 }
