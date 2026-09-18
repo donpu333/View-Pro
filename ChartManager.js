@@ -2016,33 +2016,30 @@ class ChartManager {
         this._pendingSwitchRequest = Object.assign({}, base, partial);
     }
 
-    // FIX: откладываем исполнение через setTimeout(0), чтобы цепочка
-    //   finally → _dispatchPendingSwitch → switchSymbol → finally →
-    //   _dispatchPendingSwitch → ...
-    // не разворачивалась в рекурсию по стеку при быстром чередовании
-    // переключений (пользователь кликает символы/таймфреймы быстрее, чем
-    // успевает завершиться предыдущий switch).
-    _dispatchPendingSwitch() {
-        if (!this._pendingSwitchRequest) return;
-        setTimeout(() => {
-            if (this._destroyed) return;
-            if (!this._pendingSwitchRequest) return;
-            const next = this._pendingSwitchRequest;
-            this._pendingSwitchRequest = null;
-            const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
-            const intervalChanged = next.interval !== this.currentInterval;
-            if (!symbolChanged && !intervalChanged) return;
-            if (symbolChanged) {
-                if (intervalChanged) {
-                    this.currentInterval = next.interval;
-                    localStorage.setItem('lastTimeframe', next.interval);
-                }
-                this.switchSymbol(next.symbol, next.exchange, next.marketType);
-            } else if (intervalChanged) {
-                this.switchInterval(next.interval);
+   // Синхронный вызов. Рекурсия по стеку здесь ограничена: _pendingSwitchRequest —
+// единственный слот (не очередь), поэтому даже при быстром чередовании
+// переключений цепочка finally → _dispatchPendingSwitch → switchSymbol →
+// finally → ... сворачивается в глубину 1–2 вызова, а не растёт линейно.
+// setTimeout(..., 0) здесь не нужен и вреден: браузер клэмпит его до ~4 мс,
+// а в фоновой вкладке — до 1000 мс, что заметно замедляет переключения.
+_dispatchPendingSwitch() {
+    if (this._pendingSwitchRequest) {
+        const next = this._pendingSwitchRequest;
+        this._pendingSwitchRequest = null;
+        const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
+        const intervalChanged = next.interval !== this.currentInterval;
+        if (!symbolChanged && !intervalChanged) return;
+        if (symbolChanged) {
+            if (intervalChanged) {
+                this.currentInterval = next.interval;
+                localStorage.setItem('lastTimeframe', next.interval);
             }
-        }, 0);
+            this.switchSymbol(next.symbol, next.exchange, next.marketType);
+        } else if (intervalChanged) {
+            this.switchInterval(next.interval);
+        }
     }
+}
 
     // =============== SWITCH SYMBOL ===============
     async switchSymbol(symbol, exchange, marketType) {
