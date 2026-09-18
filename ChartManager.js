@@ -2041,88 +2041,112 @@ class ChartManager {
         }
     }
 
-    // =============== SWITCH ===============
-    async switchSymbol(symbol, exchange, marketType) {
-        if (this._switchingSymbol || this._isSwitchingInterval) { this._queuePendingSwitch({ symbol, exchange, marketType }); return; }
-        this._switchingSymbol = true;
-        this._showSymbolSwitchOverlay();
-        if (this.timerManager) this.timerManager.stop();
+  // =============== SWITCH SYMBOL ===============
+// Схема:
+//   1. Всё, что должно произойти до await, — вне try (единая приостановка).
+//   2. Все ветки выхода (включая `if (generation !== generationId) return`)
+//      проходят через finally — там cleanup выполняется БЕЗУСЛОВНО, без
+//      generation-guard'а. Guard нужен только для того, чтобы не затирать
+//      чужое состояние, но в текущем коде чужого состояния быть не может:
+//      новая операция, увидев _switchingSymbol === true, уходит в очередь
+//      (_queuePendingSwitch) и ждёт, пока ЭТА операция почистит флаги
+//      и вызовет _dispatchPendingSwitch. Guard бы оставил флаги висеть
+//      навсегда — это и есть исходный баг.
+async switchSymbol(symbol, exchange, marketType) {
+    if (this._switchingSymbol || this._isSwitchingInterval) {
+        this._queuePendingSwitch({ symbol, exchange, marketType });
+        return;
+    }
+    this._switchingSymbol = true;
+    this._showSymbolSwitchOverlay();
+    // Единая точка приостановки: priceManager.suspend + timerManager.stop.
+    this._suspendAllUpdates();
 
-        const generationId = ++this._generationCounter;
-        this._activeGeneration = generationId;
+    const generationId = ++this._generationCounter;
+    this._activeGeneration = generationId;
+    let dataApplied = false;
 
-        const finishSwitch = () => {
-            if (this._activeGeneration !== generationId) return;
-            this._switchingSymbol = false;
-            this._resumeAllUpdates(generationId);
-            this._hideSymbolSwitchOverlay();
+    try {
+        let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
+        let isFromCache = !!candles;
+        if (!isFromCache) {
+            candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+        }
+        if (this._activeGeneration !== generationId) return;
+        if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
+
+        this.currentRealPrice = null;
+        this.lastCandle = null;
+        // _abortAllProcesses уже включает timerManager.stop() и abort
+        // всех fetch-контроллеров — отдельный вызов stop() не нужен.
+        this._abortAllProcesses();
+
+        this.chartData = [];
+        this._candleTimeMap.clear();
+        this._lastKlineEventTime = 0;
+        this._pendingTrimParams = null;
+
+        this.currentSymbol = symbol;
+        this.currentExchange = exchange;
+        this.currentMarketType = marketType;
+
+        this._subscribeToPrice();
+        if (window.wsManager?.updateSymbolAndTimeframe) {
+            window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
+        }
+        const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
+        if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
+        if (!this._isChartValid()) return;
+
+        let cacheRefreshPromise = null;
+        if (isFromCache) {
+            cacheRefreshPromise = Promise.race([
+                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
+                new Promise(r => setTimeout(r, 2500))
+            ]);
+        }
+
+        await new Promise((resolve) => {
+            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, resolve);
+        });
+        dataApplied = true;
+        if (this._activeGeneration !== generationId) return;
+
+        if (cacheRefreshPromise) await cacheRefreshPromise;
+        if (this._activeGeneration !== generationId) return;
+
+        if (!isFromCache) {
+            this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
+        }
+        this.loadDrawingsForCurrentSymbol();
+        localStorage.setItem('lastSymbol', symbol);
+        localStorage.setItem('lastExchange', exchange);
+        localStorage.setItem('lastMarketType', marketType);
+        this._notifySymbolChange();
+    } catch (error) {
+        console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
+    } finally {
+        // Безусловный cleanup. Без generation-guard'а.
+        //
+        // Если generation сменился (в текущем коде это возможно только
+        // когда новая операция — switchSymbol/switchInterval/loadInitialData —
+        // не смогла стартовать из-за _switchingSymbol === true и ушла
+        // в _queuePendingSwitch), то ЭТА операция остаётся единственным
+        // владельцем _switchingSymbol/_updatesSuspended, и снять их может
+        // только она. Guard бы оставил их висеть, и следующий
+        // _dispatchPendingSwitch никогда бы не сработал.
+        this._switchingSymbol = false;
+        this._updatesSuspended = false;
+        if (this.priceManager) this.priceManager.resume?.();
+        this._hideSymbolSwitchOverlay();
+        if (dataApplied) {
             this._startPeriodicSync();
             this._startNewCandleChecker();
             this._syncRecentCandles().catch(() => {});
-            this._dispatchPendingSwitch();
-        };
-
-        const rollbackSwitch = (error) => {
-            console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
-            if (this._activeGeneration !== generationId) return;
-            this._switchingSymbol = false;
-            this._resumeAllUpdates(generationId);
-            this._hideSymbolSwitchOverlay();
-            this._dispatchPendingSwitch();
-        };
-
-        try {
-            this._suspendAllUpdates();
-            let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
-            let isFromCache = !!candles;
-            if (!isFromCache) candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
-            if (this._activeGeneration !== generationId) return;
-            if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
-
-            this.currentRealPrice = null;
-            this.lastCandle = null;
-            if (this.timerManager) this.timerManager.stop();
-            this._abortAllProcesses();
-            this._suspendAllUpdates();
-
-            this.chartData = [];
-            this._candleTimeMap.clear();
-            this._lastKlineEventTime = 0;
-            this._pendingTrimParams = null;
-
-            this.currentSymbol = symbol;
-            this.currentExchange = exchange;
-            this.currentMarketType = marketType;
-
-            this._subscribeToPrice();
-            if (window.wsManager?.updateSymbolAndTimeframe) {
-                window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
-            }
-            const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
-            if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
-            if (!this._isChartValid()) { finishSwitch(); return; }
-
-            let cacheRefreshPromise = null;
-            if (isFromCache) {
-                cacheRefreshPromise = Promise.race([
-                    this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
-                    new Promise(r => setTimeout(r, 2500))
-                ]);
-            }
-            this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, () => {
-                if (cacheRefreshPromise) {
-                    cacheRefreshPromise.then(() => { if (this._activeGeneration === generationId) finishSwitch(); });
-                } else finishSwitch();
-            });
-            if (!isFromCache) this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
-            this.loadDrawingsForCurrentSymbol();
-            localStorage.setItem('lastSymbol', symbol);
-            localStorage.setItem('lastExchange', exchange);
-            localStorage.setItem('lastMarketType', marketType);
-            this._notifySymbolChange();
-        } catch (error) { rollbackSwitch(error); }
+        }
+        this._dispatchPendingSwitch();
     }
-
+}
     async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) { this._queuePendingSwitch({ interval: newInterval }); return; }
         if (this.currentInterval === newInterval) return;
@@ -3095,7 +3119,9 @@ class ChartManager {
             const ts = this.chart.timeScale();
             const cr = ts.getVisibleLogicalRange();
             const ps = this.chart.priceScale('right');
-            ps.applyOptions({ autoScale: false });
+            // FIX: priceScale('right') may return null/undefined (e.g. race
+            // during teardown); guard before calling applyOptions on it.
+            if (ps) ps.applyOptions({ autoScale: false });
             const lwBars = this._toLwBarsArray(this.chartData);
             try { if (this.candleSeries) this.candleSeries.setData(lwBars); } catch (e) {}
             try { if (this.barSeries) this.barSeries.setData(lwBars); } catch (e) {}
@@ -3156,7 +3182,8 @@ class ChartManager {
                 this._volumeDataDirty = true;
                 this._lastVolumeUpdateIndex = -1;
                 const ps = this.chart.priceScale('right');
-                ps.applyOptions({ autoScale: false });
+                // FIX: same null-guard as _performTrimNow above.
+                if (ps) ps.applyOptions({ autoScale: false });
                 const lwBars = this._toLwBarsArray(this.chartData);
                 try { if (this.candleSeries) this.candleSeries.setData(lwBars); } catch (e) {}
                 try { if (this.barSeries) this.barSeries.setData(lwBars); } catch (e) {}
