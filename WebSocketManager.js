@@ -1,39 +1,4 @@
-/**
- * WebSocketManager v3 — исправленная версия.
- *
- * ГЛАВНОЕ ИЗМЕНЕНИЕ: признак живости канала отделён от признака наличия данных.
- *
- *   ЖИВОСТЬ канала  = прикладной keep-alive (Binance: LIST_SUBSCRIPTIONS,
- *                     Bybit: {"op":"ping"}). Это ЕДИНСТВЕННОЕ основание для
- *                     принудительного реконнекта.
- *   НАЛИЧИЕ ДАННЫХ  = информационная метрика. Рынок вправе молчать.
- *
- * Почему прежний подход («нет данных 30с → реконнект») неверен — замеры на
- * живых эндпоинтах Binance Futures (см. probe2.js / live-test.js, 2026-09-18):
- *
- *   BTCUSDT   3 148 585 сделок/24ч → макс. тишина   1.8с
- *   0GUSDT      140 681 сделок/24ч → макс. тишина  46.4с   ← порог 30с уже пробит
- *   PYPLUSDT      1 464 сделок/24ч → 1 сообщение за 75с
- *   ANETUSDT      1 160 сделок/24ч → 0 сообщений за 110с  ← валидный TRADING-символ
- *   MRKUSDT       1 465 сделок/24ч → 0 сообщений за 110с
- *
- * aggTrade — событийный поток: нет сделки → нечего присылать. kline_15m у тихого
- * инструмента тоже молчит минутами. Поэтому «тишина» доказывает лишь то, что
- * рынок спокоен, а не то, что TCP мёртв.
- *
- * Прикладной keep-alive решает задачу: замер LIST_SUBSCRIPTIONS дал 7/7, 6/6 и 6/6
- * ответов на символах, где рыночных данных не было ВООБЩЕ. Ответ приходит именно
- * в тишину — то есть доказывает жизнь канала, а не рынка.
- *
- * Protocol-level ping/pong для этого непригодны: браузер отвечает на них сам и
- * в onmessage они не попадают (это ограничение отмечалось и в прежней версии —
- * но вывод из него был сделан обратный нужному).
- *
- * Рейт-лимит не нарушается: Binance spot — 5 входящих сообщений/с, futures — 10/с.
- * Один LIST_SUBSCRIPTIONS раз в 15 с = 0.067 сообщ/с, запас 75×.
- *
- * Полный список исправлений — в pm/WEBSOCKETMANAGER-REVIEW.md.
- */
+
 
 const WS_ENDPOINTS = {
     binance: {
@@ -89,7 +54,9 @@ class WebSocketManager {
             passiveCheckMs: 60000,           // пауза после «сдачи»
             connectTimeoutMs: 12000,
             tabVisibleStaleMs: 10000,        // W2: теперь сверяется с АКТИВНОСТЬЮ канала, а не с данными
-            validateSymbols: true
+            validateSymbols: true,
+            validateTimeoutMs: 5000,         // v3.1: таймаут лёгкой проверки тикера
+            validateTtlMs: 10 * 60 * 1000    // v3.1: кэш вердикта по тикеру
         }, options || {});
         this._opt = o;
 
@@ -100,8 +67,8 @@ class WebSocketManager {
         this.currentExchange = 'binance';
         this.currentMarketType = 'futures';
 
-        this._symbolInfoCache = new Map();
-        this._symbolInfoTtlMs = 10 * 60 * 1000;
+        // v3.1: кэш ВЕРДИКТОВ по конкретному тикеру, а не карта всех символов рынка.
+        this._symbolVerdictCache = new Map();
 
         // W6: жёсткий список удалён. Прежний binanceFuturesOnlyTokens был неверен:
         //   BTCDOMUSDT — только futures  (редирект был нужен)
@@ -318,68 +285,85 @@ class WebSocketManager {
         }
     }
 
-    async _checkSymbol(exchange, marketType, symbol) {
-        const info = await this._getSymbolInfo(exchange, marketType);
-        if (!info) return 'unknown';
-        const key = String(symbol).trim().toUpperCase();
-        if (!(key in info)) return 'missing';
-        return String(info[key] || '').toUpperCase() === 'TRADING' ? 'ok' : 'not-trading';
-    }
-
     /**
-     * W8 (частично): Bybit instruments-info отдаёт максимум 1000 записей за запрос.
-     * Замер 2026-09-18: linear=879, spot=536, inverse=28 — то есть linear уже на 88%
-     * лимита. Без пагинации первый же новый листинг за пределами 1000 записей начал бы
-     * давать ложный вердикт 'missing' и убивать график валидного тикера.
+     * v3.1. Проверка ОДНОГО тикера вместо выкачивания всего exchangeInfo.
+     *
+     * Замеры 2026-09-18 (probe8.js / probe9.js):
+     *
+     *   binance SPOT    exchangeInfo        17 198 КБ  ~1030мс   (3705 записей)
+     *   binance FUTURES exchangeInfo         1 097 КБ   ~343мс   (905 записей)
+     *   bybit   linear  instruments-info       796 КБ    ~77мс   (879 записей)
+     *
+     *   api/v3/ticker/price?symbol=X            45 Б   ~260мс
+     *   fapi/v1/ticker/price?symbol=X           60 Б   ~250мс
+     *   bybit instruments-info?symbol=X       1047 Б    ~25мс
+     *
+     * Точечный запрос в ~28 000 раз легче для spot и при этом даёт БОЛЬШЕ информации:
+     *   HTTP 400 + code -1121 "Invalid symbol."  → тикера нет            ('missing')
+     *   HTTP 200 + {"symbol","price"}            → торгуется             ('ok')
+     *   HTTP 200 + {}                            → есть, но не торгуется ('not-trading')
+     *      (проверено на DEFIUSDT: статус SETTLING, цена уже не отдаётся)
+     *   Bybit: list[0].status = 'Trading' / 'Settling' / 'Closed' — статус напрямую.
+     *
+     * Побочно снимается проблема пагинации Bybit: прежний запрос с limit=1000 упирался
+     * в потолок (linear = 879 записей, 88% лимита), и первый же новый листинг за
+     * пределами тысячи дал бы ложный 'missing' на валидном тикере. Для одного символа
+     * пагинация не нужна в принципе.
      */
-    async _getSymbolInfo(exchange, marketType) {
-        const cacheKey = `${exchange}:${marketType}`;
-        const cached = this._symbolInfoCache.get(cacheKey);
-        if (cached && Date.now() - cached.at < this._symbolInfoTtlMs) return cached.map;
+    async _checkSymbol(exchange, marketType, symbol) {
+        const sym = String(symbol || '').trim().toUpperCase();
+        if (!sym) return 'unknown';
 
+        const cacheKey = `${exchange}:${marketType}:${sym}`;
+        const cached = this._symbolVerdictCache.get(cacheKey);
+        if (cached && Date.now() - cached.at < this._opt.validateTtlMs) return cached.verdict;
+
+        let url;
+        if (exchange === 'binance') {
+            url = marketType === 'spot'
+                ? `https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`
+                : `https://fapi.binance.com/fapi/v1/ticker/price?symbol=${encodeURIComponent(sym)}`;
+        } else if (exchange === 'bybit') {
+            const category = marketType === 'spot' ? 'spot' : 'linear';
+            url = `https://api.bybit.com/v5/market/instruments-info?category=${category}&symbol=${encodeURIComponent(sym)}`;
+        } else {
+            return 'unknown';
+        }
+
+        let verdict = 'unknown';
         const ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
-        const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
-        const get = async (url) => {
-            const r = await fetch(url, { signal: ctrl ? ctrl.signal : undefined });
-            return (r && r.ok) ? r.json() : null;
-        };
-
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), this._opt.validateTimeoutMs) : null;
         try {
-            const map = {};
+            const r = await fetch(url, { signal: ctrl ? ctrl.signal : undefined });
 
-            if (exchange === 'binance') {
-                const url = marketType === 'spot'
-                    ? 'https://api.binance.com/api/v3/exchangeInfo'
-                    : 'https://fapi.binance.com/fapi/v1/exchangeInfo';
-                const data = await get(url);
-                if (!data) return null;
-                (data.symbols || []).forEach(s => { map[s.symbol] = s.status; });
-            } else if (exchange === 'bybit') {
-                const category = marketType === 'spot' ? 'spot' : 'linear';
-                let cursor = '';
-                // пагинация: nextPage/cursor, пока сервер его отдаёт (защита от >1000 символов)
-                for (let page = 0; page < 8; page++) {
-                    const url = `https://api.bybit.com/v5/market/instruments-info?category=${category}&limit=1000` +
-                                (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
-                    const data = await get(url);
-                    if (!data || data.retCode !== 0) break;
-                    ((data.result && data.result.list) || []).forEach(s => { map[s.symbol] = s.status; });
-                    cursor = (data.result && (data.result.nextPage || data.result.cursor)) || '';
-                    if (!cursor) break;
+            if (r.status === 400 || r.status === 404) {
+                verdict = 'missing';
+            } else if (r.status === 429 || r.status === 418 || r.status >= 500) {
+                // Рейт-лимит или сбой сервера — НЕ повод объявлять тикер несуществующим.
+                verdict = 'unknown';
+            } else if (r.ok) {
+                const d = await r.json();
+                if (exchange === 'binance') {
+                    verdict = (d && d.price !== undefined && d.price !== null && d.price !== '')
+                        ? 'ok' : 'not-trading';
+                } else {
+                    const list = (d && d.retCode === 0 && d.result && d.result.list) || [];
+                    verdict = !list.length ? 'missing'
+                        : (String(list[0].status || '').toUpperCase() === 'TRADING' ? 'ok' : 'not-trading');
                 }
-                if (!Object.keys(map).length) return null;
-            } else {
-                return null;
             }
-
-            this._symbolInfoCache.set(cacheKey, { at: Date.now(), map });
-            return map;
         } catch (e) {
-            console.warn('⚠️ exchangeInfo недоступен, пропускаем валидацию символа:', e && e.message);
-            return null;
+            console.warn('⚠️ проверка тикера не выполнена (сеть/таймаут) — подписываемся как есть:', e && e.message);
+            verdict = 'unknown';
         } finally {
             if (timer) clearTimeout(timer);
         }
+
+        // 'unknown' НЕ кэшируем: это переходный вердикт, его надо перепроверить.
+        if (verdict !== 'unknown') {
+            this._symbolVerdictCache.set(cacheKey, { at: Date.now(), verdict });
+        }
+        return verdict;
     }
 
     _nextKaId() { return ++this._kaId; }
@@ -973,7 +957,7 @@ class WebSocketManager {
         if (this._autoConnectTimer) { clearTimeout(this._autoConnectTimer); this._autoConnectTimer = null; }
 
         this._warnedAlign.clear();
-        this._symbolInfoCache.clear();
+        this._symbolVerdictCache.clear();
         this.closeAll();
         console.log('✅ WebSocketManager уничтожен');
     }
