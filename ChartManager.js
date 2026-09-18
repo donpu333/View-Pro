@@ -5445,3 +5445,4 @@ class ChartManager {
 
 if (typeof window !== 'undefined') {
     window.ChartManager = ChartManager;
+}
