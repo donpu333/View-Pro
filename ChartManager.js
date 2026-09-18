@@ -402,7 +402,7 @@ class ChartManager {
         }, 200);
 
         (async () => {
-            const CACHE_VERSION = '2';
+            const CACHE_VERSION = '3';
             const savedVersion = localStorage.getItem('candleCacheVersion');
 
             if (savedVersion !== CACHE_VERSION) {
@@ -531,9 +531,6 @@ class ChartManager {
     // LW-NULL GUARDS
     // =================================================================================
 
-    // FIX LW-NULL: LWCharts падает с "Value is null", если в bar попадёт
-    // невалидное поле или нарушены OHLC-инварианты. Возвращает чистый bar
-    // или null.
     _toLwBar(c) {
         if (!c || typeof c !== 'object') return null;
 
@@ -543,11 +540,10 @@ class ChartManager {
         const l = c.low;
         const cl = c.close;
 
-        // time: ЦЕЛЫЕ секунды в разумном диапазоне (UTCTimestamp).
         if (typeof t !== 'number') return null;
         if (!isFinite(t)) return null;
         if (!Number.isInteger(t)) return null;
-        if (t <= 0 || t > 4102444800) return null; // > 2100-01-01 не бывает
+        if (t <= 0 || t > 4102444800) return null;
 
         if (typeof o !== 'number' || !isFinite(o) || o <= 0) return null;
         if (typeof h !== 'number' || !isFinite(h) || h <= 0) return null;
@@ -561,29 +557,35 @@ class ChartManager {
         return { time: t, open: o, high: h, low: l, close: cl };
     }
 
+    // FIX: КЛЮЧЕВОЙ ФИКС. Раньше невыровненное на границу интервала time
+    // (например, 1789529940 для 1d вместо 1789516800) проходил проверки
+    // _toLwBar (число, целое, > 0), но LWCharts при рендере строил Invalid
+    // Date и падал с "Value is null". Теперь выравниваем time + дедуп.
     _toLwBarsArray(arr) {
-        const out = [];
-        let dropped = 0;
+        if (!Array.isArray(arr)) return [];
+        const interval = this.currentInterval;
+        const byTime = new Map();
 
         for (let i = 0; i < arr.length; i++) {
-            const b = this._toLwBar(arr[i]);
-            if (b) out.push(b);
-            else {
-                dropped++;
-                if (dropped <= 3) {
-                    console.warn('🚨 LW-NULL: отброшена невалидная свеча [' + i + ']',
-                        arr[i] && {
-                            time: arr[i].time,
-                            open: arr[i].open, high: arr[i].high,
-                            low: arr[i].low, close: arr[i].close,
-                            _source: arr[i]._source,
-                            _isPlaceholder: arr[i]._isPlaceholder
-                        });
-                }
-            }
+            const c = arr[i];
+            if (!c || typeof c !== 'object') continue;
+
+            const rawT = c.time;
+            if (typeof rawT !== 'number' || !isFinite(rawT) || !Number.isInteger(rawT) || rawT <= 0) continue;
+
+            const alignedT = this._alignTimeForInterval(rawT, interval);
+            if (!Number.isInteger(alignedT) || alignedT <= 0) continue;
+
+            const candidate = { ...c, time: alignedT };
+            const b = this._toLwBar(candidate);
+            if (!b) continue;
+
+            // Дедуп: при выравнивании две разные свечи могли схлопнуться в одну.
+            // Оставляем последнюю (она свежее).
+            byTime.set(alignedT, b);
         }
 
-        if (dropped > 3) console.warn('🚨 LW-NULL: всего отброшено свечей:', dropped);
+        const out = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
         return out;
     }
 
@@ -665,7 +667,15 @@ class ChartManager {
             const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
             if (!series) return;
 
-            const safe = this._toLwBar(updateData);
+            // FIX: выравниваем time на границу интервала ДО отправки в LW.
+            let data = updateData;
+            const rawT = data && data.time;
+            if (typeof rawT === 'number' && Number.isInteger(rawT) && rawT > 0) {
+                const aligned = this._alignTimeToInterval(rawT);
+                if (aligned !== rawT) data = { ...data, time: aligned };
+            }
+
+            const safe = this._toLwBar(data);
             if (!safe) return;
 
             series.update(safe);
@@ -1139,15 +1149,13 @@ class ChartManager {
                     if (isNaN(safeTime) || safeTime <= 0) continue;
 
                     if (i === currentData.length - 1) {
-                        const updateData = {
+                        this._updateVisibleSeries({
                             time: safeTime,
                             open: cur.open,
                             high: cur.high,
                             low: cur.low,
                             close: cur.close
-                        };
-
-                        this._updateVisibleSeries(updateData);
+                        });
                         this._safeVolumeBarUpdate(
                             safeTime,
                             cur.quoteVolume || cur.volume || 0,
@@ -2660,7 +2668,6 @@ class ChartManager {
             return false;
         }
 
-        // FIX: currentStart ОБЯЗАН быть целым числом (UTCTimestamp для LWCharts).
         if (!Number.isInteger(currentStart) || currentStart <= 0) return false;
 
         let price = null;
@@ -2759,8 +2766,11 @@ class ChartManager {
             this._pendingTrimParams = null;
             this._unhealableGaps.clear();
 
+            // FIX: выравниваем time каждой свечи на границу интервала
+            // ПЕРЕД дедупликацией — иначе две невыровненные свечи, попадающие
+            // в один слот после выравнивания, становятся дубликатами.
             for (const c of data) {
-                if (c && typeof c.time === 'number' && !isNaN(c.time)) {
+                if (c && typeof c.time === 'number' && Number.isInteger(c.time) && c.time > 0) {
                     const aligned = this._alignTimeForInterval(c.time, interval);
                     if (c.time !== aligned) c.time = aligned;
                 }
@@ -2769,7 +2779,7 @@ class ChartManager {
             const seenTimes = new Set();
 
             let noDupes = data.filter(c => {
-                if (!c || typeof c.time !== 'number' || isNaN(c.time)) return false;
+                if (!c || typeof c.time !== 'number' || !Number.isInteger(c.time) || c.time <= 0) return false;
                 if (seenTimes.has(c.time)) return false;
                 seenTimes.add(c.time);
                 return true;
@@ -2834,8 +2844,7 @@ class ChartManager {
             try {
                 if (this.candleSeries) this.candleSeries.setData(lwBars);
             } catch (e) {
-                console.error('❌ candleSeries.setData упал. Длина:', lwBars.length,
-                    'Первые 3:', JSON.stringify(lwBars.slice(0, 3)));
+                console.error('❌ candleSeries.setData упал', e);
                 try { this.candleSeries.setData([]); } catch (e2) {}
                 try { this.candleSeries.setData(lwBars); } catch (e3) {}
             }
@@ -4159,14 +4168,18 @@ class ChartManager {
         }
 
         const volumeData = [];
-        let dropped = 0;
+        const interval = this.currentInterval;
+        const byTime = new Map();
 
         for (let i = 0; i < data.length; i++) {
             const c = data[i];
-            if (!c || typeof c !== 'object') { dropped++; continue; }
+            if (!c || typeof c !== 'object') continue;
 
             const t = c.time;
-            if (typeof t !== 'number' || !isFinite(t) || !Number.isInteger(t) || t <= 0) { dropped++; continue; }
+            if (typeof t !== 'number' || !isFinite(t) || !Number.isInteger(t) || t <= 0) continue;
+
+            const alignedT = this._alignTimeForInterval(t, interval);
+            if (!Number.isInteger(alignedT) || alignedT <= 0) continue;
 
             let volume = (typeof c.quoteVolume === 'number') ? c.quoteVolume : Number(c.quoteVolume);
             if (!isFinite(volume) || volume < 0) {
@@ -4178,23 +4191,21 @@ class ChartManager {
             const cl = typeof c.close === 'number' ? c.close : Number(c.close);
             const isBull = (isFinite(o) && isFinite(cl)) ? (cl >= o) : true;
 
-            volumeData.push({
-                time: t,
+            byTime.set(alignedT, {
+                time: alignedT,
                 value: volume,
                 color: isBull ? bullishColor : bearishColor
             });
         }
 
-        if (dropped > 0) {
-            console.warn('🚨 LW-NULL: _buildVolumeData отбросил', dropped, 'элементов');
-        }
+        const sorted = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 
         if (data === this.chartData) {
-            this._volumeDataCache = volumeData;
+            this._volumeDataCache = sorted;
             this._volumeDataDirty = false;
         }
 
-        return volumeData;
+        return sorted;
     }
 
     _updateVolumeOptimized() {
@@ -4206,7 +4217,7 @@ class ChartManager {
             const isBullish = lastCandle.close >= lastCandle.open;
 
             this._safeVolumeBarUpdate(
-                lastCandle.time,
+                this._alignTimeToInterval(lastCandle.time),
                 lastCandle.quoteVolume || lastCandle.volume || 0,
                 isBullish ? this.bullishColor : this.bearishColor
             );
@@ -4333,8 +4344,13 @@ class ChartManager {
 
             if (signal.aborted) return null;
 
+            // Дедуп по выровненному времени
             const dedupMap = new Map();
-            for (const c of rawCandles) dedupMap.set(c.time, c);
+            for (const c of rawCandles) {
+                const aligned = alignTime(c.time);
+                c.time = aligned;
+                dedupMap.set(aligned, c);
+            }
             const noDupes = Array.from(dedupMap.values());
 
             const batchNowSec = Math.floor(Date.now() / 1000);
@@ -5178,7 +5194,7 @@ class ChartManager {
     }
 
     // =================================================================================
-    // CACHE
+    // CACHE — версия '3', чтобы старый мусорный кэш автоматически сбросился
     // =================================================================================
 
     async _waitForDb(timeoutMs = 2000) {
@@ -5202,18 +5218,27 @@ class ChartManager {
     async saveCandlesToCache(symbol, exchange, marketType, interval, candles) {
         if (!candles || candles.length === 0) return;
 
-        const CACHE_VERSION = '2';
+        const CACHE_VERSION = '3';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
 
-        const cleanCandles = candles.filter(c =>
-            c && typeof c === 'object' &&
-            typeof c.time === 'number' && isFinite(c.time) && Number.isInteger(c.time) && c.time > 0 &&
-            typeof c.open === 'number' && isFinite(c.open) && c.open > 0 &&
-            typeof c.high === 'number' && isFinite(c.high) && c.high > 0 &&
-            typeof c.low === 'number' && isFinite(c.low) && c.low > 0 &&
-            typeof c.close === 'number' && isFinite(c.close) && c.close > 0
-        );
+        // FIX: выравниваем time и чистим перед сохранением.
+        const byTime = new Map();
 
+        for (const c of candles) {
+            if (!c || typeof c !== 'object') continue;
+            if (typeof c.time !== 'number' || !isFinite(c.time) || !Number.isInteger(c.time) || c.time <= 0) continue;
+            if (typeof c.open !== 'number' || !isFinite(c.open) || c.open <= 0) continue;
+            if (typeof c.high !== 'number' || !isFinite(c.high) || c.high <= 0) continue;
+            if (typeof c.low !== 'number' || !isFinite(c.low) || c.low <= 0) continue;
+            if (typeof c.close !== 'number' || !isFinite(c.close) || c.close <= 0) continue;
+
+            const aligned = this._alignTimeForInterval(c.time, interval);
+            if (!Number.isInteger(aligned) || aligned <= 0) continue;
+
+            byTime.set(aligned, { ...c, time: aligned });
+        }
+
+        const cleanCandles = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
         if (cleanCandles.length === 0) return;
 
         const cacheData = {
@@ -5235,7 +5260,7 @@ class ChartManager {
     }
 
     async loadCandlesFromCache(symbol, exchange, marketType, interval) {
-        const CACHE_VERSION = '2';
+        const CACHE_VERSION = '3';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
 
         if (!window.db) return null;
@@ -5253,29 +5278,34 @@ class ChartManager {
             }
 
             const CACHE_DURATION = 5 * 60 * 1000;
-
             if (Date.now() - cached.lastUpdate > CACHE_DURATION) return null;
 
             if (!Array.isArray(cached.data)) return null;
 
-            const valid = cached.data.filter(c =>
-                c && typeof c === 'object' &&
-                typeof c.time === 'number' && isFinite(c.time) && Number.isInteger(c.time) && c.time > 0 &&
-                typeof c.open === 'number' && isFinite(c.open) && c.open > 0 &&
-                typeof c.high === 'number' && isFinite(c.high) && c.high > 0 &&
-                typeof c.low === 'number' && isFinite(c.low) && c.low > 0 &&
-                typeof c.close === 'number' && isFinite(c.close) && c.close > 0
-            );
+            const byTime = new Map();
 
-            if (valid.length === 0) {
+            for (const c of cached.data) {
+                if (!c || typeof c !== 'object') continue;
+                if (typeof c.time !== 'number' || !isFinite(c.time) || !Number.isInteger(c.time) || c.time <= 0) continue;
+                if (typeof c.open !== 'number' || !isFinite(c.open) || c.open <= 0) continue;
+                if (typeof c.high !== 'number' || !isFinite(c.high) || c.high <= 0) continue;
+                if (typeof c.low !== 'number' || !isFinite(c.low) || c.low <= 0) continue;
+                if (typeof c.close !== 'number' || !isFinite(c.close) || c.close <= 0) continue;
+
+                // FIX: выравниваем time ПЕРЕД сохранением в chartData.
+                const aligned = this._alignTimeForInterval(c.time, interval);
+                if (!Number.isInteger(aligned) || aligned <= 0) continue;
+
+                const copy = { ...c, time: aligned };
+                byTime.set(aligned, copy);
+            }
+
+            if (byTime.size === 0) {
                 await window.db.delete('candles', key);
                 return null;
             }
 
-            if (valid.length !== cached.data.length) {
-                console.warn('⚠️ loadCandlesFromCache: отброшено невалидных свечей:',
-                    cached.data.length - valid.length);
-            }
+            const valid = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 
             for (const c of valid) {
                 this._stampCandle(c, 'cache', cached.lastUpdate);
@@ -5288,7 +5318,7 @@ class ChartManager {
     }
 
     async clearOldCaches() {
-        const CACHE_VERSION = '2';
+        const CACHE_VERSION = '3';
 
         try {
             if (!window.db) return;
@@ -5415,4 +5445,3 @@ class ChartManager {
 
 if (typeof window !== 'undefined') {
     window.ChartManager = ChartManager;
-}
