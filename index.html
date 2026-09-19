@@ -1192,12 +1192,9 @@ if (window.alertLineManager) window.alertLineManager.deleteAlert(id);
 });
 };
 
-window.renderDrawings = function() {
-if (window.rayManager && typeof window.rayManager._requestRedraw === 'function') window.rayManager._requestRedraw();
-if (window.trendLineManager && typeof window.trendLineManager._requestRedraw === 'function') window.trendLineManager._requestRedraw();
-};
 
-function renderDrawings() { window.renderDrawings(); }
+
+
 function saveDrawings() { if (window.rayManager) window.rayManager._saveRays(); }
 function saveColors() { localStorage.setItem('chartColors', JSON.stringify(availableColors)); }
 
