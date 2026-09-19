@@ -11,21 +11,17 @@ class IndicatorPanelManager {
     }
     
     _initEvents() {
-        // Глобальные события для перетаскивания мышью
         document.addEventListener('mousemove', this._onMouseMove.bind(this));
         document.addEventListener('mouseup', this._onMouseUp.bind(this));
         
-        // 🚀 НОВОЕ: Автоматическая подстройка размеров при изменении окна/контейнера
         this._resizeObserver = new ResizeObserver(entries => {
             for (let entry of entries) {
-                // Если контейнер вообще не виден (например, скрыт вкладка), пропускаем
                 if (entry.contentRect.width === 0) return;
                 
                 this.panels.forEach(panel => {
                     if (panel.chart && !panel.isCollapsed) {
-                        // Берем ширину конкретной обертки панели, а не всего контейнера!
                         const width = panel.content.clientWidth;
-                        const height = panel.height - 28; // 28px - высота заголовка
+                        const height = panel.height - 28;
                         if (width > 0 && height > 0) {
                             panel.chart.resize(width, height);
                         }
@@ -34,7 +30,6 @@ class IndicatorPanelManager {
             }
         });
         
-        // Начинаем следить за контейнером индикаторов
         if (this.container) {
             this._resizeObserver.observe(this.container);
         }
@@ -70,7 +65,6 @@ class IndicatorPanelManager {
         wrapper.appendChild(content);
         this.container.appendChild(wrapper);
         
-             // ✅ ЗАЩИТА ОТ 0: Если браузер еще не посчитал ширину, ставим дефолтную
         const safeWidth = content.clientWidth || 400;
         const safeHeight = Math.max(50, defaultHeight - 28);
         
@@ -85,10 +79,9 @@ class IndicatorPanelManager {
             rightPriceScale: { scaleMargins: { top: 0.1, bottom: 0.1 }, borderColor: '#333333' }
         });
         
-        const panel = { wrapper, header, content, resizer, chart, height: defaultHeight, minHeight, maxHeight, isCollapsed: false, series: new Map() };
+        const panel = { wrapper, header, content, resizer, chart, height: defaultHeight, minHeight, maxHeight, isCollapsed: false, series: new Map(), _syncState: null };
         this.panels.set(id, panel);
         
-        // Обработчики кнопок
         header.querySelector('.collapse-btn').addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(id); });
         header.querySelector('.close-btn').addEventListener('click', (e) => { e.stopPropagation(); this.closePanel(id); });
         resizer.addEventListener('mousedown', (e) => { this._startResize(id, e); });
@@ -112,7 +105,6 @@ class IndicatorPanelManager {
             panel.header.querySelector('.collapse-btn').innerHTML = '▼';
         }
         
-        // ИСПРАВЛЕНО: Используем chart.resize вместо applyOptions и УБРАЛИ пересчет данных!
         setTimeout(() => {
             const width = panel.content.clientWidth;
             const height = panel.isCollapsed ? 0 : panel.height - 28;
@@ -126,11 +118,29 @@ class IndicatorPanelManager {
         const panel = this.panels.get(id);
         if (!panel) return;
         
+        // [FIX] Отписываемся от событий главного графика
+        this._teardownPanelSync(panel);
+        
         if (panel.wrapper && panel.wrapper.parentNode) panel.wrapper.remove();
         try { if (panel.chart) panel.chart.remove(); } catch(e) {}
         
         this.panels.delete(id);
         this._updateContainerHeight();
+    }
+    
+    // [FIX] Общая очистка подписок панели
+    _teardownPanelSync(panel) {
+        if (!panel || !panel._syncState) return;
+        
+        for (const unsub of panel._syncState.unsubscribers) {
+            try { unsub(); } catch(e) {}
+        }
+        panel._syncState.unsubscribers = [];
+        
+        const line = panel._syncState.crosshairLine;
+        if (line && line.parentNode) line.parentNode.removeChild(line);
+        
+        panel._syncState = null;
     }
     
     _startResize(id, e) {
@@ -156,7 +166,6 @@ class IndicatorPanelManager {
             panel.height = newHeight;
             panel.wrapper.style.height = `${newHeight}px`;
             
-            // ИСПРАВЛЕНО: Используем chart.resize (без пересчета данных!)
             const width = panel.content.clientWidth;
             if (width > 0) panel.chart.resize(width, newHeight - 28);
             
@@ -199,7 +208,6 @@ class IndicatorPanelManager {
         
         if (seriesToDelete) {
             try { panel.chart.removeSeries(seriesToDelete); } catch(e) {}
-            // Удаляем по значению объекта из Map
             for (const [key, val] of panel.series.entries()) {
                 if (val === seriesToDelete) { panel.series.delete(key); break; }
             }
@@ -214,80 +222,108 @@ class IndicatorPanelManager {
             }
         });
     }
-_syncPanelWithMainChart(panelChart) {
-    const cm = this.chartManager;
-    if (!cm?.chart) return;
     
-    const mainChart = cm.chart;
-    
-    let panelData = null;
-    this.panels.forEach((p) => {
-        if (p.chart === panelChart) panelData = p;
-    });
-    
-    if (!panelData?.wrapper) return;
-    
-    // ════════════════════════════════════
-    // ❗️❗️❗️ ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ
-    // ════════════════════════════════════
-    
-    // 1. Копируем настройки timeScale из основного!
-    const mainOptions = mainChart.options();
-    
-    panelChart.applyOptions({
-        timeScale: {
-            ...mainOptions.timeScale,
-            visible: false,
-            rightOffset: mainOptions.timeScale?.rightOffset || 5,
-            barSpacing: mainOptions.timeScale?.barSpacing || 12,
-            minBarSpacing: mainOptions.timeScale?.minBarSpacing || 3,
-            fixLeftEdge: true,
-            fixRightEdge: false
-        }
-    });
-    
-    // 2. Синхронизация при каждом изменении
-    let syncTimer = null;
-    
-    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (syncTimer) cancelAnimationFrame(syncTimer);
+    // [FIX] Защита от повторной подписки. Раньше: каждый повторный вызов
+    // вешал ещё один обработчик timeScale и crosshair на главный график,
+    // и панель дёргалась N раз за скролл. Сейчас: подписка вешается один
+    // раз на панель, отписка — в closePanel / destroy.
+    _syncPanelWithMainChart(panelChart) {
+        const cm = this.chartManager;
+        if (!cm?.chart) return;
         
-        syncTimer = requestAnimationFrame(() => {
-            try {
-                // ❗️ Получаем актуальный диапазон и применяем
-                const currentRange = mainChart.timeScale().getVisibleLogicalRange();
-                if (currentRange) {
-                    panelChart.timeScale().setVisibleLogicalRange({
-                        from: Math.floor(currentRange.from),
-                        to: Math.ceil(currentRange.to)
-                    });
-                }
-            } catch(e){}
+        const mainChart = cm.chart;
+        
+        let panelData = null;
+        this.panels.forEach((p) => {
+            if (p.chart === panelChart) panelData = p;
         });
-    });
-    
-    // 3. Crosshair линия
-    let line = document.getElementById(`crosshair-line-${panelData.wrapper.dataset.panelId}`);
-    if (!line) {
-        line = document.createElement('div');
-        line.id = `crosshair-line-${panelData.wrapper.dataset.panelId}`;
-        line.style.cssText = `
-            position:absolute; width:1px; background:transparent;
-            height:100%; top:0; pointer-events:none; z-index:99999;
-            display:none; border-left:1px dashed #758696;
-        `;
-        document.body.appendChild(line);
+        
+        if (!panelData?.wrapper) return;
+        
+        // [FIX] Уже подписаны — выходим, чтобы не плодить дубли
+        if (panelData._syncState) return;
+        
+        panelData._syncState = { unsubscribers: [], crosshairLine: null };
+        
+        // 1. Копируем настройки timeScale из основного
+        const mainOptions = mainChart.options();
+        panelChart.applyOptions({
+            timeScale: {
+                ...mainOptions.timeScale,
+                visible: false,
+                rightOffset: mainOptions.timeScale?.rightOffset || 5,
+                barSpacing: mainOptions.timeScale?.barSpacing || 12,
+                minBarSpacing: mainOptions.timeScale?.minBarSpacing || 3,
+                fixLeftEdge: true,
+                fixRightEdge: false
+            }
+        });
+        
+        // 2. Синхронизация диапазона
+        let syncTimer = null;
+        const rangeHandler = () => {
+            if (syncTimer) cancelAnimationFrame(syncTimer);
+            syncTimer = requestAnimationFrame(() => {
+                try {
+                    const currentRange = mainChart.timeScale().getVisibleLogicalRange();
+                    if (currentRange) {
+                        panelChart.timeScale().setVisibleLogicalRange({
+                            from: Math.floor(currentRange.from),
+                            to: Math.ceil(currentRange.to)
+                        });
+                    }
+                } catch(e) {}
+            });
+        };
+        mainChart.timeScale().subscribeVisibleLogicalRangeChange(rangeHandler);
+        panelData._syncState.unsubscribers.push(() => {
+            try { mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeHandler); } catch(e) {}
+            if (syncTimer) cancelAnimationFrame(syncTimer);
+        });
+        
+        // 3. Crosshair линия
+        const panelId = panelData.wrapper.dataset.panelId;
+        let line = document.getElementById(`crosshair-line-${panelId}`);
+        if (!line) {
+            line = document.createElement('div');
+            line.id = `crosshair-line-${panelId}`;
+            line.style.cssText = `
+                position:absolute; width:1px; background:transparent;
+                height:100%; top:0; pointer-events:none; z-index:99999;
+                display:none; border-left:1px dashed #758696;
+            `;
+            document.body.appendChild(line);
+        }
+        panelData._syncState.crosshairLine = line;
+        
+        const crosshairHandler = (p) => {
+            if (!p?.time || !p?.point) { line.style.display = 'none'; return; }
+            const rect = panelData.wrapper.getBoundingClientRect();
+            line.style.display = 'block';
+            line.style.left = p.point.x + 'px';
+            line.style.top = rect.top + 'px';
+            line.style.height = (rect.height - 28) + 'px';
+        };
+        mainChart.subscribeCrosshairMove(crosshairHandler);
+        panelData._syncState.unsubscribers.push(() => {
+            try { mainChart.unsubscribeCrosshairMove(crosshairHandler); } catch(e) {}
+        });
     }
     
-    mainChart.subscribeCrosshairMove((p) => {
-        if (!p?.time || !p?.point) { line.style.display='none'; return; }
-        const rect = panelData.wrapper.getBoundingClientRect();
-        line.style.display='block';
-        line.style.left=p.point.x+'px';
-        line.style.top=rect.top+'px';
-        line.style.height=(rect.height-28)+'px';
-    });
-}
+    // [FIX] Полная очистка — на случай destroy или перезагрузки приложения
+    destroy() {
+        for (const [id, panel] of this.panels.entries()) {
+            this._teardownPanelSync(panel);
+            try { if (panel.chart) panel.chart.remove(); } catch(e) {}
+            if (panel.wrapper?.parentNode) panel.wrapper.parentNode.removeChild(panel.wrapper);
+        }
+        this.panels.clear();
+        
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+    }
 }
 
 if (typeof window !== 'undefined') {
