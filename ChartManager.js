@@ -390,6 +390,7 @@ class ChartManager {
     }
 
     // =============== RIGHT EDGE ===============
+       // =============== RIGHT EDGE ===============
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
         const ts = this.chart.timeScale();
@@ -402,14 +403,16 @@ class ChartManager {
         } catch (e) {}
         let barSpacing = this._savedBarSpacing || ts.options().barSpacing || 25;
         if (!barSpacing || barSpacing <= 0) barSpacing = 25;
-        let width = 0;
-        try { width = ts.width() || 0; } catch (e) {}
-        if (!width || width < 50) {
-            const ps = this.chart.priceScale('right');
-            let psW = 0;
-            try { psW = ps?.width?.() || 0; } catch (e) {}
-            width = Math.max(50, (this.chartContainer.clientWidth || 800) - psW - 8);
-        }
+
+        // [FIX] Ширину берём от контейнера минус реальная ширина правой шкалы.
+        // Раньше использовался ts.width(), который меняется асинхронно после
+        // autoscale / смены точности — из-за этого visibleBars для разных монет
+        // был разным и зум "уплывал". Этот расчёт стабилен всегда.
+        let psW = 0;
+        try { psW = this.chart.priceScale('right')?.width?.() || 0; } catch (e) {}
+        const containerW = this.chartContainer?.clientWidth || 800;
+        const width = Math.max(50, containerW - psW - 8);
+
         const visibleBars = width / barSpacing;
         const to = lastIndex + rightOffset;
         const from = to - visibleBars;
@@ -432,9 +435,22 @@ class ChartManager {
             if (w > 0) ps.applyOptions({ minimumWidth: w });
         } catch (e) {}
     }
-
     _relockPriceScaleWidth() {
         if (!this._isChartValid()) return;
+        // [FIX] Если пользователь ушёл в историю — не трогаем его зум.
+        // Раньше relock вызывал сброс/фиксацию минимума ширины, из-за чего
+        // visibleLogicalRange пересчитывался и пользователя "дёргало".
+        try {
+            const lr = this.chart.timeScale().getVisibleLogicalRange();
+            if (lr && this.chartData.length > 0 && lr.to < this.chartData.length - 3) {
+                this._resetPriceScaleWidth();
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    if (this._switchingSymbol || this._isSwitchingInterval) return;
+                    this._lockPriceScaleWidth();
+                }));
+                return;
+            }
+        } catch (e) {}
         this._resetPriceScaleWidth();
         requestAnimationFrame(() => requestAnimationFrame(() => {
             if (this._switchingSymbol || this._isSwitchingInterval) return;
@@ -1792,6 +1808,7 @@ class ChartManager {
     }
 
     // =============== SET DATA ===============
+      // =============== SET DATA ===============
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         try {
             if (!this._isChartValid()) { if (onReady) onReady(); return; }
@@ -1939,19 +1956,18 @@ class ChartManager {
             this.scheduleUpdatePosition();
             this._updatePageTitle();
 
+            // [FIX] Убран _relockPriceScaleWidth() — именно он менял ширину правой
+            // шкалы ПОСЛЕ того, как layout уже устоялся, и сбивал зум у монет,
+            // точность которых не была в кэше. Точность всё равно закэшируется —
+            // она применится при следующем открытии монеты или при switchSymbol.
             if (typeof getPrecisionFromExchange === 'function') {
                 getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
                     if (this.currentSymbol === symbol && this._isChartValid()) {
-                        const changed = this._lastAppliedPrecision !== String(precision);
                         this._setCachedPrecision(symbol, exchange, marketType, precision);
-                        this.applyPriceFormat(precision);
-                        this._lastAppliedPrecision = String(precision);
-                        if (changed && !this._switchingSymbol && !this._isSwitchingInterval) this._relockPriceScaleWidth();
                     }
                 }).catch(() => {});
             }
 
-      
             this._lastTimeframe = interval;
 
             if (!window._dailySeparator && window.DailySeparator) window._dailySeparator = new window.DailySeparator(this);
@@ -1969,7 +1985,6 @@ class ChartManager {
             if (onReady) onReady();
         }
     }
-
     // =============== SCALE ===============
     _captureScale() {
         if (!this._isChartValid()) return null;
