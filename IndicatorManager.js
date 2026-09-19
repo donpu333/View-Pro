@@ -13,6 +13,15 @@ class IndicatorManager {
         this._pendingIndicatorsUpdate = false;
         this._pendingIndicatorResults = new Map();
         
+        // [FIX] Троттлинг пересчётов — не чаще одного раза за _indicatorThrottleMs
+        this._updateThrottleTimeout = null;
+        this._lastIndicatorUpdateAt = 0;
+        this._indicatorThrottleMs = 150;
+        
+        // [FIX] Батч результатов: собираем результаты worker'а и применяем в одном RAF
+        this._batchResults = [];
+        this._batchRafId = null;
+        
         // Привязываем контекст всех методов
         this._handleWorkerMessage = this._handleWorkerMessage.bind(this);
         this.updateAllIndicators = this.updateAllIndicators.bind(this);
@@ -33,49 +42,72 @@ class IndicatorManager {
         }, 2000);
     }
     
+    // [FIX] Применяем собранные результаты в одном RAF вместо трёх отдельных рендеров
+    _flushBatch() {
+        this._batchRafId = null;
+        if (this._batchResults.length === 0) return;
+        const batch = this._batchResults;
+        this._batchResults = [];
+        for (const { indicator, res } of batch) {
+            // Проверяем, что индикатор всё ещё активен (не удалён между сбором и применением)
+            if (!this.activeIndicators.includes(indicator)) continue;
+            indicator.onCalculateResult({ 
+                indicatorId: res.indicatorId, 
+                result: res.result, 
+                success: true 
+            });
+        }
+    }
+    
+    _scheduleBatchFlush() {
+        if (this._batchRafId) return;
+        this._batchRafId = requestAnimationFrame(() => this._flushBatch());
+    }
+    
     _handleWorkerMessage(message) {
-        const processResult = (res) => {
+        // [FIX] Собираем результаты, применяем в одном RAF
+        const collect = (res) => {
             const indicator = this.activeIndicators.find(i => i.id == res.indicatorId);
-            if (indicator && res.success) {
-                // Если идёт скролл — откладываем применение результата
-                if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming) {
-                    this._pendingIndicatorResults.set(indicator.id, res);
-                    return;
-                }
-                
-                // Применяем результат сразу (без предварительной очистки)
-                indicator.onCalculateResult({ 
-                    indicatorId: res.indicatorId, 
-                    result: res.result, 
-                    success: true 
-                });
+            if (!indicator || !res.success) return;
+
+            // Если идёт скролл — откладываем применение результата
+            if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming) {
+                this._pendingIndicatorResults.set(indicator.id, res);
+                return;
             }
+            this._batchResults.push({ indicator, res });
         };
 
         if (message.task === 'result') {
-            processResult(message);
-        }
-        else if (message.task === 'resultMultiple') {
+            collect(message);
+        } else if (message.task === 'resultMultiple') {
             for (const res of message.results) {
-                processResult(res);
+                collect(res);
             }
+        } else {
+            return;
+        }
+
+        if (this._batchResults.length > 0) {
+            this._scheduleBatchFlush();
         }
     }
     
     _flushPendingIndicatorResults() {
         if (this._pendingIndicatorResults.size === 0) return;
         
+        // [FIX] Собираем в батч и применяем в одном RAF
         for (const [indicatorId, res] of this._pendingIndicatorResults.entries()) {
             const indicator = this.activeIndicators.find(i => i.id == indicatorId);
             if (indicator && res.success) {
-                indicator.onCalculateResult({ 
-                    indicatorId: res.indicatorId, 
-                    result: res.result, 
-                    success: true 
-                });
+                this._batchResults.push({ indicator, res });
             }
         }
         this._pendingIndicatorResults.clear();
+        
+        if (this._batchResults.length > 0) {
+            this._scheduleBatchFlush();
+        }
     }
     
     _filterData(data) {
@@ -189,6 +221,8 @@ class IndicatorManager {
         
         // Очищаем отложенные результаты для удалённого индикатора
         this._pendingIndicatorResults.delete(indicator.id);
+        // [FIX] И из текущего батча
+        this._batchResults = this._batchResults.filter(b => b.indicator !== indicator);
         
         this._saveIndicators();
         this._renderUI();
@@ -206,6 +240,20 @@ class IndicatorManager {
             return;
         }
         
+        // [FIX] Троттлинг: не чаще одного пересчёта за _indicatorThrottleMs
+        const now = performance.now();
+        const elapsed = now - this._lastIndicatorUpdateAt;
+        if (elapsed < this._indicatorThrottleMs) {
+            if (!this._updateThrottleTimeout) {
+                this._updateThrottleTimeout = setTimeout(() => {
+                    this._updateThrottleTimeout = null;
+                    this.updateAllIndicators();
+                }, this._indicatorThrottleMs - elapsed);
+            }
+            return;
+        }
+        this._lastIndicatorUpdateAt = now;
+        
         const calculations = [];
         this.activeIndicators.forEach(indicator => {
             const workerType = indicator.getWorkerType();
@@ -220,7 +268,8 @@ class IndicatorManager {
                 calculations.push({
                     indicatorId: indicator.id,
                     type: workerType,
-                    data: [...chartData],
+                    // [FIX] Не копируем массив — postMessage всё равно сделает structured clone
+                    data: chartData,
                     params: indicator.getWorkerParams()
                 });
             }
