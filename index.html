@@ -12,8 +12,7 @@
 <script src="html2canvas.min.js"></script>
 <script src="lightweight-charts.js"></script>
 
-<!-- QR-код (оставляем на CDN, он работает стабильно) -->
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
 
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 </head>
@@ -375,14 +374,14 @@
 <path d="M85 80L426.5 80L427 80.5L427 155L85.5 155L85 154.5L85 80Z"/>
 </svg>
 </button>
-<button class="alert-history-btn" id="collageBtn" title="Коллаж" onclick="window.open('https://donpu333.github.io/View-Pro/photo-collage%20.html', '_blank')">
+<button class="alert-history-btn" id="collageBtn" title="Коллаж" onclick="window.open('photo-collage.html', '_blank', 'noopener')">
 <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e3e3e3"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h480L570-480 450-320l-90-120-120 160Zm-40 80v-560 560Z"/></svg>
 </button>
 
 <button class="alert-history-btn" id="economicCalendarBtn" title="Экономический календарь">
 <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M200-80q-33 0-56.5-23.5T120-160v-560q0-33 23.5-56.5T200-800h40v-80h80v80h320v-80h80v80h40q33 0 56.5 23.5T840-720v560q0 33-23.5 56.5T760-80H200Zm0-80h560v-400H200v400Zm0-480h560v-80H200v80Zm0 0v-80 80Zm280 240q-17 0-28.5-11.5T440-440q0-17 11.5-28.5T480-480q17 0 28.5 11.5T520-440q0 17-11.5 28.5T480-400Zm-188.5-11.5Q280-423 280-440t11.5-28.5Q303-480 320-480t28.5 11.5Q360-457 360-440t-11.5 28.5Q337-400 320-400t-28.5-11.5ZM640-400q-17 0-28.5-11.5T600-440q0-17 11.5-28.5T640-480q17 0 28.5 11.5T680-440q0 17-11.5 28.5T640-400ZM480-240q-17 0-28.5-11.5T440-280q0-17 11.5-28.5T480-320q17 0 28.5 11.5T520-280q0 17-11.5 28.5T480-240Zm-188.5-11.5Q280-263 280-280t11.5-28.5Q303-320 320-320t28.5 11.5Q360-297 360-280t-11.5 28.5Q337-240 320-240t-28.5-11.5ZM640-240q-17 0-28.5-11.5T600-280q0-17 11.5-28.5T640-320q17 0 28.5 11.5T680-280q0 17-11.5 28.5T640-240Z"/></svg>
 </button>
-<button class="alert-history-btn" id="screenerBtn" title="Скринер" onclick="window.open('https://donpu333.github.io/screener/', '_blank')">
+<button class="alert-history-btn" id="screenerBtn" title="Скринер" onclick="window.open('https://donpu333.github.io/screener/', '_blank', 'noopener')">
 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
 <path d="m17.5,11c-3.584,0-6.5,2.916-6.5,6.5s2.916,6.5,6.5,6.5,6.5-2.916,6.5-6.5-2.916-6.5-6.5-6.5Zm0,12c-3.032,0-5.5-2.468-5.5-5.5s2.468-5.5,5.5-5.5,5.5,2.468,5.5,5.5-2.468,5.5-5.5,5.5Zm2.939-7.451l.701.713-3.456,3.399c-.217.218-.51.339-.822.339s-.604-.121-.825-.343l-1.85-1.793.695-.719,1.856,1.8c.099.099.157.089.24.007l3.46-3.403Zm-8.416-4.549H4v-1h9.497c-.527.282-1.021.618-1.474,1Zm0,13H0V2.5C0,1.121,1.121,0,2.5,0h13c1.379,0,2.5,1.121,2.5,2.5v6.515c-.166-.01-.332-.015-.5-.015s-.334.005-.5.015V2.5c0-.827-.673-1.5-1.5-1.5H2.5c-.827,0-1.5.673-1.5,1.5v20.5h10.02c.306.36.642.695,1.004,1Zm1.977-18H4v-1h10v1ZM4,15h5v1h-5v-1Z"/>
 </svg>
@@ -644,7 +643,7 @@
     <div class="visibility-panel" id="visibilityPanel">
         <div class="visibility-title">Видимость на таймфреймах</div>
         <div class="timeframe-checkbox-list" id="timeframeCheckboxList"></div>
-        <<div class="visibility-actions">
+              <div class="visibility-actions">
     <button class="visibility-btn select-all" id="selectAllTimeframes">Выбрать всё</button>
     <button class="visibility-btn deselect-all" id="deselectAllTimeframes">Снять всё</button>
     <!-- Новая кнопка -->
@@ -656,62 +655,10 @@
         <button class="delete-btn" id="deleteDrawing">Удалить</button>
     </div>
 </div>
-<!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ЛУЧЕЙ ========== -->
-<div class="drawing-settings-panel" id="drawingSettings" style="display: none;">
-    <div class="settings-tabs">
-        <button class="settings-tab active" data-settings-tab="style">Стиль</button>
-        <button class="settings-tab" data-settings-tab="visibility">Видимость</button>
-    </div>
-    <div class="visibility-panel active" id="stylePanel">
-        <div class="current-color-box" id="currentColorBox" style="display:none;"></div>
-        <div class="color-section">
-            <span class="color-label">Цвет линии</span>
-            <div class="color-picker-row" style="display: flex; align-items: center; gap: 6px;">
-                <input type="color" class="color-picker-inline" id="colorPickerInline" value="#4A90E2" style="width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; background: none;">
-                <input type="text" class="hex-input" id="hexInputInline" placeholder="#4A90E2" value="#4A90E2" style="flex: 1; min-width: 60px; height: 30px; background: #1E1E1E; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 12px; padding: 0 6px;">
-                <button class="add-btn" id="addColorInline" style="padding: 2px 10px; font-size: 12px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 30px;">+</button>
-            </div>
-            <div class="colors-grid" id="inlineColorsGrid"></div>
-        </div>
-        <div class="settings-row" id="colorOpacityRow" style="display: flex; margin-bottom: 15px;">
-            <label>Прозрачность:</label>
-            <input type="range" id="colorOpacity" min="0" max="100" value="100">
-            <span class="value-display" id="colorOpacityValue">100%</span>
-        </div>
-        <div class="settings-row" id="priceInputRow" style="display: flex; margin-bottom: 15px;">
-            <label>Цена:</label>
-            <input type="text" id="settingsPriceInput" value="" placeholder="Введите цену">
-            <button class="apply-price-btn" id="applyPriceBtn" style="margin-left: 5px; padding: 5px 10px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
-        </div>
-        <div id="templateSection" style="display: block;">
-            <div class="template-section" id="templateSectionDefault" style="display: block;">
-                <div class="template-title">Шаблон</div>
-                <select class="template-select" id="templateSelect">
-                    <option value="solid">Сплошная</option>
-                    <option value="dashed">Пунктирная</option>
-                    <option value="dotted">Точечная</option>
-                </select>
-            </div>
-        </div>
-        <div class="settings-row" id="settingThicknessRow">
-            <label>Толщина:</label>
-            <input type="number" id="settingThickness" value="1" min="1" max="10" style="width: 60px;">
-        </div>
-    </div>
-    <div class="visibility-panel" id="visibilityPanel" style="display: none;">
-        <div class="visibility-title">Видимость на таймфреймах</div>
-        <div class="timeframe-checkbox-list" id="timeframeCheckboxList"></div>
-        <div class="visibility-actions">
-            <button class="visibility-btn select-all" id="selectAllTimeframes">Выбрать всё</button>
-            <button class="visibility-btn deselect-all" id="deselectAllTimeframes">Снять всё</button>
-            <button class="visibility-btn select-minutes" id="selectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
-        </div>
-    </div>
-    <div class="settings-actions">
-        <button id="saveSettings">Сохранить</button>
-        <button class="delete-btn" id="deleteDrawing">Удалить</button>
-    </div>
-</div>
+
+
+
+
 <div id="tradeCreatePanel" style="display: none; position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 99999; background: #1E1E1E; border: 1px solid #404040; border-radius: 8px; padding: 15px; width: 340px; box-shadow: 0 8px 24px rgba(0,0,0,0.6);">
     <div class="settings-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: move; padding-bottom: 10px; border-bottom: 1px solid #404040;">
         <span style="color: #fff; font-size: 14px; font-weight: bold;">Стоп Тейк</span>
@@ -2637,8 +2584,7 @@ requestAnimationFrame(positionButtons);
 });
 mutationObserver.observe(mainContainer, {
 childList: true,
-subtree: true,
-attributes: true
+subtree: true
 });
 
 window.addEventListener('resize', positionButtons);
@@ -2650,9 +2596,7 @@ window.addEventListener('resize', positionButtons);
 <script src="./Utils.js"></script>
 <script src="./TFLabels.js"></script>
 <script src="./IndexedDBStorage.js"></script>
-<script src="./DataFetcher.js"></script>
-<script src="./SafeHelpers.js"></script>
-<script src="./SafeElement.js"></script>
+
 <script src="./IndicatorWorker.js"></script>
 <script src="./BaseIndicator.js"></script>
 <script src="./IndicatorRegistry.js"></script>
