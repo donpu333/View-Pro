@@ -226,7 +226,7 @@ class IndicatorManager {
         
         this._saveIndicators();
         this._renderUI();
-        this.chartManager?.chart?.timeScale()?.fitContent();
+     
         
         return true;
     }
