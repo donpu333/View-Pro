@@ -3,9 +3,13 @@ self.addEventListener('message', function(e) {
     const { task, calculations, indicatorType, indicatorId, data, params } = e.data;
     
     if (task === 'calculate') {
-        const func = self[indicatorType];
-        const result = (typeof func === 'function') ? func(data, params) : null;
-        self.postMessage({ task: 'result', indicatorId, result, success: result !== null });
+        try {
+            const func = self[indicatorType];
+            const result = (typeof func === 'function') ? func(data, params) : null;
+            self.postMessage({ task: 'result', indicatorId, result, success: result !== null });
+        } catch (error) {
+            self.postMessage({ task: 'result', indicatorId, result: null, success: false, error: error && error.message });
+        }
     }
     else if (task === 'calculateMultiple') {
         const results = [];
@@ -27,6 +31,7 @@ self.addEventListener('message', function(e) {
 // ==========================================
 
 function calculateSMA(data, period) {
+    if (!data || data.length === 0) return [];
     const result = [];
     for (let i = period - 1; i < data.length; i++) {
         let sum = 0;
@@ -37,6 +42,7 @@ function calculateSMA(data, period) {
 }
 
 function calculateEMA(data, period) {
+    if (!data || data.length === 0) return [];
     const k = 2 / (period + 1);
     const result = [{ time: data[0].time, value: data[0].close }];
     for (let i = 1; i < data.length; i++) {
@@ -47,7 +53,7 @@ function calculateEMA(data, period) {
 
 function calculateRSI(data, period = 14) {
     const rsiData = [];
-    if (data.length <= period) return rsiData;
+    if (!data || data.length <= period) return rsiData;
     let gains = [], losses = [];
     for (let i = 1; i < data.length; i++) {
         const diff = data[i].close - data[i-1].close;
@@ -68,6 +74,7 @@ function calculateRSI(data, period = 14) {
 }
 
 function calculateEMAArray(arr, period) {
+    if (!arr || arr.length === 0) return [];
     const k = 2 / (period + 1);
     const ema = [arr[0]];
     for (let i = 1; i < arr.length; i++) ema.push(arr[i] * k + ema[i-1] * (1 - k));
@@ -75,6 +82,7 @@ function calculateEMAArray(arr, period) {
 }
 
 function calculateMACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+    if (!data || data.length === 0) return [];
     const closes = data.map(d => d.close);
     const emaFast = calculateEMAArray(closes, fastPeriod);
     const emaSlow = calculateEMAArray(closes, slowPeriod);
@@ -85,12 +93,13 @@ function calculateMACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9)
 }
 
 function calculateStochRSI(data, period = 14, kSmooth = 3, dSmooth = 3) {
+    if (!data || data.length === 0) return { k: [], d: [], times: [] };
     const closes = data.map(d => d.close);
     let rsi = [];
     if (closes.length < period + 1) return { k: [], d: [], times: [] };
     let gains = [], losses = [];
     for (let i = 1; i < closes.length; i++) {
-        const diff = closes[i] - closes[i-1].close;
+        const diff = closes[i] - closes[i-1];
         gains.push(diff > 0 ? diff : 0);
         losses.push(diff < 0 ? -diff : 0);
     }
@@ -118,11 +127,12 @@ function calculateStochRSI(data, period = 14, kSmooth = 3, dSmooth = 3) {
     }
     const offset = stochK.length - stochD.length;
     const timeOffset = (period * 2) + offset;
-    return { k: stochK.slice(offset), d: stochD, times: data.map(d=>d.time).slice(timeOffset) };
+    const dAligned = new Array(offset).fill(null).concat(stochD);
+    return { k: stochK.slice(offset), d: dAligned.slice(offset), times: data.map(d=>d.time).slice(timeOffset) };
 }
 
 function calculateADX(data, period = 14) {
-    if (data.length < period + 1) return [];
+    if (!data || data.length < period + 1) return [];
     const tr = [], plusDM = [], minusDM = [];
     for (let i = 1; i < data.length; i++) {
         tr.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - data[i-1].close), Math.abs(data[i].low - data[i-1].close)));
@@ -150,6 +160,7 @@ function calculateADX(data, period = 14) {
 }
 
 function calculateATR(data, period = 14) {
+    if (!data || data.length <= period) return [];
     const tr = [];
     for (let i = 1; i < data.length; i++) {
         tr.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - data[i-1].close), Math.abs(data[i].low - data[i-1].close)));
