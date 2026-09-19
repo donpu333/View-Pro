@@ -1053,7 +1053,6 @@ svg, svg * { font-family: none !important; }
     border: 1px solid #404040;
 }
 
-/* Горизонтальная панель — подсказка СНИЗУ */
 #drawingToolbar:not(.vertical) .tool-btn {
     position: relative;
 }
@@ -1084,7 +1083,6 @@ svg, svg * { font-family: none !important; }
     border-bottom-color: #2D2D2D;
 }
 
-/* Вертикальная панель — подсказка СПРАВА */
 #drawingToolbar.vertical .tool-btn {
     position: relative;
 }
@@ -1115,7 +1113,6 @@ svg, svg * { font-family: none !important; }
     border-right-color: #2D2D2D;
 }
 
-/* Показ подсказки при наведении */
 .tool-btn:hover .tooltip {
     opacity: 1;
     visibility: visible;
@@ -1198,7 +1195,6 @@ svg, svg * { font-family: none !important; }
 .chart-price-axis,
 .price-axis,
 .tv-price-axis,
-.chart-price-axis,
 .tv-float-panel,
 [class*="priceAxis"] { cursor: ns-resize !important; }
 
@@ -1878,6 +1874,9 @@ svg, svg * { font-family: none !important; }
 .flag-cyan-small::after { background: linear-gradient(145deg, var(--accent-cyan), var(--accent-cyan-dark)); }
 
 /* Заголовок таблицы */
+/* ============================================================ */
+/* ==================== ШАПКА ТАБЛИЦЫ ========================= */
+/* ============================================================ */
 .ticker-panel .table-header {
     display: grid;
     grid-template-columns: 1fr 0.8fr 0.6fr 0.8fr 0.7fr;
@@ -1892,15 +1891,16 @@ svg, svg * { font-family: none !important; }
     user-select: none;
     font-size: 0.65rem;
     flex-shrink: 0;
+    overflow: visible;
 }
 
 .ticker-panel .table-header span {
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
 }
 
 .ticker-panel .table-header span[data-sort="name"] { justify-content: flex-start; }
@@ -1909,10 +1909,102 @@ svg, svg * { font-family: none !important; }
 .ticker-panel .table-header span[data-sort="volume"],
 .ticker-panel .table-header span[data-sort="trades"] { justify-content: flex-end; }
 
-.ticker-panel .table-header span i { font-size: 0.55rem; opacity: 0.5; margin-left: 2px; transition: opacity 0.15s ease; }
-.ticker-panel .table-header span:hover i { opacity: 1; }
+/* Колонка флагов в шапке — БЕЗ уменьшения, только небольшой отступ */
+.ticker-panel .table-header span[data-sort="flag"] {
+    gap: 2px;
+    justify-content: flex-start;
+}
+
+/* ============================================================ */
+/* ============ СТРЕЛКИ СОРТИРОВКИ — ЧИСТЫЙ CSS =============== */
+/* Рисуем треугольниками, Font Awesome НЕ нужен.               */
+/* Классы fa-sort / fa-sort-up / fa-sort-down ставит JS.       */
+/* ============================================================ */
+.ticker-panel .table-header span i {
+    display: inline-block;
+    position: relative;
+    width: 9px;
+    height: 12px;
+    margin-left: 4px;
+    flex-shrink: 0;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    font-family: inherit !important;
+    font-weight: normal !important;
+    font-style: normal !important;
+    color: var(--text-ticker);
+    opacity: 0.75;
+    text-indent: -9999px;
+    overflow: hidden;
+    vertical-align: middle;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+/* Оба треугольника как псевдоэлементы */
+.ticker-panel .table-header span i::before,
+.ticker-panel .table-header span i::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    text-indent: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+/* Верхний треугольник */
+.ticker-panel .table-header span i::before {
+    top: 0;
+    transform: translateX(-50%);
+    border-bottom: 4px solid currentColor;
+}
+
+/* Нижний треугольник */
+.ticker-panel .table-header span i::after {
+    bottom: 0;
+    transform: translateX(-50%);
+    border-top: 4px solid currentColor;
+}
+
+/* Hover */
+.ticker-panel .table-header span:hover i {
+    opacity: 1;
+    color: var(--text-light);
+}
+
+/* Активная колонка */
 .ticker-panel .table-header span.active-sort { color: var(--text-white); }
-.ticker-panel .table-header span.active-sort i { opacity: 1; color: var(--text-white); }
+.ticker-panel .table-header span.active-sort i {
+    opacity: 1;
+    color: var(--text-white);
+}
+
+/* fa-sort-up (сортировка ASC) — один большой верхний треугольник */
+.ticker-panel .table-header span i.fa-sort-up::before {
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border-left-width: 5px;
+    border-right-width: 5px;
+    border-bottom-width: 6px;
+}
+.ticker-panel .table-header span i.fa-sort-up::after {
+    display: none;
+}
+
+/* fa-sort-down (сортировка DESC) — один большой нижний треугольник */
+.ticker-panel .table-header span i.fa-sort-down::before {
+    display: none;
+}
+.ticker-panel .table-header span i.fa-sort-down::after {
+    bottom: 50%;
+    transform: translate(-50%, 50%);
+    border-left-width: 5px;
+    border-right-width: 5px;
+    border-top-width: 6px;
+}
 
 /* Список тикеров */
 .ticker-panel .ticker-list-container {
@@ -2660,7 +2752,30 @@ svg, svg * { font-family: none !important; }
     border-radius: 10px;
 }
 
-.wl-btn-arrow { color: var(--text-787); transition: transform 0.2s; }
+/* ✅ СТРЕЛКА ВОТЧЛИСТА — чистый CSS-треугольник, Font Awesome не нужен */
+.wl-btn-arrow {
+    flex-shrink: 0;
+    display: inline-block;
+    position: relative;
+    width: 10px;
+    height: 6px;
+    font-size: 0 !important;
+    font-family: inherit !important;
+    color: var(--text-787);
+    opacity: 0.9;
+    transition: transform 0.2s, color 0.15s;
+}
+.wl-btn-arrow::before {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid currentColor;
+}
+.wl-dropdown-btn:hover .wl-btn-arrow { color: var(--text-light); opacity: 1; }
 .wl-dropdown-container.open .wl-btn-arrow { transform: rotate(180deg); }
 
 .wl-dropdown-container.open .wl-dropdown-btn {
@@ -3124,6 +3239,7 @@ input:checked + .slider:before { transform: translateX(22px); }
     from { opacity: 0; transform: translateY(-8px); }
     to { opacity: 1; transform: translateY(0); }
 }
+
 /* ===== БАЗОВЫЕ СТИЛИ ПОДСКАЗОК ===== */
 .tool-btn .tooltip {
     position: absolute;
@@ -3142,18 +3258,14 @@ input:checked + .slider:before { transform: translateX(22px); }
     border: 1px solid #404040;
 }
 
-/* ===== ГОРИЗОНТАЛЬНАЯ ПАНЕЛЬ — подсказка СНИЗУ ===== */
-#drawingToolbar:not(.vertical) .tool-btn {
-    position: relative;
-}
+#drawingToolbar:not(.vertical) .tool-btn { position: relative; }
 
 #drawingToolbar:not(.vertical) .tool-btn .tooltip {
-    top: calc(100% + 8px);      /* снизу от кнопки */
+    top: calc(100% + 8px);
     left: 50%;
-    transform: translateX(-50%); /* центрируем по горизонтали */
+    transform: translateX(-50%);
 }
 
-/* Стрелочка сверху у подсказки */
 #drawingToolbar:not(.vertical) .tool-btn .tooltip::before {
     content: '';
     position: absolute;
@@ -3173,18 +3285,14 @@ input:checked + .slider:before { transform: translateX(22px); }
     border-bottom-color: #2D2D2D;
 }
 
-/* ===== ВЕРТИКАЛЬНАЯ ПАНЕЛЬ — подсказка СПРАВА ===== */
-#drawingToolbar.vertical .tool-btn {
-    position: relative;
-}
+#drawingToolbar.vertical .tool-btn { position: relative; }
 
 #drawingToolbar.vertical .tool-btn .tooltip {
-    left: calc(100% + 8px);     /* справа от кнопки */
+    left: calc(100% + 8px);
     top: 50%;
-    transform: translateY(-50%); /* центрируем по вертикали */
+    transform: translateY(-50%);
 }
 
-/* Стрелочка слева у подсказки */
 #drawingToolbar.vertical .tool-btn .tooltip::before {
     content: '';
     position: absolute;
@@ -3204,14 +3312,14 @@ input:checked + .slider:before { transform: translateX(22px); }
     border-right-color: #2D2D2D;
 }
 
-/* ===== ПОКАЗ ПОДСКАЗКИ ПРИ НАВЕДЕНИИ ===== */
 .tool-btn:hover .tooltip {
     opacity: 1;
     visibility: visible;
 }
+
 .chart-updating {
-    pointer-events: none; /* Блокирует мышь/тач на время обновления */
-    cursor: wait; /* Показывает курсор загрузки */
-    opacity: 0.95; /* Легкое визуальное indication, что что-то происходит, без мерцания */
+    pointer-events: none;
+    cursor: wait;
+    opacity: 0.95;
     transition: opacity 0.05s ease;
 }
