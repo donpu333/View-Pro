@@ -6,9 +6,6 @@ const INTERVAL_SECONDS_MAP = {
     '1d': 86400, '1w': 604800, '1M': 2592000
 };
 
-// [FIX] Intl.DateTimeFormat создаётся один раз. Раньше toLocaleString/toLocaleTimeString
-// с опциями создавали новый форматтер на КАЖДЫЙ вызов (для каждой метки оси при каждом сдвиге
-// графика и при каждом движении курсора) — это главный источник тормозов при скролле.
 const FMT_TICK_DAY = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
 const FMT_TICK_TIME = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
 const FMT_CROSSHAIR = new Intl.DateTimeFormat('ru-RU', {
@@ -71,7 +68,7 @@ class ChartManager {
         this._colorChangeCallbacks = [];
         this._updateScheduled = false;
         this._lastUpdateTime = 0;
-        this._drawingsUpdateRafId = null;
+        // [ШАГ 1] Удалены: _drawingsUpdateRafId, _drawingsRafId, _lastDrawingsCall, _drawingsFinalUpdateTimeout
         this._pendingUpdates = false;
         this._pendingRedraw = false;
         this._updatePositionRafId = null;
@@ -88,7 +85,6 @@ class ChartManager {
         this._crosshairRafId = null;
         this._latestCrosshairData = null;
         this._pendingCrosshairParam = null;
-        this._drawingsRafId = null;
         this._refreshingAfterHidden = false;
         this._periodicSyncInterval = null;
         this._quarantineTimeout = null;
@@ -112,13 +108,9 @@ class ChartManager {
         this._autoScrollEnabled = false;
         this._autoScrollTimeout = null;
 
-        // [FIX] Скрытая серия (bar/candle) больше не держит копию данных.
-        // Она пустая, а при переключении типа графика заполняется в setChartType.
         this._invisibleSeriesDirty = true;
         this._isScrolling = false;
         this._isScrollingFast = false;
-        this._lastDrawingsCall = 0;
-        this._drawingsFinalUpdateTimeout = null;
         this._scrollStopTimeout = null;
         this._lastScrollTime = 0;
         this._panelsSyncRafId = null;
@@ -126,7 +118,6 @@ class ChartManager {
         this._isViewingHistory = false;
         this._historyLoadQueue = [];
         this._preloadThreshold = 400;
-        // [FIX] Было 500: меньше подгрузок истории при скролле влево.
         this._batchSize = 1000;
         this._minLoadDelay = 1000;
         this._lastHistoryLoadTime = 0;
@@ -139,9 +130,6 @@ class ChartManager {
         this._lastInferredPrecision = null;
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        // [FIX] Меньше данных в памяти -> быстрее setData/индикаторы при подгрузке истории.
-        // Буферы подобраны так, чтобы (left+right)*1.5 + видимая область помещались в лимит,
-        // иначе _performTrimNow ничего не обрезает.
         this._maxCandlesInMemory = isMobile ? 3000 : 5000;
         this._leftBuffer = isMobile ? 1000 : 2000;
         this._rightBuffer = isMobile ? 500 : 1000;
@@ -167,8 +155,7 @@ class ChartManager {
                 if (window.wsManager) window.wsManager.forceReconnect?.();
 
                 this.refreshCandlesAfterTabHidden();
-                this.scheduleDrawingsUpdate(true);
-                this.requestDrawingsRedraw();
+                // [ШАГ 1] Удалены scheduleDrawingsUpdate/requestDrawingsRedraw
 
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
 
@@ -201,7 +188,7 @@ class ChartManager {
         this._priceUpdateHandler = null;
         this._candleCheckerTimeout = null;
 
-        this.scheduleDrawingsUpdate = this.scheduleDrawingsUpdate.bind(this);
+        // [ШАГ 1] Убран .bind(this) для scheduleDrawingsUpdate — метода больше нет
         this.onVisibleLogicalRangeChange = this.onVisibleLogicalRangeChange.bind(this);
 
         this.overlay = this._safeElement('candleStatsOverlay');
@@ -231,7 +218,6 @@ class ChartManager {
                 fixRightEdge: false,
                 rightOffset: 15,
                 shiftVisibleRangeOnNewBar: true,
-                // [FIX] заранее созданные Intl-форматтеры вместо toLocale*String с опциями
                 tickMarkFormatter: (time) => {
                     const iv = this.currentInterval;
                     return (iv === '1d' || iv === '1w' || iv === '1M')
@@ -243,8 +229,6 @@ class ChartManager {
                 borderColor: '#333333',
                 borderVisible: true,
                 scaleMargins: { top: 0.1, bottom: 0.25 },
-                // [FIX] автомасштаб включён с самого начала: ширина оси считается
-                // библиотекой по реальным подписям уже на первом кадре с данными.
                 autoScale: true,
                 entireTextOnly: false,
             },
@@ -434,10 +418,6 @@ class ChartManager {
     }
 
     // =============== PRICE SCALE WIDTH ===============
-    // [FIX] Ширина оси цен больше не оценивается формулой (макс. цена * 2, 7px на символ) —
-    // она ИЗМЕРЯЕТСЯ: библиотека сама считает ширину по реальным подписям при включённом
-    // автомасштабе, мы читаем priceScale.width() и фиксируем её как minimumWidth.
-    // Так ось не «прыгает» и не остаётся лишнего зазора.
     _resetPriceScaleWidth() {
         if (!this._isChartValid()) return;
         try { this.chart.priceScale('right').applyOptions({ minimumWidth: 0 }); } catch (e) {}
@@ -453,8 +433,6 @@ class ChartManager {
         } catch (e) {}
     }
 
-    // Для случаев, когда формат подписей изменился уже после отрисовки
-    // (например, пришла точность с биржи и она отличается от выведенной).
     _relockPriceScaleWidth() {
         if (!this._isChartValid()) return;
         this._resetPriceScaleWidth();
@@ -495,9 +473,6 @@ class ChartManager {
         return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
     }
 
-    // [FIX] Единая точка записи данных в серии: заполняется ТОЛЬКО видимая серия.
-    // Скрытая очищается (чтобы её старые точки не влияли на шкалу времени)
-    // и получит данные при переключении типа графика в setChartType.
     _setVisibleSeriesData(lwBars, clearHidden = false) {
         const visible = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
         const hidden = this.currentChartType === 'candle' ? this.barSeries : this.candleSeries;
@@ -594,7 +569,6 @@ class ChartManager {
             }
         } catch (e) {}
 
-        // [FIX] только видимая серия
         const lwBars = this._toLwBarsArray(this.chartData);
         this._setVisibleSeriesData(lwBars, true);
 
@@ -632,7 +606,6 @@ class ChartManager {
         for (const c of newCandles) {
             const point = this._toLwBar(c);
             if (!point) continue;
-            // [FIX] update только в видимую серию
             try { series.update(point); } catch (e) { failed = true; break; }
             if (this.volumeSeries) {
                 this._safeVolumeBarUpdate(point.time, c.quoteVolume || c.volume || 0,
@@ -1064,7 +1037,7 @@ class ChartManager {
                 this.timerManager.start(this.currentInterval);
                 this.timerManager.updatePrice(this.lastCandle.close);
             }
-            if (dataChanged) { this.requestDrawingsRedraw(); this.scheduleDrawingsUpdate(true); }
+            // [ШАГ 1] Удалены requestDrawingsRedraw + scheduleDrawingsUpdate(true)
         } catch (error) { console.error('❌ Ошибка синхронизации после возврата:', error); if (this._isChartValid()) this._forceRedrawAll(); }
         finally {
             if (this._quarantineTimeout) clearTimeout(this._quarantineTimeout);
@@ -1253,7 +1226,7 @@ class ChartManager {
             this._rebuildTimeMap();
             this._applyDataAtomically();
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-            this.requestDrawingsRedraw();
+            // [ШАГ 1] Удалён requestDrawingsRedraw()
 
             setTimeout(() => {
                 if (this._destroyed) return;
@@ -1285,7 +1258,7 @@ class ChartManager {
             const barSpacing = this.chart.timeScale().options().barSpacing;
             if (barSpacing) this._pendingBarSpacing = barSpacing;
             clearTimeout(this._scrollStopTimeout);
-            this._pendingDrawingsRedraw = true;
+            // [ШАГ 1] Удалено this._pendingDrawingsRedraw = true;
 
             this._scrollStopTimeout = setTimeout(() => {
                 this._isScrolling = false;
@@ -1297,10 +1270,7 @@ class ChartManager {
                 }
                 this._applyPendingTrim();
                 this.onVisibleLogicalRangeChange(this._lastVisibleRange);
-                if (this._pendingDrawingsRedraw) {
-                    this._pendingDrawingsRedraw = false;
-                    this.requestDrawingsRedraw();
-                }
+                // [ШАГ 1] Удалён блок if (this._pendingDrawingsRedraw) { ... }
             }, 150);
 
             if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
@@ -1347,7 +1317,7 @@ class ChartManager {
                     if (this._resizeIndicatorPanels) this._resizeIndicatorPanels();
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
                 }
-                this.scheduleDrawingsUpdate(true);
+                // [ШАГ 1] Удалён this.scheduleDrawingsUpdate(true);
             }, 100);
         };
         window.addEventListener('resize', this._resizeHandler);
@@ -1403,8 +1373,6 @@ class ChartManager {
         this.currentChartType = type;
         localStorage.setItem('chartType', type);
 
-        // [FIX] Скрытая серия пустая, поэтому при смене типа её всегда нужно заполнить.
-        // А серию, которая стала скрытой, очищаем.
         const switched = previousType !== type;
         if (type === 'candle') {
             if (switched && this.candleSeries && this.chartData.length) {
@@ -1502,10 +1470,6 @@ class ChartManager {
         this._cachedPrecisionValue = value;
     }
 
-    // [FIX] Точность запрашивается ПАРАЛЛЕЛЬНО с загрузкой свечей и кладётся в кэш до
-    // setDataQuick. Тогда первый кадр сразу рисуется с правильным числом знаков,
-    // подписи оси не меняют формат (и ширину) после отрисовки.
-    // Ожидание ограничено 1 секундой, чтобы не задерживать открытие графика.
     _prefetchPrecision(symbol, exchange, marketType) {
         if (this._getCachedPrecision(symbol, exchange, marketType)) return Promise.resolve();
         if (typeof getPrecisionFromExchange !== 'function') return Promise.resolve();
@@ -1540,8 +1504,6 @@ class ChartManager {
 
         if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
         const lastCandle = this.chartData[this.chartData.length - 1];
-        // getCurrentPrice() уже возвращает currentRealPrice как fallback,
-        // так что `?? this.currentRealPrice` здесь — мёртвая ветка.
         const price = this.getCurrentPrice();
 
         if (price !== null) this._syncPriceLine(price);
@@ -1616,7 +1578,7 @@ class ChartManager {
             this._applyPriceLineColor(activeSeries, this._getLineColor());
             this._updatePageTitle();
             if (!document.hidden) this.scheduleUpdatePosition();
-            this.requestDrawingsRedraw();
+            // [ШАГ 1] Удалён this.requestDrawingsRedraw();
             if (this.timerManager) this.timerManager.updatePrice(price);
             return;
         }
@@ -1911,15 +1873,11 @@ class ChartManager {
                 return;
             }
 
-            // [FIX] Перед setData: автомасштаб включён и старая фиксированная ширина сброшена.
-            // Библиотека посчитает ширину оси по реальным подписям нового символа/таймфрейма;
-            // в finalizeAfterRescale мы её измерим и зафиксируем.
             try {
                 const ps0 = this.chart.priceScale('right');
                 if (ps0) ps0.applyOptions({ autoScale: true, minimumWidth: 0 });
             } catch (e) {}
 
-            // [FIX] Данные пишутся только в видимую серию, скрытая очищается.
             this._setVisibleSeriesData(lwBars, true);
 
             if (this.volumeSeries && this.chartData.length > 0) {
@@ -1956,7 +1914,6 @@ class ChartManager {
                     if (this._isChartValid()) {
                         const ps = this.chart.priceScale('right');
                         if (ps) {
-                            // [FIX] ширину измеряем, пока автомасштаб ещё включён, и только потом его выключаем
                             this._lockPriceScaleWidth();
                             try { ps.applyOptions({ autoScale: false }); } catch (e) {}
                         }
@@ -1989,13 +1946,12 @@ class ChartManager {
                         this._setCachedPrecision(symbol, exchange, marketType, precision);
                         this.applyPriceFormat(precision);
                         this._lastAppliedPrecision = String(precision);
-                        // [FIX] формат подписей изменился после отрисовки — пересчитать ширину оси
                         if (changed && !this._switchingSymbol && !this._isSwitchingInterval) this._relockPriceScaleWidth();
                     }
                 }).catch(() => {});
             }
 
-            setTimeout(() => { if (window.renderDrawings) window.renderDrawings(); }, 0);
+      
             this._lastTimeframe = interval;
 
             if (!window._dailySeparator && window.DailySeparator) window._dailySeparator = new window.DailySeparator(this);
@@ -2063,12 +2019,6 @@ class ChartManager {
         this._pendingSwitchRequest = Object.assign({}, base, partial);
     }
 
-    // Синхронный вызов. Рекурсия по стеку здесь ограничена: _pendingSwitchRequest —
-    // единственный слот (не очередь), поэтому даже при быстром чередовании
-    // переключений цепочка finally → _dispatchPendingSwitch → switchSymbol →
-    // finally → ... сворачивается в глубину 1–2 вызова, а не растёт линейно.
-    // setTimeout(..., 0) здесь не нужен и вреден: браузер клэмпит его до ~4 мс,
-    // а в фоновой вкладке — до 1000 мс, что заметно замедляет переключения.
     _dispatchPendingSwitch() {
         if (this._pendingSwitchRequest) {
             const next = this._pendingSwitchRequest;
@@ -2103,7 +2053,6 @@ class ChartManager {
         let dataApplied = false;
 
         try {
-            // [FIX] точность запрашивается параллельно с загрузкой свечей
             const precisionPromise = this._prefetchPrecision(symbol, exchange, marketType);
 
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
@@ -2156,7 +2105,7 @@ class ChartManager {
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
             }
-            this.loadDrawingsForCurrentSymbol();
+            // [ШАГ 1] Удалён вызов this.loadDrawingsForCurrentSymbol(); — координатор сам отработает по _notifySymbolChange
             localStorage.setItem('lastSymbol', symbol);
             localStorage.setItem('lastExchange', exchange);
             localStorage.setItem('lastMarketType', marketType);
@@ -2165,9 +2114,6 @@ class ChartManager {
             console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
         } finally {
             if (this._destroyed) return;
-            // Безусловный cleanup, без generation-guard'а: если generation
-            // сменился, эта операция всё равно остаётся владельцем
-            // _switchingSymbol/_updatesSuspended и снять их может только она.
             this._switchingSymbol = false;
             this._updatesSuspended = false;
             if (this.priceManager) this.priceManager.resume?.();
@@ -2233,7 +2179,6 @@ class ChartManager {
         } catch (error) { console.error('❌ Ошибка переключения таймфрейма:', error); }
         finally {
             if (this._destroyed) return;
-            // Тот же паттерн, что в switchSymbol: cleanup без generation-guard.
             this._isSwitchingInterval = false;
             this._updatesSuspended = false;
             if (this.priceManager) this.priceManager.resume?.();
@@ -2244,19 +2189,12 @@ class ChartManager {
         }
     }
 
-    loadDrawingsForCurrentSymbol() {
-        Promise.allSettled([
-            window.rayManager?.loadRays?.(), window.trendLineManager?.loadTrendLines?.(),
-            window.rulerLineManager?.loadRulers?.(), window.alertLineManager?.loadAlerts?.(), window.textManager?.loadTexts?.()
-        ]).then(() => this.requestDrawingsRedraw());
-    }
+    // [ШАГ 1] Метод loadDrawingsForCurrentSymbol() удалён целиком
 
     async loadInitialData(symbol, exchange, marketType, interval, onReady = null) {
         if (this._switchingSymbol || this._isSwitchingInterval) { if (onReady) onReady(); return; }
         if (this._destroyed) { if (onReady) onReady(); return; }
 
-        // [FIX] Закрываем график оверлеем на время начальной загрузки —
-        // промежуточные кадры (узкая ось, смена формата подписей) пользователь не видит.
         this._showSymbolSwitchOverlay();
 
         const generationId = ++this._generationCounter;
@@ -2267,15 +2205,12 @@ class ChartManager {
         if (interval) this.currentInterval = interval;
 
         const finish = () => {
-            // оверлей снимаем только если наша загрузка всё ещё актуальна
-            // (иначе им владеет более новая операция)
             if (this._activeGeneration === generationId && !this._switchingSymbol && !this._isSwitchingInterval) {
                 this._hideSymbolSwitchOverlay();
             }
             if (onReady) onReady();
         };
         try {
-            // [FIX] точность параллельно со свечами
             const precisionPromise = this._prefetchPrecision(this.currentSymbol, this.currentExchange, this.currentMarketType);
 
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
@@ -2974,7 +2909,7 @@ class ChartManager {
         this._updateScheduled = false;
         this._pendingUpdates = false;
         this._pendingRedraw = false;
-        if (this._drawingsUpdateRafId) { cancelAnimationFrame(this._drawingsUpdateRafId); this._drawingsUpdateRafId = null; }
+        // [ШАГ 1] Удалены cancelAnimationFrame(this._drawingsUpdateRafId)
         if (this._updatePositionRafId) { cancelAnimationFrame(this._updatePositionRafId); this._updatePositionRafId = null; }
         if (this._priceUpdateRafId) { cancelAnimationFrame(this._priceUpdateRafId); this._priceUpdateRafId = null; }
         this._pendingPriceValue = null;
@@ -3003,11 +2938,11 @@ class ChartManager {
         if (window._sessionHighlighter && typeof window._sessionHighlighter.destroy === 'function') { window._sessionHighlighter.destroy(); window._sessionHighlighter = null; }
         if (this._candleCheckerTimeout) clearTimeout(this._candleCheckerTimeout);
         if (this._trimDebounceTimeout) clearTimeout(this._trimDebounceTimeout);
-        if (this._drawingsFinalUpdateTimeout) clearTimeout(this._drawingsFinalUpdateTimeout);
+        // [ШАГ 1] Удалён clearTimeout(this._drawingsFinalUpdateTimeout)
         if (this._scrollStopTimeout) clearTimeout(this._scrollStopTimeout);
         if (this._priceUpdateRafId) { cancelAnimationFrame(this._priceUpdateRafId); this._priceUpdateRafId = null; }
         if (this._crosshairRafId) { cancelAnimationFrame(this._crosshairRafId); this._crosshairRafId = null; }
-        if (this._drawingsRafId) { cancelAnimationFrame(this._drawingsRafId); this._drawingsRafId = null; }
+        // [ШАГ 1] Удалён cancelAnimationFrame(this._drawingsRafId)
         if (this._panelsSyncRafId) { cancelAnimationFrame(this._panelsSyncRafId); this._panelsSyncRafId = null; }
         if (this._autoScrollTimeout) { clearTimeout(this._autoScrollTimeout); this._autoScrollTimeout = null; }
         if (this._globalMouseUpHandler) window.removeEventListener('mouseup', this._globalMouseUpHandler, true);
@@ -3066,7 +3001,6 @@ class ChartManager {
             getPrecisionFromExchange(symbol, exchange, marketType).then(precision => {
                 this.applyPriceFormat(precision);
                 this._setCachedPrecision(symbol, exchange, marketType, precision);
-                // [FIX] формат подписей мог измениться — пересчитать ширину оси
                 if (!this._switchingSymbol && !this._isSwitchingInterval) this._relockPriceScaleWidth();
             }).catch(() => {});
         }
@@ -3174,7 +3108,6 @@ class ChartManager {
             const ps = this.chart.priceScale('right');
             if (ps) ps.applyOptions({ autoScale: false });
             const lwBars = this._toLwBarsArray(this.chartData);
-            // [FIX] только видимая серия
             this._setVisibleSeriesData(lwBars);
             this._updateVolumeOptimized();
             this._applyVolumeScaleOptions();
@@ -3234,20 +3167,16 @@ class ChartManager {
                 const ps = this.chart.priceScale('right');
                 if (ps) ps.applyOptions({ autoScale: false });
                 const lwBars = this._toLwBarsArray(this.chartData);
-                // [FIX] только видимая серия
                 this._setVisibleSeriesData(lwBars);
                 this._updateVolumeOptimized();
                 this._applyVolumeScaleOptions();
-
-                // [FIX] здесь раньше вызывалась _applyPriceScaleWidthOnce() — это и была
-                // «подстройка ширины уже после открытия». Убрано.
 
                 const netShift = addedCount - trimmedFromFront;
                 if (cr) ts.setVisibleLogicalRange({ from: cr.from + netShift, to: cr.to + netShift });
 
                 requestAnimationFrame(() => {
                     if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                    this.scheduleDrawingsUpdate(true);
+                    // [ШАГ 1] Удалён this.scheduleDrawingsUpdate(true);
                 });
                 if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
             } else this.hasMoreData = false;
@@ -3429,53 +3358,10 @@ class ChartManager {
     async waitForSeriesReady() { return this.waitForReady(); }
 
     // =============== DRAWINGS ===============
+    // [ШАГ 1] Из блока DRAWINGS оставлен только manualAutoScale().
+    // scheduleDrawingsUpdate / requestDrawingsRedraw / _performDrawingsRedraw — удалены,
+    // их работу делают сами примитивы через attached({ requestUpdate }).
     manualAutoScale() { this.autoScale(); }
-
-    scheduleDrawingsUpdate(forceHighPriority = false) {
-        if (document.hidden || !this._isChartValid()) return;
-        if (this._isVerticalZooming) return;
-        const now = performance.now();
-        let delay;
-        if (forceHighPriority) delay = 0;
-        else if (this._isScrollingFast) delay = 50;
-        else if (this._isScrolling) delay = 100;
-        else delay = 150;
-
-        if (now - (this._lastDrawingsCall || 0) < delay) {
-            if (!this._drawingsFinalUpdateTimeout) {
-                this._drawingsFinalUpdateTimeout = setTimeout(() => {
-                    this._drawingsFinalUpdateTimeout = null;
-                    if (window.renderDrawings) window.renderDrawings();
-                }, delay);
-            }
-            return;
-        }
-        this._lastDrawingsCall = now;
-        if (this._drawingsUpdateRafId === null && window.renderDrawings) {
-            this._drawingsUpdateRafId = requestAnimationFrame(() => {
-                window.renderDrawings();
-                this._drawingsUpdateRafId = null;
-            });
-        }
-    }
-
-    requestDrawingsRedraw() {
-        if (document.hidden || !this._isChartValid()) return;
-        if (this._isScrolling || this._isScrollingFast) { this._pendingDrawingsRedraw = true; return; }
-        if (this._drawingsRafId !== null) return;
-        this._drawingsRafId = requestAnimationFrame(() => {
-            this._drawingsRafId = null;
-            this._performDrawingsRedraw();
-        });
-    }
-
-    _performDrawingsRedraw() {
-        if (window.rayManager?._applyRedrawIfNeeded) window.rayManager._applyRedrawIfNeeded();
-        if (window.trendLineManager?._requestRedraw) window.trendLineManager._requestRedraw();
-        if (window.rulerLineManager?._requestRedraw) window.rulerLineManager._requestRedraw();
-        if (window.alertLineManager?._applyRedrawsIfNeeded) window.alertLineManager._applyRedrawsIfNeeded();
-        if (window.textManager?._requestRedraw) window.textManager._requestRedraw();
-    }
 }
 
 if (typeof window !== 'undefined') {
