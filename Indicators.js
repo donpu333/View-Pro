@@ -1944,22 +1944,22 @@ class StochRSIIndicator extends BaseIndicator {
         ];
     }
     
-    updateSeriesData(data) {
+        updateSeriesData(data) {
         if (!data || !data.k || !data.d || !data.times) return;
         const chartData = this.manager.chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
         
         const kMap = new Map(), dMap = new Map();
         for (let i = 0; i < data.times.length; i++) {
-            kMap.set(data.times[i], data.k[i]);
-            dMap.set(data.times[i], data.d[i]);
+            if (data.k[i] != null && !isNaN(data.k[i])) kMap.set(data.times[i], data.k[i]);
+            if (data.d[i] != null && !isNaN(data.d[i])) dMap.set(data.times[i], data.d[i]);
         }
         
         const kData = [], dData = [];
         for (let i = 0; i < chartData.length; i++) {
             const time = chartData[i].time;
-            kData.push(kMap.has(time) ? { time, value: kMap.get(time) } : { time, value: null });
-            dData.push(dMap.has(time) ? { time, value: dMap.get(time) } : { time, value: null });
+            if (kMap.has(time)) kData.push({ time, value: kMap.get(time) });
+            if (dMap.has(time)) dData.push({ time, value: dMap.get(time) });
         }
         
         if (this.series[0]) this.series[0].setData(kData);
