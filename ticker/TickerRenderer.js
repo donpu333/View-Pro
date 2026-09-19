@@ -11,15 +11,16 @@ class TickerRenderer {
         this._renderRafId = null;
         this._firstRender = true;
         this._updatePriceRaf = null;
-        this._pendingTrailingUpdate = false;
+        this._pendingTrailingUpdate = false; // ✅ НОВОЕ: флаг "есть отложенный вызов updatePriceElements"
         this._escapeDiv = document.createElement('div');
 
         this._lastUpdateTime = 0;
-        this._updateInterval = 66;
+        this._updateInterval = 66; 
 
         this.SCROLL_BUFFER = 10;
         this._formatCache = new Map();
-        this._keyIndexMap = new Map();
+        
+        this._keyIndexMap = new Map(); // ✅ НОВОЕ: key -> индекс в текущем displayedTickers, для прунинга DOM
 
         this._injectFlashCSS();
     }
@@ -57,6 +58,12 @@ class TickerRenderer {
         document.head.appendChild(style);
     }
 
+    // ✅ ФИКС: раньше вызов, попавший в окно троттлинга (66мс), просто отбрасывался
+    // без какого-либо trailing-вызова. Если следующий "естественный" вызов
+    // updatePriceElements() приходил нескоро (метод вызывается сравнительно редко —
+    // после REST-батчей), UI мог остаться не обновлённым дольше, чем нужно.
+    // Теперь отброшенный вызов помечается флагом и гарантированно перезапускается
+    // сразу после завершения текущего цикла.
     updatePriceElements() {
         if (this._updatePriceRaf) {
             this._pendingTrailingUpdate = true;
@@ -150,7 +157,7 @@ class TickerRenderer {
 
         for (const item of elementsToFlash) {
             item.el.classList.remove('flash-up', 'flash-down');
-            void item.el.offsetWidth;
+            void item.el.offsetWidth; 
             item.el.classList.add(item.flashClass);
         }
 
@@ -168,22 +175,24 @@ class TickerRenderer {
 
         const els = el._cachedEls || {};
         const colorClass = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
-
+        
+        // --- Цена ---
         if (els.price) {
             const newPrice = this.formatPrice(price);
             if (els.price.textContent !== newPrice) {
                 els.price.textContent = newPrice;
                 els.price.className = `ticker-price ${colorClass}`;
-
+                
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
                     const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
                     els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth;
+                    void els.price.offsetWidth; 
                     els.price.classList.add(flashClass);
                 }
             }
         }
-
+        
+        // --- Процент ---
         if (els.change) {
             const newChange = this.formatChange(change) + '%';
             if (els.change.textContent !== newChange) {
@@ -192,6 +201,11 @@ class TickerRenderer {
             }
         }
 
+        // ✅ ФИКС: убраны отладочные вставки (принудительная покраска в
+        // red/aqua инлайн-стилями и console.warn на каждый апдейт). Это был
+        // забытый тестовый код — он перекрывал любую нормальную стилизацию
+        // колонок объёма и сделок при каждом live-обновлении цены.
+        // Логика приведена к тому же простому виду, что и в _doUpdatePriceElements.
         if (els.volume && volume !== undefined && volume !== null) {
             const newVolume = this.formatVolume(volume);
             if (els.volume.textContent !== newVolume) {
@@ -219,17 +233,6 @@ class TickerRenderer {
     getFilteredTickers() {
         const state = this.parent?.state;
         if (!state) return [];
-
-        // ✅ ФИКС (ключевой): если состав customSymbols изменился (переключение
-        // вотчлиста, массовое добавление/удаление, ручное добавление) —
-        // принудительно сбрасываем filterCache. Без этого возвращался старый
-        // result от предыдущего списка, из-за чего визуально «сортировка
-        // не работает при переключении вотчлиста».
-        const symbolsSig = (state.customSymbols || []).join(',');
-        if (this.parent._lastSymbolsSig !== symbolsSig) {
-            this.parent._lastSymbolsSig = symbolsSig;
-            this.parent.filterCache = null;
-        }
 
         let cacheKey = `${state.marketFilter || 'all'}:${state.exchangeFilter || 'all'}:${state.activeTab || 'all'}:${state.sortBy || 'volume'}:${state.sortDirection || 'desc'}`;
 
@@ -289,15 +292,9 @@ class TickerRenderer {
                 }
             }
 
-            // ✅ ФИКС: различаем «сортировка выключена» (sortBy === null)
-            // и «сортировка по volume». Раньше `state.sortBy || 'volume'`
-            // стирал это различие, и при sortBy === null список всё равно
-            // сортировался по объёму — из-за чего UI (стрелка не горит)
-            // расходился с реальным порядком строк.
-            if (state.sortBy) {
-                const direction = state.sortDirection === 'asc' ? 1 : -1;
-                result.sort((a, b) => this._compareTickers(a, b, state.sortBy, direction));
-            }
+            const sortBy = state.sortBy || 'volume';
+            const direction = state.sortDirection === 'asc' ? 1 : -1;
+            result.sort((a, b) => this._compareTickers(a, b, sortBy, direction));
 
         } catch (error) {
             console.error('❌ getFilteredTickers error:', error);
@@ -334,6 +331,9 @@ class TickerRenderer {
         this.displayedTickers = displayed;
         this.totalItems = displayed.length;
 
+        // ✅ НОВОЕ: строим индекс key -> позиция для текущего отфильтрованного списка.
+        // Используется в renderVisibleTickers для прунинга давно ушедших за пределы
+        // экрана элементов (см. фикс утечки DOM-узлов ниже).
         this._keyIndexMap = new Map();
         for (let i = 0; i < displayed.length; i++) {
             const t = displayed[i];
@@ -424,14 +424,14 @@ class TickerRenderer {
                 el.style.right = '0';
                 el.style.width = '100%';
                 el.style.display = '';
-
+                
                 if (!isNewElement) {
                     const isActive = (
                         ticker.symbol === this.parent?.state?.currentSymbol &&
                         ticker.exchange === this.parent?.state?.currentExchange &&
                         ticker.marketType === this.parent?.state?.currentMarketType
                     );
-
+                    
                     if (isActive && !el.classList.contains('active')) {
                         el.classList.add('active');
                     } else if (!isActive && el.classList.contains('active')) {
@@ -479,6 +479,15 @@ class TickerRenderer {
             itemsContainer.appendChild(fragment);
         }
 
+        // ✅ ФИКС: раньше элементы, ушедшие за пределы видимой области, только
+        // скрывались (display:none) и оставались в DOM и в this.tickerElements
+        // НАВСЕГДА. При скролле большого списка (сотни/тысячи тикеров) это давало
+        // неограниченный рост числа DOM-узлов и размера Map — реальная утечка
+        // памяти и постепенная деградация производительности при долгой сессии.
+        // Теперь элементы, ушедшие далеко за пределы видимой зоны (с запасом
+        // PRUNE_MARGIN, чтобы не пересоздавать их при небольшом дрожании скролла),
+        // полностью удаляются из DOM и из Map — при возврате к ним они будут
+        // просто пересозданы через createTickerElement, это дёшево.
         const PRUNE_MARGIN = this.visibleCount + this.SCROLL_BUFFER * 3;
         for (const [key, el] of this.tickerElements.entries()) {
             if (visibleKeys.has(key)) continue;
@@ -573,13 +582,13 @@ class TickerRenderer {
         while (end > 0 && str[end - 1] === '0') end--;
         if (end > 0 && str[end - 1] === '.') end--;
         str = str.substring(0, end);
-
+        
         if (!str.includes('.')) str += '.00';
         else {
             const parts = str.split('.');
             if (parts[1].length < 2) str += '0'.repeat(2 - parts[1].length);
         }
-
+        
         this._formatCache.set(key, str);
         if (this._formatCache.size > 5000) this._formatCache.clear();
         return str;
@@ -607,7 +616,7 @@ class TickerRenderer {
         else if (volume >= 1e3) result = (volume / 1e3).toFixed(2) + 'K';
         else if (volume < 1) result = volume.toFixed(4);
         else result = volume.toFixed(2);
-
+        
         this._formatCache.set(key, result);
         if (this._formatCache.size > 5000) this._formatCache.clear();
         return result;
@@ -623,7 +632,7 @@ class TickerRenderer {
         else if (trades > 1e6) result = (trades / 1e6).toFixed(1) + 'M';
         else if (trades > 1e3) result = (trades / 1e3).toFixed(1) + 'K';
         else result = trades.toString();
-
+        
         this._formatCache.set(key, result);
         if (this._formatCache.size > 5000) this._formatCache.clear();
         return result;
@@ -642,23 +651,22 @@ class TickerRenderer {
         const savedSortBy = localStorage.getItem('tickerSortBy');
         const savedSortDir = localStorage.getItem('tickerSortDir');
         const VALID_SORT_FIELDS = ['flag', 'price', 'change', 'volume', 'trades'];
-
-        // ✅ ФИКС: не перетираем уже установленное state.sortBy, если оно
-        // определено (например, восстановлено WatchlistManager'ом для
-        // конкретного списка). Раньше эта функция безусловно переписывала
-        // state из глобального localStorage — из-за чего после переключения
-        // вотчлиста сортировка «откатывалась» к значению предыдущего списка,
-        // а стрелка в шапке расходилась с реальным порядком строк.
-        if (parent.state.sortBy === undefined) {
-            parent.state.sortBy = savedSortBy === null
-                ? 'volume'
-                : (VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null);
-        }
-        if (parent.state.sortDirection === undefined) {
-            parent.state.sortDirection = savedSortDir === null
-                ? 'desc'
-                : ((savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null);
-        }
+        
+        // ✅ ФИКС: раньше здесь была логика "нет валидного значения в localStorage
+        // → null", которая ПОСЛЕ конструктора TickerPanel (где явно задумано
+        // "ключа нет вообще → дефолт volume/desc для нового пользователя")
+        // тут же перезатирала этот дефолт обратно на null. В итоге у новых
+        // пользователей список при первой загрузке оставался вообще без
+        // сортировки, хотя по коду это явно не задумывалось.
+        // Теперь здесь та же трёхсостояниевая логика, что и в конструкторе:
+        // ключа нет (null) → дефолт volume/desc; ключ есть, но пустая строка
+        // (пользователь явно отключил сортировку) → null; валидное значение → оно.
+        parent.state.sortBy = savedSortBy === null
+            ? 'volume'
+            : (VALID_SORT_FIELDS.includes(savedSortBy) ? savedSortBy : null);
+        parent.state.sortDirection = savedSortDir === null
+            ? 'desc'
+            : ((savedSortDir === 'asc' || savedSortDir === 'desc') ? savedSortDir : null);
 
         parent._sortClickHandler = (e) => {
             e.stopPropagation();
@@ -685,8 +693,8 @@ class TickerRenderer {
             }
 
             document.querySelectorAll('.table-header span[data-sort] i').forEach(icon => {
-                icon.className = 'fas fa-sort';
-                icon.style.display = '';
+                icon.className = 'fas fa-sort'; 
+                icon.style.display = '';        
             });
 
             if (parent.state.sortBy) {
@@ -701,10 +709,6 @@ class TickerRenderer {
             }
 
             parent.filterCache = null;
-            // ✅ ФИКС: смена сортировки не меняет состав customSymbols, но
-            // для консистентности сигнатуру тоже обнуляем — чтобы не было
-            // расхождения между фильтром и сортировкой.
-            parent._lastSymbolsSig = null;
             parent.renderTickerList();
         };
 
@@ -738,8 +742,10 @@ class TickerRenderer {
         if (this.parent?._rowDomCache) {
             this.parent._rowDomCache.clear();
         }
-        this._keyIndexMap.clear();
+        this._keyIndexMap.clear(); // ✅ НОВОЕ: чистим индекс вместе с остальным состоянием
         if (this._updatePriceRaf) {
+            // ✅ ФИКС: _updatePriceRaf теперь может быть либо requestAnimationFrame id,
+            // либо setTimeout id (см. новую updatePriceElements) — отменяем оба варианта безопасно
             cancelAnimationFrame(this._updatePriceRaf);
             clearTimeout(this._updatePriceRaf);
         }
