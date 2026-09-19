@@ -2039,7 +2039,7 @@ class ChartManager {
     }
 
     // =============== SWITCH SYMBOL ===============
-    async switchSymbol(symbol, exchange, marketType) {
+        async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol || this._isSwitchingInterval) {
             this._queuePendingSwitch({ symbol, exchange, marketType });
             return;
@@ -2105,10 +2105,15 @@ class ChartManager {
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
             }
-            // [ШАГ 1] Удалён вызов this.loadDrawingsForCurrentSymbol(); — координатор сам отработает по _notifySymbolChange
             localStorage.setItem('lastSymbol', symbol);
             localStorage.setItem('lastExchange', exchange);
             localStorage.setItem('lastMarketType', marketType);
+            // [FIX] Загрузка рисунков для нового символа.
+            // Раньше это делал loadDrawingsForCurrentSymbol(), который я удалил в шаге 1 по ошибке.
+            // Возвращаем через координатор — он сам раздаст данные по всем менеджерам.
+            if (window.drawingLoaderCoordinator) {
+                window.drawingLoaderCoordinator.loadAllForSymbol(this.getCurrentSymbolKey()).catch(() => {});
+            }
             this._notifySymbolChange();
         } catch (error) {
             console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
@@ -2127,8 +2132,7 @@ class ChartManager {
         }
     }
 
-    // =============== SWITCH INTERVAL ===============
-    async switchInterval(newInterval) {
+       async switchInterval(newInterval) {
         if (this._isSwitchingInterval || this._switchingSymbol) { this._queuePendingSwitch({ interval: newInterval }); return; }
         if (this.currentInterval === newInterval) return;
 
@@ -2176,6 +2180,12 @@ class ChartManager {
                 ]);
                 if (this._activeGeneration !== generationId) return;
             }
+            // [FIX] Загрузка рисунков для нового таймфрейма — та же логика, что в switchSymbol.
+            // При смене ТФ координатор перечитает данные с новым ключом (символ тот же, но объекты
+            // могут отфильтроваться по timeframeVisibility внутри каждого менеджера).
+            if (window.drawingLoaderCoordinator) {
+                window.drawingLoaderCoordinator.loadAllForSymbol(this.getCurrentSymbolKey()).catch(() => {});
+            }
         } catch (error) { console.error('❌ Ошибка переключения таймфрейма:', error); }
         finally {
             if (this._destroyed) return;
@@ -2188,7 +2198,6 @@ class ChartManager {
             this._dispatchPendingSwitch();
         }
     }
-
     // [ШАГ 1] Метод loadDrawingsForCurrentSymbol() удалён целиком
 
     async loadInitialData(symbol, exchange, marketType, interval, onReady = null) {
