@@ -7060,9 +7060,66 @@ class AlertLineManager {
         }).catch(err => console.warn('Ошибка отправки в Telegram:', err));
     }
 
-    _updateAlertsListUI() {
+        _updateAlertsListUI() {
         const content = document.getElementById('alertHistoryContent');
         if (!content) return;
+
+        // SVG-иконки
+        const SVG_PAUSE = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M360-336h72v-288h-72v288Zm168 0h72v-288h-72v288ZM480.28-96Q401-96 331-126t-122.5-82.5Q156-261 126-330.96t-30-149.5Q96-560 126-629.5q30-69.5 82.5-122T330.96-834q69.96-30 149.5-30t149.04 30q69.5 30 122 82.5T834-629.28q30 69.73 30 149Q864-401 834-331t-82.5 122.5Q699-156 629.28-126q-69.73 30-149 30Zm-.28-72q130 0 221-91t91-221q0-130-91-221t-221-91q-130 0-221 91t-91 221q0 130 91 221t221 91Zm0-312Z"/></svg>';
+        const SVG_PLAY  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="m384-312 264-168-264-168v336Zm96.28 216Q401-96 331-126t-122.5-82.5Q156-261 126-330.96t-30-149.5Q96-560 126-629.5q30-69.5 82.5-122T330.96-834q69.96-30 149.5-30t149.04 30q69.5 30 122 82.5T834-629.28q30 69.73 30 149Q864-401 834-331t-82.5 122.5Q699-156 629.28-126q-69.73 30-149 30Zm-.28-72q130 0 221-91t91-221q0-130-91-221t-221-91q-130 0-221 91t-91 221q0 130 91 221t221 91Zm0-312Z"/></svg>';
+        const SVG_GOTO  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M288-288h72v-288h-72v288Zm156 0h72v-384h-72v384Zm156 0h72v-144h-72v144ZM216-144q-29.7 0-50.85-21.15Q144-186.3 144-216v-528q0-29.7 21.15-50.85Q186.3-816 216-816h528q29.7 0 50.85 21.15Q816-773.7 816-744v528q0 29.7-21.15 50.85Q773.7-144 744-144H216Zm0-72h528v-528H216v528Zm0-528v528-528Z"/></svg>';
+        const SVG_COPY  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M744-192H312q-29 0-50.5-21.5T240-264v-576q0-29 21.5-50.5T312-912h312l192 192v456q0 29-21.5 50.5T744-192ZM576-672v-168H312v576h432v-408H576ZM168-48q-29 0-50.5-21.5T96-120v-552h72v552h456v72H168Zm144-792v195-195 576-576Z"/></svg>';
+        const SVG_CLOSE = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="m291-240-51-51 189-189-189-189 51-51 189 189 189-189 51 51-189 189 189 189-51 51-189-189-189 189Z"/></svg>';
+        const SVG_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>';
+        const SVG_BELL  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M192-216v-72h48v-240q0-87 53.5-153T432-763v-53q0-20 14-34t34-14q20 0 34 14t14 34v53q85 16 138.5 82T720-528v240h48v72H192Zm288-276Zm-.21 396Q450-96 429-117.15T408-168h144q0 30-21.21 51t-51 21ZM312-288h336v-240q0-70-49-119t-119-49q-70 0-119 49t-49 119v240Z"/></svg>';
+
+        const BTN_STYLE = 'width:28px;height:28px;padding:0;margin:0;background:transparent;border:none;border-radius:4px;color:#888;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:color 0.15s ease,background 0.15s ease,transform 0.15s ease;line-height:1;flex-shrink:0;';
+        const ACTIONS_STYLE = 'display:flex;align-items:center;gap:2px;flex-shrink:0;';
+
+        // [НОВОЕ] Хелпер: получить текущую рыночную цену для символа
+        const getMarketPrice = (symbol, exchange, marketType) => {
+            exchange = exchange || 'binance';
+            marketType = marketType || 'futures';
+
+            // 1. Пытаемся через PriceManager
+            try {
+                if (window.priceManagerInstance?.getPrice) {
+                    let p = window.priceManagerInstance.getPrice(symbol, exchange, marketType);
+                    if (p && typeof p === 'object') {
+                        if (typeof p.price === 'number') p = p.price;
+                        else if (typeof p.close === 'number') p = p.close;
+                        else if (typeof p.last === 'number') p = p.last;
+                        else p = null;
+                    }
+                    if (typeof p === 'string') p = Number(p);
+                    if (typeof p === 'number' && isFinite(p) && p > 0) return p;
+                }
+            } catch (e) {}
+
+            // 2. Fallback: если это текущий символ на графике
+            const cm = this._chartManager;
+            if (cm && cm.currentSymbol === symbol &&
+                (cm.currentExchange || 'binance') === exchange &&
+                (cm.currentMarketType || 'futures') === marketType) {
+                if (typeof cm.currentRealPrice === 'number' && cm.currentRealPrice > 0) {
+                    return cm.currentRealPrice;
+                }
+                if (cm.chartData && cm.chartData.length > 0) {
+                    const last = cm.chartData[cm.chartData.length - 1];
+                    if (last && typeof last.close === 'number' && last.close > 0) return last.close;
+                }
+            }
+
+            return null;
+        };
+
+        // [НОВОЕ] Хелпер: цвет цены алерта относительно рынка
+        const getAlertPriceColor = (alertPrice, marketPrice) => {
+            if (marketPrice === null || !isFinite(marketPrice)) return '#B0B0B0';
+            if (alertPrice > marketPrice) return '#00ff88';  // выше рынка — зелёный
+            if (alertPrice < marketPrice) return '#f23645';  // ниже рынка — красный
+            return '#B0B0B0';                                 // равно — серый
+        };
 
         const activeAlerts = this._alerts
             .map(a => a.alert)
@@ -7097,14 +7154,17 @@ class AlertLineManager {
                     const exchangeBadge = alert.exchange || 'binance';
                     const marketBadge = (alert.marketType || 'futures') === 'spot' ? 'Spot' : 'Fut';
 
-                    const statusIcon = isPaused ? '⏸️' : '🔔';
                     const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
+
+                    // [НОВОЕ] Цвет цены
+                    const marketPrice = getMarketPrice(alert.symbol, alert.exchange, alert.marketType);
+                    const alertPriceColor = getAlertPriceColor(alert.price, marketPrice);
 
                     html += `
                         <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}"
                              style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}"
                              data-id="${alert.id}">
-                            <div class="trigger-bell">${statusIcon}</div>
+                            <div class="trigger-bell">${SVG_BELL}</div>
                             <div>
                                 <div class="price">
                                     <span class="copy-symbol" style="color:#FFD700; font-weight:bold; cursor:pointer;"
@@ -7113,19 +7173,28 @@ class AlertLineManager {
                                         ${alert.symbol}
                                     </span>
                                     <span style="font-size: 0.7em; color: #888;">${exchangeBadge}:${marketBadge}</span>
-                                    ${priceFormatted}
+                                    <div style="color:${alertPriceColor}; font-weight:600; margin-top:2px;">${priceFormatted}</div>
                                 </div>
                                 <div class="info">
                                     <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
                                     <span>${statusText}</span>
                                 </div>
                             </div>
-                            <div class="actions">
-                                <button class="copy-alert-symbol" data-symbol="${alert.symbol}" title="Копировать тикер">📋</button>
-                                <button class="pause-alert" data-id="${alert.id}" title="${isPaused ? 'Возобновить' : 'Пауза'}">
-                                    ${isPaused ? '▶️' : '⏸️'}
-                                </button>
-                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">❌</button>
+                            <div class="actions" style="${ACTIONS_STYLE}">
+                                <button class="goto-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        data-exchange="${alert.exchange || 'binance'}" 
+                                        data-market-type="${alert.marketType || 'futures'}" 
+                                        title="Перейти на график">${SVG_GOTO}</button>
+                                <button class="copy-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        title="Копировать тикер">${SVG_COPY}</button>
+                                <button class="pause-alert" style="${BTN_STYLE}"
+                                        data-id="${alert.id}" 
+                                        title="${isPaused ? 'Возобновить' : 'Пауза'}">${isPaused ? SVG_PLAY : SVG_PAUSE}</button>
+                                <button class="delete-alert" style="${BTN_STYLE}"
+                                        data-id="${alert.id}" 
+                                        title="Удалить">${SVG_CLOSE}</button>
                             </div>
                         </div>
                     `;
@@ -7145,6 +7214,10 @@ class AlertLineManager {
                     const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
                     const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
 
+                    // [НОВОЕ] Цвет цены
+                    const marketPrice = getMarketPrice(alert.symbol, alert.exchange, alert.marketType);
+                    const alertPriceColor = getAlertPriceColor(alert.price, marketPrice);
+
                     html += `
                         <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
                             <div>
@@ -7154,16 +7227,25 @@ class AlertLineManager {
                                           title="Копировать тикер">
                                         ${alert.symbol}
                                     </span>
-                                    ${priceFormatted}${repeatInfo}
+                                    <div style="color:${alertPriceColor}; font-weight:600; margin-top:2px;">${priceFormatted}${repeatInfo}</div>
                                 </div>
                                 <div class="info">
                                     <span>🕐 ${dateStr} ${timeStr}</span>
                                     <span>✅ Завершен</span>
                                 </div>
                             </div>
-                            <div class="actions">
-                                <button class="copy-alert-symbol" data-symbol="${alert.symbol}" title="Копировать тикер">📋</button>
-                                <button class="delete-alert" data-id="${alert.id}" title="Удалить">❌</button>
+                            <div class="actions" style="${ACTIONS_STYLE}">
+                                <button class="goto-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        data-exchange="${alert.exchange || 'binance'}" 
+                                        data-market-type="${alert.marketType || 'futures'}" 
+                                        title="Перейти на график">${SVG_GOTO}</button>
+                                <button class="copy-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        title="Копировать тикер">${SVG_COPY}</button>
+                                <button class="delete-alert" style="${BTN_STYLE}"
+                                        data-id="${alert.id}" 
+                                        title="Удалить">${SVG_CLOSE}</button>
                             </div>
                         </div>
                     `;
@@ -7182,6 +7264,7 @@ class AlertLineManager {
 
         content.innerHTML = html;
 
+        // Копирование по клику на тикер
         content.querySelectorAll('.copy-symbol').forEach(el => {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -7191,22 +7274,47 @@ class AlertLineManager {
             });
         });
 
+        // Перейти на график
+        content.querySelectorAll('.goto-alert-symbol').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const symbol = btn.dataset.symbol;
+                const exchange = btn.dataset.exchange || 'binance';
+                const marketType = btn.dataset.marketType || 'futures';
+                this._goToSymbol(symbol, exchange, marketType);
+            });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#4A90E2'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
+        });
+
+        // Копировать тикер
         content.querySelectorAll('.copy-alert-symbol').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 navigator.clipboard?.writeText(btn.dataset.symbol);
-                btn.textContent = '✅';
-                setTimeout(() => btn.textContent = '📋', 500);
+                const original = btn.innerHTML;
+                btn.innerHTML = SVG_CHECK;
+                btn.style.color = '#00FF00';
+                setTimeout(() => {
+                    btn.innerHTML = original;
+                    btn.style.color = '#888';
+                }, 500);
             });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#FFD700'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
         });
 
+        // Удалить
         content.querySelectorAll('.delete-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deleteAlert(btn.dataset.id);
             });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#f23645'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
         });
 
+        // Пауза/возобновить
         content.querySelectorAll('.pause-alert').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -7217,6 +7325,8 @@ class AlertLineManager {
                     else this.pauseAlert(id);
                 }
             });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#ffa500'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
         });
 
         const clearBtn = content.querySelector('.clear-completed-btn');
@@ -7224,7 +7334,31 @@ class AlertLineManager {
             clearBtn.addEventListener('click', () => this.deleteCompletedAlerts());
         }
     }
+        // [НОВОЕ] Переход на график указанного символа — как в TickerModal (кнопка "прицелиться")
+    _goToSymbol(symbol, exchange, marketType) {
+        const cm = this._chartManager;
+        if (cm && cm.currentSymbol === symbol &&
+            cm.currentExchange === exchange &&
+            cm.currentMarketType === marketType) {
+            const panel = document.getElementById('alertHistoryPanel');
+            if (panel) panel.style.display = 'none';
+            return;
+        }
 
+        if (window.app && typeof window.app.loadSymbol === 'function') {
+            window.app.loadSymbol(symbol, exchange, marketType);
+        } else if (window.tickerPanel && typeof window.tickerPanel.focusOnSymbol === 'function') {
+            window.tickerPanel.focusOnSymbol(symbol, exchange, marketType);
+        } else if (cm && typeof cm.switchSymbol === 'function') {
+            cm.switchSymbol(symbol, exchange, marketType);
+        } else {
+            console.warn('Не найден обработчик переключения символа');
+            return;
+        }
+
+        const panel = document.getElementById('alertHistoryPanel');
+        if (panel) panel.style.display = 'none';
+    }
     debugAlertTimers() {
         console.log('=== ДЕБАГ ИНТЕРВАЛОВ АЛЕРТОВ ===');
 
