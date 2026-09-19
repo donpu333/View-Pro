@@ -1,25 +1,30 @@
 class DailySeparator {
-    constructor(chartManager) {
+      constructor(chartManager) {
         this._cm = chartManager;
         this._primitive = null;
         this._requestUpdate = null;
         this._attachTimeout = null;
-        
+
+        // Дефолты выставляются ВСЕГДА — до попытки чтения localStorage.
+        // Если JSON битый, try/catch поглотит ошибку, и объект останется валидным.
+        this._enabled = true;
+        this._color = '#808080';
+        this._lineStyle = 'dashed';
+        this._lineWidth = 1;
+        this._opacity = 0.3;
+
         const saved = localStorage.getItem('separatorSettings');
         if (saved) {
-            const s = JSON.parse(saved);
-            this._enabled = s.enabled !== false;
-            this._color = s.color || '#808080';
-            this._lineStyle = s.style || 'dashed';
-            this._lineWidth = s.width || 1;
-            this._opacity = s.opacity || 0.3;
-        } else {
-            this._enabled = true;
-            this._color = '#808080';
-            this._lineStyle = 'dashed';
-            this._lineWidth = 1;
-            this._opacity = 0.3;
+            try {
+                const s = JSON.parse(saved);
+                this._enabled = s.enabled !== false;
+                this._color = s.color || '#808080';
+                this._lineStyle = s.style || 'dashed';
+                this._lineWidth = s.width || 1;
+                this._opacity = s.opacity || 0.3;
+            } catch (e) {}
         }
+
         this._attach();
     }
     
