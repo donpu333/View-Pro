@@ -180,7 +180,22 @@ async function getPrecisionFromExchange(symbol, exchange, marketType) {
     }
 }
 
+// ============================================================
+// positionsLine — перенос из DataFetcher.js
+// Используется в DrawingManagers.js и TimerManager.js (26 мест)
+// ============================================================
+function positionsLine(positionMedia, pixelRatio, desiredWidthMedia = 1, widthIsBitmap = false) {
+    const scaledPosition = Math.round(pixelRatio * positionMedia);
+    const lineBitmapWidth = widthIsBitmap
+        ? desiredWidthMedia
+        : Math.round(desiredWidthMedia * pixelRatio);
+    const centreOffset = Math.floor(lineBitmapWidth * 0.5);
+    const position = scaledPosition - centreOffset;
+    return { position, length: lineBitmapWidth };
+}
+
 if (typeof window !== 'undefined') {
     window.Utils = Utils;
     window.getPrecisionFromExchange = getPrecisionFromExchange;
+    window.positionsLine = positionsLine;
 }
