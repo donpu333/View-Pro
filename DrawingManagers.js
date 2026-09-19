@@ -516,7 +516,7 @@ _categorizeDrawings(allDrawings) {
 window.drawingLoaderCoordinator = new DrawingLoaderCoordinator();
 
 class HorizontalRayManager {
-    constructor(chartManager) {
+       constructor(chartManager) {
         this._rays = [];
         this._chartManager = chartManager;
         this._selectedRay = null;
@@ -529,7 +529,7 @@ class HorizontalRayManager {
         this._dragStartY = 0;
         this._dragStartPrice = 0;
         this._dragStartTime = 0;
-                this._dragItem = null;
+        this._dragItem = null;
         this._lastMouseX = 0;
         this._lastMouseY = 0;
         this._potentialDrag = null;
@@ -538,30 +538,30 @@ class HorizontalRayManager {
         this._currentSymbolKey = this._getCurrentSymbolKey();
         this._isLoading = false;
         this._handleDblClick = this._handleDblClickFn.bind(this);
-                this._pendingMouseEvent = null;
+        this._pendingMouseEvent = null;
         this._hoverRafId = null;
         this._pixelRatio = window.devicePixelRatio || 1;
-        
+
         this._setupEventListeners();
         this._setupHotkeys();
-                this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
         window.addEventListener('mouseup', this._handleGlobalMouseUp);
-        // ✅ Регистрируем в координаторе
+
         window.drawingLoaderCoordinator.register(this, 'ray');
-        
-        // ✅ Единая задержка 150ms
+
         setTimeout(async () => {
             try {
                 if (!window.dbReady) {
                     await new Promise(resolve => {
+                        const startedAt = Date.now();
                         const check = () => {
-                            if (window.dbReady) resolve();
+                            if (window.dbReady || Date.now() - startedAt > 10000) resolve();
                             else setTimeout(check, 50);
                         };
                         check();
                     });
                 }
-                
+
                 console.log('🚀 Auto-loading rays...');
                 await this.loadRays();
                 console.log('✅ Rays auto-loaded successfully');
@@ -1384,17 +1384,13 @@ _showSettings(ray) {
     const priceInput = document.getElementById('settingsPriceInput');
     if (priceInput) {
         priceInput.value = Utils.formatPrice(ray.price);
-        priceInput.addEventListener('contextmenu', (e) => {
-            e.stopPropagation();
-        });
+          priceInput.oncontextmenu = (e) => e.stopPropagation();
     }
     
     createColorGrid('inlineColorsGrid', 'currentColorBox', 'colorPickerInline', 'hexInputInline', ray.options.color, 'addColorInline');
     const hexInput = document.getElementById('hexInputInline');
     if (hexInput) {
-        hexInput.addEventListener('contextmenu', (e) => {
-            e.stopPropagation();
-        });
+              hexInput.oncontextmenu = (e) => e.stopPropagation();
     }
 
     this._renderTimeframeCheckboxes(ray);
@@ -1404,11 +1400,13 @@ _showSettings(ray) {
     settings.style.top = '50%';
     settings.style.transform = 'translate(-50%, -50%)';
     
-    settings.addEventListener('mousedown', (e) => e.stopPropagation());
-    settings.addEventListener('mousemove', (e) => e.stopPropagation());
-    settings.addEventListener('mouseup', (e) => e.stopPropagation());
-    settings.addEventListener('click', (e) => e.stopPropagation());
-    
+       if (!settings.dataset.vpBound) {
+        settings.dataset.vpBound = 'true';
+        settings.addEventListener('mousedown', (e) => e.stopPropagation());
+        settings.addEventListener('mousemove', (e) => e.stopPropagation());
+        settings.addEventListener('mouseup', (e) => e.stopPropagation());
+        settings.addEventListener('click', (e) => e.stopPropagation());
+    }
     let header = settings.querySelector('.settings-header');
     if (!header) {
         header = document.createElement('div');
@@ -3135,9 +3133,8 @@ class TrendLineManager {
         const stylePanel = document.getElementById('trendStylePanel');
         const visibilityPanel = document.getElementById('trendVisibilityPanel');
         const tabs = document.querySelectorAll('#trendSettings .settings-tab');
-        tabs.forEach(tab => {
-            tab.onclick = null;
-            tab.addEventListener('click', function () {
+              tabs.forEach(tab => {
+            tab.onclick = function () {
                 document.querySelectorAll('#trendSettings .settings-tab').forEach(t => t.classList.remove('active'));
                 this.classList.add('active');
                 if (this.dataset.settingsTab === 'style') {
@@ -3147,15 +3144,14 @@ class TrendLineManager {
                     stylePanel.classList.remove('active');
                     visibilityPanel.classList.add('active');
                 }
-            });
+            };
         });
 
         const saveBtn = document.getElementById('trendSaveSettings');
         const deleteBtn = document.getElementById('trendDeleteDrawing');
 
-        if (saveBtn) {
-            saveBtn.onclick = null;
-            saveBtn.addEventListener('click', () => {
+              if (saveBtn) {
+            saveBtn.onclick = () => {
                 trendLine.options.color = document.getElementById('trendHexInputInline').value;
                 trendLine.options.lineWidth = parseInt(document.getElementById('trendSettingThickness').value) || 1;
                 trendLine.options.lineStyle = document.getElementById('trendTemplateSelect').value;
@@ -3165,16 +3161,15 @@ class TrendLineManager {
                 this._requestRedraw();
                 settings.style.display = 'none';
                 this._saveTrendLines();
-            });
+            };
         }
 
-        if (deleteBtn) {
-            deleteBtn.onclick = null;
-            deleteBtn.addEventListener('click', () => {
+             if (deleteBtn) {
+            deleteBtn.onclick = () => {
                 this.deleteTrendLine(trendLine.id);
                 settings.style.display = 'none';
                 this._requestRedraw();
-            });
+            };
         }
 
         if (!settings.dataset.instantBound) {
@@ -4718,7 +4713,7 @@ class RulerLineManager {
         this.setDrawingMode(false);
     }
 
-    _showSettings(ruler) {
+       _showSettings(ruler) {
         const panel = document.getElementById('rulerSettingsPanel');
         if (!panel) return;
 
@@ -4734,30 +4729,27 @@ class RulerLineManager {
 
         const closeBtn = panel.querySelector('.close-settings');
         if (closeBtn) {
-            closeBtn.onclick = null;
-            closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
+            closeBtn.onclick = () => { panel.style.display = 'none'; };
         }
 
         const saveBtn = document.getElementById('rulerSaveSettings');
         if (saveBtn) {
-            saveBtn.onclick = null;
-            saveBtn.addEventListener('click', () => {
+            saveBtn.onclick = () => {
                 if (opacitySlider) {
                     ruler.updateOptions({ fillOpacity: parseInt(opacitySlider.value) / 100 });
                     this._requestRedraw();
                     this._saveRulers();
                 }
                 panel.style.display = 'none';
-            });
+            };
         }
 
         const deleteBtn = document.getElementById('rulerDeleteFromSettings');
         if (deleteBtn) {
-            deleteBtn.onclick = null;
-            deleteBtn.addEventListener('click', () => {
+            deleteBtn.onclick = () => {
                 this.deleteRuler(ruler.id);
                 panel.style.display = 'none';
-            });
+            };
         }
 
         panel.style.display = 'block';
@@ -6973,19 +6965,13 @@ class AlertLineManager {
         this._showSystemNotification(alert, currentPrice, isRepeat);
     }
 
-    _playAlertSound() {
+       _playAlertSound() {
         try {
-            const audio = document.getElementById('alertSound');
-            if (audio && audio.src && audio.src !== '') {
-                audio.currentTime = 0;
-                audio.play().catch(e => {});
-                return;
-            }
-
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             if (!AudioContext) return;
 
-            const ctx = new AudioContext();
+            if (!this._alertAudioCtx) this._alertAudioCtx = new AudioContext();
+            const ctx = this._alertAudioCtx;
 
             if (ctx.state === 'suspended') {
                 ctx.resume().catch(() => {});
@@ -7010,8 +6996,7 @@ class AlertLineManager {
             });
         } catch (e) {}
     }
-
-    _showSystemNotification(alert, currentPrice, isRepeat = false) {
+       _showSystemNotification(alert, currentPrice, isRepeat = false) {
         if (!("Notification" in window)) return;
 
         const priceFormatted = Utils.formatPrice(currentPrice);
@@ -7020,9 +7005,8 @@ class AlertLineManager {
         const showNotification = () => {
             const notification = new Notification(`🔔 ${alert.symbol} - АЛЕРТ${repeatText}`, {
                 body: `Цена: ${priceFormatted} | Уровень: ${Utils.formatPrice(alert.price)}`,
-                icon: 'https://tradingview.com/favicon.ico',
-                silent: false,
-                requireInteraction: true
+                icon: 'favicon.svg',
+                silent: false
             });
             notification.onclick = () => { window.focus(); notification.close(); };
             setTimeout(() => notification.close(), 10000);
@@ -8555,14 +8539,12 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         return closestCandle.time;
     }
 
-  _showSettings(text) {
+   _showSettings(text) {
     const settings = document.getElementById('textSettings');
     if (!settings) return;
 
-    // ✅ Устанавливаем выбранный текст
     this._selectedText = text;
 
-    // Заполняем поля текущими значениями
     document.getElementById('textCurrentColorBox').style.backgroundColor = text.options.color;
     document.getElementById('textHexInputInline').value = text.options.color;
     document.getElementById('textBgColorBox').style.backgroundColor = text.options.bgColor;
@@ -8575,25 +8557,25 @@ _detachAllPrimitivesForSymbol(symbolKey) {
     document.getElementById('textBgOpacityValue').textContent = document.getElementById('textBgOpacity').value + '%';
     document.getElementById('textContentInput').value = text.text;
 
-    // Цветовые сетки
     createColorGrid('textInlineColorsGrid', 'textCurrentColorBox', 'textColorPickerInline', 'textHexInputInline', text.options.color, 'textAddColorInline');
     createColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgColorPicker', 'textBgHexInput', text.options.bgColor, 'textBgAddColor');
     this._renderColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor);
     this._renderTimeframeCheckboxes(text);
 
-    // Показываем панель
     settings.style.display = 'block';
     settings.style.left = '50%';
     settings.style.top = '50%';
     settings.style.transform = 'translate(-50%, -50%)';
 
-    // Блокируем всплытие событий внутри панели
-    settings.addEventListener('mousedown', (e) => e.stopPropagation());
-    settings.addEventListener('mousemove', (e) => e.stopPropagation());
-    settings.addEventListener('mouseup', (e) => e.stopPropagation());
-    settings.addEventListener('click', (e) => e.stopPropagation());
+    // ✅ ЗАЩИТА ОТ НАКОПЛЕНИЯ LISTENER'ОВ
+    if (!settings.dataset.vpBound) {
+        settings.dataset.vpBound = 'true';
+        settings.addEventListener('mousedown', (e) => e.stopPropagation());
+        settings.addEventListener('mousemove', (e) => e.stopPropagation());
+        settings.addEventListener('mouseup', (e) => e.stopPropagation());
+        settings.addEventListener('click', (e) => e.stopPropagation());
+    }
 
-    // Заголовок (создаётся один раз)
     let header = settings.querySelector('.settings-header');
     if (!header) {
         header = document.createElement('div');
@@ -8615,8 +8597,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         settings.insertBefore(header, settings.firstChild);
     }
 
-    // Закрытие по клику вне панели
-      // Закрытие по клику вне панели
     if (this._closeOnOutsideClick) {
         document.removeEventListener('mousedown', this._closeOnOutsideClick);
     }
@@ -8635,7 +8615,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         }
     }, 100);
 
-    // === Вкладки (без cloneNode!) ===
     const textPanel = document.getElementById('textEditPanel');
     const stylePanel = document.getElementById('textStylePanel');
     const visibilityPanel = document.getElementById('textVisibilityPanel');
@@ -8650,9 +8629,9 @@ _detachAllPrimitivesForSymbol(symbolKey) {
     if (stylePanel) stylePanel.classList.remove('active');
     if (visibilityPanel) visibilityPanel.classList.remove('active');
 
+    // ✅ onclick вместо addEventListener (нет накопления)
     tabs.forEach(tab => {
-        tab.onclick = null;
-        tab.addEventListener('click', function() {
+        tab.onclick = function() {
             document.querySelectorAll('#textSettings .settings-tab').forEach(t => t.classList.remove('active'));
             this.classList.add('active');
             if (textPanel) textPanel.classList.remove('active');
@@ -8661,16 +8640,14 @@ _detachAllPrimitivesForSymbol(symbolKey) {
             if (this.dataset.textSettingsTab === 'text' && textPanel) textPanel.classList.add('active');
             else if (this.dataset.textSettingsTab === 'style' && stylePanel) stylePanel.classList.add('active');
             else if (this.dataset.textSettingsTab === 'visibility' && visibilityPanel) visibilityPanel.classList.add('active');
-        });
+        };
     });
 
-    // === Кнопки сохранить/удалить (без cloneNode!) ===
     const saveBtn = document.getElementById('textSaveSettings');
     const deleteBtn = document.getElementById('textDeleteDrawing');
 
     if (saveBtn) {
-        saveBtn.onclick = null;
-        saveBtn.addEventListener('click', () => {
+        saveBtn.onclick = () => {
             text.updateOptions({
                 color: document.getElementById('textCurrentColorBox').style.backgroundColor,
                 bgColor: document.getElementById('textBgColorBox').style.backgroundColor,
@@ -8683,23 +8660,20 @@ _detachAllPrimitivesForSymbol(symbolKey) {
             this._requestRedraw();
             settings.style.display = 'none';
             this._saveTexts();
-        });
+        };
     }
 
     if (deleteBtn) {
-        deleteBtn.onclick = null;
-        deleteBtn.addEventListener('click', () => {
+        deleteBtn.onclick = () => {
             this.deleteText(text.id);
             settings.style.display = 'none';
             this._requestRedraw();
-        });
+        };
     }
 
-    // ========== МГНОВЕННОЕ ПРИМЕНЕНИЕ (однократно) ==========
     if (!settings.dataset.instantBound) {
         settings.dataset.instantBound = 'true';
 
-        // Размер шрифта
         document.getElementById('textFontSize').addEventListener('input', function() {
             const mgr = window.textManager;
             if (!mgr || !mgr._selectedText) return;
@@ -8710,7 +8684,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
             mgr._saveTexts();
         });
 
-        // Жирный
         document.getElementById('textBold').addEventListener('change', function() {
             const mgr = window.textManager;
             if (!mgr || !mgr._selectedText) return;
@@ -8720,7 +8693,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
             mgr._saveTexts();
         });
 
-        // Прозрачность текста
         document.getElementById('textOpacity').addEventListener('input', function() {
             const mgr = window.textManager;
             if (!mgr || !mgr._selectedText) return;
@@ -8731,7 +8703,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
             mgr._saveTexts();
         });
 
-        // Прозрачность фона
         document.getElementById('textBgOpacity').addEventListener('input', function() {
             const mgr = window.textManager;
             if (!mgr || !mgr._selectedText) return;
@@ -8743,7 +8714,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         });
     }
 
-    // ========== КНОПКА "МИНУТКИ" (добавляется один раз) ==========
     if (!settings.dataset.minutesBound) {
         settings.dataset.minutesBound = 'true';
         const minutesBtn = document.getElementById('textSelectMinutesTimeframes');
@@ -8761,7 +8731,6 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         }
     }
 
-    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
     if (typeof window.makePanelDraggable === 'function') {
         window.makePanelDraggable(settings);
     }
