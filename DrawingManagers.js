@@ -2858,11 +2858,17 @@ class TrendLineManager {
         if (!this._isDragging) return;
         this._handleMouseUp(e);
     }
-    _handleMouseLeave() {
+      _handleMouseLeave() {
+        // [ШАГ 2] Сброс отложенного RAF и события
+        if (this._hoverRafId) {
+            cancelAnimationFrame(this._hoverRafId);
+            this._hoverRafId = null;
+        }
+        this._pendingMouseEvent = null;
+
         if (this._hoveredLine) { this._hoveredLine.hovered = false; this._hoveredLine = null; this._requestRedraw(); }
         this._chartManager.chartContainer.style.cursor = 'crosshair';
     }
-
     _handleContextMenu(e) {
         e.preventDefault(); e.stopPropagation();
         const rect = this._chartManager.chartContainer.getBoundingClientRect();
