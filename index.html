@@ -4,12 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>View Pro </title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- PERF: шрифты грузятся неблокирующе (media=print + onload). Если
+     fonts.googleapis.com недоступен/медленный — страница рендерится
+     сразу, со системными/локальными шрифтами, без «белого экрана». -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="./styles.css">
 
 <!-- ✅ ЛОКАЛЬНЫЕ ФАЙЛЫ (те, что ты скачал на Шаге 1) -->
 <link rel="stylesheet" href="all.min.css">
-<script src="html2canvas.min.js"></script>
+<!-- PERF: html2canvas.min.js (198 КБ) больше не грузится синхронно при
+     старте — он подгружается лениво при первом скриншоте (см. ensureHtml2Canvas) -->
 <script src="lightweight-charts.js"></script>
 
 
@@ -2461,6 +2466,21 @@ function getSymbolAndTimeframe() {
   return { symbol, timeframe };
 }
 
+// PERF: ленивая загрузка html2canvas — только при первом скриншоте
+function ensureHtml2Canvas() {
+  if (window.html2canvas) return Promise.resolve();
+  if (!window._html2canvasLoading) {
+    window._html2canvasLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'html2canvas.min.js';
+      s.onload = resolve;
+      s.onerror = () => { window._html2canvasLoading = null; reject(new Error('html2canvas load failed')); };
+      document.head.appendChild(s);
+    });
+  }
+  return window._html2canvasLoading;
+}
+
 function takeChartScreenshot() {
   const { symbol, timeframe } = getSymbolAndTimeframe();
   const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
@@ -2469,8 +2489,8 @@ function takeChartScreenshot() {
   // 1. Временно скрываем курсор мыши на всей странице
   document.body.style.cursor = 'none';
 
-  // 2. Запускаем html2canvas
-  html2canvas(document.documentElement, {
+  // 2. Запускаем html2canvas (библиотека подгружается лениво)
+  ensureHtml2Canvas().then(() => html2canvas(document.documentElement, {
     scale: 1, // Scale 1 работает быстро. (Scale 2 делал минуту)
     useCORS: true,
     allowTaint: true,
@@ -2479,7 +2499,7 @@ function takeChartScreenshot() {
     windowHeight: window.innerHeight,
     logging: false
     // ВАЖНО: Мы полностью убрали блок onclone. Именно он ломал верстку (transform: none)!
-  }).then(canvas => {
+  })).then(canvas => {
     // 3. Возвращаем курсор мыши
     document.body.style.cursor = '';
 
