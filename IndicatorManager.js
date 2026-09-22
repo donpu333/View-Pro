@@ -254,6 +254,25 @@ class IndicatorManager {
         }
         this._lastIndicatorUpdateAt = now;
         
+        // PERF: пропускаем полный пересчёт, если данные и состав индикаторов
+        // не изменились с прошлого запуска. updateAllIndicators() дёргается на
+        // каждом тике (до ~6 раз/с) и каждый раз отправляет ВЕСЬ chartData
+        // (до 5000 свечей) в worker + применяет результат через series.setData().
+        // Все worker-индикаторы считаются только по OHLC — если последняя свеча
+        // не изменилась (обновление объёма, resize, повторный тик той же цены),
+        // результат идентичен, пересчёт не нужен.
+        const cmRef = this.chartManager;
+        const dataRef = cmRef?.chartData;
+        if (dataRef && dataRef.length > 0 && this.activeIndicators.length > 0) {
+            const lastBar = dataRef[dataRef.length - 1];
+            const sig = dataRef.length + '|' + lastBar.time + '|' + lastBar.open + '|' +
+                lastBar.high + '|' + lastBar.low + '|' + lastBar.close + '|' +
+                (cmRef.currentSymbol || '') + '|' + (cmRef.currentInterval || '') + '|' +
+                this.activeIndicators.map(i => i.id).join(',');
+            if (sig === this._lastCalcSignature) return;
+            this._lastCalcSignature = sig;
+        }
+        
         const calculations = [];
         this.activeIndicators.forEach(indicator => {
             const workerType = indicator.getWorkerType();
