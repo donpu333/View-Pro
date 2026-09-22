@@ -8920,6 +8920,7 @@ class TradeLevel {
             showLabels: options.showLabels !== undefined ? options.showLabels : true,
             showPlechi: options.showPlechi !== undefined ? options.showPlechi : true,
             showTP2: options.showTP2 !== undefined ? options.showTP2 : true, // НОВЫЙ: Показывать второй тейк
+            arrowOnly: options.arrowOnly !== undefined ? options.arrowOnly : false, // НОВЫЙ: «Только стрелка» — скрыть все линии и плашки
         };
 
         const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
@@ -9050,6 +9051,38 @@ class TradeLevelRenderer {
             const isLong = trade.direction === 'long';
             const entryColor = isLong ? '#00ff88' : '#f23645';
             const arrowSize = 6 * scope.horizontalPixelRatio;
+
+            // НОВЫЙ: режим «Только стрелка» — не рисуем линии ТВХ/Стоп/Тейк/Тейк2,
+            // плашки с ценами, «плечи» и драг-точки. Остаётся только стрелка входа.
+            // Клик по стрелке по-прежнему выделяет сделку: её можно перетащить по
+            // времени, открыть настройки (ПКМ) и удалить. Хит-зоны невидимых линий
+            // не добавляем, чтобы курсор не «хватал» пустое место.
+            if (trade.options.arrowOnly === true) {
+                if (entry !== null) {
+                    ctx.save();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 2 * scope.horizontalPixelRatio;
+                    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+                    ctx.shadowBlur = 4;
+                    ctx.beginPath();
+                    if (isLong) {
+                        ctx.moveTo(x, entry - arrowSize);
+                        ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
+                        ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
+                    } else {
+                        ctx.moveTo(x, entry + arrowSize);
+                        ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
+                        ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = entryColor;
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                    this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade, isPoint: true });
+                }
+                return;
+            }
 
             if (entry !== null) {
                 this._drawLine(ctx, scope, entry, entryColor, 'solid', 0.7);
@@ -10130,6 +10163,36 @@ class TradeLevelManager {
                 showTP2Checkbox.onchange = (e) => {
                     if (trade) {
                         trade.options.showTP2 = e.target.checked;
+                        this._requestRedraw();
+                        this._saveTrades();
+                    }
+                };
+            }
+        }
+
+        // НОВЫЙ: чекбокс «Только стрелка» — скрывает все линии (ТВХ/Стоп/Тейки)
+        // и плашки, оставляя только стрелку входа.
+        if (stylePanel) {
+            let arrowOnlyContainer = stylePanel.querySelector('#arrowOnlyContainer');
+            if (!arrowOnlyContainer) {
+                arrowOnlyContainer = document.createElement('div');
+                arrowOnlyContainer.id = 'arrowOnlyContainer';
+                arrowOnlyContainer.className = 'setting-row';
+                arrowOnlyContainer.style.marginTop = '8px';
+                arrowOnlyContainer.innerHTML = `
+                    <label style="display: flex; align-items: center; gap: 8px; color: #E0E0E0; cursor: pointer; font-size: 13px; user-select: none;">
+                        <input type="checkbox" id="arrowOnlyCheckbox" style="accent-color: #4A90E2; width: 16px; height: 16px; cursor: pointer;">
+                        <span>Только стрелка (скрыть все линии)</span>
+                    </label>
+                `;
+                stylePanel.appendChild(arrowOnlyContainer);
+            }
+            const arrowOnlyCheckbox = arrowOnlyContainer.querySelector('#arrowOnlyCheckbox');
+            if (arrowOnlyCheckbox) {
+                arrowOnlyCheckbox.checked = trade ? (trade.options.arrowOnly === true) : false;
+                arrowOnlyCheckbox.onchange = (e) => {
+                    if (trade) {
+                        trade.options.arrowOnly = e.target.checked;
                         this._requestRedraw();
                         this._saveTrades();
                     }
