@@ -25,6 +25,28 @@ class TickerRenderer {
         this._injectFlashCSS();
     }
 
+    // PERF: «мигание» цены через Web Animations API вместо
+    // classList.remove -> void offsetWidth -> classList.add.
+    // Старый вариант делал ПРИНУДИТЕЛЬНЫЙ СИНХРОННЫЙ REFLOW на каждый символ
+    // (layout thrashing): десятки тикеров в одном кадре = десятки reflow,
+    // из-за чего график в том же кадре не успевал отрисоваться (тормоза).
+    _flashElement(el, isUp) {
+        try {
+            if (typeof el.animate === 'function') {
+                if (el._flashAnim) { try { el._flashAnim.cancel(); } catch (e) {} }
+                const color = isUp ? 'rgba(38, 166, 91, 0.5)' : 'rgba(234, 57, 67, 0.5)';
+                el._flashAnim = el.animate(
+                    [{ backgroundColor: color }, { backgroundColor: 'transparent' }],
+                    { duration: 400, easing: 'ease-out' }
+                );
+                return;
+            }
+        } catch (e) {}
+        // Фолбэк (очень старые браузеры): классы без чтения offsetWidth
+        el.classList.remove('flash-up', 'flash-down');
+        el.classList.add(isUp ? 'flash-up' : 'flash-down');
+    }
+
     _escapeHtml(str) {
         if (!str) return '';
         this._escapeDiv.textContent = str;
@@ -156,9 +178,7 @@ class TickerRenderer {
         }
 
         for (const item of elementsToFlash) {
-            item.el.classList.remove('flash-up', 'flash-down');
-            void item.el.offsetWidth; 
-            item.el.classList.add(item.flashClass);
+            this._flashElement(item.el, item.flashClass === 'flash-up');
         }
 
         if (this.parent?.debugMode && domUpdates > 0) {
@@ -184,10 +204,7 @@ class TickerRenderer {
                 els.price.className = `ticker-price ${colorClass}`;
                 
                 if (ticker.prevPrice > 0 && ticker.prevPrice !== price) {
-                    const flashClass = price > ticker.prevPrice ? 'flash-up' : 'flash-down';
-                    els.price.classList.remove('flash-up', 'flash-down');
-                    void els.price.offsetWidth; 
-                    els.price.classList.add(flashClass);
+                    this._flashElement(els.price, price > ticker.prevPrice);
                 }
             }
         }
