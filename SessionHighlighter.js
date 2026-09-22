@@ -74,6 +74,9 @@ class SessionHighlighter {
         const fromIdx = Math.max(0, Math.floor(visibleRange.from) - 1);
         const toIdx = Math.min(data.length - 1, Math.ceil(visibleRange.to) + 1);
 
+        // PERF: кэш строк fillStyle (инвалидируется в updateSettings)
+        if (!this._fillStyleCache) this._fillStyleCache = new Map();
+
         target.useBitmapCoordinateSpace(scope => {
             const ctx = scope.context;
             const hpr = scope.horizontalPixelRatio;
@@ -81,14 +84,36 @@ class SessionHighlighter {
             const canvasHeight = scope.mediaSize.height * vpr;
             let candleWidthPixels = 0;
 
+            // PERF: вместо fillRect на КАЖДУЮ свечу (сотни полупрозрачных
+            // прямоугольников на каждый кадр) склеиваем идущие подряд свечи
+            // одной сессии в один span и рисуем один fillRect на span.
+            // Соседние свечи перекрывались ровно по краю (width = 2 * шаг),
+            // поэтому визуальный результат идентичен (и без швов на стыках).
+            let spanSession = null;
+            let spanX1 = 0, spanX2 = 0;
+
+            const flushSpan = () => {
+                if (!spanSession) return;
+                const cacheKey = spanSession.color + '|' + this._opacity;
+                let fill = this._fillStyleCache.get(cacheKey);
+                if (!fill) {
+                    fill = this._hexToRgba(spanSession.color, this._opacity);
+                    this._fillStyleCache.set(cacheKey, fill);
+                }
+                ctx.fillStyle = fill;
+                ctx.fillRect((spanX1 - candleWidthPixels / 2) * hpr, 0,
+                    (spanX2 - spanX1 + candleWidthPixels) * hpr, canvasHeight);
+                spanSession = null;
+            };
+
             for (let i = fromIdx; i <= toIdx; i++) {
                 const candle = data[i];
-                const utcHour = new Date(candle.time * 1000).getUTCHours();
+                // PERF: час UTC арифметически, без new Date() на каждую свечу
+                const utcHour = Math.floor(candle.time / 3600) % 24;
                 const session = this._getSessionForHour(utcHour);
-                if (!session) continue;
 
                 const xCenter = timeScale.timeToCoordinate(candle.time);
-                if (xCenter === null) continue;
+                if (xCenter === null) { flushSpan(); continue; }
 
                 if (candleWidthPixels === 0 && i + 1 <= toIdx) {
                     const nextX = timeScale.timeToCoordinate(data[i + 1].time);
@@ -96,9 +121,18 @@ class SessionHighlighter {
                 }
                 if (candleWidthPixels === 0) candleWidthPixels = 10 * hpr;
 
-                ctx.fillStyle = this._hexToRgba(session.color, this._opacity);
-                ctx.fillRect((xCenter - candleWidthPixels / 2) * hpr, 0, candleWidthPixels * hpr, canvasHeight);
+                if (!session) { flushSpan(); continue; }
+
+                if (spanSession === session) {
+                    spanX2 = xCenter;
+                } else {
+                    flushSpan();
+                    spanSession = session;
+                    spanX1 = xCenter;
+                    spanX2 = xCenter;
+                }
             }
+            flushSpan();
         });
     }
 
@@ -111,6 +145,7 @@ class SessionHighlighter {
             if (settings.colors.european) this.sessions[1].color = settings.colors.european;
             if (settings.colors.american) this.sessions[2].color = settings.colors.american;
         }
+        this._fillStyleCache = null;   // PERF: цвета/прозрачность могли измениться
         localStorage.setItem('sessionSettings', JSON.stringify({ enabled: this._enabled, opacity: this._opacity, colors: this._colors }));
         if (this._primitive && this._primitive.requestRedraw) this._primitive.requestRedraw();
     }
