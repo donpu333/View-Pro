@@ -71,8 +71,8 @@ class DailySeparator {
             
             for (let i = fromIdx; i <= toIdx; i++) {
                 const candle = data[i];
-                const mskTime = new Date(candle.time * 1000);
-                const day = mskTime.getUTCDate();
+                // PERF: индекс UTC-дня арифметически, без new Date() на каждую свечу
+                const day = Math.floor(candle.time / 86400);
                 
                 if (prevDay !== null && day !== prevDay) {
                     let x = timeScale.timeToCoordinate(candle.time);
