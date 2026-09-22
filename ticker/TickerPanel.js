@@ -254,6 +254,14 @@ class TickerPanel {
 
     _restoreWebSockets() {
         if (this._isDestroyed) return;
+        // PERF: focus/visibilitychange могут firing'ать часто (клики по другим окнам,
+        // alt-tab туда-обратно). Раньше КАЖДЫЙ вызов запускал полный REST-батч
+        // и полный перерендер списка — одновременно с refresh'ем графика,
+        // что давало «шторм» и подвисание на несколько секунд.
+        // Теперь — не чаще раза в 30 с.
+        const nowTs = Date.now();
+        if (this._lastRestoreAt && nowTs - this._lastRestoreAt < 30000) return;
+        this._lastRestoreAt = nowTs;
         console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
 
         this._restToken = (this._restToken || 0) + 1;
