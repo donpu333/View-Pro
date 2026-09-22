@@ -940,6 +940,11 @@ class ChartManager {
                 this._applyAppendOnly(pushedMissing);
             }
 
+            // [FIX VSCALE] Фоновая дозагрузка свечей может сильно изменить ценовой
+            // диапазон, а вертикальный масштаб у нас залочен (autoScale: false) —
+            // переставляем его заново (то же, что кнопка «автомасштаб»).
+            if (needsFullRedraw || pushedMissing.length > 0) this.autoScale();
+
             if (changed) {
                 this._volumeDataDirty = true;
                 this._syncLineColor();
@@ -1085,6 +1090,9 @@ class ChartManager {
                 }
             }
             if (appendOnly && pushed.length > 0) this._applyAppendOnly(pushed);
+            // [FIX VSCALE] Пока вкладка была скрыта, цена могла уйти далеко —
+            // после мержа данных переставляем залоченный вертикальный масштаб.
+            if (dataChanged) this.autoScale();
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             const lastCandle = this.lastCandle;
             if (lastCandle && this._isChartValid()) {
@@ -3307,6 +3315,13 @@ class ChartManager {
                 this._syncLineColor();
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             }
+
+            // [FIX VSCALE] Главный сценарий «отдалённого масштаба» на 1d:
+            // монету давно не открывали → кэш устарел → при загрузке вертикальный
+            // масштаб подогнался под диапазон «старые свечи + плейсхолдер по живой
+            // цене» и залочился. Здесь мы только что дозагрузили недостающие свечи —
+            // переставляем масштаб заново, иначе монета остаётся «сплюснутой».
+            if (newCandles.length > 0) this.autoScale();
         } catch (error) {}
     }
 
