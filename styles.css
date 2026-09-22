@@ -2016,6 +2016,16 @@ svg, svg * { font-family: none !important; }
     height: 100%;
     scrollbar-width: thin;
     scrollbar-color: #3a3f4a var(--bg-header);
+    /* PERF: изоляция списка от остальной страницы. Любые изменения строк
+       (цена, подсветка, скролл) не вызывают layout/paint вне контейнера —
+       график перестаёт «дёргаться» вместе с панелью котировок. */
+    contain: layout style paint;
+}
+
+/* PERF: строка тикера — изолированный блок. Анимация подсветки цены
+   не пересчитывает стили/-layout соседних строк и графика. */
+.ticker-panel .ticker-item {
+    contain: layout style paint;
 }
 
 .ticker-panel .ticker-list-container::-webkit-scrollbar { width: 4px; }
