@@ -391,18 +391,60 @@ class ChartManager {
 
     // =============== RIGHT EDGE ===============
        // =============== RIGHT EDGE ===============
+
+    // [FIX ZOOM] Память зума (barSpacing) ОТДЕЛЬНО для каждого таймфрейма.
+    // Раньше barSpacing хранился ОДНИМ глобальным значением (chartBarSpacing)
+    // для всех монет и всех ТФ: зум с 5m «протекал» в 1d, а часть монет при
+    // загрузке попадала в early-return и оставалась со «чужим» зумом —
+    // из-за этого на 1d одни монеты открывались сильно отдалёнными, другие нормально.
+    _defaultBarSpacingForTf(tf) {
+        const DEFAULTS = {
+            '1m': 10, '3m': 10, '5m': 12, '15m': 14, '30m': 16,
+            '1h': 18, '2h': 20, '4h': 22, '6h': 22, '12h': 24,
+            '1d': 25, '1w': 26, '1M': 26
+        };
+        return DEFAULTS[tf] || 25;
+    }
+
+    _getSavedBarSpacingForTf(tf) {
+        if (!tf) return this._savedBarSpacing || 25;
+        if (!this._barSpacingByTf) this._barSpacingByTf = {};
+        if (this._barSpacingByTf[tf] > 0) return this._barSpacingByTf[tf];
+        let v = null;
+        try { v = parseFloat(localStorage.getItem('chartBarSpacing_' + tf)); } catch (e) {}
+        if (!v || v <= 0 || !isFinite(v)) v = this._defaultBarSpacingForTf(tf);
+        this._barSpacingByTf[tf] = v;
+        return v;
+    }
+
+    _saveBarSpacingForTf(tf, value) {
+        if (!tf || !value || value <= 0 || !isFinite(value)) return;
+        if (!this._barSpacingByTf) this._barSpacingByTf = {};
+        this._barSpacingByTf[tf] = value;
+        try { localStorage.setItem('chartBarSpacing_' + tf, String(value)); } catch (e) {}
+    }
+
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
         const ts = this.chart.timeScale();
         if (!ts) return;
         const lastIndex = this.chartData.length - 1;
         const rightOffset = 15;
+
+        // [FIX ZOOM] Зум берём из памяти ТЕКУЩЕГО таймфрейма, а не глобальный.
+        let barSpacing = this._getSavedBarSpacingForTf(this.currentInterval);
+        if (!barSpacing || barSpacing <= 0) barSpacing = 25;
+
+        // [FIX ZOOM] Раньше при «совпавшем» правом крае метод выходил, НЕ применяя
+        // barSpacing — монета оставалась с зумом предыдущей монеты/таймфрейма.
+        // Теперь выходим только если совпали И край, И зум.
         try {
             const cur = ts.getVisibleLogicalRange();
-            if (cur && Math.abs((cur.to - lastIndex) - rightOffset) < 0.5) return;
+            const curSpacing = ts.options().barSpacing;
+            const edgeOk = cur && Math.abs((cur.to - lastIndex) - rightOffset) < 0.5;
+            const spacingOk = curSpacing > 0 && Math.abs(curSpacing - barSpacing) < 0.5;
+            if (edgeOk && spacingOk) return;
         } catch (e) {}
-        let barSpacing = this._savedBarSpacing || ts.options().barSpacing || 25;
-        if (!barSpacing || barSpacing <= 0) barSpacing = 25;
 
         // [FIX] Ширину берём от контейнера минус реальная ширина правой шкалы.
         // Раньше использовался ts.width(), который меняется асинхронно после
@@ -1283,6 +1325,8 @@ class ChartManager {
                     this._lastSavedBarSpacing = this._pendingBarSpacing;
                     this._savedBarSpacing = this._pendingBarSpacing;
                     localStorage.setItem('chartBarSpacing', this._pendingBarSpacing);
+                    // [FIX ZOOM] запоминаем зум отдельно для текущего таймфрейма
+                    this._saveBarSpacingForTf(this.currentInterval, this._pendingBarSpacing);
                 }
                 this._applyPendingTrim();
                 this.onVisibleLogicalRangeChange(this._lastVisibleRange);
@@ -2387,7 +2431,7 @@ class ChartManager {
             this.lastCandle = this.chartData[this.chartData.length - 1];
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
-            const savedBarSpacing = this._savedBarSpacing || 25;
+            const savedBarSpacing = this._getSavedBarSpacingForTf(this.currentInterval) || 25;   // [FIX ZOOM] per-TF
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
             this._scrollToRightEdgeWithOffset();
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
