@@ -2100,22 +2100,19 @@ class ChartManager {
             if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
             if (!this._isChartValid()) return;
 
-            let cacheRefreshPromise = null;
-            if (isFromCache) {
-                cacheRefreshPromise = Promise.race([
-                    this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
-                    new Promise(r => setTimeout(r, 2500))
-                ]);
-            }
-
             await new Promise((resolve) => {
                 this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, resolve);
             });
             dataApplied = true;
             if (this._activeGeneration !== generationId) return;
 
-            if (cacheRefreshPromise) await cacheRefreshPromise;
-            if (this._activeGeneration !== generationId) return;
+            // PERF: раньше здесь стоял await Promise.race([refresh, 2500ms]) —
+            // оверлей и пауза live-обновлений держались до 2,5 с, хотя кэшированные
+            // данные уже показаны. Теперь refresh идёт в фоне (как в loadInitialData),
+            // merge защищён проверками свежести (_isFresherUpdate/_closed).
+            if (isFromCache) {
+                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
+            }
 
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
@@ -2189,11 +2186,8 @@ class ChartManager {
             if (this._activeGeneration !== generationId) return;
             if (!isFromCache) this.saveCandlesToCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles).catch(() => {});
             if (isFromCache) {
-                await Promise.race([
-                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {}),
-                    new Promise(r => setTimeout(r, 2500))
-                ]);
-                if (this._activeGeneration !== generationId) return;
+                // PERF: фоновое обновление не блокирует переключение (см. switchSymbol)
+                this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {});
             }
             // [FIX] Загрузка рисунков для нового таймфрейма — та же логика, что в switchSymbol.
             // При смене ТФ координатор перечитает данные с новым ключом (символ тот же, но объекты
