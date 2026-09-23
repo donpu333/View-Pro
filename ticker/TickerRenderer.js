@@ -520,6 +520,12 @@ class TickerRenderer {
                 el.style.display = 'none';
             }
         }
+
+        // [SUBS-WINDOW] сообщаем панели текущее видимое окно — она держит
+        // живые WS-подписки только на этих строках (+ избранное + текущий символ)
+        if (typeof this.parent?._onVisibleWindowChanged === 'function') {
+            this.parent._onVisibleWindowChanged(visibleKeys);
+        }
     }
 
     createTickerElement(ticker, index) {
