@@ -658,6 +658,8 @@ class WebSocketManager {
         // Полагаться на это не стоит.
         // '1M' = 0 намеренно: календарный месяц постоянным шагом не выражается,
         // любой внешний код обязан идти через _alignTimeToInterval().
+        // [FIX-M3] '2h' в UI (TF_LABELS) также отсутствует и оставлен ради
+        // обратной совместимости со старыми кэшами/рисунками.
         const map = {
             '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
             '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800,
@@ -704,6 +706,10 @@ class WebSocketManager {
             clearInterval(ws._keepAlive);    ws._keepAlive = null;
 
             ws.onopen = null; ws.onclose = null; ws.onerror = null; ws.onmessage = null;
+            // [FIX-M4] хендлеры снимаются ДО close. Единичная ошибка консоли от самого
+            // Chromium «Ping received after close» — сетевая гонка уровня браузера
+            // (пинг биржи приходит во время close-handshake); страницным кодом не
+            // убирается, безобидна и внесена в белый список tests/regression.test.js.
             try {
                 if (ws.readyState === WebSocket.OPEN) ws.close(1000, 'User disconnect');
                 else if (ws.readyState === WebSocket.CONNECTING) ws.close();
