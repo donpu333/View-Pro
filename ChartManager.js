@@ -231,7 +231,7 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: true,
                 entireTextOnly: false,
-                // [LOGSCALE] запоминаемый режим шкалы: 1 = логарифмическая
+                // [LOGSCALE] запоминаем режим шкалы: 1 = логарифмическая (кнопка «Л»)
                 mode: (localStorage.getItem('priceScaleMode') === 'log')
                     ? ((typeof LightweightCharts !== 'undefined' && LightweightCharts.PriceScaleMode)
                         ? LightweightCharts.PriceScaleMode.Logarithmic : 1)
@@ -340,7 +340,7 @@ class ChartManager {
         }, 200);
 
         (async () => {
-            const CACHE_VERSION = '4';   // [FAST-CACHE] v4 = кэш в виде JSON-строки
+            const CACHE_VERSION = '3';
             const savedVersion = localStorage.getItem('candleCacheVersion');
             if (savedVersion !== CACHE_VERSION) {
                 await this.clearOldCaches();
@@ -396,60 +396,18 @@ class ChartManager {
 
     // =============== RIGHT EDGE ===============
        // =============== RIGHT EDGE ===============
-
-    // [FIX ZOOM] Память зума (barSpacing) ОТДЕЛЬНО для каждого таймфрейма.
-    // Раньше barSpacing хранился ОДНИМ глобальным значением (chartBarSpacing)
-    // для всех монет и всех ТФ: зум с 5m «протекал» в 1d, а часть монет при
-    // загрузке попадала в early-return и оставалась со «чужим» зумом —
-    // из-за этого на 1d одни монеты открывались сильно отдалёнными, другие нормально.
-    _defaultBarSpacingForTf(tf) {
-        const DEFAULTS = {
-            '1m': 10, '3m': 10, '5m': 12, '15m': 14, '30m': 16,
-            '1h': 18, '2h': 20, '4h': 22, '6h': 22, '12h': 24,
-            '1d': 25, '1w': 26, '1M': 26
-        };
-        return DEFAULTS[tf] || 25;
-    }
-
-    _getSavedBarSpacingForTf(tf) {
-        if (!tf) return this._savedBarSpacing || 25;
-        if (!this._barSpacingByTf) this._barSpacingByTf = {};
-        if (this._barSpacingByTf[tf] > 0) return this._barSpacingByTf[tf];
-        let v = null;
-        try { v = parseFloat(localStorage.getItem('chartBarSpacing_' + tf)); } catch (e) {}
-        if (!v || v <= 0 || !isFinite(v)) v = this._defaultBarSpacingForTf(tf);
-        this._barSpacingByTf[tf] = v;
-        return v;
-    }
-
-    _saveBarSpacingForTf(tf, value) {
-        if (!tf || !value || value <= 0 || !isFinite(value)) return;
-        if (!this._barSpacingByTf) this._barSpacingByTf = {};
-        this._barSpacingByTf[tf] = value;
-        try { localStorage.setItem('chartBarSpacing_' + tf, String(value)); } catch (e) {}
-    }
-
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
         const ts = this.chart.timeScale();
         if (!ts) return;
         const lastIndex = this.chartData.length - 1;
         const rightOffset = 15;
-
-        // [FIX ZOOM] Зум берём из памяти ТЕКУЩЕГО таймфрейма, а не глобальный.
-        let barSpacing = this._getSavedBarSpacingForTf(this.currentInterval);
-        if (!barSpacing || barSpacing <= 0) barSpacing = 25;
-
-        // [FIX ZOOM] Раньше при «совпавшем» правом крае метод выходил, НЕ применяя
-        // barSpacing — монета оставалась с зумом предыдущей монеты/таймфрейма.
-        // Теперь выходим только если совпали И край, И зум.
         try {
             const cur = ts.getVisibleLogicalRange();
-            const curSpacing = ts.options().barSpacing;
-            const edgeOk = cur && Math.abs((cur.to - lastIndex) - rightOffset) < 0.5;
-            const spacingOk = curSpacing > 0 && Math.abs(curSpacing - barSpacing) < 0.5;
-            if (edgeOk && spacingOk) return;
+            if (cur && Math.abs((cur.to - lastIndex) - rightOffset) < 0.5) return;
         } catch (e) {}
+        let barSpacing = this._savedBarSpacing || ts.options().barSpacing || 25;
+        if (!barSpacing || barSpacing <= 0) barSpacing = 25;
 
         // [FIX] Ширину берём от контейнера минус реальная ширина правой шкалы.
         // Раньше использовался ts.width(), который меняется асинхронно после
@@ -945,11 +903,7 @@ class ChartManager {
                 this._applyAppendOnly(pushedMissing);
             }
 
-            // [FIX VSCALE] Переставляем залоченный вертикальный масштаб ТОЛЬКО когда
-            // реально добавились недостающие свечи (изменился ценовой диапазон).
-            // При обычном обновлении существующих свечей рефит не нужен — он давал
-            // видимый «прыжок» масштаба после каждого переключения и каждые 30 с,
-            // из-за чего переключение ощущалось более медленным.
+            // [ВЫРАВНИВАНИЕ] добавились пропущенные свечи -> пересчёт залоченного масштаба
             if (pushedMissing.length > 0) this.autoScale();
 
             if (changed) {
@@ -1097,9 +1051,6 @@ class ChartManager {
                 }
             }
             if (appendOnly && pushed.length > 0) this._applyAppendOnly(pushed);
-            // [FIX-GAPS] Авто-рефит вертикального масштаба при возврате на вкладку
-            // УБРАН: он давал видимый «прыжок» шкалы на каждый возврат.
-            // Масштаб здесь и раньше не пересчитывался — поведение как до правок.
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             const lastCandle = this.lastCandle;
             if (lastCandle && this._isChartValid()) {
@@ -1340,8 +1291,6 @@ class ChartManager {
                     this._lastSavedBarSpacing = this._pendingBarSpacing;
                     this._savedBarSpacing = this._pendingBarSpacing;
                     localStorage.setItem('chartBarSpacing', this._pendingBarSpacing);
-                    // [FIX ZOOM] запоминаем зум отдельно для текущего таймфрейма
-                    this._saveBarSpacingForTf(this.currentInterval, this._pendingBarSpacing);
                 }
                 this._applyPendingTrim();
                 this.onVisibleLogicalRangeChange(this._lastVisibleRange);
@@ -1973,26 +1922,18 @@ class ChartManager {
 
             if (series) this._applyPriceLineColor(series, this._getLineColor());
 
-            // [FAST-SWITCH] отложили на 200 мс: postMessage с клоном всего
-            // chartData (до 5000 свечей) не конкурирует с отрисовкой переключения.
-            // Индикаторы и так приходят из worker'а не раньше чем через 100-300 мс.
             setTimeout(() => {
                 if (this.indicatorManager && this._isChartValid()) {
                     this.indicatorManager.restorePendingIndicators();
                     this.indicatorManager.updateAllIndicators();
                     this.indicatorManager.loadIndicators();
                 }
-            }, 200);
+            }, 0);
 
             const positionAfterDataApplied = () => {
                 if (!this._isChartValid()) { this._disableAutoScroll(); if (onReady) onReady(); return; }
 
                 this._scrollToRightEdgeWithOffset();
-
-                // [FAST-SWITCH] отпускаем вызывающего сразу после позиционирования:
-                // данные уже нарисованы, оверлей исчезает на ~2 кадра раньше,
-                // а фиксация шкалы (finalizeAfterRescale) дорабатывает в фоне.
-                if (onReady) { const _cb = onReady; onReady = null; _cb(); }
 
                 const finalizeAfterRescale = () => {
                     if (this._isChartValid()) {
@@ -2133,7 +2074,6 @@ class ChartManager {
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
         let dataApplied = false;
-        let cacheRefreshPromise = null;   // [PERF2] фоновый refresh кэша (не блокирует UI)
 
         try {
             const precisionPromise = this._prefetchPrecision(symbol, exchange, marketType);
@@ -2143,9 +2083,7 @@ class ChartManager {
             if (!isFromCache) {
                 candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
             }
-            // [FAST-SWITCH] ждём точность с биржи не дольше 150 мс: setDataQuick
-            // выведет её из данных сам, а настоящий ответ допишет кэш в фоне
-            await Promise.race([precisionPromise, new Promise(r => setTimeout(r, 150))]);
+            await precisionPromise;
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных для ' + symbol);
 
@@ -2170,19 +2108,22 @@ class ChartManager {
             if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
             if (!this._isChartValid()) return;
 
+            let cacheRefreshPromise = null;
+            if (isFromCache) {
+                cacheRefreshPromise = Promise.race([
+                    this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
+                    new Promise(r => setTimeout(r, 2500))
+                ]);
+            }
+
             await new Promise((resolve) => {
                 this.setDataQuick(candles, this.currentInterval, symbol, exchange, marketType, true, resolve);
             });
             dataApplied = true;
             if (this._activeGeneration !== generationId) return;
 
-            // PERF: раньше здесь стоял await Promise.race([refresh, 2500ms]) —
-            // оверлей и пауза live-обновлений держались до 2,5 с, хотя кэшированные
-            // данные уже показаны. Теперь refresh идёт в фоне (как в loadInitialData),
-            // merge защищён проверками свежести (_isFresherUpdate/_closed).
-            if (isFromCache) {
-                cacheRefreshPromise = this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
-            }
+            if (cacheRefreshPromise) await cacheRefreshPromise;
+            if (this._activeGeneration !== generationId) return;
 
             if (!isFromCache) {
                 this.saveCandlesToCache(symbol, exchange, marketType, this.currentInterval, candles).catch(() => {});
@@ -2208,19 +2149,7 @@ class ChartManager {
             if (dataApplied) {
                 this._startPeriodicSync();
                 this._startNewCandleChecker();
-                // [PERF2] НЕ запускаем _syncRecentCandles параллельно с фоновым
-                // refresh кэша: два одновременных REST+merge сразу после переключения
-                // давали двойную перерисовку и «прыжки» — переключение ощущалось
-                // медленнее. Сначала дожидаемся refresh, потом синхронизируем.
-                if (cacheRefreshPromise) {
-                    cacheRefreshPromise.finally(() => {
-                        if (!this._destroyed && this._activeGeneration === generationId) {
-                            this._syncRecentCandles().catch(() => {});
-                        }
-                    });
-                } else {
-                    this._syncRecentCandles().catch(() => {});
-                }
+                this._syncRecentCandles().catch(() => {});
             }
             this._dispatchPendingSwitch();
         }
@@ -2268,8 +2197,11 @@ class ChartManager {
             if (this._activeGeneration !== generationId) return;
             if (!isFromCache) this.saveCandlesToCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles).catch(() => {});
             if (isFromCache) {
-                // PERF: фоновое обновление не блокирует переключение (см. switchSymbol)
-                this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {});
+                await Promise.race([
+                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {}),
+                    new Promise(r => setTimeout(r, 2500))
+                ]);
+                if (this._activeGeneration !== generationId) return;
             }
             // [FIX] Загрузка рисунков для нового таймфрейма — та же логика, что в switchSymbol.
             // При смене ТФ координатор перечитает данные с новым ключом (символ тот же, но объекты
@@ -2316,8 +2248,7 @@ class ChartManager {
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
             const isFromCache = !!(candles && candles.length > 0);
             if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 1000);
-            // [FAST-SWITCH] то же ограничение ожидания точности, что в switchSymbol
-            await Promise.race([precisionPromise, new Promise(r => setTimeout(r, 150))]);
+            await precisionPromise;
             if (this._activeGeneration !== generationId) { finish(); return; }
             if (!candles || candles.length === 0) { console.warn('⚠️ loadInitialData: нет данных'); finish(); return; }
             await new Promise((resolve) => {
@@ -2470,7 +2401,7 @@ class ChartManager {
             this.lastCandle = this.chartData[this.chartData.length - 1];
             const timeScale = this.chart.timeScale();
             if (!timeScale) return false;
-            const savedBarSpacing = this._getSavedBarSpacingForTf(this.currentInterval) || 25;   // [FIX ZOOM] per-TF
+            const savedBarSpacing = this._savedBarSpacing || 25;
             timeScale.applyOptions({ barSpacing: savedBarSpacing });
             this._scrollToRightEdgeWithOffset();
             const activeSeries = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
@@ -2522,10 +2453,7 @@ class ChartManager {
         }, 100);
     }
 
-    // =============== LOG SCALE ===============
-    // [LOGSCALE] Логарифмическая шкала — спасение для монет с огромным
-    // диапазоном (KORU x106, LAB x697): на линейной шкале текущие свечи
-    // сплющены в полоску внизу, на лог-шкале читаются и памп, и дно.
+    // =============== LOG SCALE (кнопка «Л») ===============
     isLogScale() {
         try { return this.chart?.priceScale('right')?.options()?.mode === 1; } catch (e) { return false; }
     }
@@ -2541,7 +2469,6 @@ class ChartManager {
             localStorage.setItem('priceScaleMode', enabled ? 'log' : 'normal');
         } catch (e) { console.warn('setLogScale failed:', e); }
         this._updateLogScaleButton();
-        // переподогнать масштаб под новый режим
         this.autoScale();
     }
 
@@ -3377,11 +3304,11 @@ class ChartManager {
                 if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             }
 
-            // [FIX VSCALE] Главный сценарий «отдалённого масштаба» на 1d:
-            // монету давно не открывали → кэш устарел → при загрузке вертикальный
-            // масштаб подогнался под диапазон «старые свечи + плейсхолдер по живой
-            // цене» и залочился. Здесь мы только что дозагрузили недостающие свечи —
-            // переставляем масштаб заново, иначе монета остаётся «сплюснутой».
+            // [ВЫРАВНИВАНИЕ] Если фоновая дозагрузка ДОБАВИЛА недостающие свечи
+            // (кейс «сплюснутой» монеты: устаревший кэш + плейсхолдер по живой цене),
+            // залоченный вертикальный масштаб (autoScale:false) остаётся растянутым
+            // между старыми ценами и текущей — пересчитываем его (то же, что кнопка «A»).
+            // Только при ДОБАВЛЕНИИ свечей — обычные обновления масштаб не трогают.
             if (newCandles.length > 0) this.autoScale();
         } catch (error) {}
     }
@@ -3399,7 +3326,7 @@ class ChartManager {
 
     async saveCandlesToCache(symbol, exchange, marketType, interval, candles) {
         if (!candles || candles.length === 0) return;
-        const CACHE_VERSION = '4';
+        const CACHE_VERSION = '3';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
         const byTime = new Map();
         for (const c of candles) {
@@ -3417,77 +3344,19 @@ class ChartManager {
         if (cleanCandles.length === 0) return;
         const cacheData = {
             key, symbol, exchange, marketType, interval,
-            // [FAST-CACHE] JSON-строка вместо массива объектов: десериализация
-            // тысяч объектов в IndexedDB стоила 50-300 мс на каждое переключение,
-            // JSON.parse тех же данных — 5-15 мс.
-            json: JSON.stringify(cleanCandles),
+            data: cleanCandles,
             lastUpdate: Date.now(),
             firstCandleTime: cleanCandles[0].time,
             lastCandleTime: cleanCandles[cleanCandles.length - 1].time,
             count: cleanCandles.length,
             version: CACHE_VERSION
         };
-        this._memCacheSet(symbol, exchange, marketType, interval, cleanCandles);
         if (!window.db) return;
         try { await this._waitForDb(); await window.db.put('candles', cacheData); } catch (error) {}
     }
 
-    // [FAST-CACHE] LRU-кэш свечей в памяти (последние 12 монет): повторные
-    // переключения туда-обратно вообще не ходят в IndexedDB и не парсят JSON.
-    _memCacheKey(symbol, exchange, marketType, interval) {
-        return `${symbol}_${interval}_${exchange}_${marketType}`;
-    }
-
-    // [FAST-SWITCH] Предварительный прогрев кэша свечей (вызывается на
-    // mousedown/touchstart по строке тикера, ДО клика). К моменту switchSymbol
-    // данные уже лежат в памяти — переключение теряет ещё ~50-150 мс.
-    prefetchSymbolCache(symbol, exchange, marketType) {
-        try {
-            if (this._destroyed || !symbol) return;
-            symbol = String(symbol).toUpperCase().replace(/[^A-Z0-9]/g, '');
-            exchange = (exchange || 'binance').toLowerCase();
-            marketType = (marketType || 'futures').toLowerCase();
-            const interval = this.currentInterval;
-            if (!symbol || !interval) return;
-            const memKey = this._memCacheKey(symbol, exchange, marketType, interval);
-            if (this._candleMemCache && this._candleMemCache.has(memKey)) return;
-            if (!this._prefetchInFlight) this._prefetchInFlight = new Set();
-            if (this._prefetchInFlight.has(memKey)) return;
-            this._prefetchInFlight.add(memKey);
-            this.loadCandlesFromCache(symbol, exchange, marketType, interval)
-                .catch(() => null)
-                .finally(() => { try { this._prefetchInFlight.delete(memKey); } catch (e) {} });
-        } catch (e) {}
-    }
-
-    _memCacheSet(symbol, exchange, marketType, interval, candles) {
-        if (!this._candleMemCache) this._candleMemCache = new Map();
-        const k = this._memCacheKey(symbol, exchange, marketType, interval);
-        this._candleMemCache.delete(k);
-        this._candleMemCache.set(k, { t: Date.now(), a: candles });
-        while (this._candleMemCache.size > 12) {
-            const oldest = this._candleMemCache.keys().next().value;
-            this._candleMemCache.delete(oldest);
-        }
-    }
-
     async loadCandlesFromCache(symbol, exchange, marketType, interval) {
-        const CACHE_VERSION = '4';
-        // [FAST-CACHE] сначала память — мгновенно, без IDB.
-        // [FIX-GAPS] TTL 5 минут, как у дискового кэша: при 30 мин график мог
-        // сначала показать устаревшие свечи с дырой, а потом «прыгнуть» после
-        // фоновой дозагрузки. 5 мин — повторные клики всё так же мгновенные
-        // (LRU), а протухшие данные идут полной свежей загрузкой с биржи.
-        const MEM_TTL = 5 * 60 * 1000;
-        const memKey = this._memCacheKey(symbol, exchange, marketType, interval);
-        if (this._candleMemCache) {
-            const mem = this._candleMemCache.get(memKey);
-            if (mem && Date.now() - mem.t < MEM_TTL && Array.isArray(mem.a) && mem.a.length > 0) {
-                this._candleMemCache.delete(memKey);
-                this._candleMemCache.set(memKey, mem);   // LRU touch
-                return mem.a;
-            }
-        }
+        const CACHE_VERSION = '3';
         const key = `${symbol}_${interval}_${exchange}_${marketType}_v${CACHE_VERSION}`;
         if (!window.db) return null;
         try {
@@ -3495,19 +3364,11 @@ class ChartManager {
             const cached = await window.db.get('candles', key);
             if (!cached) return null;
             if (cached.version !== CACHE_VERSION) { await window.db.delete('candles', key); return null; }
-            // [FIX-GAPS] вернули оригинальные 5 минут: при 30 мин устаревший кэш
-            // рисовался раньше свежих данных — отсюда гэпы и скачки при возврате
-            // на вкладку и переключениях. 5 мин = прежнее гарантированно свежее
-            // поведение; скорость повторных кликов обеспечивает LRU в памяти.
             const CACHE_DURATION = 5 * 60 * 1000;
             if (Date.now() - cached.lastUpdate > CACHE_DURATION) return null;
-            let parsed = null;
-            if (typeof cached.json === 'string') {
-                try { parsed = JSON.parse(cached.json); } catch (e) { parsed = null; }
-            }
-            if (!Array.isArray(parsed)) { await window.db.delete('candles', key); return null; }
+            if (!Array.isArray(cached.data)) return null;
             const byTime = new Map();
-            for (const c of parsed) {
+            for (const c of cached.data) {
                 if (!c || typeof c !== 'object') continue;
                 if (typeof c.time !== 'number' || !isFinite(c.time) || !Number.isInteger(c.time) || c.time <= 0) continue;
                 if (typeof c.open !== 'number' || !isFinite(c.open) || c.open <= 0) continue;
@@ -3516,20 +3377,17 @@ class ChartManager {
                 if (typeof c.close !== 'number' || !isFinite(c.close) || c.close <= 0) continue;
                 const aligned = this._alignTimeForInterval(c.time, interval);
                 if (!Number.isInteger(aligned) || aligned <= 0) continue;
-                // [FAST-CACHE] без копии {...c} — распарсенные объекты уже наши
-                if (c.time !== aligned) c.time = aligned;
-                byTime.set(aligned, c);
+                byTime.set(aligned, { ...c, time: aligned });
             }
             if (byTime.size === 0) { await window.db.delete('candles', key); return null; }
             const valid = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
             for (const c of valid) this._stampCandle(c, 'cache', cached.lastUpdate);
-            this._memCacheSet(symbol, exchange, marketType, interval, valid);
             return valid;
         } catch (error) { return null; }
     }
 
     async clearOldCaches() {
-        const CACHE_VERSION = '4';   // [FAST-CACHE] синхронно с save/load
+        const CACHE_VERSION = '3';
         try {
             if (!window.db) return;
             const allCandles = await window.db.getAll('candles');
