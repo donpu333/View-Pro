@@ -185,6 +185,15 @@ class TickerPanel {
     _refreshAfterBulkPriceUpdate() {
         if (this._isDestroyed) return;
         if (this._isDataDependentSort()) {
+            // [REST-CHUNK] полная пересортировка + пересборка списка — дорогая
+            // операция на 729 тикерах. Делаем её не чаще раза в минуту;
+            // в паузах значения просто обновляются на месте.
+            const nowMs = Date.now();
+            if (this._lastBulkRerenderAt && nowMs - this._lastBulkRerenderAt < 60000) {
+                this.renderer?.updatePriceElements?.();
+                return;
+            }
+            this._lastBulkRerenderAt = nowMs;
             this.filterCache = null;
             this._scheduleRender();
         } else {
@@ -260,7 +269,12 @@ class TickerPanel {
         // что давало «шторм» и подвисание на несколько секунд.
         // Теперь — не чаще раза в 30 с.
         const nowTs = Date.now();
-        if (this._lastRestoreAt && nowTs - this._lastRestoreAt < 30000) return;
+        if (this._lastRestoreAt && nowTs - this._lastRestoreAt < 30000) {
+            // [HIDDEN-GUARD] REST/пересорт не запускаем, но цены из памяти
+            // обновляем — иначе после короткого alt-tab строки стояли бы stale до 5 с.
+            if (!document.hidden) { try { this.renderer?.updatePriceElements?.(); } catch (e) {} }
+            return;
+        }
         this._lastRestoreAt = nowTs;
         console.log('📡 Вкладка стала активной, принудительно восстанавливаем обновление...');
 
@@ -408,7 +422,12 @@ class TickerPanel {
         ticker.trades = newTrades;
         ticker._lastUpdateTime = now;
 
-        if (!this._blockDOMUpdates && this.renderer) {
+        // [HIDDEN-GUARD] панель свёрнута или вкладка неактивна — данные в памяти
+        // обновляются (код выше), а DOM не трогаем вообще: при показе панели
+        // строки разом обновятся из tickersMap (см. toggle в index.html и
+        // _restoreWebSockets).
+        if (!this._blockDOMUpdates && this.renderer &&
+            !document.hidden && !document.body.classList.contains('ticker-panel-hidden')) {
             this._pendingPriceUpdates.set(compositeKey, {
                 price: ticker.price,
                 change: newChange,
@@ -502,16 +521,73 @@ class TickerPanel {
     }
 
     _syncToPriceManager() {
+        // [SUBS-WINDOW] Раньше подписывались ВСЕ символы панели (729 штук =
+        // ~700 WS-сообщений/с на главный поток). Теперь живые подписки держим
+        // только на видимом окне (~40 строк) + избранном + текущем символе.
+        // Остальные строки показывают цену из кэша (REST обновляет её каждые
+        // 30 мин), а при скролле в видимую область оживают за ~0,3 с.
         if (!window.priceManagerInstance || this._isDestroyed) return;
-        let count = 0;
-        for (const [key] of this.tickersMap.entries()) {
-            if (!this._subscribedSymbols.has(key)) {
-                window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
-                this._subscribedSymbols.add(key);
-                count++;
+        if (!this._lastVisibleKeys) {
+            const keys = new Set();
+            const list = this.renderer?.displayedTickers || [];
+            const lim = Math.min(list.length, (this.renderer?.visibleCount || 30) + (this.renderer?.SCROLL_BUFFER || 10));
+            for (let i = 0; i < lim; i++) {
+                const t = list[i];
+                if (t) keys.add(`${t.symbol}:${t.exchange}:${t.marketType}`);
+            }
+            this._lastVisibleKeys = keys;
+        }
+        this._applyVisibleSubscriptions();
+    }
+
+    // [SUBS-WINDOW] рендерер сообщает состав видимого окна (при скролле/ререндере).
+    // Дебаунс 350 мс: при быстрой прокрутке подписки не дёргаются вообще —
+    // перестраиваются один раз, когда скролл остановился.
+    _onVisibleWindowChanged(visibleKeys) {
+        if (this._isDestroyed) return;
+        this._lastVisibleKeys = visibleKeys;
+        if (this._visibleSubTimer) clearTimeout(this._visibleSubTimer);
+        this._visibleSubTimer = setTimeout(() => {
+            this._visibleSubTimer = null;
+            if (!this._isDestroyed) this._applyVisibleSubscriptions();
+        }, 350);
+    }
+
+    _applyVisibleSubscriptions() {
+        const pm = window.priceManagerInstance;
+        if (!pm || this._isDestroyed) return;
+        const keep = new Set(this._lastVisibleKeys || []);
+        // текущий символ графика — всегда живой
+        if (this.state.currentSymbol) {
+            keep.add(`${this.state.currentSymbol}:${this.state.currentExchange}:${this.state.currentMarketType}`);
+        }
+        // избранное — всегда живое
+        const favs = this.state.favorites || [];
+        if (favs.length > 0) {
+            const favSet = new Set(favs);
+            for (const key of this.tickersMap.keys()) {
+                const sym = key.slice(0, key.indexOf(':'));
+                if (favSet.has(sym)) keep.add(key);
             }
         }
-        console.log(`✅ TickerPanel подписан на PriceManager (${count} символов)`);
+        let added = 0, removed = 0;
+        for (const key of keep) {
+            if (!this._subscribedSymbols.has(key) && this.tickersMap.has(key)) {
+                pm.subscribe(key, this._pmPriceHandler);
+                this._subscribedSymbols.add(key);
+                added++;
+            }
+        }
+        for (const key of Array.from(this._subscribedSymbols)) {
+            if (!keep.has(key)) {
+                try { pm.unsubscribe(key, this._pmPriceHandler); } catch (e) {}
+                this._subscribedSymbols.delete(key);
+                removed++;
+            }
+        }
+        if (added > 0 || removed > 0) {
+            console.log(`📡 [SUBS-WINDOW] +${added}/-${removed}, активных подписок: ${this._subscribedSymbols.size}`);
+        }
     }
 
     startTickerPanelPriceEngine() {
@@ -601,7 +677,12 @@ class TickerPanel {
                     const symbolsParam = symbols.map(s => `"${s}"`).join(',');
                     const data = await this._safeFetch(`${baseUrl}?symbols=[${symbolsParam}]`);
                     if (Array.isArray(data)) {
-                        data.forEach(t => this._updateTickerFromBinance(t, marketType));
+                        // [REST-CHUNK] обрабатываем порциями по 50 с уступкой главного
+                        // потока — пик «729 тикеров» больше не блокирует график
+                        for (let i = 0; i < data.length; i++) {
+                            this._updateTickerFromBinance(data[i], marketType);
+                            if (i % 50 === 49) await new Promise(r => setTimeout(r, 0));
+                        }
                     }
                 };
             };
@@ -612,9 +693,12 @@ class TickerPanel {
                     const data = await this._safeFetch(`https://api.bybit.com/v5/market/tickers?category=${category}`);
                     if (data?.retCode === 0 && data.result?.list) {
                         const set = new Set(symbols);
-                        data.result.list.forEach(t => {
-                            if (set.has(t.symbol)) this._updateTickerFromBybit(t, marketType);
-                        });
+                        const list = data.result.list;
+                        // [REST-CHUNK] порциями по 100 с уступкой потока
+                        for (let i = 0; i < list.length; i++) {
+                            if (set.has(list[i].symbol)) this._updateTickerFromBybit(list[i], marketType);
+                            if (i % 100 === 99) await new Promise(r => setTimeout(r, 0));
+                        }
                     }
                 };
             };
@@ -859,11 +943,9 @@ class TickerPanel {
                 this.tickers.push(newTicker);
                 this.tickersMap.set(key, newTicker);
                 addedKeys.push(key);
-
-                if (window.priceManagerInstance && !this._subscribedSymbols.has(key)) {
-                    window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
-                    this._subscribedSymbols.add(key);
-                }
+                // [SUBS-WINDOW] намеренно НЕ подписываем здесь: массовое добавление
+                // сотен символов не должно создавать сотни живых WS-подписок.
+                // Видимые строки подберёт _onVisibleWindowChanged после рендера.
             }
         });
 
@@ -1241,6 +1323,8 @@ class TickerPanel {
         if (this.state.activeTab === 'favorites') {
             this._scheduleRender();
         }
+        // [SUBS-WINDOW] избранное всегда живое — пересобираем подписки сразу
+        this._applyVisibleSubscriptions();
     }
 
     handleContextMenu(e) {
