@@ -1097,9 +1097,9 @@ class ChartManager {
                 }
             }
             if (appendOnly && pushed.length > 0) this._applyAppendOnly(pushed);
-            // [FIX VSCALE] Пока вкладка была скрыта, цена могла уйти далеко —
-            // после мержа данных переставляем залоченный вертикальный масштаб.
-            if (dataChanged) this.autoScale();
+            // [FIX-GAPS] Авто-рефит вертикального масштаба при возврате на вкладку
+            // УБРАН: он давал видимый «прыжок» шкалы на каждый возврат.
+            // Масштаб здесь и раньше не пересчитывался — поведение как до правок.
             if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
             const lastCandle = this.lastCandle;
             if (lastCandle && this._isChartValid()) {
@@ -3473,8 +3473,12 @@ class ChartManager {
 
     async loadCandlesFromCache(symbol, exchange, marketType, interval) {
         const CACHE_VERSION = '4';
-        // [FAST-CACHE] сначала память — мгновенно, без IDB
-        const MEM_TTL = 30 * 60 * 1000;
+        // [FAST-CACHE] сначала память — мгновенно, без IDB.
+        // [FIX-GAPS] TTL 5 минут, как у дискового кэша: при 30 мин график мог
+        // сначала показать устаревшие свечи с дырой, а потом «прыгнуть» после
+        // фоновой дозагрузки. 5 мин — повторные клики всё так же мгновенные
+        // (LRU), а протухшие данные идут полной свежей загрузкой с биржи.
+        const MEM_TTL = 5 * 60 * 1000;
         const memKey = this._memCacheKey(symbol, exchange, marketType, interval);
         if (this._candleMemCache) {
             const mem = this._candleMemCache.get(memKey);
@@ -3491,11 +3495,11 @@ class ChartManager {
             const cached = await window.db.get('candles', key);
             if (!cached) return null;
             if (cached.version !== CACHE_VERSION) { await window.db.delete('candles', key); return null; }
-            // [FAST-CACHE] кэш живёт 30 минут вместо 5: свежесть всё равно чинится
-            // фоновым refreshCandlesInBackground + _syncRecentCandles за ~1 с,
-            // зато переключение почти всегда идёт по мгновенному кэш-пути,
-            // а не по сети (fetchKlines 300-800 мс).
-            const CACHE_DURATION = 30 * 60 * 1000;
+            // [FIX-GAPS] вернули оригинальные 5 минут: при 30 мин устаревший кэш
+            // рисовался раньше свежих данных — отсюда гэпы и скачки при возврате
+            // на вкладку и переключениях. 5 мин = прежнее гарантированно свежее
+            // поведение; скорость повторных кликов обеспечивает LRU в памяти.
+            const CACHE_DURATION = 5 * 60 * 1000;
             if (Date.now() - cached.lastUpdate > CACHE_DURATION) return null;
             let parsed = null;
             if (typeof cached.json === 'string') {
@@ -3565,8 +3569,4 @@ class ChartManager {
     // scheduleDrawingsUpdate / requestDrawingsRedraw / _performDrawingsRedraw — удалены,
     // их работу делают сами примитивы через attached({ requestUpdate }).
     manualAutoScale() { this.autoScale(); }
-}
-
-if (typeof window !== 'undefined') {
-    window.ChartManager = ChartManager;
 }
