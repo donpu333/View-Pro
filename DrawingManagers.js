@@ -1525,22 +1525,22 @@ _showSettings(ray) {
     });
 
     // ========== КНОПКА "МИНУТКИ" (добавляется один раз) ==========
-const minutesBtn = document.getElementById('selectMinutesTimeframes');
-if (minutesBtn) {
-    minutesBtn.onclick = (e) => {
-        e.stopPropagation();
-        const container = document.getElementById('timeframeCheckboxList');
-        if (!container) return;
-        const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-            const isMinute = minutesSet.has(cb.dataset.timeframe);
-            cb.checked = isMinute;
-            ray.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-        });
-        this._requestRedraw();
-        this._saveRays();
-    };
-}
+    if (!settings.dataset.minutesBound) {
+        settings.dataset.minutesBound = 'true';
+        const minutesBtn = document.getElementById('selectMinutesTimeframes');
+        if (minutesBtn) {
+            minutesBtn.addEventListener('click', () => {
+                const container = document.getElementById('timeframeCheckboxList');
+                if (!container) return;
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    const isMinute = minutesSet.has(cb.dataset.timeframe);
+                    cb.checked = isMinute;
+                    ray.timeframeVisibility[cb.dataset.timeframe] = isMinute;
+                });
+            });
+        }
+    }
     
 
     wind// ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
@@ -3205,22 +3205,22 @@ class TrendLineManager {
             });
         }
 
-       const minutesBtn = document.getElementById('trendSelectMinutesTimeframes');
-if (minutesBtn) {
-    minutesBtn.onclick = (e) => {
-        e.stopPropagation();
-        const container = document.getElementById('trendTimeframeCheckboxList');
-        if (!container) return;
-        const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-            const isMinute = minutesSet.has(cb.dataset.timeframe);
-            cb.checked = isMinute;
-            trendLine.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-        });
-        this._requestRedraw();
-        this._saveTrendLines();
-    };
-}
+        if (!settings.dataset.minutesBound) {
+            settings.dataset.minutesBound = 'true';
+            const minutesBtn = document.getElementById('trendSelectMinutesTimeframes');
+            if (minutesBtn) {
+                minutesBtn.addEventListener('click', () => {
+                    const container = document.getElementById('trendTimeframeCheckboxList');
+                    if (!container) return;
+                    const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
+                    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                        const isMinute = minutesSet.has(cb.dataset.timeframe);
+                        cb.checked = isMinute;
+                        trendLine.timeframeVisibility[cb.dataset.timeframe] = isMinute;
+                    });
+                });
+            }
+        }
 
         if (typeof window.makePanelDraggable === 'function') {
             window.makePanelDraggable(settings);
@@ -7434,7 +7434,9 @@ class AlertLineManager {
 
 class TextDrawing {
     constructor(text, time, price, options = {}) {
-    this.text = text || 'Текст';
+    // [FIX-M5] текст ВСЕГДА строка: не-строка (число/объект) раньше долетала до
+    // TextPrimitive.draw и spam'ила «text.text.split is not a function» каждый кадр.
+    this.text = (text === null || text === undefined || text === '') ? 'Текст' : String(text);
     this.time = time;
     this.price = price;
     this.anchorTime = time;
@@ -8714,22 +8716,22 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         });
     }
 
-   const minutesBtn = document.getElementById('textSelectMinutesTimeframes');
-if (minutesBtn) {
-    minutesBtn.onclick = (e) => {
-        e.stopPropagation();
-        const container = document.getElementById('textTimeframeCheckboxList');
-        if (!container) return;
-        const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-            const isMinute = minutesSet.has(cb.dataset.timeframe);
-            cb.checked = isMinute;
-            text.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-        });
-        this._requestRedraw();
-        this._saveTexts();
-    };
-}
+    if (!settings.dataset.minutesBound) {
+        settings.dataset.minutesBound = 'true';
+        const minutesBtn = document.getElementById('textSelectMinutesTimeframes');
+        if (minutesBtn) {
+            minutesBtn.addEventListener('click', () => {
+                const container = document.getElementById('textTimeframeCheckboxList');
+                if (!container) return;
+                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
+                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    const isMinute = minutesSet.has(cb.dataset.timeframe);
+                    cb.checked = isMinute;
+                    text.timeframeVisibility[cb.dataset.timeframe] = isMinute;
+                });
+            });
+        }
+    }
 
     if (typeof window.makePanelDraggable === 'function') {
         window.makePanelDraggable(settings);
@@ -8779,85 +8781,36 @@ if (minutesBtn) {
         }
     }
 
-_renderTimeframeCheckboxes(text) {
+   _renderTimeframeCheckboxes(text) {
     const container = document.getElementById('textTimeframeCheckboxList');
     if (!container) return;
-
-    const tfLabels = {
-        '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
-        '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
-        '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
-    };
-
+    const tfLabels = { '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
     let html = '';
     const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
-
     timeframes.forEach(tf => {
         const isChecked = text.timeframeVisibility[tf] !== false;
-        html += `<div class="timeframe-checkbox-item">
-            <input type="checkbox" id="text_tf_${tf}_${text.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}>
-            <label for="text_tf_${tf}_${text.id}">${tfLabels[tf] || tf}</label>
-            <span class="tf-badge">${tf}</span>
-        </div>`;
+        html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="text_tf_${tf}_${text.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="text_tf_${tf}_${text.id}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
     });
-
     container.innerHTML = html;
-
-    // Чекбоксы отдельных ТФ
     container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener('change', (e) => {
-            text.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
-            this._requestRedraw();
-            this._saveTexts();
-        });
+        checkbox.addEventListener('change', (e) => { text.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked; });
     });
-
-    // ✅ Кнопки: всегда через .onclick — они перезаписываются при каждом открытии панели,
-    // в замыкании всегда актуальный `text`.
     const selectAllBtn = document.getElementById('textSelectAllTimeframes');
     const deselectAllBtn = document.getElementById('textDeselectAllTimeframes');
-    const minutesBtn = document.getElementById('textSelectMinutesTimeframes');
-
     if (selectAllBtn) {
-        selectAllBtn.onclick = (e) => {
-            e.stopPropagation();
-            container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                cb.checked = true;
-                text.timeframeVisibility[cb.dataset.timeframe] = true;
-            });
-            this._requestRedraw();
-            this._saveTexts();
-        };
+        selectAllBtn.onclick = null; // очищаем предыдущий обработчик
+        selectAllBtn.addEventListener('click', () => { 
+            container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; text.timeframeVisibility[cb.dataset.timeframe] = true; }); 
+        });
     }
-
     if (deselectAllBtn) {
-        deselectAllBtn.onclick = (e) => {
-            e.stopPropagation();
-            container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                cb.checked = false;
-                text.timeframeVisibility[cb.dataset.timeframe] = false;
-            });
-            this._requestRedraw();
-            this._saveTexts();
-        };
-    }
-
-    // ✅ Кнопка «минутки» — теперь прямо здесь, а не в _showSettings через guard.
-    // Это устраняет баг «после рисования следующего объекта не срабатывает».
-    if (minutesBtn) {
-        minutesBtn.onclick = (e) => {
-            e.stopPropagation();
-            const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-            container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                const isMinute = minutesSet.has(cb.dataset.timeframe);
-                cb.checked = isMinute;
-                text.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-            });
-            this._requestRedraw();
-            this._saveTexts();
-        };
+        deselectAllBtn.onclick = null;
+        deselectAllBtn.addEventListener('click', () => { 
+            container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; text.timeframeVisibility[cb.dataset.timeframe] = false; }); 
+        });
     }
 }
+
        _requestRedraw(item = null) {
         // [ШАГ 3] Быстрый путь: перерисовать ровно один текст (drag)
         if (item && item.primitive?.requestRedraw) {
