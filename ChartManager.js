@@ -231,6 +231,11 @@ class ChartManager {
                 scaleMargins: { top: 0.1, bottom: 0.25 },
                 autoScale: true,
                 entireTextOnly: false,
+                // [LOGSCALE] запоминаемый режим шкалы: 1 = логарифмическая
+                mode: (localStorage.getItem('priceScaleMode') === 'log')
+                    ? ((typeof LightweightCharts !== 'undefined' && LightweightCharts.PriceScaleMode)
+                        ? LightweightCharts.PriceScaleMode.Logarithmic : 1)
+                    : 0,
             },
             localization: {
                 timeFormatter: (time) => FMT_CROSSHAIR.format(time * 1000)
@@ -2489,6 +2494,36 @@ class ChartManager {
                 } else { this._autoScalePending = false; if (onComplete) onComplete(); }
             } catch (e) { this._autoScalePending = false; if (onComplete) onComplete(); }
         }, 100);
+    }
+
+    // =============== LOG SCALE ===============
+    // [LOGSCALE] Логарифмическая шкала — спасение для монет с огромным
+    // диапазоном (KORU x106, LAB x697): на линейной шкале текущие свечи
+    // сплющены в полоску внизу, на лог-шкале читаются и памп, и дно.
+    isLogScale() {
+        try { return this.chart?.priceScale('right')?.options()?.mode === 1; } catch (e) { return false; }
+    }
+
+    setLogScale(enabled) {
+        if (!this._isChartValid()) return;
+        try {
+            const mode = enabled
+                ? ((typeof LightweightCharts !== 'undefined' && LightweightCharts.PriceScaleMode)
+                    ? LightweightCharts.PriceScaleMode.Logarithmic : 1)
+                : 0;
+            this.chart.priceScale('right').applyOptions({ mode });
+            localStorage.setItem('priceScaleMode', enabled ? 'log' : 'normal');
+        } catch (e) { console.warn('setLogScale failed:', e); }
+        this._updateLogScaleButton();
+        // переподогнать масштаб под новый режим
+        this.autoScale();
+    }
+
+    toggleLogScale() { this.setLogScale(!this.isLogScale()); }
+
+    _updateLogScaleButton() {
+        const btn = document.getElementById('logScaleButton');
+        if (btn) btn.classList.toggle('active', this.isLogScale());
     }
 
     _finishAutoScale(genId, onComplete) {
