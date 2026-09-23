@@ -103,12 +103,16 @@ class AppCoordinator {
         const defaultSymbol = this.chartManager.currentSymbol || 'BTCUSDT';
         const defaultExchange = this.chartManager.currentExchange || 'binance';
         const defaultMarketType = this.chartManager.currentMarketType || 'futures';
-        const defaultInterval = localStorage.getItem('lastTimeframe') || '1h';
+        // [FIX-M2] интервал берём из ChartManager: он уже синхронизирован с
+        // TimeframeManager и валиден по TF_LABELS. Сырой localStorage может хранить мусор.
+        const defaultInterval = this.chartManager.currentInterval || localStorage.getItem('lastTimeframe') || '1h';
         
         await this.chartManager.switchSymbol(defaultSymbol, defaultExchange, defaultMarketType);
         
         if (this.wsManager) {
-            this.wsManager.updateSymbolAndTimeframe(defaultSymbol, defaultInterval, defaultExchange);
+            // [FIX-M2] раньше marketType не передавался — работало лишь благодаря
+            // фолбэку marketType || this.currentMarketType внутри _connectInternal.
+            this.wsManager.updateSymbolAndTimeframe(defaultSymbol, defaultInterval, defaultExchange, defaultMarketType);
         }
         
         if (this.timerManager) {
