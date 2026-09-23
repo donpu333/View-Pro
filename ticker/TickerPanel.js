@@ -1553,3 +1553,31 @@ class TickerPanel {
                 if (flagContainer) {
                     const newFlag = document.createElement('div');
                     newFlag.className = `flag flag-${flag}`;
+                    newFlag.dataset.symbol = symbol;
+                    newFlag.dataset.exchange = exchange;
+                    newFlag.dataset.marketType = marketType;
+                    flagContainer.parentNode.replaceChild(newFlag, flagContainer);
+                }
+            }
+        }
+        this.filterCache = null;
+        this._lastSymbolsSig = null; // ✅ ФИКС (влияет на вкладку flags)
+        this.saveState();
+        contextMenu.style.display = 'none';
+
+        if (this.state.activeTab === 'flags') {
+            this._scheduleRender();
+        }
+    }
+
+    closeContextMenu() {
+        const flagMenu = document.getElementById('flagContextMenu');
+        if (flagMenu) flagMenu.style.display = 'none';
+        const tickerMenu = document.getElementById('tickerContextMenu');
+        if (tickerMenu) tickerMenu.style.display = 'none';
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.TickerPanel = TickerPanel;
+}
