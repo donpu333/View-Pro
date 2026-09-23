@@ -2035,17 +2035,25 @@ class ChartManager {
     }
 
     _queuePendingSwitch(partial) {
-        const base = this._pendingSwitchRequest || {
-            symbol: this.currentSymbol, exchange: this.currentExchange,
-            marketType: this.currentMarketType, interval: this.currentInterval
-        };
-        this._pendingSwitchRequest = Object.assign({}, base, partial);
+        // [FIX-D3] Храним ТОЛЬКО явно запрошенные поля. Раньше базой служил снапшот
+        // текущих symbol/exchange/marketType в момент постановки в очередь: клик по
+        // ТФ во время switchSymbol('spot') запоминал marketType='futures', и
+        // _dispatchPendingSwitch потом молча отменял смену рынка.
+        this._pendingSwitchRequest = Object.assign({}, this._pendingSwitchRequest || {}, partial);
     }
 
     _dispatchPendingSwitch() {
         if (this._pendingSwitchRequest) {
-            const next = this._pendingSwitchRequest;
+            const req = this._pendingSwitchRequest;
             this._pendingSwitchRequest = null;
+            // [FIX-D3] Незапрошенные поля берём из ТЕКУЩЕГО состояния на момент
+            // диспетчеризации, а не из снапшота в момент постановки в очередь.
+            const next = {
+                symbol:     req.symbol     !== undefined ? req.symbol     : this.currentSymbol,
+                exchange:   req.exchange   !== undefined ? req.exchange   : this.currentExchange,
+                marketType: req.marketType !== undefined ? req.marketType : this.currentMarketType,
+                interval:   req.interval   !== undefined ? req.interval   : this.currentInterval,
+            };
             const symbolChanged = next.symbol !== this.currentSymbol || next.exchange !== this.currentExchange || next.marketType !== this.currentMarketType;
             const intervalChanged = next.interval !== this.currentInterval;
             if (!symbolChanged && !intervalChanged) return;
@@ -2070,6 +2078,11 @@ class ChartManager {
         this._switchingSymbol = true;
         this._showSymbolSwitchOverlay();
         this._suspendAllUpdates();
+
+        // [FIX-D1b] Интервал мог быть изменён «снаружи» до входа (_dispatchPendingSwitch
+        // фиксирует его до вызова switchSymbol). Если данные загрузить не удастся —
+        // откатим интервал/хранилище/WS, чтобы источники истины не разъехались.
+        const prevInterval = this.currentInterval;
 
         const generationId = ++this._generationCounter;
         this._activeGeneration = generationId;
@@ -2140,6 +2153,15 @@ class ChartManager {
             this._notifySymbolChange();
         } catch (error) {
             console.error(`❌ Не удалось переключиться на ${symbol}:`, error);
+            // [FIX-D1b] откат интервала, зафиксированного извне, если данные не применились
+            if (!dataApplied && !this._destroyed && this._activeGeneration === generationId &&
+                this.currentInterval !== prevInterval) {
+                this.currentInterval = prevInterval;
+                try { localStorage.setItem('lastTimeframe', prevInterval); } catch (e) {}
+                if (window.wsManager?.updateSymbolAndTimeframe) {
+                    window.wsManager.updateSymbolAndTimeframe(this.currentSymbol, prevInterval, this.currentExchange, this.currentMarketType);
+                }
+            }
         } finally {
             if (this._destroyed) return;
             this._switchingSymbol = false;
@@ -2156,7 +2178,10 @@ class ChartManager {
     }
 
        async switchInterval(newInterval) {
-        if (this._isSwitchingInterval || this._switchingSymbol) { this._queuePendingSwitch({ interval: newInterval }); return; }
+        // [FIX-D2] Отложенное переключение возвращает маркер {queued:true}, чтобы
+        // вызывающий (TimeframeManager) не принял мгновенный возврат за «интервал
+        // не сменился» и не откатил бейдж поверх применённого позже переключения.
+        if (this._isSwitchingInterval || this._switchingSymbol) { this._queuePendingSwitch({ interval: newInterval }); return { queued: true }; }
         if (this.currentInterval === newInterval) return;
 
         this._isSwitchingInterval = true;
@@ -2180,16 +2205,22 @@ class ChartManager {
 
         try {
             this._suspendAllUpdates();
-            this.currentInterval = newInterval;
-            localStorage.setItem('lastTimeframe', newInterval);
-            if (window.wsManager?.updateSymbolAndTimeframe) {
-                window.wsManager.updateSymbolAndTimeframe(this.currentSymbol, this.currentInterval, this.currentExchange, this.currentMarketType);
-            }
-            let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
+            // [FIX-D1] Интервал, localStorage и WS-подписка фиксируются ТОЛЬКО после
+            // успешного получения данных. Раньше состояние уходило на новый ТФ до
+            // загрузки, и при ошибке сети бейдж/WS/хранилище говорили «4h», а на
+            // графике оставались часовые свечи; после восстановления сети WS-клины
+            // нового шага дописывались в массив старого — серия превращалась в кашу.
+            let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval);
             let isFromCache = !!candles;
-            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 1000);
+            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, 1000);
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных');
+
+            this.currentInterval = newInterval;
+            try { localStorage.setItem('lastTimeframe', newInterval); } catch (e) {}
+            if (window.wsManager?.updateSymbolAndTimeframe) {
+                window.wsManager.updateSymbolAndTimeframe(this.currentSymbol, newInterval, this.currentExchange, this.currentMarketType);
+            }
 
             await new Promise((resolve) => {
                 this.setDataQuick(candles, this.currentInterval, this.currentSymbol, this.currentExchange, this.currentMarketType, true, resolve);
