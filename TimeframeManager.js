@@ -484,7 +484,22 @@ class TimeframeManager {
         const previousInterval = this.currentInterval;
 
         try {
-            await this.chartManager.switchInterval(tf);
+            const result = await this.chartManager.switchInterval(tf);
+            // [FIX-D2] ChartManager был занят (смена символа/другой ТФ) и положил
+            // переключение в свою отложенную очередь, вернув {queued:true}. Раньше
+            // метод возвращался сразу, мы принимали это за «интервал не сменился» и
+            // откатывали бейдж, а отложенное переключение всё равно применялось —
+            // график и бейдж расходились навсегда. Теперь ждём фактического результата.
+            if (result && result.queued) {
+                const applied = await this._waitForChartSwitch(tf);
+                if (this._destroyed) return;
+                if (this._switchQueued) return;      // очередь обработает следующий клик
+                if (!applied) {
+                    console.warn('⚠️ Отложенное переключение на', tf, 'не применилось — откат');
+                    this._rollbackTimeframe(previousInterval);
+                    return;
+                }
+            }
         } catch (error) {
             console.error('❌ Ошибка при переключении:', error);
             // Откатываемся, только если пользователь уже не запросил другой таймфрейм.
@@ -540,6 +555,24 @@ class TimeframeManager {
 
         this.updateInstrumentInfo();
         this.loadStarredTimeframes();
+    }
+
+    // [FIX-D2] Ждём, пока ChartManager разрулит отложенное переключение.
+    // Вернём true, когда менеджер простаивает и фактический интервал равен запрошенному.
+    _waitForChartSwitch(tf, timeoutMs = 15000) {
+        return new Promise((resolve) => {
+            const startedAt = Date.now();
+            const check = () => {
+                if (this._destroyed) return resolve(false);
+                const cm = this.chartManager;
+                const busy = cm._switchingSymbol || cm._isSwitchingInterval;
+                const hasPending = !!cm._pendingSwitchRequest;
+                if (!busy && !hasPending) return resolve(cm.currentInterval === tf);
+                if (Date.now() - startedAt > timeoutMs) return resolve(cm.currentInterval === tf);
+                setTimeout(check, 100);
+            };
+            check();
+        });
     }
 
     _rollbackTimeframe(previousInterval) {
