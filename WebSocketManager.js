@@ -214,7 +214,6 @@ class WebSocketManager {
             exchange: this.currentExchange,
             marketType: this.currentMarketType
         };
-        this._activeSubContext = subContext;   // [FAST-WS] для живого ресабскрайба
 
         const urls = this._buildStreamUrls(subContext);
         if (!urls) {
@@ -716,7 +715,6 @@ class WebSocketManager {
 
         this.wsKline = null;
         this.wsTrade = null;
-        this._activeSubContext = null;   // [FAST-WS]
         this.isConnected = false;
         this.isConnecting = false;
     }
@@ -724,102 +722,7 @@ class WebSocketManager {
     updateSymbolAndTimeframe(symbol, interval, exchange, marketType) {
         console.log('🔄 Обновление символа:', { symbol, interval, exchange, marketType });
         this._warnedAlign.clear();
-        // [FAST-WS] Binance, та же биржа/рынок, сокеты открыты — переключаем
-        // потоки ЖИВЬЁМ (UNSUBSCRIBE/SUBSCRIBE), без разрыва TCP/TLS.
-        // Экономия ~0,2–0,8 с до первых тиков на каждое переключение.
-        // Любая нестыковка — откат на прежний полный реконнект.
-        const sym = (symbol || this.currentSymbol || '').trim();
-        const itv = (interval || this.currentInterval || '').trim();
-        const exc = exchange || this.currentExchange;
-        const mkt = marketType || this.currentMarketType;
-        if (this._canLiveResubscribe(exc, mkt)) {
-            this._scheduleLiveResubscribe(sym, itv, exc, mkt);
-            return;
-        }
-        this.connect(sym, itv, exc, mkt);
-    }
-
-    _canLiveResubscribe(exchange, marketType) {
-        return exchange === 'binance' &&
-            exchange === this.currentExchange &&
-            marketType === this.currentMarketType &&
-            !this._closedByUser &&
-            !!this.wsKline && !!this.wsTrade && this.wsKline !== this.wsTrade &&
-            this.wsKline.readyState === WebSocket.OPEN &&
-            this.wsTrade.readyState === WebSocket.OPEN &&
-            !!this._activeSubContext;
-    }
-
-    _scheduleLiveResubscribe(symbol, interval, exchange, marketType) {
-        // целевое состояние обновляем сразу: входящие сообщения СТАРОГО символа
-        // отсеиваются фильтром subContext (он ещё старый) и проверками в
-        // ChartManager (currentSymbol уже новый) — перекрёстного загрязнения нет.
-        this.currentSymbol = symbol;
-        this.currentInterval = interval;
-        this.currentExchange = exchange;
-        this.currentMarketType = marketType;
-        this._closedByUser = false;
-
-        if (this._liveResubTimer) clearTimeout(this._liveResubTimer);
-        if (this._connectDebounceTimer) { clearTimeout(this._connectDebounceTimer); this._connectDebounceTimer = null; }
-        // коалесцинг 250 мс: серия быстрых переключений = одна пара команд
-        // (лимит Binance spot — 5 входящих сообщений/с на соединение)
-        this._liveResubTimer = setTimeout(() => {
-            this._liveResubTimer = null;
-            this._doLiveResubscribe(symbol, interval);
-        }, 250);
-    }
-
-    _doLiveResubscribe(symbol, interval) {
-        try {
-            if (!this._canLiveResubscribe(this.currentExchange, this.currentMarketType)) {
-                this.connect(symbol, interval, this.currentExchange, this.currentMarketType);
-                return;
-            }
-            const ctx = this._activeSubContext;
-            const oldSymLc = String(ctx.symbol || '').toLowerCase();
-            const newSymLc = String(symbol).toLowerCase();
-            const symbolChanged = oldSymLc !== newSymLc;
-            const klineChanged = symbolChanged || ctx.interval !== interval;
-            if (!symbolChanged && !klineChanged) return;
-
-            const oldKline = `${oldSymLc}@kline_${ctx.interval}`;
-            const newKline = `${newSymLc}@kline_${interval}`;
-
-            // счётчики сторожа — как при обычном connect()
-            this._silentRounds = 0;
-            this._noDataNotified = false;
-            this._giveUpAt = 0;
-            this._symbolUnavailable = false;
-            this._lastRelevantMessageTime = Date.now();
-            this._lastActivityTime = Date.now();
-            this.retryCount = 0;
-            this._connectStartedAt = 0;
-            if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-
-            if (klineChanged) {
-                this.wsKline.send(JSON.stringify({ method: 'UNSUBSCRIBE', params: [oldKline], id: this._nextKaId() }));
-                this.wsKline.send(JSON.stringify({ method: 'SUBSCRIBE', params: [newKline], id: this._nextKaId() }));
-            }
-            if (symbolChanged) {
-                const oldTrade = `${oldSymLc}@aggTrade`;
-                const newTrade = `${newSymLc}@aggTrade`;
-                this.wsTrade.send(JSON.stringify({ method: 'UNSUBSCRIBE', params: [oldTrade], id: this._nextKaId() }));
-                this.wsTrade.send(JSON.stringify({ method: 'SUBSCRIBE', params: [newTrade], id: this._nextKaId() }));
-            }
-
-            // фильтр сообщений общий для обоих сокетов (один объект subContext) —
-            // мутируем его на месте, обработчики сразу принимают новый символ
-            ctx.symbol = symbol;
-            ctx.interval = interval;
-
-            this._warnedAlign.clear();
-            this._updateConnectionState();
-            console.log(`⚡ [FAST-WS] живое переключение без разрыва: ${oldKline} → ${newKline}`);
-        } catch (e) {
-            console.warn('⚠️ [FAST-WS] откат на полный реконнект:', e);
-            try { this.connect(symbol, interval, this.currentExchange, this.currentMarketType); } catch (e2) {}
-        }
+        this.connect(symbol, interval, exchange, marketType);
     }
 
     closeAll() {
