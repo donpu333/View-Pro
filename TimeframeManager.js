@@ -350,6 +350,17 @@ class TimeframeManager {
         if (autoScaleBtn) {
             this._addListener(autoScaleBtn, 'click', (e) => { e.stopPropagation(); this.autoScaleChart(); });
         }
+        // [LOGSCALE] Кнопка «Л» — логарифмическая шкала.
+        // Логика переключения живёт в ChartManager.toggleLogScale(),
+        // здесь только привязка клика (та же схема, что у кнопки «A»).
+        const logScaleBtn = document.getElementById('logScaleButton');
+        if (logScaleBtn) {
+            this._addListener(logScaleBtn, 'click', (e) => {
+                e.stopPropagation();
+                if (typeof this.chartManager?.toggleLogScale === 'function') this.chartManager.toggleLogScale();
+            });
+            if (typeof this.chartManager?._updateLogScaleButton === 'function') this.chartManager._updateLogScaleButton();
+        }
     }
 
     _handleDocumentClick(event) {
