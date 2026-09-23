@@ -350,15 +350,6 @@ class TimeframeManager {
         if (autoScaleBtn) {
             this._addListener(autoScaleBtn, 'click', (e) => { e.stopPropagation(); this.autoScaleChart(); });
         }
-        // [LOGSCALE] кнопка log рядом с автомасштабом
-        const logScaleBtn = document.getElementById('logScaleButton');
-        if (logScaleBtn) {
-            this._addListener(logScaleBtn, 'click', (e) => {
-                e.stopPropagation();
-                if (typeof this.chartManager?.toggleLogScale === 'function') this.chartManager.toggleLogScale();
-            });
-            if (typeof this.chartManager?._updateLogScaleButton === 'function') this.chartManager._updateLogScaleButton();
-        }
     }
 
     _handleDocumentClick(event) {
