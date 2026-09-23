@@ -994,6 +994,7 @@
 <div class="chart-footer-buttons">
 <div class="nav-button" id="scrollToLastCandleButton" title="К последней свече"></div>
 <div class="auto-scale-button" id="autoScaleButton" title="Автовыравнивание">A</div>
+<div class="auto-scale-button" id="logScaleButton" title="Логарифмическая шкала — для монет с огромным диапазоном (KORU, LAB и т.п.)" style="font-size:9px;">Л</div>
 </div>
 <!-- Панель настроек индикатора -->
 <div class="drawing-settings-panel" id="indicatorSettings" style="display: none;">
@@ -3395,7 +3396,7 @@ setTimeout(function() {
             transition: right 0.3s ease, bottom 0.3s ease !important;
         }
         body.ticker-panel-hidden .chart-footer-buttons {
-            right: 20px !important;
+            right: 8px !important;   /* [КНОПКИ-ПРАВЕЕ] было 20px */
         }
         .drawing-toolbar {
             transition: none !important;
