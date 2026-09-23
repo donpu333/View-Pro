@@ -1,5 +1,7 @@
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
+// [FIX-M3] '2h' в UI (TF_LABELS) отсутствует и оставлен в карте для обратной
+// совместимости: чтобы корректно выравнивать время в старых кэшах/рисунках.
 const INTERVAL_SECONDS_MAP = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
     '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
@@ -1591,7 +1593,10 @@ class ChartManager {
                 lastCandle.high = Math.max(lastCandle.high, price);
                 lastCandle.low = Math.min(lastCandle.low, price);
             }
-            this._stampCandle(lastCandle, 'ws', Date.now());
+            // [FIX-M1] сохраняем _eventTime последней свечи: тик aggTrade не должен
+            // обнулять его, иначе событийный guard порядка в updateLastCandle
+            // деградирует до сравнения по стенному receivedAt.
+            this._stampCandle(lastCandle, 'ws', Date.now(), lastCandle._eventTime ?? null);
             this.currentRealPrice = price;
             this.lastCandle = lastCandle;
             this._updateVisibleSeries({ time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close });
