@@ -238,6 +238,25 @@ class TickerPanel {
         document.addEventListener('visibilitychange', this._visibilityHandler);
         window.addEventListener('focus', this._focusHandler);
 
+        // [FAST-SWITCH] префетч кэша свечей на НАЖАТИИ по строке (до клика):
+        // ChartManager прогревает память, и switchSymbol не ждёт IndexedDB.
+        this._prefetchHandler = (e) => {
+            try {
+                const item = e.target?.closest?.('.ticker-item');
+                if (!item || !item.dataset.symbol) return;
+                if (window.chartManagerInstance?.prefetchSymbolCache) {
+                    window.chartManagerInstance.prefetchSymbolCache(
+                        item.dataset.symbol, item.dataset.exchange, item.dataset.marketType);
+                }
+            } catch (err) {}
+        };
+        const _prefetchListEl = document.getElementById('tickerListContainer');
+        if (_prefetchListEl) {
+            this._prefetchListEl = _prefetchListEl;
+            _prefetchListEl.addEventListener('mousedown', this._prefetchHandler, { passive: true });
+            _prefetchListEl.addEventListener('touchstart', this._prefetchHandler, { passive: true });
+        }
+
         if (this.watchlistManager) this.watchlistManager.createDropdownContainer();
 
         setTimeout(async () => {
@@ -747,6 +766,15 @@ class TickerPanel {
     destroy() {
         console.log('🗑️ Уничтожение TickerPanel...');
         this._isDestroyed = true;
+
+        // [FAST-SWITCH] снимаем слушатели префетча
+        if (this._prefetchListEl && this._prefetchHandler) {
+            try {
+                this._prefetchListEl.removeEventListener('mousedown', this._prefetchHandler);
+                this._prefetchListEl.removeEventListener('touchstart', this._prefetchHandler);
+            } catch (e) {}
+            this._prefetchListEl = null;
+        }
 
         this.destroyPriceEngine();
 
@@ -1525,31 +1553,3 @@ class TickerPanel {
                 if (flagContainer) {
                     const newFlag = document.createElement('div');
                     newFlag.className = `flag flag-${flag}`;
-                    newFlag.dataset.symbol = symbol;
-                    newFlag.dataset.exchange = exchange;
-                    newFlag.dataset.marketType = marketType;
-                    flagContainer.parentNode.replaceChild(newFlag, flagContainer);
-                }
-            }
-        }
-        this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС (влияет на вкладку flags)
-        this.saveState();
-        contextMenu.style.display = 'none';
-
-        if (this.state.activeTab === 'flags') {
-            this._scheduleRender();
-        }
-    }
-
-    closeContextMenu() {
-        const flagMenu = document.getElementById('flagContextMenu');
-        if (flagMenu) flagMenu.style.display = 'none';
-        const tickerMenu = document.getElementById('tickerContextMenu');
-        if (tickerMenu) tickerMenu.style.display = 'none';
-    }
-}
-
-if (typeof window !== 'undefined') {
-    window.TickerPanel = TickerPanel;
-}
