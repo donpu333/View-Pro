@@ -1,3 +1,14 @@
+/* ============================================================================
+   ПОДПИСЬ-QWEN | ✅ ФИНАЛ — ЭТИМ ФАЙЛОМ ЗАМЕНИТЬ В РЕПО: ChartManager.js (корень репо)
+   Состав: живая версия репо (коммит 00f3b17)
+     + [PERF-GATE] — троттлинг перерисовки цены на горячих монетах (<=10/сек вместо ~60)
+     + [FIX-JUMP] — убран «скачок» при переключении НЕкэшированных монет:
+       затемнение снимается после усадки графика, как у кэшированных.
+     + [FIX-JUMP2] — то же самое для смены ТАЙМФРЕЙМА (switchInterval):
+       затемнение снимается только после усадки графика — скачков после него нет.
+   Собран: 22.09.2026.
+   Откат (оригинал живого файла): uploads/Pasted_Text_1790320091215.txt
+   ============================================================================ */
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // [FIX-M3] '2h' в UI (TF_LABELS) отсутствует и оставлен в карте для обратной
@@ -2226,11 +2237,27 @@ class ChartManager {
             this._switchingSymbol = false;
             this._updatesSuspended = false;
             if (this.priceManager) this.priceManager.resume?.();
-            this._hideSymbolSwitchOverlay();
             if (dataApplied) {
                 this._startPeriodicSync();
                 this._startNewCandleChecker();
-                this._syncRecentCandles().catch(() => {});
+                // [FIX-JUMP] Затемнение гасим ТОЛЬКО после того, как первый
+                // _syncRecentCandles() усадит график (он может догрузить свечи и
+                // дёрнуть autoScale). Раньше у НЕкэшированных монет оверлей
+                // снимался СРАЗУ, а rescale отрабатывал уже на виду = «скачок».
+                // У кэшированных этот же rescale шёл внутри await cacheRefreshPromise,
+                // т.е. ПОД оверлеем, — поэтому они и выглядели плавно. Теперь оба
+                // пути одинаковы. Жёсткий лимит 1200мс — чтобы оверлей не залипал.
+                const genAtHide = this._activeGeneration;
+                Promise.race([
+                    this._syncRecentCandles().catch(() => {}),
+                    new Promise(r => setTimeout(r, 1200))
+                ]).then(() => {
+                    if (this._destroyed) return;
+                    if (this._activeGeneration !== genAtHide) return; // уже другое переключение
+                    this._hideSymbolSwitchOverlay();
+                });
+            } else {
+                this._hideSymbolSwitchOverlay();
             }
             this._dispatchPendingSwitch();
         }
@@ -2262,6 +2289,10 @@ class ChartManager {
 
         if (window.wsManager?.clearKlineQueue) window.wsManager.clearKlineQueue();
 
+        // [FIX-JUMP2] Флаги для «плавного» снятия затемнения (см. finally ниже).
+        let intervalApplied = false;  // данные нового ТФ реально легли на график
+        let bgRefreshDone = false;    // фоновый досинхрон кэша успел отработать ПОД оверлеем
+
         try {
             this._suspendAllUpdates();
             // [FIX-D1] Интервал, localStorage и WS-подписка фиксируются ТОЛЬКО после
@@ -2285,12 +2316,16 @@ class ChartManager {
                 this.setDataQuick(candles, this.currentInterval, this.currentSymbol, this.currentExchange, this.currentMarketType, true, resolve);
             });
             if (this._activeGeneration !== generationId) return;
+            intervalApplied = true;
             if (!isFromCache) this.saveCandlesToCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles).catch(() => {});
             if (isFromCache) {
-                await Promise.race([
-                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {}),
-                    new Promise(r => setTimeout(r, 2500))
-                ]);
+                // [FIX-JUMP2] race вернёт true, если фон УСПЕЛ досинхронить кэш под
+                // оверлеем (отдельный _syncRecentCandles в finally тогда не нужен),
+                // и false, если сработал лимит 2500мс — данные могли остаться старыми.
+                bgRefreshDone = await Promise.race([
+                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).then(() => true, () => true),
+                    new Promise(r => setTimeout(() => r(false), 2500))
+                ]) === true;
                 if (this._activeGeneration !== generationId) return;
             }
             // [FIX] Загрузка рисунков для нового таймфрейма — та же логика, что в switchSymbol.
@@ -2305,9 +2340,41 @@ class ChartManager {
             this._isSwitchingInterval = false;
             this._updatesSuspended = false;
             if (this.priceManager) this.priceManager.resume?.();
-            this._hideSymbolSwitchOverlay();
             this._startPeriodicSync();
             this._startNewCandleChecker();
+            // [FIX-JUMP2] Затемнение при смене ТФ снимается ТОЛЬКО после того, как
+            // график «уселся». Что могло дёрнуть его уже НА ВИДУ:
+            //   • _syncRecentCandles() догружает пропущенные свечи -> autoScale() (~стр. 924);
+            //   • _startNewCandleChecker() сразу гоняет _catchUpMissedCandles();
+            //   • _healDataGaps() лечит дырки асинхронно и тоже перерисовывает.
+            // Теперь всё это происходит под чёрным оверлеем — как в switchSymbol.
+            // Досинхрон пропускаем, если кэш уже досинхронизирован под оверлеем
+            // (bgRefreshDone === true) — лишний сетевой запрос не нужен.
+            const stale = this._activeGeneration !== generationId; // уже другое переключение
+            if (stale || !intervalApplied) {
+                // либо график уже принадлежит другому переключению (оверлей гасит оно),
+                // либо данные нового ТФ не легли (ошибка) — ждать нечего, гасим сразу.
+                this._hideSymbolSwitchOverlay();
+            } else {
+                const genAtHide = this._activeGeneration;
+                const settle = (!bgRefreshDone)
+                    // кэш НЕ был досинхронизирован под оверлеем -> делаем это сейчас,
+                    // иначе он досинхронизируется позже и дёрнет масштаб уже на виду.
+                    ? Promise.race([
+                        this._syncRecentCandles().catch(() => {}),
+                        new Promise(r => setTimeout(r, 1200))   // жёсткий лимит: оверлей не залипнет
+                    ])
+                    // кэш досинхронизирован -> хватит короткой паузы, чтобы
+                    // индикаторы/разделители/хайлайты дорисовались под затемнением.
+                    : new Promise(r => setTimeout(r, 60));
+                settle
+                    .then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))
+                    .then(() => {
+                        if (this._destroyed) return;
+                        if (this._activeGeneration !== genAtHide) return; // график уже чужой
+                        this._hideSymbolSwitchOverlay();
+                    });
+            }
             this._dispatchPendingSwitch();
         }
     }
