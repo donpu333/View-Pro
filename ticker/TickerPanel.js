@@ -1,3 +1,9 @@
+/* ============================================================================
+   ПОДПИСЬ-QWEN | ✅ ФИНАЛ — ЭТИМ ФАЙЛОМ ЗАМЕНИТЬ В РЕПО: ticker/TickerPanel.js (В ПАПКУ ticker!)
+   Состав: живая версия репо (коммит 00f3b17) + [ANTI-BAN] — на 429/418
+   запросы останавливаются сразу, без ретраев (ретраи превращают 429 в бан IP).
+   Собран: 24.09.2026. Больше НИЧЕГО не менялось.
+   ============================================================================ */
 const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
     CACHE_REFRESH_INTERVAL: 4 * 60 * 60 * 1000,
@@ -533,7 +539,14 @@ class TickerPanel {
                     const response = await fetch(url, { signal: controller.signal });
                     clearTimeout(timeoutId);
 
-                    if (response.status === 418 || response.status === 429) continue;
+                    // [ANTI-BAN] 429/418 = биржа сказала «слишком много».
+                    // Немедленно останавливаемся и НЕ ретраим: по правилам Binance
+                    // продолжение запросов после 429 превращается в 418 (бан IP),
+                    // а продолжение после 418 — продлевает бан.
+                    if (response.status === 418 || response.status === 429) {
+                        console.warn(`⛔ Binance ${response.status} — запросы остановлены, Retry-After: ${response.headers.get('Retry-After') || 'нет'}`);
+                        return null;
+                    }
                     if (!response.ok) return null;
                     return await response.json();
                 } catch (e) {
