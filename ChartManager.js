@@ -100,6 +100,12 @@ class ChartManager {
         this._priceUpdateRafId = null;
         this._pendingPriceValue = null;
         this._pendingPriceUpdate = null;
+        // [PERF-GATE] Троттлинг перерисовки графика от тиков aggTrade:
+        // не чаще 10 раз в секунду (1 раз в 100 мс). На спокойных монетах
+        // (тик реже 100 мс) гейт прозрачен — всё проходит как раньше.
+        this._lastPriceGateAt = 0;
+        this._priceGateMinMs = 100;
+        this._priceGateTimeout = null;
         this._candleTimeMap = new Map();
         this._destroyed = false;
         this._lastSeriesResyncAt = 0;
@@ -1546,6 +1552,14 @@ class ChartManager {
     }
 
     // =============== PRICE LINE (TICKS) ===============
+    // [PERF-GATE] На горячих монетах aggTrade летит 50-200 раз/с, и каждый тик
+    // тянул полную перерисовку графика (series.update + объёмы + цвет линии +
+    // заголовок) до 60 раз/с. Гейт оставляет не более 10 перерисовок в секунду.
+    // Тики внутри окна НЕ теряются: последний сохраняется в _pendingPriceUpdate
+    // и в конце окна гарантированно применяется через _flushPendingPrice —
+    // цена на графике отстаёт максимум на 100 мс.
+    // На OHLC свечи это не влияет: авторитетные данные приходят из WS kline
+    // (updateLastCandle) и _syncRecentCandles — они не троттлятся.
     _syncPriceLine(priceOrObj) {
         let price = priceOrObj, tickTime = null;
         if (priceOrObj && typeof priceOrObj === 'object') {
@@ -1556,8 +1570,43 @@ class ChartManager {
         }
         if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
         if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) return;
+
         this._pendingPriceUpdate = { price, time: tickTime };
+
+        // [PERF-GATE] окно 100 мс: внутри окна только копим последний тик
+        const now = Date.now();
+        const elapsed = now - this._lastPriceGateAt;
+        if (elapsed < this._priceGateMinMs) {
+            if (this._priceGateTimeout === null) {
+                this._priceGateTimeout = setTimeout(() => {
+                    this._priceGateTimeout = null;
+                    this._flushPendingPrice();
+                }, this._priceGateMinMs - elapsed);
+            }
+            return;
+        }
+
+        this._lastPriceGateAt = now;
         if (this._priceUpdateRafId !== null) return;
+        this._priceUpdateRafId = requestAnimationFrame(() => {
+            this._priceUpdateRafId = null;
+            const update = this._pendingPriceUpdate;
+            this._pendingPriceUpdate = null;
+            if (update && update.price !== undefined) this._applyPriceUpdate(update.price, update.time);
+        });
+    }
+
+    // [PERF-GATE] Флаш последнего тика, накопленного за окно гейта:
+    // график всегда догоняет до актуальной цены (отставание не более ~100 мс).
+    _flushPendingPrice() {
+        if (this._destroyed) return;
+        if (this._updatesSuspended || !this._isChartValid() || this._isRestoringZoom || this._isSwitchingInterval) {
+            this._pendingPriceUpdate = null;
+            return;
+        }
+        if (!this._pendingPriceUpdate || this._pendingPriceUpdate.price === undefined) return;
+        this._lastPriceGateAt = Date.now();
+        if (this._priceUpdateRafId !== null) return; // перерисовка уже запланирована — она возьмёт свежую цену
         this._priceUpdateRafId = requestAnimationFrame(() => {
             this._priceUpdateRafId = null;
             const update = this._pendingPriceUpdate;
@@ -2030,6 +2079,11 @@ class ChartManager {
     // =============== SUSPEND/RESUME ===============
     _suspendAllUpdates() {
         this._updatesSuspended = true;
+        // [PERF-GATE] выбрасываем отложенный тик СТАРОГО символа/ТФ, чтобы он
+        // не вылез на новый график после завершения переключения.
+        if (this._priceGateTimeout !== null) { clearTimeout(this._priceGateTimeout); this._priceGateTimeout = null; }
+        this._pendingPriceUpdate = null;
+        this._lastPriceGateAt = 0;
         if (this.priceManager) this.priceManager.suspend?.();
         if (this.timerManager) this.timerManager.stop?.();
     }
@@ -3006,6 +3060,9 @@ class ChartManager {
         // [ШАГ 1] Удалены cancelAnimationFrame(this._drawingsUpdateRafId)
         if (this._updatePositionRafId) { cancelAnimationFrame(this._updatePositionRafId); this._updatePositionRafId = null; }
         if (this._priceUpdateRafId) { cancelAnimationFrame(this._priceUpdateRafId); this._priceUpdateRafId = null; }
+        // [PERF-GATE] чистим гейт
+        if (this._priceGateTimeout !== null) { clearTimeout(this._priceGateTimeout); this._priceGateTimeout = null; }
+        this._lastPriceGateAt = 0;
         this._pendingPriceValue = null;
         this._pendingPriceUpdate = null;
         if (this._currentFetchController) { this._currentFetchController.abort(); this._currentFetchController = null; }
