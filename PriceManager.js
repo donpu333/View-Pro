@@ -1,59 +1,4 @@
-/**
- * PriceManager v20.
- *
- * ДОБАВЛЕНО СВЕРХ v19 (по логам «binance:spot ЗОМБИ! Нет данных 32с»):
- *  A. Binance больше не тянет !ticker@arr (весь рынок раз в секунду). Вместо этого —
- *     combined-стрим только по тем символам, на которые реально есть подписчики.
- *     Наблюдаемое поведение то же (v19 и так фильтровал arr по подписчикам до _setPrice),
- *     но трафик и JSON.parse в основном потоке падают на порядки.
- *     Откат на старое поведение: new PriceManager({ useCombinedStreams: false }).
- *  B. _checkHeartbeats устойчив к сну/окклюзии вкладки: если сам таймер сработал с
- *     опозданием > 15с, страница была заморожена, отсчёты сокетов бессмысленны —
- *     перетариваем метки и проверяем на следующем тике вместо немедленного разрыва.
- *     Плюс не дёргаем сокеты при navigator.onLine === false.
- *  C. Обработка события serverShutdown — Binance сам предупреждает о перезапуске
- *     WS-сервера, переподключаемся превентивно, а не по факту обрыва.
- *  D. Живые SUBSCRIBE/UNSUBSCRIBE на открытом сокете с троттлингом: у Binance SPOT
- *     лимит 5 входящих сообщений/с (futures — 10/с), за превышение соединение рвут,
- *     а повторяющиеся IP банят.
- *
- * ---------------------------------------------------------------------------
- * PriceManager v19 — исправленная версия.
- *
- * Что починено относительно v18 (номера соответствуют pm/REVIEW.md):
- *   1. change приведён к ОДНОЙ единице (проценты) для всех источников
- *   2. Bybit delta-сообщения больше не обнуляют change/volume («нет поля» = «не изменилось»)
- *   3. trades по Bybit не выдумывается из несуществующего поля count
- *   4. _restPollInFlight — REST-опросы не накладываются друг на друга
- *   5. fetch с AbortController-таймаутом + учёт Retry-After, обработка 418
- *   6. REST: spot — батчи symbols[] (weight 2), futures — поsymbol'но до 30 (weight 1),
- *      иначе полный дамп (weight 40). Bybit — точечно до 10 символов
- *   7. _normKey(): подписки в любом регистре/с дефисами больше не «мёртвые»
- *   8. один колбэк не дёргается дважды на одно и то же событие
- *   9. pagehide вместо beforeunload + start() — менеджер больше не умирает необратимо
- *  10. Bybit-сокет закрывается, когда подписок не осталось
- *  11. _stopPing вызывается явно при принудительном реконнекте (общий _forceReconnect)
- *  12. subscribe-батчи размазаны во времени (защита от rate-limit disconnect)
- *  13. NaN больше не ломает дедупликацию
- *  14. backoff честно начинается с reconnectDelay
- *  15. close() чистит connections/state — getStatus() не врёт
- *  16. sweeper: prices не растёт бесконечно
- *  17. кэш-колбэк полный (volume/trades) и отменяется при unsubscribe
- *  18. fetchPrice использует общий retry/парсинг
- *  19. _connectionState выставляется и для Bybit
- *  20. JSON.parse отделён от бизнес-хэндлера, ошибки больше не глотаются молча
- *  +  реконнект по событию online
- *
- * ⚠️ Единственное изменение контракта для потребителей: payload.change может быть
- *    `undefined` до первого snapshot (раньше там был 0/NaN). На практике и Binance,
- *    и Bybit всегда отдают это поле в первом же сообщении, так что окно очень короткое.
- *    Если UI делает change.toFixed(2) — добавьте `?? 0`.
- *
- * ℹ️ URL wss://fstream.binance.com/market/ws/!ticker@arr — КОРРЕКТНЫЙ.
- *    Binance в 2026 перевёл Futures WS на маршрутизацию /public, /market, /private;
- *    !ticker@arr относится к категории Market. Legacy /ws выведен из эксплуатации
- *    2026-04-23. Не «чинить»!
- */
+
 
 class PriceManager {
     // «нет поля» в delta-сообщении ≠ 0. Возвращаем undefined, чтобы _setPrice сохранил старое.
@@ -102,7 +47,7 @@ class PriceManager {
         this.config = {
             reconnectDelay: 15000,
             maxReconnectDelay: 120000,
-            restPollInterval: 10000,
+            restPollInterval: 60000,           // [ANTI-BAN] было 10с: алерты и так получают цены по WS, REST — лишь страховка
             bybitPingInterval: 15000,
             startupDelay: 2000,
             flushInterval: 100,
@@ -795,6 +740,9 @@ class PriceManager {
     // =========================================================================
     async _pollAlertPricesViaRest() {
         if (this._destroyed) return;
+        // [ANTI-BAN] скрытая вкладка не опрашивает биржу: WS в фоне продолжает
+        // работать, алерты срабатывают через него — REST-страховка подождёт
+        if (typeof document !== 'undefined' && document.hidden) return;
         // fix 4: interval не ждёт await. Без этого флага медленный опрос (ретраи на 429 —
         // до 30с) перекрывается следующими, запросы наслаиваются лавиной → 418 → бан IP.
         if (this._restPollInFlight) return;
@@ -952,7 +900,12 @@ class PriceManager {
                 const response = await this._fetchWithTimeout(url);
                 if (response.ok) return response;
 
-                if (response.status === 429 || response.status === 418) {
+                if (response.status === 418) {
+                    // [ANTI-BAN] 418 = IP уже забанен; любые ретраи продлевают бан
+                    console.warn('⛔ Binance 418 (IP ban) — REST остановлен');
+                    return null;
+                }
+                if (response.status === 429) {
                     let wait = 5000 * (i + 1);
                     try {
                         const ra = parseInt(response.headers?.get?.('Retry-After') || '', 10);
