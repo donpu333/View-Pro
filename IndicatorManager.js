@@ -57,6 +57,8 @@ class IndicatorManager {
                 success: true 
             });
         }
+        // [FIX-I5] после применения новых данных индикаторов выравниваем шкалы панелей
+        this.panelManager?.syncPanelsNow?.();
     }
     
     _scheduleBatchFlush() {
@@ -110,12 +112,20 @@ class IndicatorManager {
         }
     }
     
+    // [FIX-I1] Точки прогрева (value=null/NaN) НЕ выбрасываются, а превращаются
+    // в whitespace-данные lightweight-charts ({time} без value): серия индикатора
+    // всегда той же длины, что и свечи, поэтому логические индексы панелей и
+    // главного графика совпадают 1:1 — скролл/зум/перекрестие синхронны.
     _filterData(data) {
         if (!data || !Array.isArray(data)) return [];
-        return data.filter(item => 
-            item && item.time !== undefined && item.value !== undefined && 
-            !isNaN(item.value) && item.time > 0
-        );
+        const out = [];
+        for (const item of data) {
+            if (!item || item.time === undefined || !(item.time > 0)) continue;
+            const v = item.value;
+            if (v === undefined || v === null || (typeof v === 'number' && isNaN(v))) out.push({ time: item.time });
+            else out.push({ time: item.time, value: v });
+        }
+        return out;
     }
     
     _initIndicatorPanels() {
@@ -231,6 +241,12 @@ class IndicatorManager {
         return true;
     }
     
+    // [FIX-I3] Мягкая просьба пересчитать индикаторы (на тике цены/клины).
+    // Внутренний троттлинг updateAllIndicators() сам ограничит частоту.
+    scheduleUpdate() {
+        this.updateAllIndicators();
+    }
+
     updateAllIndicators() {
         if (!this.worker) return;
         
