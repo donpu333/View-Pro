@@ -1,14 +1,4 @@
-/* ============================================================================
-   ПОДПИСЬ-QWEN | ✅ ФИНАЛ — ЭТИМ ФАЙЛОМ ЗАМЕНИТЬ В РЕПО: ChartManager.js (корень репо)
-   Состав: живая версия репо (коммит 00f3b17)
-     + [PERF-GATE] — троттлинг перерисовки цены на горячих монетах (<=10/сек вместо ~60)
-     + [FIX-JUMP] — убран «скачок» при переключении НЕкэшированных монет:
-       затемнение снимается после усадки графика, как у кэшированных.
-     + [FIX-JUMP2] — то же самое для смены ТАЙМФРЕЙМА (switchInterval):
-       затемнение снимается только после усадки графика — скачков после него нет.
-   Собран: 22.09.2026.
-   Откат (оригинал живого файла): uploads/Pasted_Text_1790320091215.txt
-   ============================================================================ */
+
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // [FIX-M3] '2h' в UI (TF_LABELS) отсутствует и оставлен в карте для обратной
@@ -92,6 +82,7 @@ class ChartManager {
         this._historyFetchController = null;
         this._backgroundFetchController = null;
         this._healFetchController = null;
+        this._prefetchFetchController = null;   // [HIST-FIX] отдельный контроллер фонового prefetch истории
         this._updateTimeout = null;
         this._autoScalePending = false;
         this._isVerticalZooming = false;
@@ -144,12 +135,41 @@ class ChartManager {
         this._historyEndTime = null;
         this._fetchPromise = null;
 
+        // ========================== [HIST-FIX] =========================================
+        // Причина «тормозов истории» именно на коротких ТФ (1m/3m/5m/15m):
+        //   1) стартовая загрузка — всегда 1000 свечей. Для 1d это ~3 года, для 1h ~41 день,
+        //      а для 1m — всего ~16 часов. То есть на 1m левого края графика пользователь
+        //      достигает через пару прокруток, а на 1h/1d — практически никогда. Отсюда и
+        //      ощущение «на часе и дне история летает, а на минутах тормозит»: на длинных ТФ
+        //      пагинация просто не запускается.
+        //   2) догрузка истории стартовала ТОЛЬКО через 150 мс после остановки скролла и
+        //      упиралась в жёсткий троттлинг 1500 мс, который молча выходил без повтора.
+        //      Быстрая прокрутка успевала доехать до пустого края -> график вставал на
+        //      1.5–3 с (троттлинг + сеть), потом скачок — и так на каждой странице.
+        //   3) каждая страница тянула полный setData по всем ~5000 свечей + пересборку
+        //      объёмов + пересчёт индикаторов, причём массив баров собирался заново
+        //      (spread {...c} + Map + sort) на КАЖДУЮ догрузку и КАЖДЫЙ trim.
+        // Ниже: упреждающий prefetch цепочкой (без остановки у края), пачка 1500 вместо
+        // 1000 на коротких ТФ, локальный кэш страниц истории в IndexedDB (повторная
+        // прокрутка того же участка — без сети, мгновенно) и кэш LW-баров.
+        // =================================================================================
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        this._historyCheckThrottleMs = 120;   // как часто проверяем край ВО ВРЕМЯ скролла
+        this._lastHistoryCheckAt = 0;
+        this._historyThrottleRetry = null;    // отложенный повтор, если попали в троттлинг
+        this._historyPrefetchRunning = false; // цепочка фоновых догрузок уже идёт
+        this._historyPrefetchMaxPages = isMobile ? 2 : 4;  // страниц за один заход
+        this._prefetchPageDelayMs = 220;      // пауза между страницами (бережём rate limit)
+        this._prefetchIdleDelayMs = 900;      // когда начинать копать вглубь после загрузки монеты
+        this._historyCacheTtlMs = 7 * 24 * 60 * 60 * 1000; // закрытые свечи не меняются — держим неделю
+        this._lwBarsCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
+
         this._cachedPrecisionKey = null;
         this._cachedPrecisionValue = null;
         this._lastInferredPrecision = null;
 
-        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        this._maxCandlesInMemory = isMobile ? 3000 : 5000;
+        // [HIST-FIX] isMobile поднят выше (нужен параметрам истории)
+        this._maxCandlesInMemory = isMobile ? 3000 : 8000;   // было 5000: реже trim и реже «пилот» у левого края
         this._leftBuffer = isMobile ? 1000 : 2000;
         this._rightBuffer = isMobile ? 500 : 1000;
         this._trimDebounceTimeout = null;
@@ -495,10 +515,21 @@ class ChartManager {
         return { time: t, open: o, high: h, low: l, close: cl };
     }
 
+    // [HIST-FIX] Было: на КАЖДЫЙ вызов создавалось по копии {...c} на каждую свечю
+    // (5000 объектов), складывалось в Map и сортировалось. Вызов идёт на каждую страницу
+    // истории, на каждый trim и на каждое полное перерисование — на коротких ТФ это
+    // главный источник «фризов» при листании. Теперь:
+    //   • объект бара кэшируется в WeakMap по самой свече и пересоздаётся только если
+    //     свеча реально изменилась (живая свеча) — мусора и работы почти нет;
+    //   • Map + sort включаются только если вход НЕ отсортирован (в реальности он всегда
+    //     отсортирован, так что sort не выполняется вовсе).
     _toLwBarsArray(arr) {
         if (!Array.isArray(arr)) return [];
         const interval = this.currentInterval;
-        const byTime = new Map();
+        const cache = this._lwBarsCache;
+        const out = [];
+        let sorted = true;
+        let prevTime = -Infinity;
         for (let i = 0; i < arr.length; i++) {
             const c = arr[i];
             if (!c || typeof c !== 'object') continue;
@@ -506,11 +537,33 @@ class ChartManager {
             if (typeof rawT !== 'number' || !isFinite(rawT) || !Number.isInteger(rawT) || rawT <= 0) continue;
             const alignedT = this._alignTimeForInterval(rawT, interval);
             if (!Number.isInteger(alignedT) || alignedT <= 0) continue;
-            const b = this._toLwBar({ ...c, time: alignedT });
-            if (!b) continue;
-            byTime.set(alignedT, b);
+            if (alignedT < prevTime) sorted = false;
+            prevTime = alignedT;
+
+            let bar = cache ? cache.get(c) : null;
+            if (bar && bar.time === alignedT && bar.open === c.open && bar.high === c.high &&
+                bar.low === c.low && bar.close === c.close) {
+                out.push(bar);
+                continue;
+            }
+            // валидация на месте, без spread-копии (было: {...c, time: alignedT})
+            const o = c.open, h = c.high, l = c.low, cl = c.close;
+            if (typeof o !== 'number' || !isFinite(o) || o <= 0) continue;
+            if (typeof h !== 'number' || !isFinite(h) || h <= 0) continue;
+            if (typeof l !== 'number' || !isFinite(l) || l <= 0) continue;
+            if (typeof cl !== 'number' || !isFinite(cl) || cl <= 0) continue;
+            if (alignedT > 4102444800) continue;
+            if (h < l || o > h || o < l || cl > h || cl < l) continue;
+            bar = { time: alignedT, open: o, high: h, low: l, close: cl };
+            if (cache) cache.set(c, bar);
+            out.push(bar);
         }
-        return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+        if (!sorted) {
+            const byTime = new Map();
+            for (const b of out) byTime.set(b.time, b);
+            return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+        }
+        return out;
     }
 
     _setVisibleSeriesData(lwBars, clearHidden = false) {
@@ -1298,6 +1351,10 @@ class ChartManager {
                 const lastIndex = this.chartData.length - 1;
                 this._isViewingHistory = range.to < lastIndex;
             }
+            // [HIST-FIX] Проверяем левый край ПРЯМО ВО ВРЕМЯ скролла (троттлинг 120 мс),
+            // а не только через 150 мс после остановки. Иначе быстрая прокрутка на 1m
+            // успевала доехать до пустого края раньше, чем вообще стартовала загрузка.
+            this._checkHistoryPreloadLive(range);
             const barSpacing = this.chart.timeScale().options().barSpacing;
             if (barSpacing) this._pendingBarSpacing = barSpacing;
             clearTimeout(this._scrollStopTimeout);
@@ -2051,6 +2108,13 @@ class ChartManager {
             this.isLoadingMore = false;
             this._pendingHistoryLoad = false;
             this._lastHistoryLoadTime = 0;
+            // [HIST-FIX] сбрасываем состояние пагинации под новые данные
+            this._historyPrefetchRunning = false;
+            if (this._historyThrottleRetry) { clearTimeout(this._historyThrottleRetry); this._historyThrottleRetry = null; }
+            this._lastHistoryCheckAt = 0;
+            // [HIST-FIX] и сразу копаем историю ВГЛУБЬ в фоне: к моменту, когда
+            // пользователь долистает до края, страницы уже будут в памяти.
+            this._scheduleDeepPrefetch();
         } catch (error) {
             console.error('❌ Ошибка в setDataQuick:', error);
             if (this.chart) this.chart.applyOptions({ handleScroll: true, handleScale: true });
@@ -2281,6 +2345,9 @@ class ChartManager {
         if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
         if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
         if (this._healFetchController) { this._healFetchController.abort(); this._healFetchController = null; }
+        // [HIST-FIX] гасим фоновый prefetch истории — данные уже чужие
+        if (this._prefetchFetchController) { this._prefetchFetchController.abort(); this._prefetchFetchController = null; }
+        this._historyPrefetchRunning = false;
 
         this._lastKlineEventTime = 0;
         this._catchingUpMissed = false;
@@ -2963,6 +3030,12 @@ class ChartManager {
             if (this._backgroundFetchController) this._backgroundFetchController.abort();
             this._backgroundFetchController = new AbortController();
             controller = this._backgroundFetchController;
+        } else if (requestType === 'prefetch') {
+            // [HIST-FIX] фоновая догрузка истории вглубь — свой контроллер,
+            // чтобы не пересекаться с user/history/heal/background запросами
+            if (this._prefetchFetchController) this._prefetchFetchController.abort();
+            this._prefetchFetchController = new AbortController();
+            controller = this._prefetchFetchController;
         } else {
             if (this._currentFetchController) this._currentFetchController.abort();
             this._currentFetchController = new AbortController();
@@ -3051,6 +3124,7 @@ class ChartManager {
             if (requestType === 'history' && this._historyFetchController?.signal === signal) this._historyFetchController = null;
             else if (requestType === 'heal' && this._healFetchController?.signal === signal) this._healFetchController = null;
             else if (requestType === 'background' && this._backgroundFetchController?.signal === signal) this._backgroundFetchController = null;
+            else if (requestType === 'prefetch' && this._prefetchFetchController?.signal === signal) this._prefetchFetchController = null;
             else if (requestType === 'user' && this._currentFetchController?.signal === signal) this._currentFetchController = null;
         }
     }
@@ -3136,6 +3210,10 @@ class ChartManager {
         if (this._historyFetchController) { this._historyFetchController.abort(); this._historyFetchController = null; }
         if (this._backgroundFetchController) { this._backgroundFetchController.abort(); this._backgroundFetchController = null; }
         if (this._healFetchController) { this._healFetchController.abort(); this._healFetchController = null; }
+        // [HIST-FIX]
+        if (this._prefetchFetchController) { this._prefetchFetchController.abort(); this._prefetchFetchController = null; }
+        this._historyPrefetchRunning = false;
+        if (this._historyThrottleRetry) { clearTimeout(this._historyThrottleRetry); this._historyThrottleRetry = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
         if (this._trimDebounceTimeout) { clearTimeout(this._trimDebounceTimeout); this._trimDebounceTimeout = null; }
         if (this._candleCheckerTimeout) { clearTimeout(this._candleCheckerTimeout); this._candleCheckerTimeout = null; }
@@ -3273,8 +3351,9 @@ class ChartManager {
     // =============== HISTORY LOAD / TRIM ===============
     onVisibleLogicalRangeChange(range) {
         if (!range || !this.chartData.length || !this._isChartValid()) return;
-        const fromIndex = Math.max(0, Math.floor(range.from));
-        if (fromIndex < this._preloadThreshold && this.hasMoreData && !this.isLoadingMore) this._loadHistoryAsync();
+        // [HIST-FIX] порог догрузки теперь зависит от ширины видимой области и от ТФ
+        // (было фиксированных 400 баров — на 1m это меньше экрана при сильном зуме)
+        if (this._historyNeededNow(range)) { this._lastHistoryCheckAt = performance.now(); this._loadHistoryAsync(); }
         this._scheduleTrim(range);
     }
 
@@ -3341,66 +3420,342 @@ class ChartManager {
         } catch (e) {} finally { this._isTrimming = false; }
     }
 
+    // =============== [HIST-FIX] HISTORY LOAD / PREFETCH ===============
+    // Сколько свечей просить за одну страницу истории.
+    // Binance/Bybit отдают максимум 1500 за запрос — на коротких ТФ берём максимум,
+    // чтобы страниц (и полных setData) было в полтора раза меньше.
+    _historyBatchFor(interval) {
+        const sec = this._getIntervalSecondsFor(interval);
+        if (sec <= 1800) return 1500;   // 1m..30m
+        if (sec <= 14400) return 1200;  // 1h..4h
+        return 1000;                    // 6h..1M
+    }
+
+    // Насколько рано стартовать догрузку: на коротких ТФ листают намного быстрее
+    // (в свечах/секунду), поэтому и запас нужен больше.
+    _preloadThresholdFor(range) {
+        const visible = (range && isFinite(range.from) && isFinite(range.to)) ? Math.max(10, Math.ceil(range.to - range.from)) : 200;
+        const sec = this._getIntervalSecondsFor(this.currentInterval);
+        let mult = 1.0;
+        if (sec <= 300) mult = 3.0;        // 1m..5m
+        else if (sec <= 1800) mult = 2.2;  // 15m..30m
+        else if (sec <= 14400) mult = 1.5; // 1h..4h
+        const t = Math.round(visible * mult);
+        return Math.max(this._preloadThreshold, Math.min(t, 2500));
+    }
+
+    // Нужна ли догрузка прямо сейчас (range.from НЕ клампим: за левым краем он отрицательный)
+    _historyNeededNow(range) {
+        if (!this.hasMoreData || this.isLoadingMore) return false;
+        if (!this._isChartValid()) return false;
+        if (this._destroyed || this._switchingSymbol || this._isSwitchingInterval || this._updatesSuspended) return false;
+        if (!this.chartData || this.chartData.length === 0) return false;
+        if (!range || !isFinite(range.from)) return false;
+        if (range.from >= 0 && range.to <= 0) return false;   // ещё нет самих данных
+        return range.from < this._preloadThresholdFor(range);
+    }
+
+    // Проверка ВО ВРЕМЯ скролла (троттлинг 120 мс).
+    // Важно: пока пользователь тащит график, данные на серию НЕ кладём — prepend
+    // смещает логические индексы и может дёрнуть картинку прямо под курсором.
+    // Вместо этого заранее тянем следующую страницу в локальный кэш: как только
+    // скролл остановится (150 мс), страница ляжет на график уже без сети.
+    _checkHistoryPreloadLive(range) {
+        if (!this._historyNeededNow(range)) return;
+        const now = performance.now();
+        if (now - this._lastHistoryCheckAt < this._historyCheckThrottleMs) return;
+        this._lastHistoryCheckAt = now;
+        if (this._isScrolling || this._isScrollingFast) { this._warmHistoryCache(); return; }
+        this._loadHistoryAsync();
+    }
+
+    // [HIST-FIX] Тихо тянет следующую страницу истории в IndexedDB (без отрисовки).
+    // Даёт «горячий» кэш: реальная догрузка на график после остановки скролла
+    // происходит уже без ожидания сети (200–600 мс -> единицы мс).
+    _warmHistoryCache() {
+        if (!this.hasMoreData || this.isLoadingMore) return;
+        if (this._prefetchFetchController) return;   // запрос уже в полёте
+        if (!this.chartData || this.chartData.length === 0) return;
+        const genId = this._activeGeneration;
+        const interval = this.currentInterval;
+        const symbol = this.currentSymbol;
+        const cut = this.chartData[0].time;
+        const batchSize = this._historyBatchFor(interval);
+        this.fetchKlines(symbol, this.currentExchange, this.currentMarketType, interval, batchSize, (cut * 1000) - 1, 'prefetch')
+            .then(page => {
+                if (!page || page.length === 0) return;
+                if (this._activeGeneration !== genId || this.currentInterval !== interval || this.currentSymbol !== symbol) return;
+                if (this.chartData.length === 0 || this.chartData[0].time !== cut) return;
+                return this._saveHistoryPageToCache(symbol, this.currentExchange, this.currentMarketType, interval, cut, page);
+            })
+            .catch(() => {});
+    }
+
     async _loadHistoryAsync() {
         if (this.isLoadingMore || !this.hasMoreData || !this._isChartValid()) return;
         const now = Date.now();
-        if (now - this._lastHistoryLoadTime < 1500) return;
+        if (now - this._lastHistoryLoadTime < 1200) {
+            // [HIST-FIX] было 1500 мс и МОЛЧАЛИВЫЙ выход: если пользователь продолжал
+            // листать, повторная попытка случалась только на следующем событии скролла,
+            // а график всё это время стоял у пустого края. Теперь ставим отложенный повтор.
+            if (!this._historyThrottleRetry) {
+                this._historyThrottleRetry = setTimeout(() => {
+                    this._historyThrottleRetry = null;
+                    this._lastHistoryCheckAt = 0;
+                    const r = this._lastVisibleRange || this.chart?.timeScale()?.getVisibleLogicalRange?.();
+                    if (this._historyNeededNow(r)) this._loadHistoryAsync();
+                }, 1200 - (now - this._lastHistoryLoadTime) + 30);
+            }
+            return;
+        }
         this.isLoadingMore = true;
         this._lastHistoryLoadTime = now;
 
         const genId = this._activeGeneration;
         const interval = this.currentInterval;
+        const batchSize = this._historyBatchFor(interval);
 
         try {
+            if (!this.chartData.length) { this.hasMoreData = false; return; }
             const oldestCandle = this.chartData[0];
-            if (!oldestCandle) { this.hasMoreData = false; this.isLoadingMore = false; return; }
-            const endTime = (oldestCandle.time * 1000) - 1;
-            const olderCandles = await this.fetchKlines(
-                this.currentSymbol, this.currentExchange, this.currentMarketType,
-                this.currentInterval, this._batchSize, endTime, 'history'
+            if (!oldestCandle) { this.hasMoreData = false; return; }
+
+            // [HIST-FIX] сначала локальный кэш страниц (мгновенно, без сети и без rate limit),
+            // затем — REST.
+            let page = await this._loadHistoryPageFromCache(
+                this.currentSymbol, this.currentExchange, this.currentMarketType, interval, oldestCandle.time
             );
-            if (olderCandles === null) { this.isLoadingMore = false; return; }
-            if (!olderCandles || olderCandles.length === 0 || !this._isChartValid() ||
-                this._activeGeneration !== genId || this.currentInterval !== interval || this.chartData.length === 0) {
-                this.hasMoreData = false; this.isLoadingMore = false; return;
-            }
-            const oldestExistingTime = this.chartData[0].time;
-            const uniqueOlder = olderCandles.filter(c => c.time < oldestExistingTime);
-
-            if (uniqueOlder.length > 0) {
-                const ts = this.chart.timeScale();
-                const cr = ts.getVisibleLogicalRange();
-                const addedCount = uniqueOlder.length;
-                let combined = [...uniqueOlder, ...this.chartData];
-                let trimmedFromFront = 0;
-                if (combined.length > this._maxCandlesInMemory + 500) {
-                    trimmedFromFront = combined.length - this._maxCandlesInMemory;
-                    combined = combined.slice(trimmedFromFront);
+            let fromNetwork = false;
+            if (!page || page.length === 0) {
+                page = await this.fetchKlines(
+                    this.currentSymbol, this.currentExchange, this.currentMarketType,
+                    interval, batchSize, (oldestCandle.time * 1000) - 1, 'history'
+                );
+                if (page === null) return;                       // abort/timeout — hasMoreData не трогаем
+                fromNetwork = true;
+                if (page.length > 0) {
+                    this._saveHistoryPageToCache(
+                        this.currentSymbol, this.currentExchange, this.currentMarketType, interval, oldestCandle.time, page
+                    ).catch(() => {});
                 }
-                this.chartData = combined;
-                this._rebuildTimeMap();
-                this.lastCandle = this.chartData[this.chartData.length - 1];
-                this._volumeDataDirty = true;
-                this._lastVolumeUpdateIndex = -1;
-                const ps = this.chart.priceScale('right');
-                if (ps) ps.applyOptions({ autoScale: false });
-                const lwBars = this._toLwBarsArray(this.chartData);
-                this._setVisibleSeriesData(lwBars);
-                this._updateVolumeOptimized();
-                this._applyVolumeScaleOptions();
+            }
+            if (this._activeGeneration !== genId || this.currentInterval !== interval) return;
 
-                const netShift = addedCount - trimmedFromFront;
-                if (cr) ts.setVisibleLogicalRange({ from: cr.from + netShift, to: cr.to + netShift });
-
-                requestAnimationFrame(() => {
-                    if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
-                    // [ШАГ 1] Удалён this.scheduleDrawingsUpdate(true);
-                });
-                if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
-            } else this.hasMoreData = false;
-            if (olderCandles.length < this._batchSize) this.hasMoreData = false;
+            const applied = this._applyHistoryPage(page, batchSize, genId, interval, fromNetwork);
+            if (applied === true) {
+                // [HIST-FIX] добираем ещё صفحات подряд, пока край не отодвинется достаточно
+                // далеко (или пока не кончится история). Именно отсутствие этой цепочки и
+                // давало «листнул — встал — подгрузилось — листнул — встал» на минутках.
+                this._chainPrefetch(genId, interval, 1);
+            } else if (applied === false) {
+                // данные устарели/график уже чужой — просто выходим, hasMoreData не трогаем
+                return;
+            }
         } catch (e) { this.hasMoreData = false; }
         finally { this.isLoadingMore = false; }
+    }
+
+    // Применяет одну страницу истории. Возврат: true — легла, false — график уже чужой,
+    // null — истории больше нет.
+    _applyHistoryPage(page, batchSize, genId, interval, fromNetwork) {
+        if (this._activeGeneration !== genId || this.currentInterval !== interval) return false;
+        if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return false;
+
+        if (!page || page.length === 0) { this.hasMoreData = false; return null; }
+        const oldestExistingTime = this.chartData[0].time;
+        const uniqueOlder = page.filter(c => c.time < oldestExistingTime);
+        if (fromNetwork && page.length < batchSize) this.hasMoreData = false;
+
+        if (uniqueOlder.length === 0) { this.hasMoreData = false; return null; }
+
+        const ts = this.chart.timeScale();
+        const cr = ts.getVisibleLogicalRange();
+        const addedCount = uniqueOlder.length;
+        let combined = [...uniqueOlder, ...this.chartData];
+        let trimmedFromFront = 0;
+        if (combined.length > this._maxCandlesInMemory + 500) {
+            trimmedFromFront = combined.length - this._maxCandlesInMemory;
+            combined = combined.slice(trimmedFromFront);
+        }
+        this.chartData = combined;
+        this._rebuildTimeMap();
+        this.lastCandle = this.chartData[this.chartData.length - 1];
+        this._volumeDataDirty = true;
+        this._lastVolumeUpdateIndex = -1;
+        const ps = this.chart.priceScale('right');
+        if (ps) ps.applyOptions({ autoScale: false });
+        const lwBars = this._toLwBarsArray(this.chartData);
+        this._setVisibleSeriesData(lwBars);
+        this._updateVolumeOptimized();
+        this._applyVolumeScaleOptions();
+
+        const netShift = addedCount - trimmedFromFront;
+        if (cr && netShift !== 0) ts.setVisibleLogicalRange({ from: cr.from + netShift, to: cr.to + netShift });
+
+        requestAnimationFrame(() => {
+            if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+        });
+        if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
+        return true;
+    }
+
+    // Цепочка догрузок: продолжает копать влево, пока пользователь не отстал от края
+    // достаточно далеко. Пауза между страницами — чтобы не ловить rate limit биржи.
+    _chainPrefetch(genId, interval, pagesDone) {
+        if (this._destroyed) return;
+        if (this._activeGeneration !== genId || this.currentInterval !== interval) return;
+        if (!this.hasMoreData || this.isLoadingMore) return;
+        if (pagesDone >= this._historyPrefetchMaxPages) return;
+        const r = this._lastVisibleRange || this.chart?.timeScale()?.getVisibleLogicalRange?.();
+        if (!r || !isFinite(r.from)) return;
+        // край уже далеко (данные легли с запасом) — дальше не грузим
+        if (r.from >= this._preloadThresholdFor(r)) return;
+
+        setTimeout(() => {
+            if (this._destroyed) return;
+            if (this._activeGeneration !== genId || this.currentInterval !== interval) return;
+            if (!this.hasMoreData || this.isLoadingMore) return;
+            // пока пользователь тащит график или идёт trim — ждём, не дёргаем серию
+            if (this._isTrimming || this._isScrolling || this._isScrollingFast) {
+                this._chainPrefetch(genId, interval, Math.max(0, pagesDone - 1));
+                return;
+            }
+            this._loadHistoryAsync().then(() => {
+                if (this._activeGeneration === genId && this.currentInterval === interval && this.hasMoreData) {
+                    this._chainPrefetch(genId, interval, pagesDone + 1);
+                }
+            }).catch(() => {});
+        }, this._prefetchPageDelayMs);
+    }
+
+    // [HIST-FIX] Глубокая фоновая догрузка после того, как монета/ТФ легли на график.
+    // На 1m стартовых 1000 свечей — это ~16 часов: пользователь упирался в край почти
+    // сразу. Теперь к моменту первого листания в памяти уже есть запас, и листание
+    // идёт так же ровно, как на 1h/1d.
+    _scheduleDeepPrefetch() {
+        const genId = this._activeGeneration;
+        const interval = this.currentInterval;
+        const symbol = this.currentSymbol;
+        const startedAt = Date.now();
+        const tick = () => {
+            if (this._destroyed) return;
+            if (this._activeGeneration !== genId || this.currentInterval !== interval || this.currentSymbol !== symbol) return;
+            if (!this._isChartValid() || !this.chartData.length || !this.hasMoreData) return;
+            if (Date.now() - startedAt > 20000) return;   // не вечный цикл
+
+            // 1) ждём, пока погаснет затемнение переключения монеты/ТФ: под ним ещё
+            //    дорабатывают _syncRecentCandles/autoScale, и лишний setData там не нужен
+            const ov = this._symbolSwitchOverlay;
+            if (ov && ov.style && ov.style.opacity && parseFloat(ov.style.opacity) > 0.05) {
+                setTimeout(tick, 300); return;
+            }
+            // 2) не лезем, пока пользователь тащит график или идёт trim
+            if (this._isScrolling || this._isScrollingFast || this._isTrimming) { setTimeout(tick, 400); return; }
+            // 3) пользователь уже сам листает историю — работает обычная цепочка догрузок
+            const r = this.chart?.timeScale()?.getVisibleLogicalRange?.();
+            if (r && isFinite(r.from) && r.from < this._preloadThresholdFor(r)) return;
+            if (this._historyPrefetchRunning) return;
+
+            this._historyPrefetchRunning = true;
+            const done = () => { this._historyPrefetchRunning = false; };
+            this._loadHistoryAsync()
+                .then(() => this._chainPrefetch(genId, interval, 1))
+                .catch(() => {})
+                .finally(done);
+        };
+        setTimeout(tick, this._prefetchIdleDelayMs);
+    }
+
+    // ---------------- [HIST-FIX] локальный кэш страниц истории ----------------
+    // Закрытые свечи прошлого не меняются, поэтому страницу можно хранить вечно.
+    // Ключ — «срез» (время самой старой свечи на момент запроса): при повторном
+    // листании того же участка берём данные из IndexedDB за пару миллисекунд
+    // вместо 200–600 мс сетевого запроса.
+    _historyCacheKey(symbol, exchange, marketType, interval, cutTime) {
+        return `HIST_v1_${symbol}_${interval}_${exchange}_${marketType}_${cutTime}`;
+    }
+
+    async _loadHistoryPageFromCache(symbol, exchange, marketType, interval, oldestTime) {
+        if (!window.db) return null;
+        try {
+            await this._waitForDb();
+            const exact = await window.db.get('candles', this._historyCacheKey(symbol, exchange, marketType, interval, oldestTime));
+            let rec = null;
+            if (exact && Array.isArray(exact.data) && exact.data.length > 0) {
+                rec = exact;
+            } else {
+                // ближайший срез чуть старше текущей самой старой свечи
+                const rows = await window.db.getByIndex('candles', 'symbol', symbol);
+                if (Array.isArray(rows) && rows.length) {
+                    let best = null;
+                    for (const r of rows) {
+                        if (!r || r.type !== 'hist' || r.interval !== interval) continue;
+                        if (r.exchange !== exchange || r.marketType !== marketType) continue;
+                        if (typeof r.cut !== 'number' || r.cut < oldestTime) continue;
+                        if (!Array.isArray(r.data) || r.data.length === 0) continue;
+                        if (!best || r.cut < best.cut) best = r;
+                    }
+                    rec = best;
+                }
+            }
+            if (!rec) return null;
+            if (Date.now() - (rec.lastUpdate || 0) > this._historyCacheTtlMs) {
+                try { await window.db.delete('candles', rec.key); } catch (e) {}
+                return null;
+            }
+            const nowSec = Math.floor(Date.now() / 1000);
+            const currentStart = this._alignTimeForInterval(nowSec, interval);
+            const out = [];
+            for (const c of rec.data) {
+                if (!c || typeof c !== 'object') continue;
+                if (typeof c.time !== 'number' || !Number.isInteger(c.time) || c.time <= 0) continue;
+                if (c.time >= oldestTime) continue;
+                const cc = {
+                    time: this._alignTimeForInterval(c.time, interval),
+                    open: c.open, high: c.high, low: c.low, close: c.close,
+                    volume: c.volume, quoteVolume: (typeof c.quoteVolume === 'number' && c.quoteVolume > 0) ? c.quoteVolume : c.volume
+                };
+                if (!this._isValidCandle(cc, nowSec)) continue;
+                this._stampCandle(cc, 'cache', rec.lastUpdate || Date.now());
+                cc._closed = cc.time < currentStart;
+                out.push(cc);
+            }
+            if (out.length === 0) return null;
+            out.sort((a, b) => a.time - b.time);
+            return out;
+        } catch (e) { return null; }
+    }
+
+    async _saveHistoryPageToCache(symbol, exchange, marketType, interval, cutTime, candles) {
+        if (!window.db || !Array.isArray(candles) || candles.length === 0) return;
+        try {
+            await this._waitForDb();
+            const clean = [];
+            for (const c of candles) {
+                if (!c || typeof c !== 'object') continue;
+                if (typeof c.time !== 'number' || !Number.isInteger(c.time) || c.time <= 0) continue;
+                if (typeof c.open !== 'number' || typeof c.high !== 'number' ||
+                    typeof c.low !== 'number' || typeof c.close !== 'number') continue;
+                clean.push({
+                    time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+                    volume: (typeof c.volume === 'number' ? c.volume : 0),
+                    quoteVolume: (typeof c.quoteVolume === 'number' ? c.quoteVolume : 0)
+                });
+            }
+            if (clean.length === 0) return;
+            await window.db.put('candles', {
+                key: this._historyCacheKey(symbol, exchange, marketType, interval, cutTime),
+                type: 'hist',
+                symbol, exchange, marketType, interval,
+                cut: cutTime,
+                firstCandleTime: clean[0].time,
+                lastCandleTime: clean[clean.length - 1].time,
+                count: clean.length,
+                data: clean,
+                lastUpdate: Date.now(),
+                version: '3'
+            });
+        } catch (e) {}
     }
 
     // =============== BACKGROUND REFRESH ===============
