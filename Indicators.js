@@ -95,7 +95,8 @@ class ATRIndicator extends BaseIndicator {
 class EMAIndicator extends BaseIndicator {
     static meta = { name: 'EMA 20', category: 'trend', panel: 'main', color: '#00E5FF' };
 
-    constructor(manager, period, name, color) {
+    // [FIX-I4] дефолты для создания из реестра без аргументов
+    constructor(manager, period = 20, name = 'EMA 20', color = '#00E5FF') {
         super(manager, `ema${period}`, name, color, 'main');
         this.settings.period = period;
     }
@@ -122,7 +123,7 @@ class EMAIndicator extends BaseIndicator {
    _createEmptySeries() {
     this._removeAllSeries();
     this.series = [
-        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
+        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth, crosshairMarkerVisible: false })
     ];
 }
     updateSeriesData(data) {
@@ -214,31 +215,38 @@ class MACDIndicator extends BaseIndicator {
         data.forEach(item => { macdMap.set(item.time, item.macd); signalMap.set(item.time, item.signal); histMap.set(item.time, item.histogram); });
         
         const macdData = [], signalData = [], histData = [];
-        
+
+        // [FIX-I1] полная длина: прогрев = whitespace, шкала панели = шкала свечей
         chartData.forEach((candle, index) => {
-            if (macdMap.has(candle.time)) {
-                const macd = macdMap.get(candle.time);
-                const signal = signalMap.get(candle.time);
-                const hist = histMap.get(candle.time);
-                
-                macdData.push({ time: candle.time, value: macd });
-                signalData.push({ time: candle.time, value: signal });
-                
-                // ТОЧНАЯ КОПИЯ ЛОГИКИ TV: 4 цвета в зависимости от текущего и предыдущего значения
-                // color hColor = hist >= 0 ? hist > hist[1] ? #26a69a : #b2dfdb : hist > hist[1] ? #ffcdd2 : #ff5252
-                let hColor;
-                const prevHist = index > 0 ? (histMap.get(chartData[index - 1].time) || 0) : 0;
-                
-                if (hist >= 0) {
-                    // Растущая гистограмма (темно-зеленая) или падающая (светло-зеленая)
-                    hColor = hist > prevHist ? '#26a69a' : '#b2dfdb';
-                } else {
-                    // Падающая гистограмма (темно-красная) или растущая (светло-красная)
-                    hColor = hist > prevHist ? '#ffcdd2' : '#ff5252';
-                }
-                
-                histData.push({ time: candle.time, value: hist, color: hColor });
+            const has = macdMap.has(candle.time);
+            const macd = has ? macdMap.get(candle.time) : null;
+            const signal = has ? signalMap.get(candle.time) : null;
+            const hist = has ? histMap.get(candle.time) : null;
+
+            const put = (val) => (val === undefined || val === null || isNaN(val))
+                ? { time: candle.time }
+                : { time: candle.time, value: val };
+
+            macdData.push(put(macd));
+            signalData.push(put(signal));
+
+            if (hist === null || hist === undefined || isNaN(hist)) {
+                histData.push({ time: candle.time });
+                return;
             }
+            // ТОЧНАЯ КОПИЯ ЛОГИКИ TV: 4 цвета в зависимости от текущего и предыдущего значения
+            let hColor;
+            let prevHist = 0;
+            for (let j = index - 1; j >= 0; j--) {
+                const pv = histMap.get(chartData[j].time);
+                if (pv !== undefined && pv !== null && !isNaN(pv)) { prevHist = pv; break; }
+            }
+            if (hist >= 0) {
+                hColor = hist > prevHist ? '#26a69a' : '#b2dfdb';
+            } else {
+                hColor = hist > prevHist ? '#ffcdd2' : '#ff5252';
+            }
+            histData.push({ time: candle.time, value: hist, color: hColor });
         });
         
         // Применяем данные. Порядок важен: [0] = hist, [1] = macd, [2] = signal
@@ -1847,10 +1855,13 @@ class RSI14Indicator extends BaseIndicator {
         
         const rsiMap = new Map();
         data.forEach(item => rsiMap.set(item.time, item.value));
-        
-        const rsiData = [];
-        chartData.forEach(candle => {
-            if (rsiMap.has(candle.time)) rsiData.push({ time: candle.time, value: rsiMap.get(candle.time) });
+
+        // [FIX-I1] полная длина: прогрев = whitespace, шкала панели = шкала свечей
+        const rsiData = chartData.map(candle => {
+            const v = rsiMap.get(candle.time);
+            return (v === undefined || v === null || isNaN(v))
+                ? { time: candle.time }
+                : { time: candle.time, value: v };
         });
         
         if (this.series[0]) this.series[0].setData(rsiData);
@@ -1862,7 +1873,9 @@ class RSI14Indicator extends BaseIndicator {
 class SMAIndicator extends BaseIndicator {
     static meta = { name: 'SMA 20', category: 'trend', panel: 'main', color: '#FFD700' };
 
-    constructor(manager, period, name, color) {
+    // [FIX-I4] дефолты: реестр создаёт класс через new Class(manager),
+    // без них period=undefined и серия пустая (type 'smaundefined').
+    constructor(manager, period = 20, name = 'SMA 20', color = '#FFD700') {
         super(manager, `sma${period}`, name, color, 'main');
         this.settings.period = period;
     }
@@ -1888,7 +1901,7 @@ class SMAIndicator extends BaseIndicator {
     _createEmptySeries() {
     this._removeAllSeries();
     this.series = [
-        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth })
+        this.manager.chartManager.chart.addSeries(LightweightCharts.LineSeries, { color: this.settings.color, lineWidth: this.settings.lineWidth, crosshairMarkerVisible: false })
     ];
 }
     
@@ -1945,23 +1958,18 @@ class StochRSIIndicator extends BaseIndicator {
     }
     
         updateSeriesData(data) {
-        if (!data || !data.k || !data.d || !data.times) return;
+        if (!data || !data.length) return;
         const chartData = this.manager.chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
-        
+
         const kMap = new Map(), dMap = new Map();
-        for (let i = 0; i < data.times.length; i++) {
-            if (data.k[i] != null && !isNaN(data.k[i])) kMap.set(data.times[i], data.k[i]);
-            if (data.d[i] != null && !isNaN(data.d[i])) dMap.set(data.times[i], data.d[i]);
-        }
-        
-        const kData = [], dData = [];
-        for (let i = 0; i < chartData.length; i++) {
-            const time = chartData[i].time;
-            if (kMap.has(time)) kData.push({ time, value: kMap.get(time) });
-            if (dMap.has(time)) dData.push({ time, value: dMap.get(time) });
-        }
-        
+        data.forEach(item => { kMap.set(item.time, item.k); dMap.set(item.time, item.d); });
+
+        const put = (time, v) => (v === undefined || v === null || isNaN(v))
+            ? { time } : { time, value: v };
+        const kData = chartData.map(c => put(c.time, kMap.get(c.time)));
+        const dData = chartData.map(c => put(c.time, dMap.get(c.time)));
+
         if (this.series[0]) this.series[0].setData(kData);
         if (this.series[1]) this.series[1].setData(dData);
     }
