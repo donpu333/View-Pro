@@ -3,6 +3,7 @@ class IndicatorPanelManager {
         this.container = container;
         this.chartManager = chartManager;
         this.panels = new Map();
+        this._rangeSyncLock = false;   // [FIX-I2] защита от цикла синхронизации диапазона
         this.activeResizer = null;
         this.startY = 0;
         this.startHeight = 0;
@@ -86,6 +87,9 @@ class IndicatorPanelManager {
         header.querySelector('.close-btn').addEventListener('click', (e) => { e.stopPropagation(); this.closePanel(id); });
         resizer.addEventListener('mousedown', (e) => { this._startResize(id, e); });
          
+        // [FIX-X1] раньше _syncPanelWithMainChart() не вызывался НИКОГДА:
+        // синхронизация скролла/перекрестия между главным графиком и панелью не работала.
+        this._syncPanelWithMainChart(chart);
         return panel;
     }
     
@@ -190,10 +194,13 @@ class IndicatorPanelManager {
     addSeries(panelId, seriesId, type, options) {
         const panel = this.panels.get(panelId);
         if (!panel || !panel.chart) return null;
-        
+
+        // [FIX-I6] убираем «точки» на линиях индикаторов в месте перекрестия
+        const opts = Object.assign({ crosshairMarkerVisible: false }, options);
+
         let series;
-        if (type === 'line') series = panel.chart.addSeries(LightweightCharts.LineSeries, options);
-        else if (type === 'histogram') series = panel.chart.addSeries(LightweightCharts.HistogramSeries, options);
+        if (type === 'line') series = panel.chart.addSeries(LightweightCharts.LineSeries, opts);
+        else if (type === 'histogram') series = panel.chart.addSeries(LightweightCharts.HistogramSeries, opts);
         
         if (series) panel.series.set(seriesId, series);
         return series;
@@ -247,38 +254,69 @@ class IndicatorPanelManager {
         
         // 1. Копируем настройки timeScale из основного
         const mainOptions = mainChart.options();
+        // [FIX-I2] Зеркалируем timeScale главного графика ТОЧНО (раньше fixLeftEdge
+        // принудительно взводился в true и панели «отставали» у левого края).
         panelChart.applyOptions({
             timeScale: {
                 ...mainOptions.timeScale,
-                visible: false,
-                rightOffset: mainOptions.timeScale?.rightOffset || 5,
-                barSpacing: mainOptions.timeScale?.barSpacing || 12,
-                minBarSpacing: mainOptions.timeScale?.minBarSpacing || 3,
-                fixLeftEdge: true,
-                fixRightEdge: false
+                visible: false
             }
         });
         
         // 2. Синхронизация диапазона
         let syncTimer = null;
         const rangeHandler = () => {
+            if (this._rangeSyncLock) return;
+            if (cm.isLoadingMore || cm._isTrimming) return;
             if (syncTimer) cancelAnimationFrame(syncTimer);
             syncTimer = requestAnimationFrame(() => {
                 try {
-                    const currentRange = mainChart.timeScale().getVisibleLogicalRange();
-                    if (currentRange) {
-                        panelChart.timeScale().setVisibleLogicalRange({
-                            from: Math.floor(currentRange.from),
-                            to: Math.ceil(currentRange.to)
-                        });
+                    // [FIX-I5] копируем ЛОГИЧЕСКИЙ диапазон ТОЧНО (дробные значения и
+                    // правый отступ включены): панели и главный график имеют одинаковую
+                    // длину серий (whitespace-прогревы), поэтому индексы совпадают 1:1.
+                    const r = mainChart.timeScale().getVisibleLogicalRange();
+                    if (r) {
+                        this._rangeSyncLock = true;
+                        panelChart.timeScale().setVisibleLogicalRange({ from: r.from, to: r.to });
+                        this._rangeSyncLock = false;
                     }
-                } catch(e) {}
+                } catch(e) { this._rangeSyncLock = false; }
             });
         };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(rangeHandler);
         panelData._syncState.unsubscribers.push(() => {
             try { mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeHandler); } catch(e) {}
             if (syncTimer) cancelAnimationFrame(syncTimer);
+        });
+
+        // [FIX-I2] Обратное направление: скролл/зум НА ПАНЕЛИ двигает главный график
+        // (как в TradingView, где все панели связаны).
+        let panelSyncTimer = null;
+        const panelRangeHandler = () => {
+            if (this._rangeSyncLock) return;
+            // [FIX-I5] Реагируем ТОЛЬКО на действие пользователя НАД этой панелью
+            // (курсор внутри панели). Иначе это «эхо» синхронизации главного графика:
+            // оно перезаписывало пользовательский скролл (дробные позиции скруглялись)
+            // и_CLAMPило главный график по краю свечей — график «дёргался» и
+            // «не скроллился вправо».
+            if (!panelData.wrapper.matches(':hover')) return;
+            if (cm.isLoadingMore || cm._isTrimming) return;
+            if (panelSyncTimer) cancelAnimationFrame(panelSyncTimer);
+            panelSyncTimer = requestAnimationFrame(() => {
+                try {
+                    const r = panelChart.timeScale().getVisibleLogicalRange();
+                    if (r) {
+                        this._rangeSyncLock = true;
+                        mainChart.timeScale().setVisibleLogicalRange({ from: r.from, to: r.to });
+                        this._rangeSyncLock = false;
+                    }
+                } catch (e) { this._rangeSyncLock = false; }
+            });
+        };
+        panelChart.timeScale().subscribeVisibleLogicalRangeChange(panelRangeHandler);
+        panelData._syncState.unsubscribers.push(() => {
+            try { panelChart.timeScale().unsubscribeVisibleLogicalRangeChange(panelRangeHandler); } catch(e) {}
+            if (panelSyncTimer) cancelAnimationFrame(panelSyncTimer);
         });
         
         // 3. Crosshair линия
@@ -308,8 +346,47 @@ class IndicatorPanelManager {
         panelData._syncState.unsubscribers.push(() => {
             try { mainChart.unsubscribeCrosshairMove(crosshairHandler); } catch(e) {}
         });
+
+        // [FIX-X1] Reverse crosshair: hovering THIS panel drives the main chart crosshair,
+        // the main OHLC overlay and the other panels.
+        const panelCrosshairHandler = (p) => {
+            if (!cm) return;
+            if (!p?.time) {
+                cm.clearCrosshairFromExternal?.();
+                // программный clearCrosshairPosition не генерирует событий главного
+                // графика, поэтому пунктирные линии панелей гасим здесь явно
+                this.panels.forEach(pp => {
+                    if (pp._syncState?.crosshairLine) pp._syncState.crosshairLine.style.display = 'none';
+                });
+                return;
+            }
+            cm.syncCrosshairFromExternal?.(p.time, panelChart);
+        };
+        panelChart.subscribeCrosshairMove(panelCrosshairHandler);
+        panelData._syncState.unsubscribers.push(() => {
+            try { panelChart.unsubscribeCrosshairMove(panelCrosshairHandler); } catch(e) {}
+        });
     }
     
+    // [FIX-I5] Принудительное выравнивание панелей по главному графику: вызывается
+    // после догрузки истории, трима и применения пересчёта индикаторов, когда
+    // событийная синхронизация была приостановлена.
+    syncPanelsNow() {
+        const cm = this.chartManager;
+        if (!cm?.chart) return;
+        try {
+            const r = cm.chart.timeScale().getVisibleLogicalRange();
+            if (!r) return;
+            this._rangeSyncLock = true;
+            this.panels.forEach(p => {
+                if (p.chart && !p.isCollapsed) {
+                    try { p.chart.timeScale().setVisibleLogicalRange({ from: r.from, to: r.to }); } catch (e) {}
+                }
+            });
+            this._rangeSyncLock = false;
+        } catch (e) { this._rangeSyncLock = false; }
+    }
+
     // [FIX] Полная очистка — на случай destroy или перезагрузки приложения
     destroy() {
         for (const [id, panel] of this.panels.entries()) {
