@@ -1,5 +1,3 @@
-
-
 const WS_ENDPOINTS = {
     binance: {
         // После миграции 2026-03-06 kline/aggTrade/ticker/markPrice — ТОЛЬКО в /market.
@@ -17,6 +15,29 @@ const WS_ENDPOINTS = {
 };
 
 const KA_ID_BASE = 1e9;
+
+// [PERF-W1] Карта интервалов Bybit поднята на уровень модуля.
+// getExchangeInterval() вызывается на КАЖДЫЙ kline/publicTrade кадр, и каждый раз
+// создавала новый объект из 13 полей. На 1m это ~2 кадра/с — мелочь, но объект
+// всё равно летел в молодое поколение GC без всякой причины.
+const BYBIT_INTERVAL_MAP = Object.freeze({
+    '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+    '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
+    '1d': 'D', '1w': 'W', '1M': 'M'
+});
+
+// [PERF-W2] Кэш «символ в верхнем регистре» хранится прямо в subContext
+// (см. _doConnect): subContext.symbol.toUpperCase() вычислялся на КАЖДЫЙ кадр
+// (kline + aggTrade) — лишние строки на тик при неизменном значении.
+
+// [PERF-W3] Карта длительностей интервалов поднята на уровень модуля:
+// _getIntervalSeconds() вызывается через _alignTimeToInterval() на каждый
+// kline-кадр и каждый раз создавала новый объект из 15 полей.
+const WS_INTERVAL_SECONDS = Object.freeze({
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+    '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800,
+    '12h': 43200, '1d': 86400, '3d': 259200, '1w': 604800, '1M': 0
+});
 
 class WebSocketManager {
     constructor(chartManager, options = {}) {
@@ -43,6 +64,11 @@ class WebSocketManager {
         this._kaId = KA_ID_BASE;
         this._spotUsingFallback = false;     // W8: какой spot-хост сейчас в ходу
         this._quietWarnedAt = 0;
+
+        // [PERF-W2] кэш upper-формы chartManager.currentSymbol: сверка
+        // «тик наш?» делала toUpperCase() на каждый aggTrade-кадр.
+        this._cmSymbolRaw = null;
+        this._cmSymbolUpper = null;
 
         const o = Object.assign({
             watchdogIntervalMs: 5000,        // было 15000: быстрее ловим зависший handshake
@@ -112,12 +138,8 @@ class WebSocketManager {
 
     getExchangeInterval(interval, exchange) {
         if (exchange === 'bybit') {
-            const map = {
-                '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
-                '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
-                '1d': 'D', '1w': 'W', '1M': 'M'
-            };
-            return map[interval] || interval;
+            // [PERF-W1] без создания объекта карты на каждый вызов
+            return BYBIT_INTERVAL_MAP[interval] || interval;
         }
         return interval;
     }
@@ -210,6 +232,7 @@ class WebSocketManager {
 
         const subContext = {
             symbol: this.currentSymbol,
+            symbolUpper: this.currentSymbol.toUpperCase(),   // [PERF-W2]
             interval: this.currentInterval,
             exchange: this.currentExchange,
             marketType: this.currentMarketType
@@ -509,6 +532,20 @@ class WebSocketManager {
         }
     }
 
+    // [PERF-W2] «Тик адресован текущей монете графика?» без toUpperCase() на
+    // каждый кадр: upper-форма кэшируется и перечитывается только когда
+    // chartManager.currentSymbol реально сменился.
+    _chartSymbolMatches(subContext) {
+        const cm = this.chartManager ||
+            (typeof window !== 'undefined' ? window.chartManager : null);
+        if (!cm || !cm.currentSymbol) return true;
+        if (cm.currentSymbol !== this._cmSymbolRaw) {
+            this._cmSymbolRaw = cm.currentSymbol;
+            this._cmSymbolUpper = cm.currentSymbol.toUpperCase();
+        }
+        return this._cmSymbolUpper === subContext.symbolUpper;
+    }
+
     _handleMessage(rawData, type, subContext) {
         try {
             let raw = JSON.parse(rawData);
@@ -548,8 +585,10 @@ class WebSocketManager {
             if (subContext.exchange === 'binance') {
                 if (raw.e === 'kline' && raw.k) {
                     const k = raw.k;
-                    const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (msgSymbol && msgSymbol !== subContext.symbol.toUpperCase()) return;
+                    // [PERF-W2] Binance присылает символ в верхнем регистре —
+                    // первое сравнение почти всегда совпадает без аллокаций.
+                    if (raw.s && raw.s !== subContext.symbolUpper &&
+                        raw.s.toUpperCase() !== subContext.symbolUpper) return;
                     if (k.i && k.i !== subContext.interval) return;
 
                     this._markDataReceived();
@@ -579,15 +618,15 @@ class WebSocketManager {
                 }
 
                 if (raw.e === 'aggTrade') {
-                    const msgSymbol = raw.s ? raw.s.toUpperCase() : null;
-                    if (msgSymbol && msgSymbol !== subContext.symbol.toUpperCase()) return;
+                    // [PERF-W2] без toUpperCase() на каждый тик
+                    if (raw.s && raw.s !== subContext.symbolUpper &&
+                        raw.s.toUpperCase() !== subContext.symbolUpper) return;
 
                     this._markDataReceived();
 
                     const price = parseFloat(raw.p);
                     if (!isNaN(price) && price > 0) {
-                        if (!chartManager.currentSymbol ||
-                            chartManager.currentSymbol.toUpperCase() === subContext.symbol.toUpperCase()) {
+                        if (this._chartSymbolMatches(subContext)) {
                             if (typeof chartManager._syncPriceLine === 'function') {
                                 chartManager._syncPriceLine({ time: Math.floor(raw.T / 1000), price });
                             }
@@ -596,21 +635,29 @@ class WebSocketManager {
                 }
             }
             else if (subContext.exchange === 'bybit' && raw.topic) {
+                // [PERF-W4] raw.topic.startsWith('kline.') вызывался до 4 раз на кадр,
+                // parts[2].toUpperCase() и subContext.symbol.toUpperCase() — по разу
+                // на кадр каждый. На publicTrade это каждый тик.
                 const parts = raw.topic.split('.');
+                const isKline = raw.topic.startsWith('kline.');
+                const isTrade = raw.topic.startsWith('publicTrade.');
                 let msgSymbol = null;
 
-                if (raw.topic.startsWith('kline.') && parts.length >= 3) msgSymbol = parts[2].toUpperCase();
-                else if (raw.topic.startsWith('publicTrade.') && parts.length >= 2) msgSymbol = parts[1].toUpperCase();
+                if (isKline && parts.length >= 3) msgSymbol = parts[2];
+                else if (isTrade && parts.length >= 2) msgSymbol = parts[1];
 
-                if (!msgSymbol || msgSymbol !== subContext.symbol.toUpperCase()) return;
+                if (!msgSymbol ||
+                    (msgSymbol !== subContext.symbolUpper &&
+                     msgSymbol.toUpperCase() !== subContext.symbolUpper)) return;
 
-                if (raw.topic.startsWith('kline.') && parts.length >= 2) {
-                    if (parts[1] !== this.getExchangeInterval(subContext.interval, 'bybit')) return;
+                if (isKline) {
+                    if (parts.length >= 2 &&
+                        parts[1] !== this.getExchangeInterval(subContext.interval, 'bybit')) return;
                 }
 
                 this._markDataReceived();
 
-                if (raw.topic.startsWith('kline.') && raw.data && raw.data.length) {
+                if (isKline && raw.data && raw.data.length) {
                     const k = raw.data[raw.data.length - 1];   // свежие данные в КОНЦЕ батча
                     let candleTime = Math.floor(k.start / 1000);
                     const expectedTime = this._alignTimeToInterval(candleTime, subContext.interval);
@@ -634,12 +681,11 @@ class WebSocketManager {
                             symbol: subContext.symbol, interval: subContext.interval
                         });
                     }
-                } else if (raw.topic.startsWith('publicTrade.') && raw.data && raw.data.length) {
+                } else if (isTrade && raw.data && raw.data.length) {
                     const tradeData = raw.data[raw.data.length - 1];
                     const price = parseFloat(tradeData.p);
                     if (!isNaN(price) && price > 0) {
-                        if (!chartManager.currentSymbol ||
-                            chartManager.currentSymbol.toUpperCase() === subContext.symbol.toUpperCase()) {
+                        if (this._chartSymbolMatches(subContext)) {
                             if (typeof chartManager._syncPriceLine === 'function') {
                                 chartManager._syncPriceLine({ time: Math.floor(tradeData.T / 1000), price });
                             }
@@ -660,12 +706,9 @@ class WebSocketManager {
         // любой внешний код обязан идти через _alignTimeToInterval().
         // [FIX-M3] '2h' в UI (TF_LABELS) также отсутствует и оставлен ради
         // обратной совместимости со старыми кэшами/рисунками.
-        const map = {
-            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-            '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800,
-            '12h': 43200, '1d': 86400, '3d': 259200, '1w': 604800, '1M': 0
-        };
-        return Object.prototype.hasOwnProperty.call(map, interval) ? map[interval] : 3600;
+        // [PERF-W3] карта вынесена в константу модуля WS_INTERVAL_SECONDS.
+        return Object.prototype.hasOwnProperty.call(WS_INTERVAL_SECONDS, interval)
+            ? WS_INTERVAL_SECONDS[interval] : 3600;
     }
 
     _alignTimeToInterval(timeSec, interval) {
