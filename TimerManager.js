@@ -1,4 +1,6 @@
-
+// [PERF-T5] Длинные ТФ, на которых бейдж обратного отсчёта не показывается.
+// Массив раньше создавался заново на каждый _tick (4 раза/с) и _updateTimerState.
+const LONG_TF = Object.freeze(['1d', '1w', '1M']);
 
 class TimerRenderer {
     constructor(timerManager) {
@@ -21,6 +23,22 @@ class TimerRenderer {
     invalidateColor() {
         this._colorDirty = true;
         this._cachedColor = null;
+    }
+
+    // [PERF-T2] Вычислить цвет БЕЗ отрисовки — нужен TimerPrimitive.updatePrice,
+    // чтобы понять, изменилось ли что-то видимое (и стоит ли вообще
+    // инвалидировать график). Логика цвета — ровно как в draw().
+    peekColor(chartManager) {
+        if (!this._colorDirty && this._cachedColor) return this._cachedColor;
+        let bgColor = '#26a69a';
+        if (typeof chartManager?._getLineColor === 'function') {
+            bgColor = chartManager._getLineColor();
+        } else if (typeof chartManager?.getCurrentPriceColor === 'function') {
+            bgColor = chartManager.getCurrentPriceColor();
+        }
+        this._cachedColor = bgColor;
+        this._colorDirty = false;
+        return bgColor;
     }
 
     // ✅ Определяем, тёмный ли цвет (по яркости) - идентично ChartManager
@@ -210,12 +228,32 @@ class TimerPrimitive {
     setColor(color) { this._paneView?._renderer?.setColor(color); }
 
     updatePrice(price) {
-        if (price != null && !isNaN(price) && this.isEnabled()) {
-            this._chartManager.currentRealPrice = price;
-            // ✅ Сбрасываем кэш цвета: свеча могла сменить направление
-            this._paneView._renderer.invalidateColor();
-            this.requestRedraw();
-        }
+        if (price == null || isNaN(price) || !this.isEnabled()) return;
+        this._chartManager.currentRealPrice = price;
+        // [PERF-T2] Перерисовка нужна, только если что-то ВИДИМО изменилось:
+        // цена на экране (с точностью до шага цены) или направление свечи.
+        // Раньше каждый вызов безусловно делал requestRedraw() — полную
+        // инвалидацию графика. В связке с тик-потоком это был главный источник
+        // перерисовок: 100 тиков/с = 100 инвалидаций/с (замер в
+        // timer-hotpath-test.js: 102 requestUpdate за 100 тиков).
+        const r = this._paneView._renderer;
+        r.invalidateColor();
+        const color = r.peekColor(this._chartManager);
+        const priceMoved = (this._lastBadgePrice == null) ||
+            Math.abs(this._lastBadgePrice - price) >= this._priceStep(price);
+        const colorChanged = color !== this._lastDrawnColor;
+
+        if (!priceMoved && !colorChanged) return;   // ничего не изменилось — не инвалидируем
+
+        this._lastBadgePrice = price;
+        this._lastDrawnColor = color;
+        this.requestRedraw();
+    }
+
+    // Шаг цены для «заметности» движения: пиксель — слишком строго (иначе
+    // бейдж дёргается на каждом тике), поэтому берём относительный порог.
+    _priceStep(price) {
+        return Math.max(Math.abs(price) * 1e-4, Number.EPSILON);
     }
 
     setDataReady(ready) { this._dataReady = ready; }
@@ -251,6 +289,13 @@ class TimerManager {
         this._priceRetryTimeout = null;   // отменяемый ретрай подписки на цену
         this._initTimeout = null;         // отменяемый отложенный _init
         this._symbolChangeHandler = null; // переподписка при смене символа
+
+        // [PERF-T1] поля гейта перерисовки бейджа: не чаще 10 раз/с,
+        // с обязательным «хвостовым» обновлением последней цены.
+        this._badgeTimeout = null;
+        this._lastBadgePriceAt = 0;
+        this._badgeMinMs = 100;
+        this._pendingBadgePrice = null;
 
         chartManager.timerManager = this;
 
@@ -344,8 +389,12 @@ class TimerManager {
                     }
 
                     if (this._primitive.isEnabled()) {
-                        this._primitive.invalidateColor();
-                        this._primitive.requestRedraw();
+                        // [PERF-T4] Только помечаем цвет грязным: само изменение
+                        // данных УЖЕ инвалидирует панель (series.update), поэтому
+                        // прежние invalidateColor()+requestRedraw() давали вторую
+                        // полную инвалидацию на каждое обновление — 10–14 лишних
+                        // перерисовок/с на горячей монете.
+                        this._primitive._paneView?._renderer?.invalidateColor();
                     }
                 });
             } catch (e) {
@@ -354,21 +403,14 @@ class TimerManager {
             }
         }
 
-        // ✅ Подписка на скролл — тоже в отдельном блоке
-        try {
-            const timeScale = this._chartManager.chart.timeScale();
-            if (timeScale && typeof timeScale.subscribeVisibleLogicalRangeChange === 'function') {
-                this._scrollHandler = () => {
-                    if (this._primitive?.isEnabled()) {
-                        this._primitive.requestRedraw();
-                    }
-                };
-                timeScale.subscribeVisibleLogicalRangeChange(this._scrollHandler);
-            }
-        } catch (e) {
-            console.warn('TimerManager: scroll subscribe failed', e);
-            this._scrollHandler = null;
-        }
+        // [PERF-T3] Подписка на скролл УДАЛЕНА: при любом изменении видимого
+        // диапазона lightweight-charts и так перерисовывает панель, и draw()
+        // бейджа вызывается в том же кадре с актуальным priceToCoordinate.
+        // Прежний requestRedraw() на каждое событие range лишь добавлял
+        // лишнюю инвалидацию на каждый кадр скролла/зума (замер фазы B:
+        // 62 requestUpdate за 1 с прокрутки). _scrollHandler оставлен null —
+        // _detachPrimitive() корректно пропускает отписку.
+        this._scrollHandler = null;
 
         // ✅ Обновляем состояние если данные уже есть
         if (this._chartManager.chartData?.length > 0 && this._primitive) {
@@ -422,7 +464,7 @@ class TimerManager {
     _updateTimerState() {
         if (!this._primitive?.isDataReady()) return;
 
-        if (['1d','1w','1M'].includes(this._currentTf)) {
+        if (LONG_TF.includes(this._currentTf)) {
             this._timerElement.textContent = '';
             this._primitive.setEnabled(false);
             this.stop();
@@ -486,7 +528,42 @@ class TimerManager {
             if (typeof price !== 'number' || isNaN(price) || price <= 0) return;
 
             cm.currentRealPrice = price;
-            this._primitive?.updatePrice(price);
+            // [PERF-T1] ГЛАВНОЕ: раньше каждый тик aggTrade (на «лидерах роста»
+            // 94–200/с, замер QNTUSDT) делал invalidateColor + requestRedraw =
+            // ПОЛНУЮ инвалидацию графика с частотой тиков. LWC сливает их в
+            // кадры, но график вместо ~10 перерисовок/с перерисовывался КАЖДЫЙ
+            // кадр (60/с) — вечно занятый конвейер рендера, из-за которого
+            // скролл/зум и ощущались «потормаживающими». Гейт [PERF-GATE] в
+            // ChartManager обходился через эту собственную подписку.
+            // Теперь бейдж перерисовывается не чаще 10 раз/с (как цена на
+            // графике), с обязательным «хвостовым» обновлением — финальная
+            // цена не теряется. currentRealPrice по-прежнему пишется на каждый
+            // тик (дешёво, остальные потребители видят свежую цену).
+            this._pendingBadgePrice = price;
+            // [PERF-T1b] Примитив выключен (1d/1w/1M, hideImmediately на время
+            // смены монеты) — цену запоминаем, но окно гейта не открываем и
+            // таймер не ставим. Иначе _lastBadgePriceAt уходил вперёд, и после
+            // setEnabled(true) первый же тик попадал в «окно» и бейдж до
+            // 100 мс смотрел на устаревшую цену.
+            if (!this._primitive?.isEnabled()) return;
+            const now = Date.now();
+            if (now - this._lastBadgePriceAt < this._badgeMinMs) {
+                if (this._badgeTimeout === null && !this._destroyed) {
+                    this._badgeTimeout = setTimeout(() => {
+                        this._badgeTimeout = null;
+                        if (this._destroyed || document.hidden) return;
+                        const p = this._pendingBadgePrice;
+                        this._pendingBadgePrice = null;
+                        if (p == null || !this._primitive?.isEnabled()) return;
+                        this._lastBadgePriceAt = Date.now();
+                        this._primitive.updatePrice(p);
+                    }, this._badgeMinMs - (now - this._lastBadgePriceAt));
+                }
+                return;
+            }
+            this._lastBadgePriceAt = now;
+            this._pendingBadgePrice = null;
+            this._primitive.updatePrice(price);
         };
 
         try {
@@ -517,6 +594,13 @@ class TimerManager {
             clearTimeout(this._priceRetryTimeout);
             this._priceRetryTimeout = null;
         }
+
+        // [PERF-T1] отменяем отложенное обновление бейджа
+        if (this._badgeTimeout) {
+            clearTimeout(this._badgeTimeout);
+            this._badgeTimeout = null;
+        }
+        this._pendingBadgePrice = null;
 
         if (this._priceHandler && this._chartManager?.priceManager && this._subscribedSymbolKey) {
             try { this._chartManager.priceManager.unsubscribe(this._subscribedSymbolKey, this._priceHandler); } catch(e) {}
@@ -561,7 +645,7 @@ class TimerManager {
     _tick() {
         if (this._disabled || this._destroyed || !this._timerElement || !this._chartManager?.chartData?.length) return;
 
-        if (['1d','1w','1M'].includes(this._currentTf)) {
+        if (LONG_TF.includes(this._currentTf)) {
             this._timerElement.textContent = '';
             this.stop();
             return;
