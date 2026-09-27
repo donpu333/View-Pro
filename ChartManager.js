@@ -108,6 +108,16 @@ class ChartManager {
         this._lastPriceGateAt = 0;
         this._priceGateMinMs = 100;
         this._priceGateTimeout = null;
+        // [PERF-GATE2] Обвязка «тихих» апдейтов: тик-хэндлер больше не делает
+        // тяжёлую работу на каждый aggTrade (титул, timerManager, DOM-проверки).
+        this._titleUpdateTimeout = null;
+        this._lastTitleUpdateAt = 0;
+        this._titleUpdateIntervalMs = 500;
+        this._titlePrecision = null;
+        this._domCheckOk = false;
+        this._domCheckAt = 0;
+        this._lastIndicatorsUpdateAt = 0;
+        this._indicatorsUpdateTimeout = null;
         this._candleTimeMap = new Map();
         this._destroyed = false;
         this._lastSeriesResyncAt = 0;
@@ -614,7 +624,16 @@ class ChartManager {
 
     // =============== VALIDITY ===============
     _isChartValid() {
-        return this.chart && this.candleSeries && this.barSeries && this.chartContainer && document.contains(this.chartContainer);
+        if (!this.chart || !this.candleSeries || !this.barSeries || !this.chartContainer) return false;
+        // [PERF-GATE2] document.contains() — обход DOM-дерева. Раньше вызывался
+        // на каждый тик (по 2-3 раза: хэндлер цены, _syncPriceLine, ...) — на
+        // горячих монетах это 300-600 обходов в секунду. Кэшируем «да» на 1 с;
+        // «нет» перепроверяем сразу, чтобы не пропустить монтаж контейнера.
+        const now = Date.now();
+        if (this._domCheckOk && now - this._domCheckAt < 1000) return true;
+        this._domCheckOk = document.contains(this.chartContainer);
+        this._domCheckAt = now;
+        return this._domCheckOk;
     }
 
     _updateVisibleSeries(updateData) {
@@ -1355,14 +1374,20 @@ class ChartManager {
             // а не только через 150 мс после остановки. Иначе быстрая прокрутка на 1m
             // успевала доехать до пустого края раньше, чем вообще стартовала загрузка.
             this._checkHistoryPreloadLive(range);
-            const barSpacing = this.chart.timeScale().options().barSpacing;
-            if (barSpacing) this._pendingBarSpacing = barSpacing;
+            // [PERF-GATE2] Убран timeScale().options() на каждое событие: это КЛОН
+            // всего объекта опций на каждый кадр скролла/зума (мусор для GC).
+            // barSpacing теперь читается один раз при остановке скролла (ниже).
             clearTimeout(this._scrollStopTimeout);
             // [ШАГ 1] Удалено this._pendingDrawingsRedraw = true;
 
             this._scrollStopTimeout = setTimeout(() => {
                 this._isScrolling = false;
                 this._isScrollingFast = false;
+                // [PERF-GATE2] читаем barSpacing один раз при остановке
+                try {
+                    const barSpacing = this.chart?.timeScale()?.options()?.barSpacing;
+                    if (barSpacing) this._pendingBarSpacing = barSpacing;
+                } catch (e) {}
                 if (this._pendingBarSpacing && this._pendingBarSpacing !== this._lastSavedBarSpacing) {
                     this._lastSavedBarSpacing = this._pendingBarSpacing;
                     this._savedBarSpacing = this._pendingBarSpacing;
@@ -1373,7 +1398,9 @@ class ChartManager {
                 // [ШАГ 1] Удалён блок if (this._pendingDrawingsRedraw) { ... }
             }, 150);
 
-            if (this.timerManager?._primitive?.isEnabled()) this.timerManager._primitive.requestRedraw();
+            // [PERF-GATE2] Убран timerManager._primitive.requestRedraw() на каждое
+            // событие range: при изменении диапазона график и так перерисовывается,
+            // примитив отрисуется в том же кадре — вызов лишь плодил инвалидации.
 
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
                 const panels = this.indicatorManager.panelManager.panels;
@@ -1530,6 +1557,26 @@ class ChartManager {
     }
 
     // =============== SCHEDULED UPDATE ===============
+    // [PERF-GATE2] Троттлинг полного пересчёта индикаторов (<= 2 раз/с, trailing).
+    _updateIndicatorsThrottled() {
+        if (!this.indicatorManager || this._destroyed) return;
+        const minInterval = 500;
+        const now = Date.now();
+        if (now - this._lastIndicatorsUpdateAt >= minInterval) {
+            this._lastIndicatorsUpdateAt = now;
+            if (this._indicatorsUpdateTimeout) { clearTimeout(this._indicatorsUpdateTimeout); this._indicatorsUpdateTimeout = null; }
+            this.indicatorManager.updateAllIndicators();
+            return;
+        }
+        if (this._indicatorsUpdateTimeout === null) {
+            this._indicatorsUpdateTimeout = setTimeout(() => {
+                this._indicatorsUpdateTimeout = null;
+                this._lastIndicatorsUpdateAt = Date.now();
+                if (this.indicatorManager && !this._destroyed) this.indicatorManager.updateAllIndicators();
+            }, minInterval - (now - this._lastIndicatorsUpdateAt));
+        }
+    }
+
     scheduleUpdate() {
         if (this._updateScheduled || this._updatesSuspended || !this._isChartValid()) return;
         this._updateScheduled = true;
@@ -1602,7 +1649,10 @@ class ChartManager {
             if (!cachedPrecision) this._setCachedPrecision(this.currentSymbol, this.currentExchange, this.currentMarketType, precisionToApply);
         }
 
-        if (this.indicatorManager) this.indicatorManager.updateAllIndicators();
+        // [PERF-GATE2] Предохранитель: даже если scheduleUpdate() дёргают снаружи
+        // на каждый тик, полный пересчёт индикаторов — не чаще 2 раз/с и всегда
+        // с «хвостовым» пересчётом (последние данные не потеряются).
+        if (this.indicatorManager) this._updateIndicatorsThrottled();
         const lastCandle = this.chartData[this.chartData.length - 1];
         const price = this.getCurrentPrice();
 
@@ -1722,7 +1772,7 @@ class ChartManager {
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = this.chartData.length - 1;
             this._applyPriceLineColor(activeSeries, this._getLineColor());
-            this._updatePageTitle();
+            this._scheduleTitleUpdate();
             if (!document.hidden) this.scheduleUpdatePosition();
             // [ШАГ 1] Удалён this.requestDrawingsRedraw();
             if (this.timerManager) this.timerManager.updatePrice(price);
@@ -1750,14 +1800,14 @@ class ChartManager {
             this._safeVolumeBarUpdate(newCandle.time, 0, this.bullishColor || '#26a69a');
             this._applyPriceLineColor(activeSeries, this._getLineColor());
             this.currentRealPrice = price;
-            this._updatePageTitle();
+            this._scheduleTitleUpdate();
             if (this.timerManager) this.timerManager.updatePrice(price);
             return;
         }
 
         this.currentRealPrice = price;
         this._applyPriceLineColor(activeSeries, this._getLineColor());
-        this._updatePageTitle();
+        this._scheduleTitleUpdate();
         if (this.timerManager) this.timerManager.updatePrice(price);
     }
 
@@ -2562,8 +2612,8 @@ class ChartManager {
         const data = this._latestCrosshairData;
         if (!data || !data.visible) { if (this.overlay) this.overlay.classList.remove('visible'); return; }
 
-        const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-        const precision = series?.options()?.priceFormat?.precision ?? 2;
+        // [PERF-GATE2] без клона series.options() на каждый кадр кроссхэра
+        const precision = this._getTitlePrecision();
         const formatWithPrecision = (value) => {
             if (value === undefined || value === null || isNaN(value)) return '—';
             const key = `${value}_${precision}`;
@@ -2824,11 +2874,20 @@ class ChartManager {
             if (typeof price === 'string') price = Number(price);
             if (typeof price !== 'number' || isNaN(price) || !isFinite(price)) return;
             this.currentRealPrice = price;
-            this._updatePageTitle();
-            if (!document.hidden && this._isChartValid()) {
-                this._syncPriceLine(price);
-                if (this.timerManager) this.timerManager.updatePrice(price);
-            }
+            // [PERF-GATE2] ГЛАВНАЯ ПРИЧИНА остаточных тормозов на «лидерах роста».
+            // Гейт стоял только на _syncPriceLine, но этот же хэндлер на КАЖДЫЙ
+            // aggTrade (50-200 раз/с) сверх того делал:
+            //   • _updatePageTitle() — series.options() (ПОЛНЫЙ КЛОН опций серии
+            //     в lightweight-charts) + конкатенация + запись document.title
+            //     ~на каждый тик (цена-то меняется);
+            //   • timerManager.updatePrice(price) — примитив делает requestRedraw,
+            //     т.е. ПОЛНУЮ перерисовку канваса графика с частотой тиков.
+            //     Гейт 10 раз/с таким образом обходился «чёрным ходом».
+            // Теперь на тик — только запись currentRealPrice. Титул — свой
+            // троттлинг 2 раза/с; цена на графике и в таймере — через гейт
+            // (_applyPriceUpdate сам вызывает timerManager.updatePrice, 10 раз/с).
+            this._scheduleTitleUpdate();
+            if (!document.hidden) this._syncPriceLine(price);
         };
         this.priceManager.subscribe(key, this._priceUpdateHandler, this.currentExchange, this.currentMarketType);
         this._startBackgroundTitleUpdate();
@@ -2863,6 +2922,7 @@ class ChartManager {
 
             const minMove = Math.pow(10, -p);
             const priceFormat = { type: 'price', precision: p, minMove };
+            this._titlePrecision = p;   // [PERF-GATE2] кэш для титула/кроссхэра
 
             if (this.candleSeries) this.candleSeries.applyOptions({ priceFormat });
             if (this.barSeries) this.barSeries.applyOptions({ priceFormat });
@@ -3130,6 +3190,32 @@ class ChartManager {
     }
 
     // =============== TITLE ===============
+    // [PERF-GATE2] Троттлинг титула: не чаще 2 раз/с, обязательно с «хвостовым»
+    // вызовом — финальная цена не потеряется. В скрытой вкладке титул и так
+    // обновляет _startBackgroundTitleUpdate (1 раз/с).
+    _scheduleTitleUpdate() {
+        if (this._destroyed) return;
+        if (this._titleUpdateTimeout !== null) return;
+        const wait = Math.max(0, this._titleUpdateIntervalMs - (Date.now() - this._lastTitleUpdateAt));
+        this._titleUpdateTimeout = setTimeout(() => {
+            this._titleUpdateTimeout = null;
+            this._lastTitleUpdateAt = Date.now();
+            if (!this._destroyed) this._updatePageTitle();
+        }, wait);
+    }
+
+    // [PERF-GATE2] series.options() в lightweight-charts возвращает КЛОН всего
+    // объекта опций. Точность меняется только в applyPriceFormat — кэшируем.
+    _getTitlePrecision() {
+        if (typeof this._titlePrecision === 'number' && this._titlePrecision >= 0) return this._titlePrecision;
+        try {
+            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
+            const p = series?.options()?.priceFormat?.precision;
+            if (typeof p === 'number' && p >= 0) { this._titlePrecision = p; return p; }
+        } catch (e) {}
+        return 2;
+    }
+
     _updatePageTitle() {
         const symbol = this.currentSymbol || '';
         let price = this.currentRealPrice;
@@ -3137,8 +3223,7 @@ class ChartManager {
         if (!price || isNaN(price) || price <= 0) price = this.chartData?.[this.chartData.length - 1]?.close;
         if (!symbol) { document.title = 'График'; return; }
         if (price != null && !isNaN(price) && price > 0) {
-            const series = this.currentChartType === 'candle' ? this.candleSeries : this.barSeries;
-            const precision = series?.options()?.priceFormat?.precision ?? 2;
+            const precision = this._getTitlePrecision();
             const lastCandle = this.chartData?.[this.chartData.length - 1];
             const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
             const arrow = isBullish ? '▲' : '▼';
@@ -3185,6 +3270,7 @@ class ChartManager {
     // =============== ABORT / DESTROY ===============
     _abortAllProcesses() {
         if (this._bgTitleInterval) { clearInterval(this._bgTitleInterval); this._bgTitleInterval = null; }
+        if (this._titleUpdateTimeout) { clearTimeout(this._titleUpdateTimeout); this._titleUpdateTimeout = null; }
         if (this._periodicSyncInterval) { clearInterval(this._periodicSyncInterval); this._periodicSyncInterval = null; }
         if (this._quarantineTimeout) { clearTimeout(this._quarantineTimeout); this._quarantineTimeout = null; }
         if (this.priceManager && this._priceUpdateHandler && this._priceSubscriptionKey) {
@@ -3229,6 +3315,8 @@ class ChartManager {
         if (this._bgTitleInterval) { clearInterval(this._bgTitleInterval); this._bgTitleInterval = null; }
         if (this._periodicSyncInterval) { clearInterval(this._periodicSyncInterval); this._periodicSyncInterval = null; }
         if (this._quarantineTimeout) { clearTimeout(this._quarantineTimeout); this._quarantineTimeout = null; }
+        if (this._titleUpdateTimeout) { clearTimeout(this._titleUpdateTimeout); this._titleUpdateTimeout = null; }
+        if (this._indicatorsUpdateTimeout) { clearTimeout(this._indicatorsUpdateTimeout); this._indicatorsUpdateTimeout = null; }
         this._abortAllProcesses();
         if (window._dailySeparator && typeof window._dailySeparator.destroy === 'function') { window._dailySeparator.destroy(); window._dailySeparator = null; }
         if (window._sessionHighlighter && typeof window._sessionHighlighter.destroy === 'function') { window._sessionHighlighter.destroy(); window._sessionHighlighter = null; }
