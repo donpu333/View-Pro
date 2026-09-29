@@ -852,6 +852,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 
     destroy() {
+        this._destroyed = true;   // [PERF-PAN] гасим rAF-цикл маркеров
         if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
@@ -1115,10 +1116,51 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 
     _findCandleByValue(value) {
-        const data = this.manager?.chartManager?.chartData || [];
+        // [PERF-PAN] БЫЛО: data.find(...) — ЛИНЕЙНЫЙ скан всего chartData
+        // (до 12 000 свечей на 1m) с вызовом _getTimeValue() на каждую свечю.
+        // Метод зовётся из _calcChartClientPosition() для КАЖДОГО DOM-маркера
+        // на КАЖДОМ кадре — один из главных источников «тормозов» при листании.
+        // СТАЛО: точное попадание по _candleTimeMap, иначе бинарный поиск.
+        const cm = this.manager?.chartManager;
+        const data = cm?.chartData || [];
+        if (!data.length) return null;
         const num = Number(value);
-        return data.find((c) => this._getTimeValue(c.time) === num) || null;
+        if (!isFinite(num)) return null;
+
+        const idx = cm._candleTimeMap ? cm._candleTimeMap.get(num) : undefined;
+        if (idx !== undefined && data[idx]) return data[idx];
+
+        if (typeof cm.findNearestCandle === 'function') {
+            const c = cm.findNearestCandle(num);
+            if (c) return c;
+        }
+        let lo = 0, hi = data.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const t = this._getTimeValue(data[mid].time);
+            if (t === num) return data[mid];
+            if (t < num) lo = mid + 1; else hi = mid - 1;
+        }
+        const il = Math.max(0, hi), ir = Math.min(data.length - 1, lo);
+        const tl = this._getTimeValue(data[il].time), tr = this._getTimeValue(data[ir].time);
+        return (Math.abs(tl - num) <= Math.abs(tr - num)) ? data[il] : data[ir];
     }
+
+    // [PERF-PAN] Кэш getBoundingClientRect(): чтение геометрии ПОСЛЕ записи
+    // стилей (а маркеры пишут left/top каждый кадр) заставляет браузер
+    // выполнять принудительный layout — до десятков мс на кадр.
+    _getChartRectCached(ttl = 120) {
+        const container = this._getChartContainer();
+        if (!container) return null;
+        const now = performance.now();
+        const c = this._chartRectCache;
+        if (c && c.el === container && now - c.at < ttl) return c.rect;
+        const rect = container.getBoundingClientRect();
+        this._chartRectCache = { el: container, rect, at: now };
+        return rect;
+    }
+
+    _invalidateChartRectCache() { this._chartRectCache = null; }
 
     _getAllSeries() {
         const chart = this._getChart();
@@ -1383,6 +1425,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             if (m && m.element && m.element.remove) m.element.remove();
         }
         this._manualDomMarkers = [];
+        // [PERF-PAN] маркеров нет — rAF-цикл не нужен
+        if (typeof this._stopMarkerLoop === 'function') this._stopMarkerLoop();
     }
 
     _rebuildManualMarkers() {
@@ -1408,6 +1452,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             `;
             document.body.appendChild(element);
             this._manualDomMarkers.push({ element, timeValue, fixedX: client.x, fixedY: client.y, logical: info?.logical ?? null, price: info?.price ?? null });
+            // [PERF-PAN] цикл запускается ТОЛЬКО когда маркеры реально есть
+            this._startMarkerLoop();
         }
     }
 
@@ -1416,7 +1462,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const chart = this._getChart();
             const container = this._getChartContainer();
             if (!chart || !container) return null;
-            const rect = container.getBoundingClientRect();
+            // [PERF-PAN] кэш геометрии контейнера (см. _getChartRectCached)
+            const rect = this._getChartRectCached();
+            if (!rect) return null;
             const timeScale = typeof chart.timeScale === 'function' ? chart.timeScale() : null;
             const series = this._getPriceSeries();
 
@@ -1448,12 +1496,23 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             if (!client && marker.fixedX != null && marker.fixedY != null) client = { x: marker.fixedX, y: marker.fixedY };
 
             if (client) {
-                if (client.x < -9000 || client.y < -9000) {
-                    marker.element.style.display = 'none';
-                } else {
-                    marker.element.style.display = 'block';
-                    marker.element.style.left = `${client.x}px`;
-                    marker.element.style.top = `${client.y}px`;
+                const hidden = (client.x < -9000 || client.y < -9000);
+                // [PERF-PAN] запись left/top = инвалидация layout на ВСЁ дерево.
+                // Пишем только если координата реально изменилась (на 0.5px).
+                const st = marker.element.style;
+                const moved = marker._lastX === undefined ||
+                    Math.abs(marker._lastX - client.x) > 0.5 ||
+                    Math.abs(marker._lastY - client.y) > 0.5 ||
+                    marker._lastHidden !== hidden;
+                if (moved) {
+                    if (hidden) {
+                        st.display = 'none';
+                    } else {
+                        if (st.display !== 'block') st.display = 'block';
+                        st.left = `${client.x}px`;
+                        st.top = `${client.y}px`;
+                    }
+                    marker._lastX = client.x; marker._lastY = client.y; marker._lastHidden = hidden;
                 }
                 marker.fixedX = client.x;
                 marker.fixedY = client.y;
@@ -1466,16 +1525,44 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 
     _startMarkerLoop() {
+        // [PERF-PAN] БЫЛО: бесконечный requestAnimationFrame-цикл, который
+        // крутился ВСЕГДА (даже без маркеров) и каждый кадр дёргал
+        // _updateDomMarkersPositions() -> getBoundingClientRect() (принудительный
+        // layout) + поиск свечи по каждому маркеру + запись стилей.
+        // Этот цикл конкурировал за главный поток с рендером lightweight-charts
+        // именно в момент перетаскивания графика.
+        // СТАЛО: цикл живёт только пока есть DOM-маркеры, и сам останавливается.
         if (this._rafId) return;
+        if (!this._manualDomMarkers || this._manualDomMarkers.length === 0) return;
         const loop = () => {
+            this._rafId = null;
+            if (this._destroyed) return;
+            if (!this._manualDomMarkers || this._manualDomMarkers.length === 0) return; // стоп
             this._updateDomMarkersPositions();
             this._rafId = requestAnimationFrame(loop);
         };
         this._rafId = requestAnimationFrame(loop);
     }
 
+    // [PERF-PAN] останавливаем цикл, когда маркеров не осталось
+    _stopMarkerLoop() {
+        if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+    }
+
     _setupChartSync() {
-        const update = () => { this._updateDomMarkersPositions(); };
+        // [PERF-PAN] два разных колбэка:
+        //  • update — на изменение видимого диапазона/цены. Геометрия контейнера
+        //    при листании графика НЕ меняется, поэтому кэш rect НЕ сбрасываем
+        //    (иначе каждый кадр получали бы принудительный layout).
+        //  • updateGeom — на resize/scroll: здесь кэш сбрасываем.
+        const update = () => {
+            if (!this._manualDomMarkers || this._manualDomMarkers.length === 0) return;
+            this._updateDomMarkersPositions();
+        };
+        const updateGeom = () => {
+            this._invalidateChartRectCache();
+            update();
+        };
         if (!this._timeScaleHandler) {
             const chart = this._getChart();
             const timeScale = chart && typeof chart.timeScale === 'function' ? chart.timeScale() : null;
@@ -1500,15 +1587,15 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         if (!this._resizeObserver && typeof ResizeObserver !== 'undefined') {
             const container = this._getChartContainer();
             if (container && container !== document.body) {
-                this._resizeObserver = new ResizeObserver(update);
+                this._resizeObserver = new ResizeObserver(updateGeom);
                 this._resizeContainer = container;
                 this._resizeObserver.observe(container);
             }
         }
         if (!this._windowScrollHandler) {
-            this._windowScrollHandler = update;
-            window.addEventListener('scroll', update, true);
-            window.addEventListener('resize', update);
+            this._windowScrollHandler = updateGeom;
+            window.addEventListener('scroll', updateGeom, true);
+            window.addEventListener('resize', updateGeom);
         }
     }
 
