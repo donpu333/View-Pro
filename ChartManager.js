@@ -178,6 +178,20 @@ class ChartManager {
         this._cachedPrecisionValue = null;
         this._lastInferredPrecision = null;
 
+        // [PERF-PAN] Кэш «ближайшей свечи» для примитивов рисовалок.
+        // updateAllViews() у каждого примитива вызывается КАЖДЫЙ кадр, а данных
+        // на 1m в памяти до 12 000 свечей — линейный скан стоил миллисекунды
+        // на объект на кадр. Теперь: бинарный поиск + мемоизация по «поколению»
+        // данных (length/first/last), инвалидация автоматическая.
+        this._nearestTimeCache = new Map();
+        this._nearestTimeCacheGen = null;
+        this._nearestTimeCacheMax = 4096;
+
+        // [PERF-PAN] Флаг «синхронизацию панелей держит ChartManager»:
+        // IndicatorPanelManager при нём не дублирует setVisibleLogicalRange
+        // вторым rAF-колбэком на каждую панель.
+        this._panelsSyncActive = false;
+
         // [HIST-FIX] isMobile поднят выше (нужен параметрам истории)
         this._maxCandlesInMemory = isMobile ? 3000 : 8000;   // было 5000: реже trim и реже «пилот» у левого края
         this._leftBuffer = isMobile ? 1000 : 2000;
@@ -1357,6 +1371,12 @@ class ChartManager {
     // =============== SUBSCRIPTIONS ===============
     setupOptimizedSubscriptions() {
         if (!this.chart || !this.chart.timeScale()) return;
+        // [PERF-PAN] ChartManager синхронизирует панели ОДНИМ rAF на все панели.
+        // IndicatorPanelManager видит этот флаг и не дублирует синхронизацию
+        // своим отдельным rAF на каждую панель (раньше setVisibleLogicalRange
+        // вызывался дважды за кадр на панель + лишний echo-обработчик с
+        // matches(':hover') — принудительный recalc стиля каждый кадр).
+        this._panelsSyncActive = true;
 
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             if (!this._isChartValid()) return;
@@ -1406,14 +1426,27 @@ class ChartManager {
                 const panels = this.indicatorManager.panelManager.panels;
                 if (panels && panels.length > 0 && !this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
-                        this._isSyncing = true;
-                        panels.forEach((panel) => {
-                            if (panel.chart && !panel.isCollapsed) {
-                                try { panel.chart.timeScale().setVisibleLogicalRange(range); } catch (e) {}
-                            }
-                        });
-                        this._isSyncing = false;
                         this._panelsSyncRafId = null;
+                        this._isSyncing = true;
+                        // [PERF-PAN] берём САМЫЙ СВЕЖИЙ диапазон (за кадр могло
+                        // прийти несколько событий) и глушим «эхо» панелей:
+                        // иначе panelRangeHandler панели отвечал бы обратной
+                        // синхронизацией главного графика на каждый кадр.
+                        const r = this._lastVisibleRange || range;
+                        const pm = this.indicatorManager?.panelManager;
+                        const prevLock = pm ? pm._rangeSyncLock : false;
+                        if (pm) pm._rangeSyncLock = true;
+                        try {
+                            for (let i = 0; i < panels.length; i++) {
+                                const panel = panels[i];
+                                if (panel.chart && !panel.isCollapsed) {
+                                    try { panel.chart.timeScale().setVisibleLogicalRange(r); } catch (e) {}
+                                }
+                            }
+                        } finally {
+                            if (pm) pm._rangeSyncLock = prevLock;
+                            this._isSyncing = false;
+                        }
                     });
                 }
             }
@@ -2923,6 +2956,8 @@ class ChartManager {
             const minMove = Math.pow(10, -p);
             const priceFormat = { type: 'price', precision: p, minMove };
             this._titlePrecision = p;   // [PERF-GATE2] кэш для титула/кроссхэра
+            this._drawingPrecisionKey = null;   // [PERF-PAN] сброс кэша точности рисовалок
+            this._drawingPrecisionValue = null;
 
             if (this.candleSeries) this.candleSeries.applyOptions({ priceFormat });
             if (this.barSeries) this.barSeries.applyOptions({ priceFormat });
@@ -3399,6 +3434,152 @@ class ChartManager {
     _subscribeToSymbolChange(cb) { this._symbolChangeCallbacks = this._symbolChangeCallbacks || []; this._symbolChangeCallbacks.push(cb); }
     _notifySymbolChange() { if (this._symbolChangeCallbacks) this._symbolChangeCallbacks.forEach(cb => cb()); }
 
+    // [PERF-PAN] Единая точка «привязки» времени рисовалок к свече.
+    // O(log N) + кэш результата; кэш сбрасывается, когда данные изменились
+    // (trim / prepend / новая свеча). Метод НЕ читает DOM и НЕ вызывает
+    // series.options() — его безопасно звать из updateAllViews() каждый кадр.
+    findNearestCandleTime(anchor) {
+        const data = this.chartData;
+        if (!data || data.length === 0) return null;
+        const a = Number(anchor);
+        if (!isFinite(a)) return null;
+
+        const len = data.length;
+        const first = data[0].time;
+        const last = data[len - 1].time;
+
+        const gen = this._nearestTimeCacheGen;
+        if (!gen || gen.len !== len || gen.first !== first || gen.last !== last) {
+            this._nearestTimeCache.clear();
+            this._nearestTimeCacheGen = { len, first, last };
+        } else {
+            const hit = this._nearestTimeCache.get(a);
+            if (hit !== undefined) return hit;
+        }
+
+        let result;
+        if (a <= first) result = first;
+        else if (a >= last) result = last;
+        else {
+            let lo = 0, hi = len - 1;
+            while (lo <= hi) {
+                const mid = (lo + hi) >> 1;
+                const t = data[mid].time;
+                if (t === a) { result = t; lo = -1; break; }
+                if (t < a) lo = mid + 1; else hi = mid - 1;
+            }
+            if (lo !== -1) {
+                const tl = data[hi] ? data[hi].time : first;
+                const tr = data[lo] ? data[lo].time : last;
+                result = (Math.abs(tl - a) <= Math.abs(tr - a)) ? tl : tr;
+            }
+        }
+
+        if (this._nearestTimeCache.size < this._nearestTimeCacheMax) this._nearestTimeCache.set(a, result);
+        return result;
+    }
+
+    // [PERF-PAN] «Пол» по свече: наибольшее time такое, что time <= anchor < time+интервал.
+    // Семантика ТОЧНО как у старого HorizontalRayPrimitive._syncRayTime
+    // (интервал берётся по первым двум свечам; если anchor не попал ни в один
+    // интервал — фолбэк на ближайшую свечу), но O(log N) + кэш вместо двух
+    // линейных проходов по всему массиву на каждом кадре.
+    findCandleFloorTime(anchor) {
+        const data = this.chartData;
+        if (!data || data.length === 0) return null;
+        const a = Number(anchor);
+        if (!isFinite(a)) return null;
+
+        const len = data.length;
+        const first = data[0].time;
+        const last = data[len - 1].time;
+        const interval = len >= 2 ? (data[1].time - first) : 0;
+
+        const gen = this._nearestTimeCacheGen;
+        const cacheOk = gen && gen.len === len && gen.first === first && gen.last === last;
+        if (!cacheOk) {
+            this._nearestTimeCache.clear();
+            this._nearestTimeCacheGen = { len, first, last };
+        } else {
+            const key = 'f' + a;
+            const hit = this._nearestTimeCache.get(key);
+            if (hit !== undefined) return hit;
+        }
+
+        let result;
+        if (a < first) {
+            result = this.findNearestCandleTime(a);
+        } else if (a >= last) {
+            result = (interval > 0 && a < last + interval) ? last : this.findNearestCandleTime(a);
+        } else {
+            let lo = 0, hi = len - 1, idx = 0;
+            while (lo <= hi) {
+                const mid = (lo + hi) >> 1;
+                if (data[mid].time <= a) { idx = mid; lo = mid + 1; } else { hi = mid - 1; }
+            }
+            const t = data[idx].time;
+            result = (interval > 0 && a < t + interval) ? t : this.findNearestCandleTime(a);
+        }
+
+        if (this._nearestTimeCache.size < this._nearestTimeCacheMax) this._nearestTimeCache.set('f' + a, result);
+        return result;
+    }
+
+    // [PERF-PAN] Индекс ближайшей свечи (бинарный поиск, без кэша — нужен
+    // в обработчиках мыши, где anchor каждый раз новый).
+    findNearestCandleIndex(anchor) {
+        const data = this.chartData;
+        if (!data || data.length === 0) return -1;
+        const a = Number(anchor);
+        if (!isFinite(a)) return -1;
+        const len = data.length;
+        if (a <= data[0].time) return 0;
+        if (a >= data[len - 1].time) return len - 1;
+        const cachedIdx = this._candleTimeMap ? this._candleTimeMap.get(a) : undefined;
+        if (cachedIdx !== undefined) return cachedIdx;
+        let lo = 0, hi = len - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const t = data[mid].time;
+            if (t === a) return mid;
+            if (t < a) lo = mid + 1; else hi = mid - 1;
+        }
+        const il = Math.max(0, hi), ir = Math.min(len - 1, lo);
+        return (Math.abs(data[il].time - a) <= Math.abs(data[ir].time - a)) ? il : ir;
+    }
+
+    // [PERF-PAN] Ближайшая свеча целиком — для «магнита» рисовалок.
+    // Заменяет линейный скан chartData в _snapToPrice/_snapToCandle/
+    // _findClosestCandleTime (они вызываются на каждое движение мыши).
+    findNearestCandle(anchor) {
+        const i = this.findNearestCandleIndex(anchor);
+        return i >= 0 ? this.chartData[i] : null;
+    }
+
+    // [PERF-PAN] Точность цены для подписей рисовалок БЕЗ series.options()
+    // (в lightweight-charts options() возвращает ПОЛНЫЙ ГЛУБОКИЙ КЛОН опций
+    // серии — раньше такой клон создавался по 4-6 раз на сделку КАЖДЫЙ кадр)
+    // и БЕЗ localStorage.getItem() (синхронное чтение хранилища каждый кадр).
+    getDrawingPrecision() {
+        const key = `${this.currentSymbol}|${this.currentExchange}|${this.currentMarketType}|${this.currentChartType}`;
+        if (this._drawingPrecisionKey === key && typeof this._drawingPrecisionValue === 'number') {
+            return this._drawingPrecisionValue;
+        }
+        let p = NaN;
+        try { p = this._getTitlePrecision(); } catch (e) {}
+        if (typeof p !== 'number' || !isFinite(p)) {
+            const raw = this._getCachedPrecision(this.currentSymbol, this.currentExchange, this.currentMarketType);
+            p = parseInt(raw, 10);
+        }
+        if (typeof p !== 'number' || !isFinite(p) || p < 0) {
+            try { p = this._inferPrecisionFromData(); } catch (e) { p = 2; }
+        }
+        p = Math.max(0, Math.min(8, Math.floor(p)));
+        this._drawingPrecisionKey = key;
+        this._drawingPrecisionValue = p;
+        return p;
+    }
+
     timeToCoordinate(time) { if (!this._isChartValid()) return null; try { return this.chart.timeScale().timeToCoordinate(time); } catch (e) { return null; } }
     coordinateToTime(coordinate) { if (!this._isChartValid()) return null; try { return this.chart.timeScale().coordinateToTime(coordinate); } catch (e) { return null; } }
 
@@ -3458,6 +3639,10 @@ class ChartManager {
     }
 
     _applyPendingTrim() {
+        // [PERF-PAN] trim — это full setData() + пересчёт индикаторов (десятки мс).
+        // Раньше он мог выстрелить прямо во время перетаскивания (дебаунс 300 мс
+        // срабатывал посреди драга) — отсюда «рывок» при листании на 1m/5m.
+        if (this._isScrolling || this._isScrollingFast) return;
         if (this._pendingTrimParams && !this._isTrimming) {
             const { fromIndex, toIndex } = this._pendingTrimParams;
             this._performTrimNow(fromIndex, toIndex);
@@ -3467,6 +3652,9 @@ class ChartManager {
 
     _performTrimNow(fromIndex, toIndex) {
         if (this._isTrimming || this.isLoadingMore || !this._isChartValid()) return;
+        // [PERF-PAN] двойная защита: никогда не перекладываем данные серии
+        // в момент, когда пользователь тащит график.
+        if (this._isScrolling || this._isScrollingFast) return;
         if (this.chartData.length <= this._maxCandlesInMemory) return;
         const keepFrom = Math.max(0, Math.floor(fromIndex - (this._leftBuffer * 1.5)));
         let keepTo = Math.min(this.chartData.length, Math.ceil(toIndex + (this._rightBuffer * 1.5)));
@@ -3486,6 +3674,7 @@ class ChartManager {
         try {
             this.chartData = this.chartData.slice(keepFrom, keepTo);
             this._rebuildTimeMap();
+            this._nearestTimeCacheGen = null;   // [PERF-PAN] данные изменились — сброс кэша привязки
             this._volumeDataDirty = true;
             this._lastVolumeUpdateIndex = -1;
             const ts = this.chart.timeScale();
