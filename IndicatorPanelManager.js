@@ -251,6 +251,20 @@ class IndicatorPanelManager {
         if (panelData._syncState) return;
         
         panelData._syncState = { unsubscribers: [], crosshairLine: null };
+
+        // [PERF-PAN] кэш «курсор над панелью» — чтобы не звать matches(':hover')
+        // (пересчёт стиля) в обработчике диапазона на каждом кадре.
+        panelData._isHovered = false;
+        const hoverOn = () => { panelData._isHovered = true; };
+        const hoverOff = () => { panelData._isHovered = false; };
+        panelData.wrapper.addEventListener('mouseenter', hoverOn);
+        panelData.wrapper.addEventListener('mouseleave', hoverOff);
+        panelData._syncState.unsubscribers.push(() => {
+            try {
+                panelData.wrapper.removeEventListener('mouseenter', hoverOn);
+                panelData.wrapper.removeEventListener('mouseleave', hoverOff);
+            } catch (e) {}
+        });
         
         // 1. Копируем настройки timeScale из основного
         const mainOptions = mainChart.options();
@@ -267,6 +281,12 @@ class IndicatorPanelManager {
         let syncTimer = null;
         const rangeHandler = () => {
             if (this._rangeSyncLock) return;
+            // [PERF-PAN] ChartManager синхронизирует ВСЕ панели одним rAF
+            // (setupOptimizedSubscriptions). Раньше этот обработчик делал то же
+            // самое ВТОРЫМ rAF на каждую панель: setVisibleLogicalRange вызывался
+            // дважды за кадр, а в ответ ещё и echo-обработчик панели срабатывал
+            // дважды (каждый — с matches(':hover'), т.е. с пересчётом стиля).
+            if (cm._panelsSyncActive) return;
             if (cm.isLoadingMore || cm._isTrimming) return;
             if (syncTimer) cancelAnimationFrame(syncTimer);
             syncTimer = requestAnimationFrame(() => {
@@ -299,7 +319,10 @@ class IndicatorPanelManager {
             // оно перезаписывало пользовательский скролл (дробные позиции скруглялись)
             // и_CLAMPило главный график по краю свечей — график «дёргался» и
             // «не скроллился вправо».
-            if (!panelData.wrapper.matches(':hover')) return;
+            // [PERF-PAN] было panelData.wrapper.matches(':hover') — принудительный
+            // пересчёт стилей на КАЖДОМ кадре листания. Теперь флаг из
+            // mouseenter/mouseleave (см. ниже), чтение — бесплатное.
+            if (!panelData._isHovered) return;
             if (cm.isLoadingMore || cm._isTrimming) return;
             if (panelSyncTimer) cancelAnimationFrame(panelSyncTimer);
             panelSyncTimer = requestAnimationFrame(() => {
