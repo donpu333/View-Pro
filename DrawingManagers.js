@@ -9523,6 +9523,7 @@ class TradeLevelManager {
             this._pendingTradeTime = null;
             const panel = document.getElementById('tradeCreatePanel');
             if (panel) panel.style.display = 'none';
+            if (this._atrController) this._atrController.onPanelClose(); // НОВЫЙ
         }
     }
 
@@ -10038,6 +10039,16 @@ class TradeLevelManager {
         const tabStyle = panel.querySelector('#tabStyle');
         const tabVisibility = panel.querySelector('#tabVisibility');
 
+        // НОВЫЙ: вкладка «ATR» — расчёт стопа в % от ДНЕВНОГО ATR.
+        // Данные/настройки берутся из индикатора «ATR Multi» (MultiTimeframeATRIndicator),
+        // вся логика — в TradeATR.js (window.TradeATRController).
+        const atrPanel = panel.querySelector('#tradeAtrPanel');
+        const tabATR = panel.querySelector('#tabATR');
+        if (typeof window.TradeATRController === 'function') {
+            if (!this._atrController) this._atrController = new window.TradeATRController(this._chartManager);
+            if (this._atrController.bind(panel, this)) this._atrController.onPanelOpen();
+        }
+
         // НОВЫЙ: Динамическое добавление чекбокса для скрытия второго тейка в панель стилей
         if (stylePanel) {
             let tp2CheckboxContainer = stylePanel.querySelector('#showTP2Container');
@@ -10099,21 +10110,27 @@ class TradeLevelManager {
             }
         }
 
+        // НОВЫЙ: три вкладки — Стиль / ATR / Видимость
+        const tradeTabs = [
+            { name: 'style',      btn: tabStyle,      body: stylePanel },
+            { name: 'atr',        btn: tabATR,        body: atrPanel },
+            { name: 'visibility', btn: tabVisibility, body: visibilityPanel }
+        ];
         const switchTab = (tabName) => {
-            if (tabName === 'style') {
-                if (tabStyle) { tabStyle.style.background = '#4A90E2'; tabStyle.style.color = '#fff'; tabStyle.style.border = 'none'; }
-                if (tabVisibility) { tabVisibility.style.background = '#2D2D2D'; tabVisibility.style.color = '#B0B0B0'; tabVisibility.style.border = '1px solid #404040'; }
-                if (stylePanel) stylePanel.style.display = 'block';
-                if (visibilityPanel) visibilityPanel.style.display = 'none';
-            } else {
-                if (tabVisibility) { tabVisibility.style.background = '#4A90E2'; tabVisibility.style.color = '#fff'; tabVisibility.style.border = 'none'; }
-                if (tabStyle) { tabStyle.style.background = '#2D2D2D'; tabStyle.style.color = '#B0B0B0'; tabStyle.style.border = '1px solid #404040'; }
-                if (visibilityPanel) visibilityPanel.style.display = 'block';
-                if (stylePanel) stylePanel.style.display = 'none';
-            }
+            tradeTabs.forEach(t => {
+                const active = t.name === tabName;
+                if (t.btn) {
+                    t.btn.style.background = active ? '#4A90E2' : '#2D2D2D';
+                    t.btn.style.color = active ? '#fff' : '#B0B0B0';
+                    t.btn.style.border = active ? 'none' : '1px solid #404040';
+                }
+                if (t.body) t.body.style.display = active ? 'block' : 'none';
+            });
+            if (tabName === 'atr' && this._atrController) this._atrController.onTabShow();
         };
         switchTab('style');
         if (tabStyle) tabStyle.onclick = (e) => { e.stopPropagation(); switchTab('style'); };
+        if (tabATR) tabATR.onclick = (e) => { e.stopPropagation(); switchTab('atr'); };
         if (tabVisibility) tabVisibility.onclick = (e) => { e.stopPropagation(); switchTab('visibility'); };
 
         setTimeout(() => entryInput.focus(), 100);
@@ -10320,6 +10337,7 @@ class TradeLevelManager {
     _closePanel() {
         const panel = document.getElementById('tradeCreatePanel');
         if (panel) { if (panel._destroyDrag) panel._destroyDrag(); panel.style.display = 'none'; }
+        if (this._atrController) this._atrController.onPanelClose(); // НОВЫЙ: стоп автообновления ATR
         this._drawingEntry = null;
         this._isWaitingForSL = false;
         this._editingTrade = null;
