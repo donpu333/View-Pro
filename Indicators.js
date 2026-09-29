@@ -268,6 +268,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             filterType: savedSettings.filterType || 'Adaptive',
             devFactor: savedSettings.devFactor || 1.0,
             fixedMult: savedSettings.fixedMult || 1.5,
+            monthATRPeriod: savedSettings.monthATRPeriod || 3,   // [ATR-FIX] период для ТФ 1M (месяц)
             weekATRPeriod: savedSettings.weekATRPeriod || 3,
             dayATRPeriod: savedSettings.dayATRPeriod || 3,
             hourATRPeriod: savedSettings.hourATRPeriod || 12,
@@ -493,6 +494,13 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     _normalizeInterval(interval) {
         if (!interval) return '1h';
 
+        // [ATR-FIX] МЕСЯЦ проверяем ДО toLowerCase(): '1M' (месяц) и '1m'
+        // (минута) после приведения к нижнему регистру неразличимы, и месячный
+        // график попадал в ветку «1 минута» → период ATR становился
+        // calculateCandlesFromHours(3, '1') = 180 МЕСЯЦЕВ, а виджет писал «1M».
+        const raw = interval.toString().trim();
+        if (raw === '1M' || raw === 'M' || raw.toLowerCase() === 'month') return '1M';
+
         const i = interval.toString().toLowerCase().trim();
 
         if (['1', '1m', 'm1'].includes(i)) return '1m';
@@ -515,7 +523,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const map = {
             '1m': '1M', '3m': '3M', '5m': '5M', '15m': '15M', '30m': '30M',
             '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
-            '1d': '1D', '1w': '1W'
+            '1d': '1D', '1w': '1W',
+            // [ATR-FIX] месяц — '1Mo', иначе и минута, и месяц выводились как «1M»
+            '1M': '1Mo'
         };
         return map[apiInterval] || apiInterval.toUpperCase();
     }
@@ -525,6 +535,9 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 
     getActualPeriod(apiInterval) {
+        // [ATR-FIX] месяц — отдельная ветка (и ДО минутных, иначе '1M' перехватит
+        // ветка minute1TF='1' и период станет 180)
+        if (apiInterval === '1M') return this.settings.monthATRPeriod || 3;
         if (apiInterval === '1w') return this.settings.weekATRPeriod || 3;
         if (apiInterval === '1d') return this.settings.dayATRPeriod || 3;
 
@@ -645,10 +658,19 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const prevRawATR = rawRMA[i - 1];
 
             if (filterType === 'Adaptive') {
-                const window = ranges.slice(Math.max(0, i - period), i);
-                const mean = window.reduce((a, b) => a + b, 0) / window.length;
-                const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
-                const stdDev = Math.sqrt(variance);
+                // [ATR-FIX] без ranges.slice() на каждой свече: окно считаем
+                // индексами. Порядок суммирования и Math.pow сохранены — результат
+                // бит-в-бит тот же, но исчезает N аллокаций массива на пересчёт
+                // (пересчёт идёт каждые ~100 мс на тиках, на 12 000 свечей
+                // это были десятки тысяч объектов в секунду → давление на GC).
+                const wStart = Math.max(0, i - period);
+                const wLen = i - wStart;
+                let wSum = 0;
+                for (let j = wStart; j < i; j++) wSum += ranges[j];
+                const mean = wSum / wLen;
+                let varSum = 0;
+                for (let j = wStart; j < i; j++) varSum += Math.pow(ranges[j] - mean, 2);
+                const stdDev = Math.sqrt(varSum / wLen);
 
                 upperBound = Math.min(prevRawATR + stdDev * devFactor, prevRawATR * 3.0);
                 lowerBound = Math.max(prevRawATR - stdDev * devFactor, prevRawATR * 0.3);
@@ -722,19 +744,49 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const atr = ranges.reduce((sum, v) => sum + v, 0) / ranges.length;
         const last = selectedCandles[selectedCandles.length - 1];
         const lastRange = ranges[ranges.length - 1];
-        const progress = atr > 0 ? (lastRange / atr) * 100 : 0;
+
+        // [ATR-FIX] «Прогресс» и «Остаток» в ручном режиме считались от последней
+        // ВЫБРАННОЙ свечи. Если пользователь выбирал исторические свечи, виджет
+        // показывал остаток хода свечи из прошлого (замер: «Ост 77.4%» вместо
+        // «−5.8%» по текущей свече). Теперь — как в авто-режиме: ATR берётся из
+        // выборки, а прогресс/остаток относятся к ТЕКУЩЕЙ свече графика.
+        // Диапазон последней выбранной свечи сохранён в _selectedLastRange.
+        const live = fullData[fullData.length - 1];
+        const liveRange = (live && isFinite(live.high) && isFinite(live.low))
+            ? (live.high - live.low)
+            : lastRange;
+        const liveClose = (live && isFinite(live.close) && live.close > 0) ? live.close : last.close;
+        const progress = atr > 0 ? (liveRange / atr) * 100 : 0;
 
         return {
             atr,
-            natr: last.close > 0 ? (atr / last.close) * 100 : 0,
+            natr: liveClose > 0 ? (atr / liveClose) * 100 : 0,
             progress,
             remaining: 100 - progress,
-            remainingPoints: atr - lastRange,
-            trueRange: lastRange,
-            rangeRatio: atr > 0 ? (lastRange / atr) * 100 : 0,
+            remainingPoints: atr - liveRange,
+            trueRange: liveRange,
+            rangeRatio: atr > 0 ? (liveRange / atr) * 100 : 0,
+            _selectedLastRange: lastRange,
             upperBound: 0, lowerBound: 0, isValid: true, isAnomaly: false, anomalyType: null,
             _manual: true, _selectedBars: selectedCandles.length
         };
+    }
+
+    // [ATR-FIX] Сравнение ВСЕХ полей, которые виджет показывает.
+    // БЫЛО: сравнивались только atr / remaining / _actualPeriod.
+    // NATR = ATR / close * 100 зависит ещё и от close: когда цена двигалась
+    // ВНУТРИ диапазона текущей свечи (high/low не изменились → remaining тот же),
+    // NATR менялся, но renderWidget() НЕ вызывался — на экране оставалось
+    // устаревшее значение (замер: close 95.8272→95.3312, NATR 1.2697%→1.2763%,
+    // перерисовки нет).
+    _displayChanged(nw, old) {
+        if (!old) return true;
+        return nw.atr !== old.atr
+            || nw.natr !== old.natr
+            || nw.remaining !== old.remaining
+            || nw.progress !== old.progress
+            || nw._actualPeriod !== old._actualPeriod
+            || nw._selectedBars !== old._selectedBars;
     }
 
     updateMetrics() {
@@ -764,8 +816,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 const newMetrics = this.computeManualHighLowMetricsFromTimes(data, selectedTimes);
                 newMetrics._actualPeriod = newMetrics._selectedBars || selectedTimes.length;
 
-                if (newMetrics.atr !== this.metrics.atr || newMetrics.remaining !== this.metrics.remaining || 
-                    newMetrics._actualPeriod !== this.metrics._actualPeriod || newMetrics._selectedBars !== this.metrics._selectedBars) {
+                if (this._displayChanged(newMetrics, this.metrics)) {   // [ATR-FIX] + natr/progress
                     this.metrics = newMetrics;
                     this.renderWidget();
                 } else {
@@ -782,16 +833,16 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 );
                 newMetrics._actualPeriod = actualPeriod;
 
-                if (newMetrics.atr !== this.metrics.atr || newMetrics.remaining !== this.metrics.remaining || 
-                    newMetrics._actualPeriod !== this.metrics._actualPeriod) {
+                if (this._displayChanged(newMetrics, this.metrics)) {   // [ATR-FIX] + natr/progress
                     this.metrics = newMetrics;
                     this.renderWidget();
                 } else {
                     this.metrics = newMetrics;
                 }
             } else {
-                this.metrics.atr = 0;
-                this.metrics._actualPeriod = actualPeriod;
+                // [ATR-FIX] сбрасываем ВСЕ метрики, а не только atr: иначе виджет
+                // показывал «ATR: ...» рядом с устаревшими NATR и «Остаток».
+                this.metrics = this._emptyMetrics({ _actualPeriod: actualPeriod });
                 this.renderWidget();
             }
         } catch (e) {
@@ -886,21 +937,41 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
     }
 
     _getPriceDecimals() {
+        // [ATR-FIX] сначала — точность ценовой шкалы (кэш ChartManager, тот же
+        // знаменатель, что и у оси цен/плашки), и без toString()/split() на
+        // каждый вызов. Прежняя эвристика оставлена фолбэком; в ней дополнительно
+        // обработана экспоненциальная запись (1e-7 → «0.00» раньше).
+        try {
+            const cm = this.manager?.chartManager;
+            if (cm && typeof cm.getDrawingPrecision === 'function') {
+                const p = cm.getDrawingPrecision();
+                if (typeof p === 'number' && isFinite(p) && p >= 0) return Math.min(8, Math.floor(p));
+            }
+            if (cm && typeof cm._getTitlePrecision === 'function') {
+                const p = cm._getTitlePrecision();
+                if (typeof p === 'number' && isFinite(p) && p >= 0) return Math.min(8, Math.floor(p));
+            }
+        } catch (e) {}
         try {
             const data = this.manager?.chartManager?.chartData;
             if (data && data.length > 0) {
                 const last = data[data.length - 1];
                 let maxDecimals = 2;
-                [last.open, last.high, last.low, last.close].forEach((price) => {
-                    if (price && price > 0) {
-                        const str = price.toString();
-                        if (str.includes('.')) {
-                            const decimals = str.split('.')[1].length;
-                            if (decimals > maxDecimals) maxDecimals = decimals;
-                        }
+                const decimalsOf = (price) => {
+                    if (!(price > 0)) return 0;
+                    const str = price.toString();
+                    if (str.includes('e-')) {
+                        const parts = str.split('e-');
+                        const mant = parts[0].includes('.') ? parts[0].split('.')[1].length : 0;
+                        return mant + (parseInt(parts[1], 10) || 0);
                     }
+                    return str.includes('.') ? str.split('.')[1].length : 0;
+                };
+                [last.open, last.high, last.low, last.close].forEach((price) => {
+                    const d = decimalsOf(price);
+                    if (d > maxDecimals) maxDecimals = d;
                 });
-                return maxDecimals;
+                return Math.min(8, maxDecimals);
             }
         } catch (e) {}
         return 2;
@@ -932,8 +1003,18 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             return v.toFixed(2);
         };
 
+        // [ATR-FIX] если ATR неизвестен (мало данных / плоский рынок / нет
+        // выбранных свечей в ручном режиме) — NATR и «Остаток» показываем как «—».
+        // Раньше выводилось «NATR: 0.00% | Ост: 0.0%» КРАСНЫМ, что читалось как
+        // «свеча уже прошла 100% ATR», хотя на самом деле расчёт просто не готов.
+        const hasATR = !!(m.atr && m.atr > 0 && isFinite(m.atr) && isFinite(m.natr));
+        const natrText = hasATR ? `${formatNATR(m.natr)}%` : '—';
+        const remText = hasATR ? `${m.remaining.toFixed(1)}%` : '—';
+
         // ✅ ЦВЕТА: Фиолетовый для отрицательного остатка (пробой ATR)
-        const remColor = m.remaining < 0
+        const remColor = !hasATR
+            ? '#777777'
+            : m.remaining < 0
             ? '#FF00FF'
             : m.remaining < 20
             ? '#FF4444'
@@ -948,11 +1029,11 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             <span style="color:#AAA">ATR:</span>
             <span id="matr-val" style="color:#FFFFFF; font-weight:600; transition: color 0.2s;">${formatATR(m.atr)}</span>
             <span style="color:#444; margin: 0 4px;">|</span>
-            <span style="color:#AAA">NATR:</span>
-            <span style="color:#4FC3F7; font-weight:600;">${formatNATR(m.natr)}%</span>
+            <span style="color:#AAA" title="Normalized ATR = ATR / цена закрытия × 100">NATR:</span>
+            <span style="color:#4FC3F7; font-weight:600;" title="${hasATR ? `ATR ${formatATR(m.atr)} / close × 100` : 'недостаточно данных для расчёта'}">${natrText}</span>
             <span style="color:#444; margin: 0 4px;">|</span>
-            <span style="color:#AAA">Ост:</span>
-            <span style="color:${remColor}; font-weight:600;">${m.remaining.toFixed(1)}%</span>
+            <span style="color:#AAA" title="Сколько ATR осталось пройти текущей свече (100% − прогресс). Отрицательный = свеча уже пробила ATR">Ост:</span>
+            <span style="color:${remColor}; font-weight:600;" title="${hasATR ? `прогресс свечи: ${m.progress.toFixed(1)}% ATR` : 'недостаточно данных для расчёта'}">${remText}</span>
             <span id="multiatr-close" style="margin-left: 8px; color: #666; cursor: pointer; font-size: 10px;" title="Удалить">✕</span>
         `;
 
@@ -1029,6 +1110,10 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
                 <div style="margin-bottom:12px;">
                     <div style="color:#FFA500; margin-bottom:8px;">📅 Периоды под ТФ</div>
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
+                        <label style="color:#B0B0B0; width:70px;" title="Период ATR для месячного таймфрейма (1M)">Mo ATR:</label>
+                        <input type="number" id="monthATRPeriod" value="${this.settings.monthATRPeriod}" min="1" max="20" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
+                    </div>
+                    <div style="margin-bottom:6px; display:flex; align-items:center; gap:10px;">
                         <label style="color:#B0B0B0; width:70px;">W ATR:</label>
                         <input type="number" id="weekATRPeriod" value="${this.settings.weekATRPeriod}" min="1" max="20" style="background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px; width:60px;">
                     </div>
@@ -1071,6 +1156,7 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         this.settings.filterType = document.getElementById('filterType')?.value || 'Adaptive';
         this.settings.devFactor = parseFloat(document.getElementById('devFactor')?.value || 1);
         this.settings.fixedMult = parseFloat(document.getElementById('fixedMult')?.value || 1.5);
+        this.settings.monthATRPeriod = parseInt(document.getElementById('monthATRPeriod')?.value || 3);   // [ATR-FIX]
         this.settings.weekATRPeriod = parseInt(document.getElementById('weekATRPeriod')?.value || 5);
         this.settings.dayATRPeriod = parseInt(document.getElementById('dayATRPeriod')?.value || 5);
         this.settings.hourTF = document.getElementById('hourTF')?.value || '1';
