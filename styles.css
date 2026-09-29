@@ -1,3 +1,4 @@
+
 /* ===== CSS ПЕРЕМЕННЫЕ ===== */
 :root {
     --bg-black: #000000;
@@ -2930,13 +2931,17 @@ svg, svg * { font-family: none !important; }
     font-size: 10px;
     font-weight: 500;
     font-family: var(--font-main);
-    background: rgba(0,0,0,0.6);
+    /* [PERF-PAN] было rgba(0,0,0,0.6) + backdrop-filter: blur(2px).
+       Плашка лежит ПОВЕРХ канваса индикаторной панели: на каждом кадре
+       листания браузер заново считал backdrop и заново его блюрил.
+       Убираем blur, делаем фон непрозрачным — визуально почти идентично. */
+    background: rgba(10,10,12,0.92);
     padding: 2px 8px;
     border-radius: 4px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    backdrop-filter: blur(2px);
+    contain: layout style paint;
 }
 
 .indicator-panel-actions { display: none !important; }
