@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -670,9 +671,10 @@
         <button id="closeTradeCreate" style="background:transparent; border:none; color:#B0B0B0; font-size:18px; cursor:pointer;">✕</button>
     </div>
     
-    <div style="display: flex; gap: 8px; margin-bottom: 15px;">
-        <button id="tabStyle" style="flex: 1; padding: 8px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold;">Стиль</button>
-        <button id="tabVisibility" style="flex: 1; padding: 8px; background: #2D2D2D; color: #B0B0B0; border: 1px solid #404040; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold;">Видимость</button>
+    <div style="display: flex; gap: 6px; margin-bottom: 15px;">
+        <button id="tabStyle" style="flex: 1; padding: 8px 4px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Стиль</button>
+        <button id="tabATR" style="flex: 1; padding: 8px 4px; background: #2D2D2D; color: #B0B0B0; border: 1px solid #404040; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">ATR</button>
+        <button id="tabVisibility" style="flex: 1; padding: 8px 4px; background: #2D2D2D; color: #B0B0B0; border: 1px solid #404040; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Видимость</button>
     </div>
     
     <div id="stylePanel" style="display: block;">
@@ -712,6 +714,52 @@
         <div style="display: flex; gap: 10px;">
             <button id="tradeCreateBtn" style="flex: 1; padding: 8px; background: #4A90E2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Создать</button>
             <button id="tradeCancelBtn" style="flex: 1; padding: 8px; background: #404040; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Отмена</button>
+        </div>
+    </div>
+
+    <!-- ========== ВКЛАДКА ATR: стоп в % от ДНЕВНОГО ATR (данные из индикатора ATR Multi) ========== -->
+    <div id="tradeAtrPanel" style="display: none;">
+        <div style="margin-bottom: 12px; padding: 10px; background: #2D2D2D; border-radius: 4px; border-left: 3px solid #FFA500;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                <span style="color: #B0B0B0; font-size: 12px;">Дневной ATR (1D)</span>
+                <button id="tradeAtrRefreshBtn" title="Пересчитать дневной ATR" style="background: #404040; border: none; color: #fff; border-radius: 4px; width: 26px; height: 22px; cursor: pointer; font-size: 13px; line-height: 1;">&#8635;</button>
+            </div>
+            <div id="tradeAtrValue" style="color: #FFA500; font-size: 22px; font-weight: bold; font-family: 'JetBrains Mono', monospace;">&mdash;</div>
+            <div style="display: flex; gap: 12px; font-size: 11px; color: #8A8A8A; margin-top: 2px;">
+                <span>Период: <span id="tradeAtrPeriod" style="color: #E0E0E0;">&mdash;</span></span>
+                <span>NATR: <span id="tradeAtrNatr" style="color: #E0E0E0;">&mdash;</span></span>
+                <span>Прошло дня: <span id="tradeAtrProgress" style="color: #E0E0E0;">&mdash;</span></span>
+            </div>
+            <div id="tradeAtrSource" style="font-size: 10px; color: #6E6E6E; margin-top: 4px; word-break: break-word;">&mdash;</div>
+        </div>
+
+        <div style="color: #B0B0B0; font-size: 12px; font-weight: bold; margin-bottom: 6px;">Стоп = % от дневного ATR</div>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <button class="trade-atr-pct-btn" id="tradeAtrPct10" data-pct="10" style="flex: 1; padding: 9px 4px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px; font-weight: bold;">10%</button>
+            <button class="trade-atr-pct-btn" id="tradeAtrPct15" data-pct="15" style="flex: 1; padding: 9px 4px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px;">15%</button>
+            <button class="trade-atr-pct-btn" id="tradeAtrPct20" data-pct="20" style="flex: 1; padding: 9px 4px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px;">20%</button>
+        </div>
+        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+            <input type="number" id="tradeAtrCustomPct" min="0.1" max="1000" step="0.5" value="5" title="Свой процент от дневного ATR" style="flex: 1; padding: 7px; background: #2D2D2D; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 13px; box-sizing: border-box;">
+            <button id="tradeAtrCustomBtn" style="padding: 7px 12px; background: #404040; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-size: 12px;">Свой %</button>
+        </div>
+
+        <div style="margin-bottom: 10px; padding: 8px 10px; background: #2D2D2D; border-radius: 4px;">
+            <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #B0B0B0;">
+                <span>Стоп: <span id="tradeAtrPreviewSL" style="color: #f23645; font-weight: bold;">&mdash;</span></span>
+                <span id="tradeAtrPreviewDist" style="color: #E0E0E0; text-align: right;">&mdash;</span>
+            </div>
+            <div id="tradeAtrHint" style="font-size: 11px; color: #8A8A8A; margin-top: 6px;">&mdash;</div>
+        </div>
+
+        <label style="display: flex; align-items: center; gap: 8px; color: #E0E0E0; cursor: pointer; font-size: 12px; user-select: none; margin-bottom: 12px;">
+            <input type="checkbox" id="tradeAtrRecalcTP" checked style="accent-color: #4A90E2; width: 15px; height: 15px; cursor: pointer;">
+            <span>Пересчитать тейк по R:R после установки стопа</span>
+        </label>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="tradeAtrApplyBtn" style="flex: 1; padding: 8px; background: #FFA500; color: #1E1E1E; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Применить стоп</button>
+            <button id="tradeAtrCloseBtn" style="flex: 1; padding: 8px; background: #404040; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Отмена</button>
         </div>
     </div>
     
@@ -2633,6 +2681,7 @@ window.addEventListener('resize', positionButtons);
 <script src="./TimeframeManager.js"></script>
 
 
+<script src="./TradeATR.js"></script>
 <script src="./DrawingManagers.js"></script>
 <script src="./IndicatorPanelManager.js"></script>
 <script src="./IndicatorManager.js"></script>
