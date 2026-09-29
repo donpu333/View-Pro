@@ -178,8 +178,12 @@ class HorizontalRayRenderer {
         }
 
                               if (ray.options.showPrice) {
-            const precisionKey = `precision_${chartManager.currentSymbol}_${chartManager.currentExchange}_${chartManager.currentMarketType}`;
-            const precision = parseInt(localStorage.getItem(precisionKey)) || chartManager._inferPrecisionFromData();
+            // [PERF-PAN] БЫЛО: localStorage.getItem() + parseInt() (и иногда
+            // _inferPrecisionFromData()) на КАЖДОМ кадре для КАЖДОГО луча —
+            // синхронное чтение хранилища прямо в горячем пути рендера.
+            const precision = (typeof chartManager.getDrawingPrecision === 'function')
+                ? chartManager.getDrawingPrecision()
+                : (typeof chartManager._getTitlePrecision === 'function' ? chartManager._getTitlePrecision() : 2);
             const priceText = ray.price.toFixed(precision);
 
             // ЗАЩИТА ОТ ПОЛОВКИ: если размера нет, ставим 20. Иначе луч будет пропадать.
@@ -340,51 +344,32 @@ class HorizontalRayPrimitive {
     }
     
     updateAllViews() {
-        const oldTime = this._ray.time;
+        // [PERF-PAN] requestUpdate() из updateAllViews() убран: мы уже внутри
+        // кадра рендера, новое ray.time подхватывается ЭТИМ ЖЕ кадром. Раньше
+        // вызов назначал вторую полную перерисовку графика (а при «прыгающем»
+        // anchor — бесконечную цепочку инвалидаций).
         this._syncRayTime();
-        if (this._ray.time !== oldTime && this._requestUpdate) {
-            this._requestUpdate();
-        }
     }
     
     _syncRayTime() {
-        const chartData = this._chartManager.chartData;
-        if (!chartData || chartData.length === 0) return;
-        
+        // [PERF-PAN] БЫЛО: два линейных прохода по всему chartData
+        // (до 12 000 свечей на 1m) на КАЖДОМ кадре и на КАЖДЫЙ луч.
+        // При 10 лучах это ~120 000 итераций/кадр только на привязку времени —
+        // главная причина «тормозов» при перетаскивании на коротких ТФ.
+        // СТАЛО: общий бинарный поиск ChartManager.findNearestCandleTime()
+        // с мемоизацией (повторный запрос в том же поколении данных — O(1)).
         const ray = this._ray;
+        if (!ray) return;
         const anchor = ray.anchorTime;
-        if (anchor === undefined) return;
-        
-        let intervalMs = 60 * 60 * 1000;
-        if (chartData.length >= 2) {
-            intervalMs = chartData[1].time - chartData[0].time;
-        }
-        
-        let newTime = anchor;
-        for (let i = 0; i < chartData.length; i++) {
-            const start = chartData[i].time;
-            const end = start + intervalMs;
-            if (anchor >= start && anchor < end) {
-                newTime = start;
-                break;
-            }
-        }
-        
-        if (newTime === anchor && chartData.length) {
-            let closest = chartData[0];
-            let minDiff = Math.abs(chartData[0].time - anchor);
-            
-            for (let i = 1; i < chartData.length; i++) {
-                const diff = Math.abs(chartData[i].time - anchor);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    closest = chartData[i];
-                }
-            }
-            newTime = closest.time;
-        }
-        
-        ray.time = newTime;
+        if (anchor === undefined || anchor === null) return;
+        const cm = this._chartManager;
+        if (!cm || !cm.chartData || cm.chartData.length === 0) return;
+        // floor-семантика (свеча, ВНУТРИ интервала которой лежит anchor) —
+        // ровно как раньше, но O(log N) + кэш
+        const t = (typeof cm.findCandleFloorTime === 'function')
+            ? cm.findCandleFloorTime(anchor)
+            : (typeof cm.findNearestCandleTime === 'function' ? cm.findNearestCandleTime(anchor) : null);
+        if (typeof t === 'number' && isFinite(t)) ray.time = t;
     }
     
     getRay() { return this._ray; }
@@ -1303,15 +1288,11 @@ class HorizontalRayManager {
         
         const data = this._chartManager.chartData;
         
-        let closestCandle = data[0];
-        let minTimeDiff = Math.abs(data[0].time - time);
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minTimeDiff) { 
-                minTimeDiff = diff; 
-                closestCandle = data[i]; 
-            }
-        }
+        // [PERF-PAN] O(log N) вместо линейного скана: _snapToPrice вызывается
+        // на каждое движение мыши при рисовании/перетаскивании объекта.
+        const closestCandle = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
         
         const priceY = this._chartManager.priceToCoordinate(price);
         const highY = this._chartManager.priceToCoordinate(closestCandle.high);
@@ -1356,20 +1337,13 @@ class HorizontalRayManager {
     
     _findClosestCandleTime(time) {
         if (!this._chartManager.chartData.length) return time;
-        
-        const data = this._chartManager.chartData;
-        let closestCandle = data[0];
-        let minDiff = Math.abs(data[0].time - time);
-        
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closestCandle = data[i];
-            }
+        // [PERF-PAN] O(log N) вместо линейного скана по всем свечам
+        const cm = this._chartManager;
+        if (typeof cm.findNearestCandleTime === 'function') {
+            const t = cm.findNearestCandleTime(time);
+            if (typeof t === 'number' && isFinite(t)) return t;
         }
-        
-        return closestCandle.time;
+        return cm.chartData[0].time;
     }
 _showSettings(ray) {
     const settings = document.getElementById('drawingSettings');
@@ -2129,12 +2103,8 @@ class TrendLinePrimitive {
         this._syncPointsTime();
     }
     updateAllViews() {
-        const oldTime1 = this._trendLine.point1.time;
-        const oldTime2 = this._trendLine.point2.time;
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
         this._syncPointsTime();
-        if (this._trendLine.point1.time !== oldTime1 || this._trendLine.point2.time !== oldTime2) {
-            if (this._requestUpdate) this._requestUpdate();
-        }
     }
 
     // ✅ ИСПРАВЛЕНО: не перезаписываем время, если оно вне диапазона свечей
@@ -2147,33 +2117,16 @@ class TrendLinePrimitive {
 
         const syncPoint = (anchorTime) => {
             // Если время вне диапазона данных - оставляем как есть
+            if (typeof anchorTime !== 'number' || !isFinite(anchorTime)) return anchorTime;
             if (anchorTime > lastCandleTime || anchorTime < firstCandleTime) {
                 return anchorTime;
             }
-
-            let left = 0;
-            let right = chartData.length - 1;
-            let closest = chartData[0];
-
-            while (left <= right) {
-                const mid = Math.floor((left + right) / 2);
-                const midTime = chartData[mid].time;
-
-                if (midTime === anchorTime) {
-                    return midTime;
-                }
-
-                if (Math.abs(midTime - anchorTime) < Math.abs(closest.time - anchorTime)) {
-                    closest = chartData[mid];
-                }
-
-                if (midTime < anchorTime) {
-                    left = mid + 1;
-                } else {
-                    right = mid - 1;
-                }
-            }
-            return closest.time;
+            // [PERF-PAN] общий бинарный поиск с кэшем вместо локального
+            const cm = this._chartManager;
+            const t = (cm && typeof cm.findNearestCandleTime === 'function')
+                ? cm.findNearestCandleTime(anchorTime)
+                : null;
+            return (typeof t === 'number' && isFinite(t)) ? t : anchorTime;
         };
 
         this._trendLine.point1.time = syncPoint(this._trendLine.anchorTime1);
@@ -3047,17 +3000,10 @@ class TrendLineManager {
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
         const data = this._chartManager.chartData;
-        let closestCandle;
-        if (time <= data[0].time) closestCandle = data[0];
-        else if (time >= data[data.length - 1].time) closestCandle = data[data.length - 1];
-        else {
-            closestCandle = data[0];
-            let minDiff = Math.abs(data[0].time - time);
-            for (let i = 1; i < data.length; i++) {
-                const d = Math.abs(data[i].time - time);
-                if (d < minDiff) { minDiff = d; closestCandle = data[i]; }
-            }
-        }
+        // [PERF-PAN] O(log N) вместо линейного скана
+        const closestCandle = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
         const priceY = this._chartManager.priceToCoordinate(price);
         const highY = this._chartManager.priceToCoordinate(closestCandle.high), lowY = this._chartManager.priceToCoordinate(closestCandle.low), closeY = this._chartManager.priceToCoordinate(closestCandle.close);
         if (priceY === null || highY === null) return { price, time, anchorCandle: null };
@@ -4026,12 +3972,8 @@ class RulerLinePrimitive {
     }
 
     updateAllViews() {
-        const oldTime1 = this._ruler.point1.time;
-        const oldTime2 = this._ruler.point2.time;
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
         this._syncPointsTime();
-        if (this._ruler.point1.time !== oldTime1 || this._ruler.point2.time !== oldTime2) {
-            if (this._requestUpdate) this._requestUpdate();
-        }
     }
 
     // ✅ ИСПРАВЛЕНО: Разрешаем времени выходить за пределы существующих свечей
@@ -4048,30 +3990,15 @@ class RulerLinePrimitive {
 
         const syncPoint = (anchorTime) => {
             // ✅ Если время в будущем или прошлом, не обрезаем его до последней/первой свечи
+            if (typeof anchorTime !== 'number' || !isFinite(anchorTime)) return anchorTime;
             if (anchorTime >= lastTime) return anchorTime;
             if (anchorTime <= firstTime) return anchorTime;
-
-            let left = 0;
-            let right = chartData.length - 1;
-            let closest = chartData[0];
-
-            while (left <= right) {
-                const mid = Math.floor((left + right) / 2);
-                const midTime = chartData[mid].time;
-
-                if (midTime === anchorTime) return midTime;
-
-                if (Math.abs(midTime - anchorTime) < Math.abs(closest.time - anchorTime)) {
-                    closest = chartData[mid];
-                }
-
-                if (midTime < anchorTime) {
-                    left = mid + 1;
-                } else {
-                    right = mid - 1;
-                }
-            }
-            return closest.time;
+            // [PERF-PAN] общий бинарный поиск с кэшем вместо локального
+            const cm = this._chartManager;
+            const t = (cm && typeof cm.findNearestCandleTime === 'function')
+                ? cm.findNearestCandleTime(anchorTime)
+                : null;
+            return (typeof t === 'number' && isFinite(t)) ? t : anchorTime;
         };
         
         this._ruler.point1.time = syncPoint(this._ruler.anchorTime1);
@@ -5409,48 +5336,25 @@ class AlertLinePrimitive {
     }
     
     updateAllViews() {
-        const oldTime = this._alert.time;
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
         this._syncTime();
-        
-        if (this._alert.time !== oldTime && this._requestUpdate) {
-            this._requestUpdate();
-        }
     }
     
     _syncTime() {
         const chartData = this._chartManager.chartData;
         if (!chartData || chartData.length === 0) return;
-        
+
         const anchor = AlertLine.getTs(this._alert.anchorTime);
         if (isNaN(anchor)) return;
 
-        let left = 0;
-        let right = chartData.length - 1;
-        let closest = chartData[0];
-        let minDiff = Infinity;
-
-        while (left <= right) {
-            const mid = Math.floor((left + right) / 2);
-            const midTime = AlertLine.getTs(chartData[mid].time);
-            const diff = Math.abs(midTime - anchor);
-
-            if (diff < minDiff) {
-                minDiff = diff;
-                closest = chartData[mid];
-            }
-
-            if (midTime < anchor) {
-                left = mid + 1;
-            } else if (midTime > anchor) {
-                right = mid - 1;
-            } else {
-                closest = chartData[mid];
-                break;
-            }
-        }
-
-        if (this._alert.time !== closest.time) {
-            this._alert.time = closest.time;
+        // [PERF-PAN] общий бинарный поиск с кэшем (был локальный бинарный —
+        // оставляем его семантику «ближайшая свеча», но через единый кэш)
+        const cm = this._chartManager;
+        const t = (typeof cm.findNearestCandleTime === 'function')
+            ? cm.findNearestCandleTime(anchor)
+            : null;
+        if (typeof t === 'number' && isFinite(t) && this._alert.time !== t) {
+            this._alert.time = t;
         }
     }
     
@@ -7710,11 +7614,8 @@ class TextPrimitive {
     }
     
     updateAllViews() {
-        const oldTime = this._text.time;
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
         this._syncTime();
-        if (this._text.time !== oldTime && this._requestUpdate) {
-            this._requestUpdate();
-        }
     }
     
     _syncTime() {
@@ -7730,32 +7631,12 @@ class TextPrimitive {
             return;
         }
 
-        // Бинарный поиск ближайшей свечи
-        let left = 0;
-        let right = chartData.length - 1;
-        let closest = chartData[0];
-
-        while (left <= right) {
-            const mid = Math.floor((left + right) / 2);
-            const midTime = chartData[mid].time;
-
-            if (midTime === anchor) {
-                closest = chartData[mid];
-                break;
-            }
-
-            if (Math.abs(midTime - anchor) < Math.abs(closest.time - anchor)) {
-                closest = chartData[mid];
-            }
-
-            if (midTime < anchor) {
-                left = mid + 1;
-            } else {
-                right = mid - 1;
-            }
-        }
-
-        this._text.time = closest.time;
+        // [PERF-PAN] общий бинарный поиск с кэшем вместо локального
+        const cm = this._chartManager;
+        const t = (typeof cm.findNearestCandleTime === 'function')
+            ? cm.findNearestCandleTime(anchor)
+            : null;
+        if (typeof t === 'number' && isFinite(t)) this._text.time = t;
     }
     
     getText() { return this._text; }
@@ -8503,12 +8384,10 @@ _detachAllPrimitivesForSymbol(symbolKey) {
     _snapToPrice(price, time) {
         if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
         const data = this._chartManager.chartData;
-        let closestCandle = data[0];
-        let minTimeDiff = Math.abs(data[0].time - time);
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minTimeDiff) { minTimeDiff = diff; closestCandle = data[i]; }
-        }
+        // [PERF-PAN] O(log N) вместо линейного скана
+        const closestCandle = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
         const priceY = this._chartManager.priceToCoordinate(price);
         const highY = this._chartManager.priceToCoordinate(closestCandle.high);
         const lowY = this._chartManager.priceToCoordinate(closestCandle.low);
@@ -8531,14 +8410,13 @@ _detachAllPrimitivesForSymbol(symbolKey) {
 
     _findClosestCandleTime(time) {
         if (!this._chartManager.chartData.length) return time;
-        const data = this._chartManager.chartData;
-        let closestCandle = data[0];
-        let minDiff = Math.abs(data[0].time - time);
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minDiff) { minDiff = diff; closestCandle = data[i]; }
+        // [PERF-PAN] O(log N) вместо линейного скана по всем свечам
+        const cm = this._chartManager;
+        if (typeof cm.findNearestCandleTime === 'function') {
+            const t = cm.findNearestCandleTime(time);
+            if (typeof t === 'number' && isFinite(t)) return t;
         }
-        return closestCandle.time;
+        return cm.chartData[0].time;
     }
 
    _showSettings(text) {
@@ -8879,11 +8757,11 @@ _detachAllPrimitivesForSymbol(symbolKey) {
     }
 }
 function getFormattedPriceFromChart(chartManager, price) {
+    // [PERF-PAN] без series.options() (глубокий клон опций серии)
     try {
-        const series = chartManager.currentChartType === 'candle' 
-            ? chartManager.candleSeries 
-            : chartManager.barSeries;
-        const precision = series?.options()?.priceFormat?.precision ?? 2;
+        const precision = (typeof chartManager.getDrawingPrecision === 'function')
+            ? chartManager.getDrawingPrecision()
+            : (typeof chartManager._getTitlePrecision === 'function' ? chartManager._getTitlePrecision() : 2);
         return Number(price).toFixed(precision);
     } catch (e) {
         return Number(price).toFixed(2);
@@ -8997,10 +8875,26 @@ class TradeLevelRenderer {
     }
 
     _getPrecision() {
+        // [PERF-PAN] БЫЛО: series.options() — lightweight-charts возвращает
+        // ПОЛНЫЙ ГЛУБОКИЙ КЛОН объекта опций серии. _formatPrice() вызывается
+        // ~5 раз за отрисовку одной сделки, т.е. десятки клонов на КАЖДЫЙ кадр.
+        // СТАЛО: кэш точности в ChartManager (инвалидируется в applyPriceFormat).
+        const cm = this._chartManager;
         try {
-            const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-            return series?.options()?.priceFormat?.precision ?? 2;
-        } catch (e) { return 2; }
+            if (typeof cm.getDrawingPrecision === 'function') return cm.getDrawingPrecision();
+            if (typeof cm._getTitlePrecision === 'function') return cm._getTitlePrecision();
+        } catch (e) {}
+        // фолбэк: не чаще раза в секунду, а не на каждый кадр
+        const now = Date.now();
+        if (this._precisionFallbackAt === undefined || now - this._precisionFallbackAt > 1000) {
+            this._precisionFallbackAt = now;
+            try {
+                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+                const p = series?.options()?.priceFormat?.precision;
+                if (typeof p === 'number' && isFinite(p)) this._precisionFallback = p;
+            } catch (e) {}
+        }
+        return this._precisionFallback ?? 2;
     }
 
     _formatPrice(price) {
@@ -9312,21 +9206,21 @@ class TradeLevelPrimitive {
         this._syncTime();
     }
     updateAllViews() {
-        const oldTime = this._trade.entryTime;
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
         this._syncTime();
-        if (this._trade.entryTime !== oldTime && this._requestUpdate) this._requestUpdate();
     }
     _syncTime() {
-        const chartData = this._chartManager.chartData;
+        // [PERF-PAN] БЫЛО: линейный скан всего chartData (до 12 000 свечей)
+        // на КАЖДОМ кадре и на КАЖДУЮ сделку. При 20 сделках на 1m —
+        // ~240 000 итераций/кадр только на привязку времени.
+        const cm = this._chartManager;
+        const chartData = cm.chartData;
         if (!chartData || chartData.length === 0) return;
         const anchor = this._trade.anchorTime ?? this._trade.entryTime;
-        let closest = chartData[0];
-        let minDiff = Math.abs(chartData[0].time - anchor);
-        for (let i = 1; i < chartData.length; i++) {
-            const diff = Math.abs(chartData[i].time - anchor);
-            if (diff < minDiff) { minDiff = diff; closest = chartData[i]; }
-        }
-        this._trade.entryTime = closest.time;
+        const t = (typeof cm.findNearestCandleTime === 'function')
+            ? cm.findNearestCandleTime(anchor)
+            : null;
+        if (typeof t === 'number' && isFinite(t)) this._trade.entryTime = t;
     }
     getTrade() { return this._trade; }
     requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
@@ -9399,10 +9293,13 @@ class TradeLevelManager {
     }
 
     _getChartPrecision() {
+        // [PERF-PAN] без series.options() (глубокий клон опций) — берём кэш
+        const cm = this._chartManager;
         try {
-            const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
-            return series?.options()?.priceFormat?.precision ?? 2;
-        } catch (e) { return 2; }
+            if (typeof cm.getDrawingPrecision === 'function') return cm.getDrawingPrecision();
+            if (typeof cm._getTitlePrecision === 'function') return cm._getTitlePrecision();
+        } catch (e) {}
+        return 2;
     }
 
     _formatPrice(price) {
@@ -10448,12 +10345,10 @@ class TradeLevelManager {
     _snapToCandle(price, time) {
         const data = this._chartManager.chartData;
         if (!data || data.length === 0) return { price, time };
-        let closest = data[0];
-        let minDiff = Math.abs(data[0].time - time);
-        for (let i = 1; i < data.length; i++) {
-            const diff = Math.abs(data[i].time - time);
-            if (diff < minDiff) { minDiff = diff; closest = data[i]; }
-        }
+        // [PERF-PAN] O(log N) вместо линейного скана по всем свечам
+        const closest = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
         const newTime = closest.time;
         if (this._magnetEnabled) {
             const priceY = this._chartManager.priceToCoordinate(price);
