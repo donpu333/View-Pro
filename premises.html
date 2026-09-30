@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -337,12 +338,187 @@
             90% { opacity: 1; transform: translateY(0); }
             100% { opacity: 0; transform: translateY(-20px); }
         }
+
+        /* ===================== VP-SCORING: СИСТЕМА БАЛЛОВ ===================== */
+/* =====================================================
+   VIEW-PRO · SCORE PANEL  (система баллов предпосылок)
+   ===================================================== */
+.vp-score-panel{
+  display:none; position:sticky; bottom:0; z-index:60; margin-top:16px;
+  background:#15181d; border:1px solid #2f6fdb; border-radius:12px;
+  box-shadow:0 -6px 24px rgba(0,0,0,.55); overflow:hidden;
+}
+.vp-score-panel.vp-visible{ display:block; }
+.vp-score-panel *{ box-sizing:border-box; }
+
+/* ---- шапка ---- */
+.vp-sp-head{ display:flex; align-items:center; gap:8px; padding:10px 12px; flex-wrap:wrap;
+  background:linear-gradient(90deg, rgba(47,111,219,.20), rgba(47,111,219,.03)); border-bottom:1px solid #2b3240; }
+.vp-sp-title{ font-weight:700; color:#7fb2ff; letter-spacing:.4px; font-size:15px; }
+.vp-sp-note{ color:#7f8899; font-size:11.5px; flex:1 1 auto; min-width:140px; text-align:right; }
+.vp-sp-btn{ background:#242a33; color:#e0e0e0; border:1px solid #3a424f; border-radius:6px;
+  padding:5px 10px; cursor:pointer; font-family:inherit; font-size:11.5px; }
+.vp-sp-btn:hover{ background:#2f3742; border-color:#2f6fdb; }
+
+/* ---- табы сценариев ---- */
+.vp-tabs{ display:flex; flex-wrap:wrap; gap:6px; padding:9px 12px 0; }
+.vp-tab{ background:#1d222a; border:1px solid #333b47; color:#98a0b0; border-radius:7px;
+  padding:6px 10px; cursor:pointer; font-family:inherit; font-size:12px; line-height:1.25; text-align:left; }
+.vp-tab:hover{ border-color:#2f6fdb; color:#fff; }
+.vp-tab.vp-active{ background:#12305c; border-color:#2f6fdb; color:#fff; font-weight:700; }
+.vp-tab-grade{ display:block; font-size:10.5px; opacity:.85; margin-top:2px; font-weight:400; }
+
+/* ---- карточки сценариев ---- */
+.vp-cards{ display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px 12px; }
+@media (max-width:900px){ .vp-cards{ grid-template-columns:1fr; } }
+.vp-card{ background:#1a1f27; border:1px solid #2c333d; border-radius:9px; padding:10px; }
+.vp-card.vp-card-active{ border-color:#2f6fdb; box-shadow:0 0 0 1px rgba(47,111,219,.30) inset; }
+.vp-card-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+.vp-card-name{ font-size:12.5px; color:#c9d3e2; font-weight:700; }
+.vp-card-tf{ font-size:10.5px; color:#7f8899; font-weight:400; }
+.vp-pill{ font-size:11px; font-weight:700; padding:3px 9px; border-radius:20px; white-space:nowrap; }
+.vp-row{ display:flex; align-items:center; gap:7px; margin:5px 0; font-size:11.5px; }
+.vp-lbl{ width:50px; color:#98a0b0; flex:0 0 auto; }
+.vp-num{ color:#e6e8ec; font-variant-numeric:tabular-nums; flex:0 0 auto; min-width:88px; text-align:right; }
+.vp-bar{ flex:1 1 auto; height:7px; background:#0f1217; border-radius:4px; overflow:hidden; min-width:50px; }
+.vp-bar i{ display:block; height:100%; width:0; border-radius:4px; transition:width .25s ease; }
+.vp-bar-plus i{ background:linear-gradient(90deg,#1f9d55,#39d98a); }
+.vp-bar-minus i{ background:linear-gradient(90deg,#c62828,#ff6b6b); }
+.vp-bar-net i{ background:linear-gradient(90deg,#2f6fdb,#7fb2ff); }
+.vp-card-foot{ margin-top:7px; font-size:11px; color:#8b93a3; border-top:1px dashed #2c333d; padding-top:6px; }
+.vp-card-foot b{ color:#c9d3e2; }
+.vp-veto{ margin-top:7px; padding:6px 8px; border-radius:6px; background:#3a1414; border:1px solid #a33;
+  color:#ffb3b3; font-size:11.5px; font-weight:700; }
+
+/* ---- вердикт ---- */
+.vp-verdict{ padding:12px; border-top:1px solid #2b3240; background:#12161c; }
+.vp-verdict-top{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.vp-grade{ font-size:34px; font-weight:800; line-height:1; padding:6px 14px; border-radius:9px; color:#fff; flex:0 0 auto; }
+.vp-grade-A{ background:#1f9d55; }
+.vp-grade-B{ background:#2f6fdb; }
+.vp-grade-C{ background:#c98a00; }
+.vp-grade-D{ background:#6b7280; }
+.vp-grade-X{ background:#c62828; }
+.vp-verdict-main{ flex:1 1 240px; min-width:220px; }
+.vp-verdict-title{ font-size:15.5px; font-weight:700; color:#fff; margin-bottom:3px; }
+.vp-verdict-risk{ font-size:12.5px; color:#9fe8c3; }
+.vp-verdict-cond{ font-size:11.5px; color:#8b93a3; margin-top:3px; }
+.vp-verdict-extra{ margin-top:10px; font-size:12px; color:#b9c2d0; line-height:1.65; }
+.vp-verdict-extra .vp-miss{ color:#ffd28a; }
+.vp-verdict-extra .vp-veto-txt{ color:#ff9d9d; font-weight:700; }
+.vp-verdict-extra .vp-stop{ color:#9fe8c3; }
+
+/* ---- бейджи весов у пунктов ---- */
+.vp-w{ display:inline-block; min-width:32px; text-align:center; font-size:10.5px; font-weight:700;
+  padding:1px 5px; border-radius:5px; margin-left:9px; vertical-align:1px; flex:0 0 auto; }
+.vp-w-plus{ background:rgba(31,157,85,.20); color:#6fe3a5; border:1px solid rgba(31,157,85,.45); }
+.vp-w-minus{ background:rgba(198,40,40,.20); color:#ff9d9d; border:1px solid rgba(198,40,40,.45); }
+.vp-w-veto{ background:#c62828; color:#fff; border:1px solid #ff6b6b; }
+.vp-crit-star{ color:#ffd166; margin-left:7px; font-size:11px; flex:0 0 auto; }
+.checkbox-item.vp-crit .item-text{ border-bottom:1px dotted #ffd166; }
+
+/* ---- легенда ---- */
+.vp-legend{ padding:10px 12px; border-top:1px solid #2b3240; font-size:11px; color:#7f8899; line-height:1.85; background:#12161c; }
+.vp-legend b{ color:#c9d3e2; }
+/* ====== VP-SCORING: ПОДГРУППА «ПРОБОЙ ПО ФАКТУ» ВНУТРИ СУЩЕСТВУЮЩИХ БЛОКОВ ====== */
+.vp-subhead{ margin:16px 0 10px; padding:7px 10px; font-size:11.5px; font-weight:700;
+  letter-spacing:.5px; text-transform:uppercase; background:rgba(255,255,255,.04);
+  border-left:3px solid #7fb2ff; border-radius:0 6px 6px 0; }
+.vp-bcline{ margin-top:9px; padding-top:8px; border-top:1px dashed #2c333d; }
+.vp-bc-label{ font-size:11px; color:#8b93a3; text-transform:uppercase; letter-spacing:.6px; }
+.vp-bc-badge{ display:inline-block; font-size:11.5px; font-weight:800; padding:3px 10px;
+  border-radius:20px; color:#fff; margin:5px 0 0; }
+.vp-bc-TRUE{ background:#1f9d55; }
+.vp-bc-WEAK{ background:#2f6fdb; }
+.vp-bc-ALERT{ background:#c98a00; }
+.vp-bc-FALSE{ background:#e65100; }
+.vp-bc-REVERSE{ background:#c62828; }
+.vp-bc-WAIT{ background:#4b5563; }
+.vp-bc-counts{ font-size:11.5px; color:#b9c2d0; margin-top:5px; line-height:1.7; }
+.vp-bc-counts b{ color:#fff; }
+.vp-bc-counts .t{ color:#6fe3a5; }
+.vp-bc-counts .f{ color:#ff9d9d; }
+.vp-bc-action{ font-size:11.5px; color:#9fe8c3; margin-top:5px; line-height:1.6; }
+.vp-bc-miss{ color:#ffd28a; }
+
+/* ---- модалка настроек ---- */
+.vp-set-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:1200;
+  align-items:flex-start; justify-content:center; padding:24px 16px; overflow-y:auto; }
+.vp-set-modal{ background:#1a1f27; border:1px solid #2f6fdb; border-radius:12px; padding:20px;
+  max-width:760px; width:100%; color:#e0e0e0; }
+.vp-set-modal h3{ color:#7fb2ff; margin:0 0 12px; font-size:17px; }
+.vp-set-modal h4{ color:#c9d3e2; margin:16px 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.7px; }
+.vp-set-modal table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+.vp-set-modal th,.vp-set-modal td{ padding:6px 8px; border-bottom:1px solid #2c333d; text-align:left; vertical-align:middle; }
+.vp-set-modal th{ color:#98a0b0; font-weight:600; font-size:11px; text-transform:uppercase; }
+.vp-set-modal input[type=number]{ width:72px; background:#0f1217; border:1px solid #3a424f; color:#fff;
+  border-radius:5px; padding:4px 6px; font-family:inherit; font-size:12.5px; }
+.vp-set-modal .vp-set-actions{ display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
+.vp-set-modal button{ background:#2f6fdb; color:#fff; border:none; border-radius:6px; padding:9px 16px;
+  cursor:pointer; font-family:inherit; font-size:13px; }
+.vp-set-modal button.vp-set-gray{ background:#3a424f; }
+.vp-set-modal button:hover{ filter:brightness(1.12); }
+.vp-set-hint{ color:#8b93a3; font-size:11.5px; margin-top:10px; line-height:1.7; }
+
+/* ================= VP-SCORING LAYOUT: СПРАВА, БЕЗ ПЕРЕКРЫТИЙ =================
+   Список предпосылок — слева, панель оценки — в правой колонке.
+   Ничего не перекрывается: панель не плавающая, а часть сетки страницы.
+   В узком окне (телефон) панель уходит вниз и прилипает к нижнему краю. */
+.premises-container{ max-width:none; width:auto; flex:1 1 auto; min-width:0; }
+
+.vp-layout{
+  display:flex; flex-wrap:nowrap; align-items:flex-start; gap:16px;
+  width:100%; max-width:1620px; margin:0 auto;
+  /* сверху — место под кнопку ✕ закрытия окна терминала, справа — тоже */
+  padding:56px 56px 24px 20px;
+}
+
+.vp-sidebar{
+  flex:1 1 360px; min-width:270px; max-width:400px; align-self:flex-start;
+  position:sticky; top:12px; max-height:calc(100vh - 24px);
+  overflow-y:auto; overscroll-behavior:contain;
+}
+
+/* панель больше не прилипает к низу и не всплывает над списком */
+.vp-score-panel{ position:static; bottom:auto; margin-top:0; display:block; }
+.vp-score-panel.vp-visible{ display:block; }
+
+/* в правой колонке карточки сценариев идут столбиком */
+.vp-cards{ grid-template-columns:1fr; }
+
+/* карточки получают ключ сценария — в узком режиме видна только активная */
+.vp-card[data-vp-scen]{ display:block; }
+
+/* ---- узкое окно: панель вниз, прилипает к нижнему краю ---- */
+@media (max-width:900px){
+  .vp-layout{ flex-wrap:wrap; padding:56px 14px 24px 14px; }
+  .premises-container{ flex:1 1 100%; width:100%; }
+  .vp-sidebar{
+    position:sticky; bottom:0; top:auto; max-width:none; width:100%;
+    flex:1 1 100%; max-height:52vh; z-index:60;
+    box-shadow:0 -8px 28px rgba(0,0,0,.6);
+  }
+  .vp-card[data-vp-scen]{ display:none; }
+  .vp-card[data-vp-scen].vp-card-active{ display:block; }
+}
+
+/* ---- печать ---- */
+@media print{
+  .vp-layout{ display:block; padding:0; }
+  .vp-sidebar{ position:static; max-width:none; width:100%; max-height:none; }
+}
+
+@media print{
+  .vp-score-panel{ position:static; box-shadow:none; }
+  .vp-sp-head .vp-sp-btn,.vp-tabs{ display:none; }
+}
     </style>
 </head>
 <body>
     <!-- Уведомление -->
     <div class="notification" id="notification"></div>
 
+    <div class="vp-layout">
     <div class="premises-container">
         <h1 class="text-2xl font-bold mb-6">Предпосылки и ТВХ</h1>
 
@@ -448,170 +624,211 @@
         <!-- ===== ТЕКСТОВЫЕ БЛОКИ (ПРЕДПОСЫЛКИ) ===== -->
         <div id="dailyBreakthroughText" class="text-display">
             <h3 style="color: #098ae2;">📊Предпосылки Пробой (Дневной уровень)</h3>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный тренд лонг</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный тренд шорт</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный тренд Рендж</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд лонг</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд шорт</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд Рендж</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Ближний ретест</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет реакции на ЛП</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня до (5%)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">После сильного движения нет отката</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди свободная зона</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выкупной бар</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Продажный бар</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V-Формация</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">U-Формация</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на коротком таймфрейме 1ч/4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подходит поджатием на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подходит поджатием на 1ч/4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Понижающие хаи и лои на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Понижающие хаи и лои на лок.ТФ 1ч/4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышающие хаи и лои 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышающие хаи и лои на лок.ТФ 1ч/4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Затухание волатильности на 1d</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Затухание волатильности на лок.ТФ 1ч/4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень находится на круглом числе</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Задерг против тренда</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабея рынка</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Сильнее рынка</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="0" data-vp-key="dailyBreakthrough#0" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Глобальный тренд лонг</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="1" data-vp-key="dailyBreakthrough#1" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Глобальный тренд шорт</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="2" data-vp-key="dailyBreakthrough#2" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Глобальный тренд Рендж</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="3" data-vp-key="dailyBreakthrough#3" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Локальный тренд лонг</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="4" data-vp-key="dailyBreakthrough#4" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Локальный тренд шорт</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="5" data-vp-key="dailyBreakthrough#5" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Локальный тренд Рендж</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="6" data-vp-key="dailyBreakthrough#6" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Ближний ретест</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="7" data-vp-key="dailyBreakthrough#7" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Нет реакции на ЛП</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="8" data-vp-key="dailyBreakthrough#8" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Накопление</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="9" data-vp-key="dailyBreakthrough#9" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Закрытие вблизи уровня до (5%)</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="10" data-vp-key="dailyBreakthrough#10" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">После сильного движения нет отката</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="11" data-vp-key="dailyBreakthrough#11" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Впереди свободная зона</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="12" data-vp-key="dailyBreakthrough#12" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Выкупной бар</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="13" data-vp-key="dailyBreakthrough#13" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Продажный бар</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="14" data-vp-key="dailyBreakthrough#14" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">V-Формация</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="15" data-vp-key="dailyBreakthrough#15" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">U-Формация</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="16" data-vp-key="dailyBreakthrough#16" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Проторговка вблизи уровня на 1D</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="17" data-vp-key="dailyBreakthrough#17" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Проторговка вблизи уровня на коротком таймфрейме 1ч/4ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="18" data-vp-key="dailyBreakthrough#18" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Подходит поджатием на 1D</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="19" data-vp-key="dailyBreakthrough#19" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Подходит поджатием на 1ч/4ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="20" data-vp-key="dailyBreakthrough#20" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Понижающие хаи и лои на 1D</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="21" data-vp-key="dailyBreakthrough#21" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Понижающие хаи и лои на лок.ТФ 1ч/4ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="22" data-vp-key="dailyBreakthrough#22" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Повышающие хаи и лои 1D</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="23" data-vp-key="dailyBreakthrough#23" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Повышающие хаи и лои на лок.ТФ 1ч/4ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="24" data-vp-key="dailyBreakthrough#24" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Затухание волатильности на 1d</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="25" data-vp-key="dailyBreakthrough#25" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Затухание волатильности на лок.ТФ 1ч/4ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="26" data-vp-key="dailyBreakthrough#26" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Уровень находится на круглом числе</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="27" data-vp-key="dailyBreakthrough#27" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Задерг против тренда</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="28" data-vp-key="dailyBreakthrough#28" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Слабея рынка</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="29" data-vp-key="dailyBreakthrough#29" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Сильнее рынка</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="vp-subhead" style="border-color:#6fe3a555;color:#6fe3a5">🎯 Пробой по факту — признаки ИСТИННОГО пробоя</div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="30" data-vp-key="dailyBreakthrough#30" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Путь до уровня короткий, движение было с откатами</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="31" data-vp-key="dailyBreakthrough#31" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" data-vp-group="bc" title="КРИТИЧНЫЙ признак: +3 балла"><span class="item-text">Тело свечи рабочего ТФ закрылось за уровнем (≥ 0.3 ATR)</span><span class="vp-w vp-w-plus" title="КРИТИЧНЫЙ признак: +3 балла">+3</span><span class="vp-crit-star" title="Критичный признак">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="32" data-vp-key="dailyBreakthrough#32" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" data-vp-group="bc" title="КРИТИЧНЫЙ признак: +3 балла"><span class="item-text">2–3 следующие свечи удержались за уровнем</span><span class="vp-w vp-w-plus" title="КРИТИЧНЫЙ признак: +3 балла">+3</span><span class="vp-crit-star" title="Критичный признак">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="33" data-vp-key="dailyBreakthrough#33" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Объём на свече пробоя ≥ 1.5× среднего и не иссяк</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="34" data-vp-key="dailyBreakthrough#34" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Откат мелкий: ≤ 38–50% от импульса пробоя</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="35" data-vp-key="dailyBreakthrough#35" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Слом структуры на M5/M15 в сторону пробоя (HH/HL или LH/LL)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="36" data-vp-key="dailyBreakthrough#36" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" data-vp-group="bc" title="КРИТИЧНЫЙ признак: +3 балла"><span class="item-text">Ретест уровня удержался, объём на ретесте падает</span><span class="vp-w vp-w-plus" title="КРИТИЧНЫЙ признак: +3 балла">+3</span><span class="vp-crit-star" title="Критичный признак">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthrough" data-vp-idx="37" data-vp-key="dailyBreakthrough#37" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Open Interest растёт вместе с ценой (пришли новые деньги)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
         </div>
 
         <div id="dailyFalseBreakthroughText" class="text-display">
             <h3 style="color: #098ae2;">📊Предпосылки Ложный пробой (Дневной уровень)</h3>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дальний ретест (от 10 дней)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подход на больших барах</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на лок таймфрейме</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенные объемы перед уровням на 1ч 4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Экстремум</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди зараженная зона</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длинное безоткатное движение</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вдали от уровня мин от 10%(больше половины от ATR)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет накопления</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Сильный уровень впереди</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V подход к уровню(без накопления)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дистрибуция</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет ипульса после пробоя</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="0" data-vp-key="dailyFalseBreakthrough#0" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Дальний ретест (от 10 дней)</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="1" data-vp-key="dailyFalseBreakthrough#1" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Подход на больших барах</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="2" data-vp-key="dailyFalseBreakthrough#2" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Резкий подход на лок таймфрейме</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="3" data-vp-key="dailyFalseBreakthrough#3" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Выход повышенные объемы перед уровням на 1ч 4ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="4" data-vp-key="dailyFalseBreakthrough#4" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Экстремум</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="5" data-vp-key="dailyFalseBreakthrough#5" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Впереди зараженная зона</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="6" data-vp-key="dailyFalseBreakthrough#6" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Длинное безоткатное движение</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="7" data-vp-key="dailyFalseBreakthrough#7" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Закрытие вдали от уровня мин от 10%(больше половины от ATR)</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="8" data-vp-key="dailyFalseBreakthrough#8" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Нет накопления</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="9" data-vp-key="dailyFalseBreakthrough#9" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Сильный уровень впереди</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="10" data-vp-key="dailyFalseBreakthrough#10" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">V подход к уровню(без накопления)</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="11" data-vp-key="dailyFalseBreakthrough#11" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Дистрибуция</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="12" data-vp-key="dailyFalseBreakthrough#12" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Повышенная волатильность</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="dailyFalseBreakthrough" data-vp-idx="13" data-vp-key="dailyFalseBreakthrough#13" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Нет ипульса после пробоя</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
         </div>
 
         <div id="dailyBreakthroughMinusesText" class="text-display">
             <h3 style="color: #098ae2;">📊Предпосылки Пробой Минусы ⛔️ (Дневной уровень)</h3>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный и локальный тренд не совпадают</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на лок.ТФ 1ч/4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на лок.ТФ</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий ЛП</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на лок ТФ</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Далеко закрылись от уровня</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Пройдено больше половина ATR</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 1ч далеко от уровня</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на лок.ТФ</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенного объёма на лок.ТФ</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабое накопление на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабое накопление на лок.ТФ</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень часто прошивается на лок.ТФ</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длиное безоткатное движение к уровню</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="0" data-vp-key="dailyBreakthroughMinuses#0" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="1" title="СТОП-ФАКТОР: блокирует вход"><span class="item-text">Глобальный и локальный тренд не совпадают</span><span class="vp-w vp-w-veto" title="СТОП-ФАКТОР: блокирует вход">−3 ⛔</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="1" data-vp-key="dailyBreakthroughMinuses#1" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Повышенная волатильность на 1D</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="2" data-vp-key="dailyBreakthroughMinuses#2" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Повышенная волатильность на лок.ТФ 1ч/4ч</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="3" data-vp-key="dailyBreakthroughMinuses#3" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="0" title="Штраф -3 балла"><span class="item-text">Зараженная зона на 1D</span><span class="vp-w vp-w-minus" title="Штраф -3 балла">−3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="4" data-vp-key="dailyBreakthroughMinuses#4" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Зараженная зона на лок.ТФ</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="5" data-vp-key="dailyBreakthroughMinuses#5" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Глубокий ЛП</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="6" data-vp-key="dailyBreakthroughMinuses#6" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Резкий подход на 1D</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="7" data-vp-key="dailyBreakthroughMinuses#7" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Резкий подход на лок ТФ</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="8" data-vp-key="dailyBreakthroughMinuses#8" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Далеко закрылись от уровня</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="9" data-vp-key="dailyBreakthroughMinuses#9" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="0" title="Штраф -3 балла"><span class="item-text">Пройдено больше половина ATR</span><span class="vp-w vp-w-minus" title="Штраф -3 балла">−3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="10" data-vp-key="dailyBreakthroughMinuses#10" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Накопление на 1ч далеко от уровня</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="11" data-vp-key="dailyBreakthroughMinuses#11" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Выравнивание баров на 1D</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="12" data-vp-key="dailyBreakthroughMinuses#12" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Выравнивание баров на лок.ТФ</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="13" data-vp-key="dailyBreakthroughMinuses#13" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Выход повышенного объёма на лок.ТФ</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="14" data-vp-key="dailyBreakthroughMinuses#14" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Слабое накопление на 1D</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="15" data-vp-key="dailyBreakthroughMinuses#15" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Слабое накопление на лок.ТФ</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="16" data-vp-key="dailyBreakthroughMinuses#16" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Уровень часто прошивается на лок.ТФ</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="17" data-vp-key="dailyBreakthroughMinuses#17" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Длиное безоткатное движение к уровню</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="vp-subhead" style="border-color:#ff9d9d55;color:#ff9d9d">🎯 Пробой по факту — признаки ЛОЖНОГО пробоя</div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="18" data-vp-key="dailyBreakthroughMinuses#18" data-vp-pts="3" data-vp-crit="0" data-vp-veto="1" data-vp-group="bc" title="⛔ СТОП-ФАКТОР: блокирует вход"><span class="item-text">Длинная тень за уровнем, но тело закрылось обратно</span><span class="vp-w vp-w-plus" title="⛔ СТОП-ФАКТОР: блокирует вход">+3 ⛔</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="19" data-vp-key="dailyBreakthroughMinuses#19" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Следующая свеча поглощает свечу-шпильку</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="20" data-vp-key="dailyBreakthroughMinuses#20" data-vp-pts="3" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +3 балла"><span class="item-text">Нет импульса после пробоя — цена встала в 0.2–0.5 ATR</span><span class="vp-w vp-w-plus" title="Признак: +3 балла">+3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="21" data-vp-key="dailyBreakthroughMinuses#21" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Объём всплеснул на проколе и сразу иссяк</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="22" data-vp-key="dailyBreakthroughMinuses#22" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Open Interest падает или стоит (движение на закрытии позиций)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="23" data-vp-key="dailyBreakthroughMinuses#23" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +1 балла"><span class="item-text">Funding экстремальный до пробоя — толпа перегружена</span><span class="vp-w vp-w-plus" title="Признак: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="24" data-vp-key="dailyBreakthroughMinuses#24" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +1 балла"><span class="item-text">Спот не подтверждает движение перпа</span><span class="vp-w vp-w-plus" title="Признак: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="25" data-vp-key="dailyBreakthroughMinuses#25" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Уровень уже запилен: много прошивок в обе стороны</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="26" data-vp-key="dailyBreakthroughMinuses#26" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Тонкая ликвидность (ночь / выходной) или 5–15 минут до новости</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyBreakthroughMinuses" data-vp-idx="27" data-vp-key="dailyBreakthroughMinuses#27" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Пробой против BTC (для альта)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
         </div>
 
         <div id="dailyFalseBreakthroughMinusesText" class="text-display">
             <h3 style="color: #098ae2;">📊Предпосылки Ложный пробой ⛔️(Дневной уровень)</h3>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на лок.ТФ 1-4ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">В переди свободная зона</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий пробой</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня на 1D</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие с затуханиям волатильности</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поступательное движения к уровню</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление в близи уровня</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Большой запас ATR</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="0" data-vp-key="dailyFalseBreakthroughMinuses#0" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="1" title="СТОП-ФАКТОР: блокирует вход"><span class="item-text">Накопление на 1D</span><span class="vp-w vp-w-veto" title="СТОП-ФАКТОР: блокирует вход">−3 ⛔</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="1" data-vp-key="dailyFalseBreakthroughMinuses#1" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Накопление на лок.ТФ 1-4ч</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="2" data-vp-key="dailyFalseBreakthroughMinuses#2" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="0" title="Штраф -3 балла"><span class="item-text">В переди свободная зона</span><span class="vp-w vp-w-minus" title="Штраф -3 балла">−3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="3" data-vp-key="dailyFalseBreakthroughMinuses#3" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Глубокий пробой</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="4" data-vp-key="dailyFalseBreakthroughMinuses#4" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Закрытие вблизи уровня на 1D</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="5" data-vp-key="dailyFalseBreakthroughMinuses#5" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Поджатие с затуханиям волатильности</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="6" data-vp-key="dailyFalseBreakthroughMinuses#6" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Поступательное движения к уровню</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="7" data-vp-key="dailyFalseBreakthroughMinuses#7" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Накопление в близи уровня</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="dailyFalseBreakthroughMinuses" data-vp-idx="8" data-vp-key="dailyFalseBreakthroughMinuses#8" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Большой запас ATR</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
         </div>
 
         <div id="minuteBreakthroughText" class="text-display">
             <h3>Пробой (Минутный таймфрейм)</h3>
             <p>📊Предпосылки для МИНУТНОГО пробоя</p>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд лонг на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд шорт на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Локальный тренд Рендж на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Ближний ретест на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет реакции на ЛП на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня на 5M (до 2%)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">После сильного движения нет отката на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди свободная зона на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выкупной бар на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Продажный бар на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V-Формация на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">U-Формация на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на 1ч</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Проторговка вблизи уровня на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Понижающие хаи и лои на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышающие хаи и лои на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Затухание волатильности на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень находится на круглом числе</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Задерг против тренда на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="0" data-vp-key="minuteBreakthrough#0" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Локальный тренд лонг на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="1" data-vp-key="minuteBreakthrough#1" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Локальный тренд шорт на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="2" data-vp-key="minuteBreakthrough#2" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Локальный тренд Рендж на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="3" data-vp-key="minuteBreakthrough#3" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Ближний ретест на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="4" data-vp-key="minuteBreakthrough#4" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Нет реакции на ЛП на 5M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="5" data-vp-key="minuteBreakthrough#5" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Накопление на 15M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="6" data-vp-key="minuteBreakthrough#6" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Закрытие вблизи уровня на 5M (до 2%)</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="7" data-vp-key="minuteBreakthrough#7" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">После сильного движения нет отката на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="8" data-vp-key="minuteBreakthrough#8" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Впереди свободная зона на 5M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="9" data-vp-key="minuteBreakthrough#9" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Выкупной бар на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="10" data-vp-key="minuteBreakthrough#10" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Продажный бар на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="11" data-vp-key="minuteBreakthrough#11" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">V-Формация на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="12" data-vp-key="minuteBreakthrough#12" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">U-Формация на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="13" data-vp-key="minuteBreakthrough#13" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Проторговка вблизи уровня на 1ч</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="14" data-vp-key="minuteBreakthrough#14" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Проторговка вблизи уровня на 5M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="15" data-vp-key="minuteBreakthrough#15" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Поджатие на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="16" data-vp-key="minuteBreakthrough#16" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Поджатие на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="17" data-vp-key="minuteBreakthrough#17" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Понижающие хаи и лои на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="18" data-vp-key="minuteBreakthrough#18" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Повышающие хаи и лои на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="19" data-vp-key="minuteBreakthrough#19" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Затухание волатильности на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="20" data-vp-key="minuteBreakthrough#20" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Уровень находится на круглом числе</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="21" data-vp-key="minuteBreakthrough#21" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Задерг против тренда на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="vp-subhead" style="border-color:#6fe3a555;color:#6fe3a5">🎯 Пробой по факту — признаки ИСТИННОГО пробоя</div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="22" data-vp-key="minuteBreakthrough#22" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Путь до уровня короткий, движение было с откатами</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="23" data-vp-key="minuteBreakthrough#23" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" data-vp-group="bc" title="КРИТИЧНЫЙ признак: +3 балла"><span class="item-text">Тело свечи рабочего ТФ закрылось за уровнем (≥ 0.3 ATR)</span><span class="vp-w vp-w-plus" title="КРИТИЧНЫЙ признак: +3 балла">+3</span><span class="vp-crit-star" title="Критичный признак">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="24" data-vp-key="minuteBreakthrough#24" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" data-vp-group="bc" title="КРИТИЧНЫЙ признак: +3 балла"><span class="item-text">2–3 следующие свечи удержались за уровнем</span><span class="vp-w vp-w-plus" title="КРИТИЧНЫЙ признак: +3 балла">+3</span><span class="vp-crit-star" title="Критичный признак">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="25" data-vp-key="minuteBreakthrough#25" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Объём на свече пробоя ≥ 1.5× среднего и не иссяк</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="26" data-vp-key="minuteBreakthrough#26" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Откат мелкий: ≤ 38–50% от импульса пробоя</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="27" data-vp-key="minuteBreakthrough#27" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Слом структуры на M5/M15 в сторону пробоя (HH/HL или LH/LL)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="28" data-vp-key="minuteBreakthrough#28" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" data-vp-group="bc" title="КРИТИЧНЫЙ признак: +3 балла"><span class="item-text">Ретест уровня удержался, объём на ретесте падает</span><span class="vp-w vp-w-plus" title="КРИТИЧНЫЙ признак: +3 балла">+3</span><span class="vp-crit-star" title="Критичный признак">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthrough" data-vp-idx="29" data-vp-key="minuteBreakthrough#29" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Open Interest растёт вместе с ценой (пришли новые деньги)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
         </div>
 
         <div id="minuteFalseBreakthroughText" class="text-display">
             <h3>Ложный пробой (Минутный таймфрейм)</h3>
             <p>📊Предпосылки для МИНУТНОГО ложного пробоя</p>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дальний ретест (от 5 дней)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Подход на больших барах на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенные объемы перед уровням на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Экстремум на 1H</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Впереди зараженная зона на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длинное безоткатное движение на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вдали от уровня на 5M (больше половины от ATR)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет накопления на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Сильный уровень впереди на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">V подход к уровню на 5M (без накопления)</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Дистрибуция на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Нет импульса после пробоя на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="0" data-vp-key="minuteFalseBreakthrough#0" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Дальний ретест (от 5 дней)</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="1" data-vp-key="minuteFalseBreakthrough#1" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Подход на больших барах на 15M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="2" data-vp-key="minuteFalseBreakthrough#2" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Резкий подход на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="3" data-vp-key="minuteFalseBreakthrough#3" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Выход повышенные объемы перед уровням на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="4" data-vp-key="minuteFalseBreakthrough#4" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Экстремум на 1H</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="5" data-vp-key="minuteFalseBreakthrough#5" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Впереди зараженная зона на 15M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="6" data-vp-key="minuteFalseBreakthrough#6" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Длинное безоткатное движение на 5M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="7" data-vp-key="minuteFalseBreakthrough#7" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Закрытие вдали от уровня на 5M (больше половины от ATR)</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="8" data-vp-key="minuteFalseBreakthrough#8" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Нет накопления на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="9" data-vp-key="minuteFalseBreakthrough#9" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Сильный уровень впереди на 15M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="10" data-vp-key="minuteFalseBreakthrough#10" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">V подход к уровню на 5M (без накопления)</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="11" data-vp-key="minuteFalseBreakthrough#11" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +2 балла"><span class="item-text">Дистрибуция на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="12" data-vp-key="minuteFalseBreakthrough#12" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" title="Предпосылка: +1 балла"><span class="item-text">Повышенная волатильность на 5M</span><span class="vp-w vp-w-plus" title="Предпосылка: +1 балла">+1</span></div>
+            <div class="checkbox-item vp-crit"><input type="checkbox" data-vp-block="minuteFalseBreakthrough" data-vp-idx="13" data-vp-key="minuteFalseBreakthrough#13" data-vp-pts="3" data-vp-crit="1" data-vp-veto="0" title="КРИТИЧНАЯ предпосылка: +3 балла"><span class="item-text">Нет импульса после пробоя на 5M</span><span class="vp-w vp-w-plus" title="КРИТИЧНАЯ предпосылка: +3 балла">+3</span><span class="vp-crit-star" title="Критичная предпосылка">★</span></div>
         </div>
 
         <div id="minuteBreakthroughMinusesText" class="text-display">
             <h3>Пробой минусы (Минутный таймфрейм)</h3>
             <p>⛔️ Минусы для МИНУТНОГО пробоя</p>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глобальный и локальный тренд не совпадают</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Повышенная волатильность на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Зараженная зона на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий ЛП на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Резкий подход на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Далеко закрылись от уровня на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Пройдено больше половина ATR на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 5M далеко от уровня</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выравнивание баров на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Выход повышенного объёма на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Слабое накопление на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Уровень часто прошивается на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Длиное безоткатное движение к уровню на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="0" data-vp-key="minuteBreakthroughMinuses#0" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="1" title="СТОП-ФАКТОР: блокирует вход"><span class="item-text">Глобальный и локальный тренд не совпадают</span><span class="vp-w vp-w-veto" title="СТОП-ФАКТОР: блокирует вход">−3 ⛔</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="1" data-vp-key="minuteBreakthroughMinuses#1" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Повышенная волатильность на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="2" data-vp-key="minuteBreakthroughMinuses#2" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Зараженная зона на 15M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="3" data-vp-key="minuteBreakthroughMinuses#3" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Зараженная зона на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="4" data-vp-key="minuteBreakthroughMinuses#4" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Глубокий ЛП на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="5" data-vp-key="minuteBreakthroughMinuses#5" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Резкий подход на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="6" data-vp-key="minuteBreakthroughMinuses#6" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Далеко закрылись от уровня на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="7" data-vp-key="minuteBreakthroughMinuses#7" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="0" title="Штраф -3 балла"><span class="item-text">Пройдено больше половина ATR на 5M</span><span class="vp-w vp-w-minus" title="Штраф -3 балла">−3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="8" data-vp-key="minuteBreakthroughMinuses#8" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Накопление на 5M далеко от уровня</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="9" data-vp-key="minuteBreakthroughMinuses#9" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Выравнивание баров на 15M</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="10" data-vp-key="minuteBreakthroughMinuses#10" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Выравнивание баров на 5M</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="11" data-vp-key="minuteBreakthroughMinuses#11" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Выход повышенного объёма на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="12" data-vp-key="minuteBreakthroughMinuses#12" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Слабое накопление на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="13" data-vp-key="minuteBreakthroughMinuses#13" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Уровень часто прошивается на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="14" data-vp-key="minuteBreakthroughMinuses#14" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Длиное безоткатное движение к уровню на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="vp-subhead" style="border-color:#ff9d9d55;color:#ff9d9d">🎯 Пробой по факту — признаки ЛОЖНОГО пробоя</div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="15" data-vp-key="minuteBreakthroughMinuses#15" data-vp-pts="3" data-vp-crit="0" data-vp-veto="1" data-vp-group="bc" title="⛔ СТОП-ФАКТОР: блокирует вход"><span class="item-text">Длинная тень за уровнем, но тело закрылось обратно</span><span class="vp-w vp-w-plus" title="⛔ СТОП-ФАКТОР: блокирует вход">+3 ⛔</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="16" data-vp-key="minuteBreakthroughMinuses#16" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Следующая свеча поглощает свечу-шпильку</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="17" data-vp-key="minuteBreakthroughMinuses#17" data-vp-pts="3" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +3 балла"><span class="item-text">Нет импульса после пробоя — цена встала в 0.2–0.5 ATR</span><span class="vp-w vp-w-plus" title="Признак: +3 балла">+3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="18" data-vp-key="minuteBreakthroughMinuses#18" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Объём всплеснул на проколе и сразу иссяк</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="19" data-vp-key="minuteBreakthroughMinuses#19" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Open Interest падает или стоит (движение на закрытии позиций)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="20" data-vp-key="minuteBreakthroughMinuses#20" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +1 балла"><span class="item-text">Funding экстремальный до пробоя — толпа перегружена</span><span class="vp-w vp-w-plus" title="Признак: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="21" data-vp-key="minuteBreakthroughMinuses#21" data-vp-pts="1" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +1 балла"><span class="item-text">Спот не подтверждает движение перпа</span><span class="vp-w vp-w-plus" title="Признак: +1 балла">+1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="22" data-vp-key="minuteBreakthroughMinuses#22" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Уровень уже запилен: много прошивок в обе стороны</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="23" data-vp-key="minuteBreakthroughMinuses#23" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Тонкая ликвидность (ночь / выходной) или 5–15 минут до новости</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteBreakthroughMinuses" data-vp-idx="24" data-vp-key="minuteBreakthroughMinuses#24" data-vp-pts="2" data-vp-crit="0" data-vp-veto="0" data-vp-group="bc" title="Признак: +2 балла"><span class="item-text">Пробой против BTC (для альта)</span><span class="vp-w vp-w-plus" title="Признак: +2 балла">+2</span></div>
         </div>
 
         <div id="minuteFalseBreakthroughMinusesText" class="text-display">
             <h3>Ложный пробой минусы (Минутный таймфрейм)</h3>
             <p>⛔️ Минусы для МИНУТНОГО ложного пробоя</p>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 15M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">В переди свободная зона на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Глубокий пробой на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Закрытие вблизи уровня на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поджатие с затуханиям волатильности на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Поступательное движения к уровню на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Накопление в близи уровня на 5M</span></div>
-            <div class="checkbox-item"><input type="checkbox"><span class="item-text">Большой запас ATR на 5M</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="0" data-vp-key="minuteFalseBreakthroughMinuses#0" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="1" title="СТОП-ФАКТОР: блокирует вход"><span class="item-text">Накопление на 15M</span><span class="vp-w vp-w-veto" title="СТОП-ФАКТОР: блокирует вход">−3 ⛔</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="1" data-vp-key="minuteFalseBreakthroughMinuses#1" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Накопление на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="2" data-vp-key="minuteFalseBreakthroughMinuses#2" data-vp-pts="-3" data-vp-crit="0" data-vp-veto="0" title="Штраф -3 балла"><span class="item-text">В переди свободная зона на 5M</span><span class="vp-w vp-w-minus" title="Штраф -3 балла">−3</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="3" data-vp-key="minuteFalseBreakthroughMinuses#3" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Глубокий пробой на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="4" data-vp-key="minuteFalseBreakthroughMinuses#4" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Закрытие вблизи уровня на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="5" data-vp-key="minuteFalseBreakthroughMinuses#5" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Поджатие с затуханиям волатильности на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="6" data-vp-key="minuteFalseBreakthroughMinuses#6" data-vp-pts="-1" data-vp-crit="0" data-vp-veto="0" title="Штраф -1 балла"><span class="item-text">Поступательное движения к уровню на 5M</span><span class="vp-w vp-w-minus" title="Штраф -1 балла">−1</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="7" data-vp-key="minuteFalseBreakthroughMinuses#7" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Накопление в близи уровня на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
+            <div class="checkbox-item"><input type="checkbox" data-vp-block="minuteFalseBreakthroughMinuses" data-vp-idx="8" data-vp-key="minuteFalseBreakthroughMinuses#8" data-vp-pts="-2" data-vp-crit="0" data-vp-veto="0" title="Штраф -2 балла"><span class="item-text">Большой запас ATR на 5M</span><span class="vp-w vp-w-minus" title="Штраф -2 балла">−2</span></div>
         </div>
+
 
         <!-- ===== КНОПКИ ДЕЙСТВИЙ ===== -->
         <div id="actionButtons" class="action-buttons-container">
@@ -622,6 +839,38 @@
         <div id="statusMessage" class="status-message"></div>
     </div>
 
+
+    <!-- ===== ПРАВАЯ КОЛОНКА: ОЦЕНКА СДЕЛКИ (ничего не перекрывает) ===== -->
+    <aside class="vp-sidebar">
+        <!-- ===== ПАНЕЛЬ БАЛЛОВ И ПОРОГА ВХОДА ===== -->
+        <div class="vp-score-panel" id="vpScorePanel">
+            <div class="vp-sp-head">
+                <span class="vp-sp-title">⚖️ ОЦЕНКА СДЕЛКИ</span>
+                <span class="vp-sp-note" id="vpSpNote">Выберите блок предпосылок</span>
+                <button class="vp-sp-btn" onclick="vpOpenSettings()" title="Пороги входа, % риска, стоп"><i class="fas fa-sliders-h"></i> Пороги входа</button>
+                <button class="vp-sp-btn" onclick="vpResetCurrent()" title="Сбросить чекбоксы открытого блока"><i class="fas fa-eraser"></i> Сброс блока</button>
+                <button class="vp-sp-btn" onclick="vpCopyReport()" title="Скопировать отчёт с баллами"><i class="fas fa-copy"></i> Отчёт</button>
+            </div>
+
+            <div class="vp-tabs" id="vpTabs">
+                <button class="vp-tab" data-vp-scen="daily_break" onclick="vpSetActive('daily_break')">ПРОБОЙ · Дневка<span class="vp-tab-grade" data-vp-grade></span></button>
+                <button class="vp-tab" data-vp-scen="daily_lp" onclick="vpSetActive('daily_lp')">ЛОЖНЫЙ ПРОБОЙ · Дневка<span class="vp-tab-grade" data-vp-grade></span></button>
+                <button class="vp-tab" data-vp-scen="minute_break" onclick="vpSetActive('minute_break')">ПРОБОЙ · Минута<span class="vp-tab-grade" data-vp-grade></span></button>
+                <button class="vp-tab" data-vp-scen="minute_lp" onclick="vpSetActive('minute_lp')">ЛОЖНЫЙ ПРОБОЙ · Минута<span class="vp-tab-grade" data-vp-grade></span></button>
+            </div>
+
+            <div class="vp-cards" id="vpCards"></div>
+
+            <div class="vp-verdict" id="vpVerdict"></div>
+
+            <div class="vp-legend">
+                <b>Веса предпосылок:</b> <span class="vp-w vp-w-plus">+3</span> критичная (★) · <span class="vp-w vp-w-plus">+2</span> основная · <span class="vp-w vp-w-plus">+1</span> усиливающая &nbsp;|&nbsp; <span class="vp-w vp-w-minus">−2</span> минус · <span class="vp-w vp-w-veto">−3 ⛔</span> стоп-фактор (вход запрещён)<br>
+                <b>Как считается:</b> «+ Баллы» = % набранных предпосылок от максимума сценария · «− Штраф» = % набранных минусов · «Σ Итог» = (+ баллы − штраф) ÷ максимум. Вердикт требует BOTH: достаточно плюсов И мало минусов.
+            </div>
+        </div>
+    </aside>
+    </div><!-- /.vp-layout -->
+
     <!-- ===== МОДАЛЬНОЕ ОКНО ДЛЯ ТВХ-ТЕКСТА ===== -->
     <div class="tvh-overlay" id="tvhOverlay">
         <div class="tvh-modal">
@@ -630,6 +879,113 @@
             <button class="tvh-copy-btn" onclick="copyTvhText()">
                 <i class="fas fa-copy"></i> Копировать
             </button>
+        </div>
+    </div>
+
+    <!-- ===== МОДАЛКА: ПОРОГИ ВХОДА ===== -->
+    <div class="vp-set-overlay" id="vpSettingsOverlay">
+        <div class="vp-set-modal">
+            <h3><i class="fas fa-sliders-h"></i> Пороги входа и веса риска</h3>
+
+            <h4>Сколько баллов нужно, чтобы зайти в сделку</h4>
+            <table>
+                <tr><th>Оценка</th><th>Что означает</th><th>+ баллы ≥, %</th><th>− штраф ≤, %</th><th>Критичных (★) ≥</th><th>Риск, % от базового</th></tr>
+                <tr>
+                    <td><b style="color:#39d98a">A</b></td><td>ПОЛНЫЙ ВХОД</td>
+                    <td><input type="number" id="vpSetAP" min="0" max="100" step="1"></td>
+                    <td><input type="number" id="vpSetAM" min="0" max="100" step="1"></td>
+                    <td><input type="number" id="vpSetAC" min="0" max="10" step="1"></td>
+                    <td><input type="number" id="vpSetAR" min="0" max="300" step="5"></td>
+                </tr>
+                <tr>
+                    <td><b style="color:#7fb2ff">B</b></td><td>ВХОД ПОЛОВИННЫМ РИСКОМ</td>
+                    <td><input type="number" id="vpSetBP" min="0" max="100" step="1"></td>
+                    <td><input type="number" id="vpSetBM" min="0" max="100" step="1"></td>
+                    <td><input type="number" id="vpSetBC" min="0" max="10" step="1"></td>
+                    <td><input type="number" id="vpSetBR" min="0" max="300" step="5"></td>
+                </tr>
+                <tr>
+                    <td><b style="color:#ffd166">C</b></td><td>НАБЛЮДЕНИЕ, БЕЗ ВХОДА</td>
+                    <td><input type="number" id="vpSetCP" min="0" max="100" step="1"></td>
+                    <td><input type="number" id="vpSetCM" min="0" max="100" step="1"></td>
+                    <td><input type="number" id="vpSetCC" min="0" max="10" step="1"></td>
+                    <td><input type="number" id="vpSetCR" min="0" max="300" step="5"></td>
+                </tr>
+                <tr>
+                    <td><b style="color:#ff8a8a">D</b></td><td>НЕТ ВХОДА (всё, что ниже C)</td>
+                    <td colspan="4" style="color:#8b93a3">автоматически</td>
+                </tr>
+            </table>
+
+            <h4>Стоп-факторы (⛔)</h4>
+            <label style="font-size:12.5px;color:#c9d3e2;display:flex;gap:8px;align-items:center">
+                <input type="checkbox" id="vpSetVeto"> Любой отмеченный стоп-фактор полностью блокирует вход (оценка X), независимо от баллов
+            </label>
+            <div class="vp-set-hint">
+                Стоп-факторы по умолчанию: «Глобальный и локальный тренд не совпадают» (для пробоя)
+                и «Накопление на 1D / на 15M» (для ложного пробоя). Отметьте этот пункт в блоке минусов — и сделка блокируется.
+            </div>
+
+            <h4>Стопы по вашей системе (подсказка в вердикте)</h4>
+            <table>
+                <tr><th>Сценарий</th><th>Куда ставить стоп</th></tr>
+                <tr><td>Пробой — все условия соблюдены</td><td><input type="text" id="vpSetStopBreak" style="width:100%;background:#0f1217;border:1px solid #3a424f;color:#fff;border-radius:5px;padding:5px 7px;font-family:inherit;font-size:12px"></td></tr>
+                <tr><td>Ложный пробой</td><td><input type="text" id="vpSetStopLp" style="width:100%;background:#0f1217;border:1px solid #3a424f;color:#fff;border-radius:5px;padding:5px 7px;font-family:inherit;font-size:12px"></td></tr>
+            </table>
+
+            <h4>Пороги «Пробой по факту» (истинный / ложный)</h4>
+            <table>
+                <tr><th>Вердикт</th><th>Условие</th><th>Значение</th></tr>
+                <tr><td><span class="vp-bc-badge vp-bc-TRUE">ИСТИННЫЙ</span></td>
+                    <td>признаков истинного пробоя ≥</td>
+                    <td><input type="number" id="vpSetBcStrongTrue" min="1" max="15" step="1"></td></tr>
+                <tr><td>…и при этом ложных ≤</td><td>доля сомнений</td>
+                    <td><input type="number" id="vpSetBcSoftFalse" min="0" max="11" step="1"></td></tr>
+                <tr><td><span class="vp-bc-badge vp-bc-WEAK">СЛАБЫЙ</span></td>
+                    <td>признаков истинного ≥ (половинный риск)</td>
+                    <td><input type="number" id="vpSetBcMidTrue" min="1" max="15" step="1"></td></tr>
+                <tr><td><span class="vp-bc-badge vp-bc-FALSE">ЛОЖНЫЙ</span></td>
+                    <td>признаков ложного ≥ (ждём возврат)</td>
+                    <td><input type="number" id="vpSetBcStrongFalse" min="1" max="10" step="1"></td></tr>
+                <tr><td><span class="vp-bc-badge vp-bc-REVERSE">РАЗВОРОТ</span></td>
+                    <td>признаков ложного ≥ (разворот от уровня)</td>
+                    <td><input type="number" id="vpSetBcHardFalse" min="1" max="10" step="1"></td></tr>
+            </table>
+            <div class="vp-set-hint">
+                Считаются ШТУКИ отмеченных признаков из подгруппы «Пробой по факту» в конце блоков
+                «Предпосылки Пробой» и «Предпосылки Пробой минусы». Баллы этих пунктов при этом
+                идут и в общую оценку сценария (A/B/C/D), как у остальных предпосылок.
+            </div>
+
+            <h4>Базовый риск</h4>
+            <table>
+                <tr><th>Параметр</th><th>Значение</th></tr>
+                <tr><td>Риск на сделку при оценке A, % депозита</td><td><input type="number" id="vpSetBaseRisk" min="0.1" max="10" step="0.1"></td></tr>
+            </table>
+            <div class="vp-set-hint">
+                Вердикт покажет конкретный риск: A = базовый, B = 50% от базового, C и D = 0 (вход запрещён).
+            </div>
+
+            <div class="vp-set-actions">
+                <button onclick="vpSaveSettings()"><i class="fas fa-save"></i> Сохранить</button>
+                <button class="vp-set-gray" onclick="vpResetSettings()"><i class="fas fa-undo"></i> Значения по умолчанию</button>
+                <button class="vp-set-gray" onclick="vpCloseSettings()">Закрыть</button>
+            </div>
+
+            <h4>Шкала (справка)</h4>
+            <table>
+                <tr><th>Вес</th><th>Смысл</th></tr>
+                <tr><td><span class="vp-w vp-w-plus">+3</span> ★</td><td>Критичная предпосылка — без неё сценарий обычно не отрабатывает</td></tr>
+                <tr><td><span class="vp-w vp-w-plus">+2</span></td><td>Основная предпосылка</td></tr>
+                <tr><td><span class="vp-w vp-w-plus">+1</span></td><td>Усиливающий фактор</td></tr>
+                <tr><td><span class="vp-w vp-w-minus">−2</span></td><td>Минус, снижающий вероятность отработки</td></tr>
+                <tr><td><span class="vp-w vp-w-veto">−3 ⛔</span></td><td>Стоп-фактор — блокирует вход</td></tr>
+            </table>
+            <div class="vp-set-hint">
+                Веса назначены по приоритетам вашего «Алгоритма отбора по дневке» (сильный уровень, подход, накопление, свободная зона, ATR).
+                Изменить вес конкретного пункта можно прямо в файле <b>premises.html</b> — массив <b>VP_WEIGHTS</b> в начале скрипта оценки:
+                ключ = точный текст пункта, значение = <b>[вес, критичность, стоп-фактор]</b>.
+            </div>
         </div>
     </div>
 
@@ -1209,7 +1565,9 @@
                 if (minute.style.display === 'flex') minute.style.display = 'none';
                 else { minute.style.display = 'flex'; daily.style.display = 'none'; }
             }
+            if (typeof vpCurrentTf !== 'undefined') vpCurrentTf = (section === 'minute') ? 'minute' : 'daily';
             currentlyActiveText = null;
+            if (typeof vpUpdatePanelVisibility === 'function') vpUpdatePanelVisibility();
         }
 
         function toggleText(textId) {
@@ -1228,6 +1586,9 @@
                 actionBtns.style.display = 'flex';
                 currentlyActiveText = textId;
             }
+            var vpP = document.getElementById('vpScorePanel');
+            if (vpP) vpP.classList.add('vp-visible');
+            if (typeof vpUpdatePanelVisibility === 'function') vpUpdatePanelVisibility();
         }
 
         function toggleTvhButtons(tvhType) {
@@ -1255,6 +1616,7 @@
                 else { btns.minuteFalse.style.display = 'flex'; btns.dailyBreak.style.display = 'none'; btns.dailyFalse.style.display = 'none'; btns.minuteBreak.style.display = 'none'; }
             }
             currentlyActiveText = null;
+            if (typeof vpUpdatePanelVisibility === 'function') vpUpdatePanelVisibility();
         }
 
         function toggleAlgorithmButtons() {
@@ -1286,6 +1648,7 @@
             }
             document.getElementById('algorithmButtons').style.display = 'none';
             currentlyActiveText = null;
+            if (typeof vpUpdatePanelVisibility === 'function') vpUpdatePanelVisibility();
         }
 
         function backToAlgorithmMain() {
@@ -1294,6 +1657,7 @@
             document.getElementById('algorithmButtons').style.display = 'flex';
             currentAlgorithmType = null;
             currentlyActiveText = null;
+            if (typeof vpUpdatePanelVisibility === 'function') vpUpdatePanelVisibility();
         }
 
         // ---- ТВХ - МОДАЛЬНОЕ ОКНО ----
@@ -1315,7 +1679,16 @@
             navigator.clipboard.writeText(text).then(() => showNotification('Текст скопирован', 'success'));
         }
 
-        // ---- КОПИРОВАНИЕ / ОТПРАВКА / СБРОС ----
+        // ---- КОПИРОВАНИЕ / ОТПРАВКА / СБРОС (с баллами и вердиктом) ----
+        function vpItemsOfBlock(blockEl) {
+            const checked = blockEl.querySelectorAll('input[type="checkbox"]:checked');
+            return Array.from(checked).map((cb, i) => {
+                const sp = cb.parentNode.querySelector('.item-text');
+                const bd = cb.parentNode.querySelector('.vp-w');
+                return `${i + 1}. ☑ ${sp ? sp.textContent.trim() : ''}${bd ? ' [' + bd.textContent.trim() + ']' : ''}`;
+            }).join('\n');
+        }
+
         function copySelectedText() {
             const active = document.querySelector('.text-display[style*="display: block"]');
             if (!active) { showNotification('Нет активного текста', 'error'); return; }
@@ -1324,9 +1697,9 @@
             const header = active.querySelector('h3');
             const headerText = header ? header.textContent.trim() : '';
             let text = headerText ? headerText + '\n' : '';
-            const items = Array.from(checked).map((cb, i) => `${i+1}. ☑ ${cb.nextElementSibling.textContent}`);
-            text += items.join('\n');
-            navigator.clipboard.writeText(text).then(() => showNotification('Выбранное скопировано с нумерацией', 'success'));
+            text += vpItemsOfBlock(active);
+            if (typeof vpScoreReport === 'function') text += '\n\n' + vpScoreReport().text;
+            navigator.clipboard.writeText(text).then(() => showNotification('Скопировано: пункты + баллы + вердикт', 'success'));
         }
 
         function exportSelectedToTelegram() {
@@ -1335,24 +1708,33 @@
             const checked = active.querySelectorAll('input[type="checkbox"]:checked');
             if (checked.length === 0) { showNotification('Не выбрано ни одного пункта', 'error'); return; }
             const header = active.querySelector('h3');
-            const headerText = header ? header.textContent.trim() : '';
-            let text = headerText ? headerText + '\n' : '';
-            const items = Array.from(checked).map((cb, i) => `${i+1}. ☑ ${cb.nextElementSibling.textContent}`);
-            text += items.join('\n');
-            const msg = encodeURIComponent(text);
-            fetch(`https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${msg}`)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.ok) showNotification('Отправлено в Telegram', 'success');
-                    else showNotification('Ошибка отправки', 'error');
-                })
-                .catch(() => showNotification('Ошибка соединения', 'error'));
+            let text = (header ? header.textContent.trim() : '') + '\n';
+            text += vpItemsOfBlock(active);
+            if (typeof vpScoreReport === 'function') text += '\n\n' + vpScoreReport().text;
+
+            const chatId = localStorage.getItem('telegramChatId');
+            const proxyUrl = (typeof CONFIG !== 'undefined' && CONFIG.telegramProxyUrl)
+                ? CONFIG.telegramProxyUrl
+                : (window.parent && window.parent.CONFIG ? window.parent.CONFIG.telegramProxyUrl : '');
+            if (!chatId || !proxyUrl) {
+                showNotification('Telegram не настроен: укажите chat_id в настройках терминала', 'error');
+                return;
+            }
+            const body = new URLSearchParams();
+            body.append('chat_id', chatId);
+            body.append('text', text);
+            fetch(proxyUrl, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })
+                .then(() => showNotification('Отправлено в Telegram', 'success'))
+                .catch(() => showNotification('Ошибка отправки в Telegram', 'error'));
         }
 
         function resetCheckboxes() {
             const active = document.querySelector('.text-display[style*="display: block"]');
             if (!active) { showNotification('Нет активного текста', 'error'); return; }
             active.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+            if (typeof vpClearBlockState === 'function') vpClearBlockState(active.id.replace(/Text$/, ''));
+            if (typeof vpSaveState === 'function') vpSaveState();
+            if (typeof vpRefreshScore === 'function') vpRefreshScore();
             showNotification('Сброшено', 'success');
         }
 
@@ -1535,6 +1917,831 @@
         document.getElementById('photoModal').addEventListener('click', function(e) {
             if (e.target === this) closePhotoModal();
         });
+    </script>
+
+    <!-- ===================== VP-SCORING: СИСТЕМА БАЛЛОВ ===================== -->
+    <script>
+        // =====================================================================
+        //  VIEW-PRO · СИСТЕМА БАЛЛОВ ПРЕДПОСЫЛОК И ПОРОГ ВХОДА
+        //  Считает баллы по отмеченным чекбоксам, вычитает минусы,
+        //  блокирует вход при стоп-факторах и выдаёт вердикт A/B/C/D/X.
+        // =====================================================================
+
+        // ---- ВЕСА ПРЕДПОСЫЛОК -------------------------------------------------
+        //  [вес, критичная(★), стоп-фактор(⛔)]
+        //  плюс-блоки: 3 = критичная, 2 = основная, 1 = усиливающая
+        //  минус-блоки: значения отрицательные; veto=true блокирует вход
+        const VP_WEIGHTS = {
+            // ================= ДНЕВКА · ПРОБОЙ (+) =================
+            dailyBreakthrough: {
+                'Глобальный тренд лонг': [2, false, false],
+                'Глобальный тренд шорт': [2, false, false],
+                'Глобальный тренд Рендж': [1, false, false],
+                'Локальный тренд лонг': [2, false, false],
+                'Локальный тренд шорт': [2, false, false],
+                'Локальный тренд Рендж': [1, false, false],
+                'Ближний ретест': [2, false, false],
+                'Нет реакции на ЛП': [3, true, false],
+                'Накопление': [3, true, false],
+                'Закрытие вблизи уровня до (5%)': [3, true, false],
+                'После сильного движения нет отката': [2, false, false],
+                'Впереди свободная зона': [3, true, false],
+                'Выкупной бар': [2, false, false],
+                'Продажный бар': [2, false, false],
+                'V-Формация': [2, false, false],
+                'U-Формация': [2, false, false],
+                'Проторговка вблизи уровня на 1D': [3, true, false],
+                'Проторговка вблизи уровня на коротком таймфрейме 1ч/4ч': [2, false, false],
+                'Подходит поджатием на 1D': [2, false, false],
+                'Подходит поджатием на 1ч/4ч': [2, false, false],
+                'Понижающие хаи и лои на 1D': [2, false, false],
+                'Понижающие хаи и лои на лок.ТФ 1ч/4ч': [1, false, false],
+                'Повышающие хаи и лои 1D': [2, false, false],
+                'Повышающие хаи и лои на лок.ТФ 1ч/4ч': [1, false, false],
+                'Затухание волатильности на 1d': [2, false, false],
+                'Затухание волатильности на лок.ТФ 1ч/4ч': [1, false, false],
+                'Уровень находится на круглом числе': [1, false, false],
+                'Задерг против тренда': [2, false, false],
+                'Слабея рынка': [1, false, false],
+                'Сильнее рынка': [1, false, false]
+            },
+
+            // ================= ДНЕВКА · ЛОЖНЫЙ ПРОБОЙ (+) =================
+            dailyFalseBreakthrough: {
+                'Дальний ретест (от 10 дней)': [2, false, false],
+                'Подход на больших барах': [3, true, false],
+                'Резкий подход на лок таймфрейме': [2, false, false],
+                'Выход повышенные объемы перед уровням на 1ч 4ч': [2, false, false],
+                'Экстремум': [2, false, false],
+                'Впереди зараженная зона': [3, true, false],
+                'Длинное безоткатное движение': [3, true, false],
+                'Закрытие вдали от уровня мин от 10%(больше половины от ATR)': [3, true, false],
+                'Нет накопления': [2, false, false],
+                'Сильный уровень впереди': [2, false, false],
+                'V подход к уровню(без накопления)': [2, false, false],
+                'Дистрибуция': [2, false, false],
+                'Повышенная волатильность': [1, false, false],
+                'Нет ипульса после пробоя': [3, true, false]
+            },
+
+            // ================= ДНЕВКА · ПРОБОЙ (−) =================
+            dailyBreakthroughMinuses: {
+                'Глобальный и локальный тренд не совпадают': [-3, false, true],
+                'Повышенная волатильность на 1D': [-2, false, false],
+                'Повышенная волатильность на лок.ТФ 1ч/4ч': [-2, false, false],
+                'Зараженная зона на 1D': [-3, false, false],
+                'Зараженная зона на лок.ТФ': [-2, false, false],
+                'Глубокий ЛП': [-2, false, false],
+                'Резкий подход на 1D': [-2, false, false],
+                'Резкий подход на лок ТФ': [-1, false, false],
+                'Далеко закрылись от уровня': [-2, false, false],
+                'Пройдено больше половина ATR': [-3, false, false],
+                'Накопление на 1ч далеко от уровня': [-1, false, false],
+                'Выравнивание баров на 1D': [-1, false, false],
+                'Выравнивание баров на лок.ТФ': [-1, false, false],
+                'Выход повышенного объёма на лок.ТФ': [-2, false, false],
+                'Слабое накопление на 1D': [-2, false, false],
+                'Слабое накопление на лок.ТФ': [-1, false, false],
+                'Уровень часто прошивается на лок.ТФ': [-2, false, false],
+                'Длиное безоткатное движение к уровню': [-2, false, false]
+            },
+
+            // ================= ДНЕВКА · ЛОЖНЫЙ ПРОБОЙ (−) =================
+            dailyFalseBreakthroughMinuses: {
+                'Накопление на 1D': [-3, false, true],
+                'Накопление на лок.ТФ 1-4ч': [-2, false, false],
+                'В переди свободная зона': [-3, false, false],
+                'Глубокий пробой': [-2, false, false],
+                'Закрытие вблизи уровня на 1D': [-2, false, false],
+                'Поджатие с затуханиям волатильности': [-2, false, false],
+                'Поступательное движения к уровню': [-1, false, false],
+                'Накопление в близи уровня': [-2, false, false],
+                'Большой запас ATR': [-2, false, false]
+            },
+
+            // ================= МИНУТА · ПРОБОЙ (+) =================
+            minuteBreakthrough: {
+                'Локальный тренд лонг на 15M': [2, false, false],
+                'Локальный тренд шорт на 15M': [2, false, false],
+                'Локальный тренд Рендж на 5M': [1, false, false],
+                'Ближний ретест на 5M': [2, false, false],
+                'Нет реакции на ЛП на 5M': [3, true, false],
+                'Накопление на 15M': [3, true, false],
+                'Закрытие вблизи уровня на 5M (до 2%)': [3, true, false],
+                'После сильного движения нет отката на 5M': [2, false, false],
+                'Впереди свободная зона на 5M': [3, true, false],
+                'Выкупной бар на 5M': [2, false, false],
+                'Продажный бар на 5M': [2, false, false],
+                'V-Формация на 15M': [2, false, false],
+                'U-Формация на 15M': [2, false, false],
+                'Проторговка вблизи уровня на 1ч': [2, false, false],
+                'Проторговка вблизи уровня на 5M': [3, true, false],
+                'Поджатие на 15M': [2, false, false],
+                'Поджатие на 5M': [2, false, false],
+                'Понижающие хаи и лои на 15M': [2, false, false],
+                'Повышающие хаи и лои на 15M': [2, false, false],
+                'Затухание волатильности на 5M': [2, false, false],
+                'Уровень находится на круглом числе': [1, false, false],
+                'Задерг против тренда на 5M': [2, false, false]
+            },
+
+            // ================= МИНУТА · ЛОЖНЫЙ ПРОБОЙ (+) =================
+            minuteFalseBreakthrough: {
+                'Дальний ретест (от 5 дней)': [2, false, false],
+                'Подход на больших барах на 15M': [3, true, false],
+                'Резкий подход на 5M': [2, false, false],
+                'Выход повышенные объемы перед уровням на 5M': [2, false, false],
+                'Экстремум на 1H': [2, false, false],
+                'Впереди зараженная зона на 15M': [3, true, false],
+                'Длинное безоткатное движение на 5M': [3, true, false],
+                'Закрытие вдали от уровня на 5M (больше половины от ATR)': [3, true, false],
+                'Нет накопления на 5M': [2, false, false],
+                'Сильный уровень впереди на 15M': [2, false, false],
+                'V подход к уровню на 5M (без накопления)': [2, false, false],
+                'Дистрибуция на 5M': [2, false, false],
+                'Повышенная волатильность на 5M': [1, false, false],
+                'Нет импульса после пробоя на 5M': [3, true, false]
+            },
+
+            // ================= МИНУТА · ПРОБОЙ (−) =================
+            minuteBreakthroughMinuses: {
+                'Глобальный и локальный тренд не совпадают': [-3, false, true],
+                'Повышенная волатильность на 5M': [-2, false, false],
+                'Зараженная зона на 15M': [-2, false, false],
+                'Зараженная зона на 5M': [-2, false, false],
+                'Глубокий ЛП на 5M': [-2, false, false],
+                'Резкий подход на 5M': [-2, false, false],
+                'Далеко закрылись от уровня на 5M': [-2, false, false],
+                'Пройдено больше половина ATR на 5M': [-3, false, false],
+                'Накопление на 5M далеко от уровня': [-1, false, false],
+                'Выравнивание баров на 15M': [-1, false, false],
+                'Выравнивание баров на 5M': [-1, false, false],
+                'Выход повышенного объёма на 5M': [-2, false, false],
+                'Слабое накопление на 5M': [-2, false, false],
+                'Уровень часто прошивается на 5M': [-2, false, false],
+                'Длиное безоткатное движение к уровню на 5M': [-2, false, false]
+            },
+
+            // ================= МИНУТА · ЛОЖНЫЙ ПРОБОЙ (−) =================
+            minuteFalseBreakthroughMinuses: {
+                'Накопление на 15M': [-3, false, true],
+                'Накопление на 5M': [-2, false, false],
+                'В переди свободная зона на 5M': [-3, false, false],
+                'Глубокий пробой на 5M': [-2, false, false],
+                'Закрытие вблизи уровня на 5M': [-2, false, false],
+                'Поджатие с затуханиям волатильности на 5M': [-2, false, false],
+                'Поступательное движения к уровню на 5M': [-1, false, false],
+                'Накопление в близи уровня на 5M': [-2, false, false],
+                'Большой запас ATR на 5M': [-2, false, false]
+            }
+        };
+
+        // ---- СЦЕНАРИИ: пара «плюсы + минусы» ---------------------------------
+        const VP_SCENARIOS = {
+            daily_break: {
+                name: 'ПРОБОЙ', tfLabel: 'Дневка', tf: 'daily',
+                plusBlock: 'dailyBreakthrough', minusBlock: 'dailyBreakthroughMinuses',
+                stopHintKey: 'stopBreak'
+            },
+            daily_lp: {
+                name: 'ЛОЖНЫЙ ПРОБОЙ', tfLabel: 'Дневка', tf: 'daily',
+                plusBlock: 'dailyFalseBreakthrough', minusBlock: 'dailyFalseBreakthroughMinuses',
+                stopHintKey: 'stopLp'
+            },
+            minute_break: {
+                name: 'ПРОБОЙ', tfLabel: 'Минута', tf: 'minute',
+                plusBlock: 'minuteBreakthrough', minusBlock: 'minuteBreakthroughMinuses',
+                stopHintKey: 'stopBreak'
+            },
+            minute_lp: {
+                name: 'ЛОЖНЫЙ ПРОБОЙ', tfLabel: 'Минута', tf: 'minute',
+                plusBlock: 'minuteFalseBreakthrough', minusBlock: 'minuteFalseBreakthroughMinuses',
+                stopHintKey: 'stopLp'
+            }
+        };
+
+        const VP_BLOCK_TO_SCENARIO = {};
+        Object.keys(VP_SCENARIOS).forEach(function (k) {
+            const s = VP_SCENARIOS[k];
+            VP_BLOCK_TO_SCENARIO[s.plusBlock] = k;
+            VP_BLOCK_TO_SCENARIO[s.minusBlock] = k;
+        });
+
+        // ---- ПОРОГИ ВХОДА (настраиваются в модалке «Пороги входа») ------------
+        const VP_DEFAULTS = {
+            grades: [
+                { grade: 'A', title: 'ПОЛНЫЙ ВХОД', minPlus: 60, maxMinus: 15, minCriticals: 2, riskFactor: 1.0 },
+                { grade: 'B', title: 'ВХОД ПОЛОВИННЫМ РИСКОМ', minPlus: 45, maxMinus: 30, minCriticals: 1, riskFactor: 0.5 },
+                { grade: 'C', title: 'НАБЛЮДЕНИЕ — БЕЗ ВХОДА', minPlus: 25, maxMinus: 50, minCriticals: 0, riskFactor: 0.0 },
+                { grade: 'D', title: 'НЕТ ВХОДА', minPlus: 0, maxMinus: 100, minCriticals: 0, riskFactor: 0.0 }
+            ],
+            vetoBlocks: true,
+            bcStrongTrue: 5,
+            bcMidTrue: 3,
+            bcSoftFalse: 1,
+            bcStrongFalse: 3,
+            bcHardFalse: 5,
+            baseRisk: 1.0,
+            stopBreak: '5% от ATR за уровнем (при полном соблюдении условий)',
+            stopLp: 'за дневной уровень / за экстремум прокола'
+        };
+
+        const VP_SETTINGS_KEY = 'vp_score_settings_v1';
+        const VP_STATE_KEY = 'vp_premises_state_v1';
+        let vpSettings = null;
+        let vpActive = 'daily_break';
+        let vpCurrentTf = 'daily';
+
+        // ---- ХРАНИЛИЩЕ --------------------------------------------------------
+        function vpLoadSettings() {
+            let saved = {};
+            try { saved = JSON.parse(localStorage.getItem(VP_SETTINGS_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+            const base = JSON.parse(JSON.stringify(VP_DEFAULTS));
+            if (saved && Array.isArray(saved.grades) && saved.grades.length === base.grades.length) {
+                base.grades = base.grades.map(function (g, i) {
+                    const s = saved.grades[i] || {};
+                    return {
+                        grade: g.grade, title: g.title,
+                        minPlus: vpNum(s.minPlus, g.minPlus),
+                        maxMinus: vpNum(s.maxMinus, g.maxMinus),
+                        minCriticals: vpNum(s.minCriticals, g.minCriticals),
+                        riskFactor: vpNum(s.riskFactor, g.riskFactor)
+                    };
+                });
+            }
+            base.vetoBlocks = typeof saved.vetoBlocks === 'boolean' ? saved.vetoBlocks : base.vetoBlocks;
+            Object.keys(VP_DEFAULTS).forEach(function (k) {
+                if (typeof VP_DEFAULTS[k] === 'number' && saved[k] !== undefined) base[k] = vpNum(saved[k], VP_DEFAULTS[k]);
+            });
+            base.baseRisk = vpNum(saved.baseRisk, base.baseRisk);
+            base.stopBreak = typeof saved.stopBreak === 'string' && saved.stopBreak ? saved.stopBreak : base.stopBreak;
+            base.stopLp = typeof saved.stopLp === 'string' && saved.stopLp ? saved.stopLp : base.stopLp;
+            return base;
+        }
+        function vpNum(v, d) { const n = parseFloat(v); return isNaN(n) ? d : n; }
+        function vpSaveSettingsToStorage() {
+            try { localStorage.setItem(VP_SETTINGS_KEY, JSON.stringify(vpSettings)); } catch (e) { }
+        }
+        function vpLoadState() {
+            try { return JSON.parse(localStorage.getItem(VP_STATE_KEY) || '{}') || {}; } catch (e) { return {}; }
+        }
+        function vpSaveState() {
+            const st = {};
+            document.querySelectorAll('.checkbox-item input[type="checkbox"][data-vp-block]').forEach(function (cb) {
+                if (cb.checked) st[cb.getAttribute('data-vp-key')] = 1;
+            });
+            try { localStorage.setItem(VP_STATE_KEY, JSON.stringify(st)); } catch (e) { }
+        }
+        function vpRestoreState() {
+            const st = vpLoadState();
+            let n = 0;
+            document.querySelectorAll('.checkbox-item input[type="checkbox"][data-vp-key]').forEach(function (cb) {
+                if (st[cb.getAttribute('data-vp-key')]) { cb.checked = true; n++; }
+            });
+            return n;
+        }
+        function vpClearBlockState(block) {
+            const st = vpLoadState();
+            Object.keys(st).forEach(function (k) { if (k.indexOf(block + '#') === 0) delete st[k]; });
+            try { localStorage.setItem(VP_STATE_KEY, JSON.stringify(st)); } catch (e) { }
+        }
+
+        // ---- РАЗМЕТКА ПУНКТОВ (бейджи весов) ----------------------------------
+        function vpDecorateItems() {
+            document.querySelectorAll('.checkbox-item').forEach(function (row) {
+                const cb = row.querySelector('input[type="checkbox"]');
+                const span = row.querySelector('.item-text');
+                if (!cb || !span) return;
+                const block = cb.getAttribute('data-vp-block');
+                if (!block) return;
+                const w = (VP_WEIGHTS[block] || {})[span.textContent.trim()];
+                if (!w) return;
+                const pts = w[0], crit = w[1], veto = w[2];
+                const b = document.createElement('span');
+                b.className = 'vp-w ' + (pts < 0 ? (veto ? 'vp-w-veto' : 'vp-w-minus') : 'vp-w-plus');
+                b.textContent = (pts > 0 ? '+' : pts === 0 ? '' : '−') + Math.abs(pts) + (veto ? ' ⛔' : '');
+                b.title = veto ? 'СТОП-ФАКТОР: блокирует вход'
+                    : (pts < 0 ? 'Штраф: ' + pts + ' балла'
+                        : (crit ? 'КРИТИЧНАЯ предпосылка: +' + pts + ' балла' : 'Предпосылка: +' + pts + ' балла'));
+                span.after(b);
+                if (crit) {
+                    const s = document.createElement('span');
+                    s.className = 'vp-crit-star'; s.textContent = '★'; s.title = 'Критичная предпосылка';
+                    b.after(s);
+                    row.classList.add('vp-crit');
+                }
+            });
+        }
+
+        // ---- ПОДСЧЁТ ----------------------------------------------------------
+        // Веса читаются из data-атрибутов пункта (data-vp-pts / -crit / -veto),
+        // VP_WEIGHTS остаётся запасным источником — чтобы можно было менять веса
+        // в одном месте (в HTML) без правки таблицы в JS.
+        function vpBlockStats(block) {
+            const weights = VP_WEIGHTS[block] || {};
+            const st = { got: 0, max: 0, count: 0, checked: 0, critGot: 0, critTotal: 0, veto: [] };
+            const box = document.getElementById(block + 'Text');
+            if (!box) return st;
+            box.querySelectorAll('.checkbox-item input[type="checkbox"]').forEach(function (cb) {
+                const span = cb.nextElementSibling && cb.nextElementSibling.classList.contains('item-text')
+                    ? cb.nextElementSibling
+                    : cb.parentNode.querySelector('.item-text');
+                const text = span ? span.textContent.trim() : '';
+
+                let pts, crit, veto;
+                const attrPts = cb.getAttribute('data-vp-pts');
+                if (attrPts !== null && attrPts !== '') {
+                    pts = parseInt(attrPts, 10) || 0;
+                    crit = cb.getAttribute('data-vp-crit') === '1';
+                    veto = cb.getAttribute('data-vp-veto') === '1';
+                } else {
+                    const w = weights[text];
+                    if (!w) return;
+                    pts = w[0]; crit = w[1]; veto = w[2];
+                }
+                const abs = Math.abs(pts);
+                st.count++;
+                st.max += abs;
+                if (crit) st.critTotal++;
+                if (cb.checked) {
+                    st.checked++; st.got += abs;
+                    if (crit) st.critGot++;
+                    if (veto) st.veto.push(text);
+                }
+            });
+            return st;
+        }
+
+        function vpGradeFor(pct, mPct, crits, vetoHit) {
+            if (vetoHit && vpSettings.vetoBlocks) {
+                return { grade: 'X', title: 'ВХОД ЗАПРЕЩЁН · СТОП-ФАКТОР', riskFactor: 0, rule: null };
+            }
+            for (let i = 0; i < vpSettings.grades.length; i++) {
+                const g = vpSettings.grades[i];
+                if (g.grade === 'D') continue;
+                if (pct >= g.minPlus && mPct <= g.maxMinus && crits >= g.minCriticals) {
+                    return { grade: g.grade, title: g.title, riskFactor: g.riskFactor, rule: g };
+                }
+            }
+            const d = vpSettings.grades[vpSettings.grades.length - 1];
+            return { grade: d.grade, title: d.title, riskFactor: d.riskFactor, rule: d };
+        }
+
+        function vpComputeScenario(key) {
+            const sc = VP_SCENARIOS[key];
+            const p = vpBlockStats(sc.plusBlock);
+            const m = vpBlockStats(sc.minusBlock);
+            const plusPct = p.max ? (p.got / p.max) * 100 : 0;
+            const minusPct = m.max ? (m.got / m.max) * 100 : 0;
+            const netPct = p.max ? ((p.got - m.got) / p.max) * 100 : 0;
+            const vetoHit = m.veto.length > 0;
+            const res = vpGradeFor(plusPct, minusPct, p.critGot, vetoHit);
+            return {
+                key: key, sc: sc, p: p, m: m,
+                plusPct: plusPct, minusPct: minusPct, netPct: netPct,
+                vetoHit: vetoHit, vetoItems: m.veto,
+                grade: res.grade, title: res.title, riskFactor: res.riskFactor, rule: res.rule
+            };
+        }
+
+        function vpMissingFor(r) {
+            const out = [];
+            const gA = vpSettings.grades[0], gB = vpSettings.grades[1];
+            const target = r.grade === 'B' || r.grade === 'C' ? gB : gA;
+            if (r.grade === 'A') return out;
+            if (r.plusPct < target.minPlus) {
+                out.push('добрать <b>+' + Math.ceil(target.minPlus - r.plusPct) + '%</b> предпосылок ('
+                    + Math.ceil((target.minPlus - r.plusPct) / 100 * r.p.max) + ' балл.)');
+            }
+            if (r.minusPct > target.maxMinus) {
+                out.push('снять минусов на <b>' + Math.ceil(r.minusPct - target.maxMinus) + '%</b>');
+            }
+            if (r.p.critGot < target.minCriticals) {
+                out.push('нужно ещё <b>' + (target.minCriticals - r.p.critGot) + '</b> критичных ★');
+            }
+            return out;
+        }
+
+        // ---- РЕНДЕР -----------------------------------------------------------
+        function vpRefreshScore() {
+            const panel = document.getElementById('vpScorePanel');
+            if (!panel) return;
+            const cards = document.getElementById('vpCards');
+            if (!cards) return;
+
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            let activeScen = null;
+            if (active && active.id) {
+                const block = active.id.replace(/Text$/, '');
+                if (VP_BLOCK_TO_SCENARIO[block]) activeScen = VP_BLOCK_TO_SCENARIO[block];
+            }
+
+            const tfKeys = Object.keys(VP_SCENARIOS).filter(function (k) { return VP_SCENARIOS[k].tf === vpCurrentTf; });
+            const shown = tfKeys.length ? tfKeys : Object.keys(VP_SCENARIOS);
+            if (activeScen && shown.indexOf(activeScen) === -1) shown.unshift(activeScen);
+            if (shown.indexOf(vpActive) === -1) vpActive = activeScen || shown[0];
+
+            // табы
+            document.querySelectorAll('.vp-tab').forEach(function (tab) {
+                const k = tab.getAttribute('data-vp-scen');
+                if (!k) return;
+                const r = vpComputeScenario(k);
+                tab.classList.toggle('vp-active', k === vpActive);
+                const g = tab.querySelector('[data-vp-grade]');
+                if (g) g.textContent = r.grade + ' · ' + Math.round(r.netPct) + '%';
+                tab.style.display = (shown.indexOf(k) === -1) ? 'none' : '';
+            });
+
+            // карточки
+            cards.innerHTML = shown.map(function (k) { return vpCardHtml(vpComputeScenario(k), k === vpActive); }).join('');
+
+            // вердикт
+            const r = vpComputeScenario(vpActive);
+            document.getElementById('vpVerdict').innerHTML = vpVerdictHtml(r);
+
+            // шапка
+            const note = document.getElementById('vpSpNote');
+            if (note) {
+                note.textContent = activeScen
+                    ? 'Открыт блок: ' + VP_SCENARIOS[activeScen].name + ' · ' + VP_SCENARIOS[activeScen].tfLabel
+                    : 'Открой блок предпосылок — оценка считается по сохранённым отметкам';
+            }
+            if (typeof vpFitStacked === 'function') vpFitStacked();
+        }
+
+        function vpCardHtml(r, isActive) {
+            const veto = r.vetoHit
+                ? '<div class="vp-veto">⛔ СТОП-ФАКТОР: ' + r.vetoItems.map(vpEsc).join(', ') + '</div>' : '';
+            const stopHint = vpSettings[r.sc.stopHintKey] ? '<br><b>Стоп:</b> ' + vpEsc(vpSettings[r.sc.stopHintKey]) : '';
+            return '' +
+                '<div class="vp-card' + (isActive ? ' vp-card-active' : '') + '" data-vp-scen="' + r.key + '">' +
+                '<div class="vp-card-head">' +
+                '<span class="vp-card-name">' + r.sc.name + ' <span class="vp-card-tf">· ' + r.sc.tfLabel + '</span></span>' +
+                '<span class="vp-pill vp-grade-' + r.grade + '">' + r.grade + '</span>' +
+                '</div>' +
+                vpRowHtml('+ Баллы', r.p.got, r.p.max, r.plusPct, 'plus') +
+                vpRowHtml('− Штраф', r.m.got, r.m.max, r.minusPct, 'minus') +
+                vpRowHtml('Σ Итог', Math.max(0, r.p.got - r.m.got), r.p.max, Math.max(0, r.netPct), 'net') +
+                '<div class="vp-card-foot">Критичных ★: <b>' + r.p.critGot + ' / ' + r.p.critTotal + '</b>' +
+                ' &nbsp;·&nbsp; Отмечено пунктов: <b>' + (r.p.checked + r.m.checked) + ' / ' + (r.p.count + r.m.count) + '</b>' + stopHint + '</div>' +
+                veto +
+                ((r.sc.name === 'ПРОБОЙ' && typeof vpBreakHtml === 'function') ? vpBreakHtml(r.key) : '') +
+                '</div>';
+        }
+
+        function vpRowHtml(label, got, max, pct, kind) {
+            const w = Math.max(0, Math.min(100, pct));
+            return '<div class="vp-row"><span class="vp-lbl">' + label + '</span>' +
+                '<span class="vp-bar vp-bar-' + kind + '"><i style="width:' + w.toFixed(1) + '%"></i></span>' +
+                '<span class="vp-num">' + got + ' / ' + max + ' (' + Math.round(pct) + '%)</span></div>';
+        }
+
+        function vpVerdictHtml(r) {
+            const risk = r.riskFactor > 0
+                ? 'Риск на сделку: <b>' + (vpSettings.baseRisk * r.riskFactor).toFixed(2).replace('.', ',') + '%</b> депозита (×' + r.riskFactor + ')'
+                : 'Риск: <b>0%</b> — вход запрещён';
+            const head = '<div class="vp-verdict-top">' +
+                '<div class="vp-grade vp-grade-' + r.grade + '">' + r.grade + '</div>' +
+                '<div class="vp-verdict-main">' +
+                '<div class="vp-verdict-title">' + r.title + '</div>' +
+                '<div class="vp-verdict-risk">' + risk + '</div>' +
+                '<div class="vp-verdict-cond">Сценарий: ' + r.sc.name + ' · ' + r.sc.tfLabel +
+                ' &nbsp;|&nbsp; + ' + Math.round(r.plusPct) + '% / − ' + Math.round(r.minusPct) + '% / Σ ' + Math.round(r.netPct) + '%' +
+                ' &nbsp;|&nbsp; ★ ' + r.p.critGot + '</div>' +
+                '</div></div>';
+
+            if (r.vetoHit && vpSettings.vetoBlocks) {
+                return head + '<div class="vp-verdict-extra"><span class="vp-veto-txt">⛔ Отмечен стоп-фактор: ' +
+                    r.vetoItems.map(vpEsc).join(', ') + '.</span> По правилам системы это блокирует вход независимо от количества баллов. ' +
+                    'Уберите стоп-фактор (если он исчез с графика) или откажитесь от сделки.</div>';
+            }
+            if (r.grade === 'A' || r.grade === 'B') {
+                const g = r.rule;
+                return head + '<div class="vp-verdict-extra">' +
+                    '<span class="vp-stop">✅ Условия входа выполнены:</span> предпосылок ' + Math.round(r.plusPct) + '% (порог ≥ ' + g.minPlus + '%), ' +
+                    'штраф ' + Math.round(r.minusPct) + '% (порог ≤ ' + g.maxMinus + '%), критичных ★ ' + r.p.critGot + ' (порог ≥ ' + g.minCriticals + ').' +
+                    '<br><b>Порог входа пройден.</b> Далее — точка входа по вашей ТВХ-модели (№1–№5), стоп и размер позиции.' +
+                    (r.grade === 'B' ? '<br><span class="vp-miss">⚠ Это вход половинным риском: до полного входа не хватает условий.</span>' : '') +
+                    '</div>';
+            }
+            const miss = vpMissingFor(r);
+            return head + '<div class="vp-verdict-extra">' +
+                '<span class="vp-miss">⛔ Порог входа НЕ пройден.</span> ' +
+                (miss.length ? 'Не хватает: ' + miss.join('; ') + '.' : 'Набрано слишком мало предпосылок.') +
+                '<br>Торговать нельзя. Ждите, пока картинка дозреет, или берите другой инструмент.' +
+                '</div>';
+        }
+
+        function vpEsc(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function vpSetActive(k) {
+            vpActive = k;
+            vpRefreshScore();
+        }
+
+        function vpUpdatePanelVisibility() {
+            // панель стоит в правой колонке и видна всегда — ничего не перекрывает
+            const panel = document.getElementById('vpScorePanel');
+            if (panel) panel.classList.add('vp-visible');
+            vpRefreshScore();
+        }
+
+        // В узком окне панель прилипает к низу — добавляем списку отступ, чтобы она его не закрывала
+        function vpFitStacked() {
+            const layout = document.querySelector('.vp-layout');
+            const sb = document.querySelector('.vp-sidebar');
+            if (!layout || !sb) return;
+            if (window.innerWidth > 900) { layout.style.paddingBottom = ''; return; }
+            const h = sb.offsetHeight || 0;
+            layout.style.paddingBottom = (h > 0 ? h + 16 : 0) + 'px';
+        }
+        if (typeof window !== 'undefined' && window.addEventListener) {
+            window.addEventListener('resize', function () { vpFitStacked(); });
+        }
+
+        // =====================================================================
+        //  «ПРОБОЙ ПО ФАКТУ» — вердикт по пунктам группы bc внутри сценария
+        //  (истинный / ложный пробой, считается штуками отмеченных признаков)
+        // =====================================================================
+        function vpCountGroup(block, group) {
+            const st = { cnt: 0, pts: 0, crit: 0, veto: [], total: 0, maxPts: 0 };
+            const box = document.getElementById(block + 'Text');
+            if (!box) return st;
+            box.querySelectorAll('.checkbox-item input[type="checkbox"][data-vp-group="' + group + '"]').forEach(function (cb) {
+                const pts = parseInt(cb.getAttribute('data-vp-pts') || '0', 10);
+                const crit = cb.getAttribute('data-vp-crit') === '1';
+                const veto = cb.getAttribute('data-vp-veto') === '1';
+                st.total++;
+                st.maxPts += Math.abs(pts);
+                if (cb.checked) {
+                    st.cnt++;
+                    st.pts += Math.abs(pts);
+                    if (crit) st.crit++;
+                    if (veto) {
+                        const span = cb.nextElementSibling && cb.nextElementSibling.classList.contains('item-text')
+                            ? cb.nextElementSibling : cb.parentNode.querySelector('.item-text');
+                        st.veto.push(span ? span.textContent.trim() : 'стоп-фактор');
+                    }
+                }
+            });
+            return st;
+        }
+
+        function vpComputeBreakFrom(scenKey) {
+            const sc = VP_SCENARIOS[scenKey];
+            const t = vpCountGroup(sc.plusBlock, 'bc');
+            const f = vpCountGroup(sc.minusBlock, 'bc');
+            const s = vpSettings;
+            let code, badge, title, action, risk;
+
+            if (f.veto.length > 0 && s.vetoBlocks) {
+                code = 'REVERSE'; badge = 'ЛОЖНЫЙ';
+                title = 'СТОП-ФАКТОР: ' + f.veto.join(', ');
+                action = 'Пробой не состоялся — тело вернулось за уровень. Вход по пробою запрещён. Ждём проторговку и работаем разворот от уровня, стоп за экстремум прокола + 0.5 ATR.';
+                risk = 1.0;
+            } else if (f.cnt >= s.bcHardFalse) {
+                code = 'REVERSE'; badge = 'ЛОЖНЫЙ';
+                title = 'РАЗВОРОТ ОТ УРОВНЯ';
+                action = 'Картина полностью в пользу ложного пробоя. Ждём возврат за уровень и проторговку — работаем разворот, стоп за экстремум прокола + 0.5 ATR.';
+                risk = 1.0;
+            } else if (t.cnt >= s.bcStrongTrue && f.cnt <= s.bcSoftFalse) {
+                code = 'TRUE'; badge = 'ИСТИННЫЙ';
+                title = 'ТОРГУЕМ РЕТЕСТ';
+                action = 'Пробой подтверждён, уровень сменил роль. Вход на ретесте (38–62% импульса) или после слома структуры M5/M15 + ретеста. Стоп за обратную сторону уровня + 0.5 ATR.';
+                risk = 1.0;
+            } else if (t.cnt >= s.bcStrongTrue) {
+                code = 'ALERT'; badge = 'ИСТИННЫЙ?';
+                title = 'ЕСТЬ СОМНЕНИЕ — СИЛЬНЫЕ МИНУСЫ';
+                action = 'Вход только половинным риском и только после удержания за уровнем 2–3 свечи. При возврате в диапазон — выход сразу, не дожидаясь стопа.';
+                risk = 0.5;
+            } else if (f.cnt >= s.bcStrongFalse) {
+                code = 'FALSE'; badge = 'ЛОЖНЫЙ';
+                title = 'ЖДЁМ ВОЗВРАТ ЗА УРОВЕНЬ';
+                action = 'Пробой не торгуем. Ждём возврат тела за уровень и проторговку — дальше разворот по вашей ТВХ. Тейк: противоположная граница диапазона / ближайший пул.';
+                risk = 1.0;
+            } else if (t.cnt >= s.bcMidTrue) {
+                code = 'WEAK'; badge = 'СЛАБЫЙ';
+                title = 'ПОЛОВИННЫМ РИСКОМ, ЖДЁМ РЕТЕСТ';
+                action = 'Подтверждений мало. Вход только на ретесте и только половинным риском. Без ретеста — пропускаем.';
+                risk = 0.5;
+            } else if (t.cnt === 0 && f.cnt === 0) {
+                code = 'WAIT'; badge = 'ПРОБОЯ ЕЩЁ НЕТ';
+                title = 'ОЦЕНИВАЕМ ТОЛЬКО СЕТАП';
+                action = 'Цена пока не пробила уровень — отметьте признаки выше (подход, накопление, свободная зона). Группа «пробой по факту» заполняется, когда пробой случился.';
+                risk = 0;
+            } else {
+                code = 'WAIT'; badge = 'НЕ ОПРЕДЕЛЁН';
+                title = 'НЕТ СДЕЛКИ ПО ПРОБОЮ';
+                action = 'Признаков мало и они противоречат друг другу. Ждём закрытия свечи рабочего ТФ за уровнем и удержания 2–3 свечи либо возврата в диапазон.';
+                risk = 0;
+            }
+            return { t: t, f: f, code: code, badge: badge, title: title, action: action, risk: risk };
+        }
+
+        function vpBreakHtml(scenKey) {
+            const r = vpComputeBreakFrom(scenKey);
+            const miss = [];
+            const s = vpSettings;
+            if (r.code !== 'TRUE' && r.code !== 'REVERSE') {
+                if (r.t.cnt < s.bcStrongTrue) miss.push('до «ИСТИННЫЙ» не хватает <b>' + (s.bcStrongTrue - r.t.cnt) + '</b> признаков пробоя');
+                if (r.t.crit < 2 && r.t.cnt > 0) miss.push('из них критичных ★ нужно ещё <b>' + (2 - r.t.crit) + '</b>');
+                if (r.f.cnt > s.bcSoftFalse && r.code === 'ALERT') miss.push('снять <b>' + (r.f.cnt - s.bcSoftFalse) + '</b> признака ложного пробоя');
+            }
+            return '' +
+                '<div class="vp-bcline">' +
+                '<span class="vp-bc-label">Пробой по факту (после прокола уровня)</span><br>' +
+                '<span class="vp-bc-badge vp-bc-' + r.code + '">' + r.badge + ' · ' + r.title + '</span>' +
+                '<div class="vp-bc-counts">' +
+                '<span class="t">✅ истинный: <b>' + r.t.cnt + '/' + r.t.total + '</b> (' + r.t.pts + ' из ' + r.t.maxPts + ' балл., ★ ' + r.t.crit + ')</span> &nbsp;·&nbsp; ' +
+                '<span class="f">⛔ ложный: <b>' + r.f.cnt + '/' + r.f.total + '</b> (' + r.f.pts + ' из ' + r.f.maxPts + ' балл.)</span>' +
+                '</div>' +
+                '<div class="vp-bc-action">' + r.action + '</div>' +
+                (miss.length ? '<div class="vp-bc-action vp-bc-miss">Не хватает: ' + miss.join('; ') + '.</div>' : '') +
+                '<div class="vp-bc-action" style="color:#8b93a3">Пороги: истинных ≥ ' + s.bcStrongTrue + ' и ложных ≤ ' + s.bcSoftFalse +
+                ' → ИСТИННЫЙ · истинных ≥ ' + s.bcMidTrue + ' → СЛАБЫЙ · ложных ≥ ' + s.bcStrongFalse +
+                ' → ЛОЖНЫЙ · ложных ≥ ' + s.bcHardFalse + ' → РАЗВОРОТ.</div>' +
+                '</div>';
+        }
+
+        function vpBreakReportLines(scenKey) {
+            const r = vpComputeBreakFrom(scenKey);
+            const s = vpSettings;
+            return [
+                '',
+                '🎯 ПРОБОЙ ПО ФАКТУ: ' + r.badge + ' — ' + r.title,
+                '   истинный: ' + r.t.cnt + '/' + r.t.total + ' (' + r.t.pts + ' из ' + r.t.maxPts + ' баллов), критичных ★ ' + r.t.crit,
+                '   ложный:   ' + r.f.cnt + '/' + r.f.total + ' (' + r.f.pts + ' из ' + r.f.maxPts + ' баллов)',
+                '   порог: истинных ≥ ' + s.bcStrongTrue + ' и ложных ≤ ' + s.bcSoftFalse,
+                '   решение: ' + r.action
+            ];
+        }
+
+        // ---- ОТЧЁТ (копирование / Telegram) -----------------------------------
+        function vpScoreReport() {
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            let scenKey = vpActive;
+            if (active && active.id) {
+                const block = active.id.replace(/Text$/, '');
+                if (VP_BLOCK_TO_SCENARIO[block]) scenKey = VP_BLOCK_TO_SCENARIO[block];
+            }
+            const r = vpComputeScenario(scenKey);
+            const g = vpSettings.grades[0];
+            const lines = [];
+            lines.push('⚖️ ОЦЕНКА СДЕЛКИ · ' + r.sc.name + ' (' + r.sc.tfLabel + ')');
+            lines.push('─────────────────────────');
+            lines.push('Оценка: ' + r.grade + ' — ' + r.title);
+            lines.push('Предпосылки (+): ' + r.p.got + ' / ' + r.p.max + ' баллов (' + Math.round(r.plusPct) + '%, порог ≥ ' + g.minPlus + '%)');
+            lines.push('Минусы (−): ' + r.m.got + ' / ' + r.m.max + ' (' + Math.round(r.minusPct) + '%, порог ≤ ' + g.maxMinus + '%)');
+            lines.push('Итог (Σ): ' + Math.round(r.netPct) + '%');
+            lines.push('Критичных ★: ' + r.p.critGot + ' / ' + r.p.critTotal + ' (порог ≥ ' + g.minCriticals + ')');
+            if (r.vetoHit) lines.push('⛔ СТОП-ФАКТОР: ' + r.vetoItems.join(', '));
+            lines.push('Риск: ' + (r.riskFactor > 0 ? (vpSettings.baseRisk * r.riskFactor).toFixed(2) + '% (×' + r.riskFactor + ')' : '0% — вход запрещён'));
+            if (r.grade !== 'A' && r.grade !== 'B') {
+                const miss = vpMissingFor(r).map(function (s) { return s.replace(/<[^>]+>/g, ''); });
+                if (miss.length) lines.push('Не хватает: ' + miss.join('; '));
+            }
+            lines.push('Стоп: ' + vpSettings[r.sc.stopHintKey]);
+            if (r.sc.name === 'ПРОБОЙ' && typeof vpBreakReportLines === 'function') {
+                vpBreakReportLines(scenKey).forEach(function (x) { lines.push(x); });
+            }
+            return { key: scenKey, r: r, text: lines.join('\n') };
+        }
+
+        // ---- НАСТРОЙКИ --------------------------------------------------------
+        function vpOpenSettings() {
+            const s = vpSettings;
+            const ids = ['A', 'B', 'C'];
+            ids.forEach(function (id, i) {
+                const g = s.grades[i];
+                document.getElementById('vpSet' + id + 'P').value = g.minPlus;
+                document.getElementById('vpSet' + id + 'M').value = g.maxMinus;
+                document.getElementById('vpSet' + id + 'C').value = g.minCriticals;
+                document.getElementById('vpSet' + id + 'R').value = Math.round(g.riskFactor * 100);
+            });
+            document.getElementById('vpSetVeto').checked = !!s.vetoBlocks;
+            document.getElementById('vpSetStopBreak').value = s.stopBreak;
+            document.getElementById('vpSetStopLp').value = s.stopLp;
+            document.getElementById('vpSetBaseRisk').value = s.baseRisk;
+            [['vpSetBcStrongTrue', 'bcStrongTrue'], ['vpSetBcSoftFalse', 'bcSoftFalse'],
+             ['vpSetBcMidTrue', 'bcMidTrue'], ['vpSetBcStrongFalse', 'bcStrongFalse'],
+             ['vpSetBcHardFalse', 'bcHardFalse']].forEach(function (pair) {
+                const el = document.getElementById(pair[0]);
+                if (el) el.value = s[pair[1]];
+            });
+            document.getElementById('vpSettingsOverlay').style.display = 'flex';
+        }
+        function vpCloseSettings() {
+            document.getElementById('vpSettingsOverlay').style.display = 'none';
+        }
+        function vpSaveSettings() {
+            const ids = ['A', 'B', 'C'];
+            ids.forEach(function (id, i) {
+                const g = vpSettings.grades[i];
+                g.minPlus = vpNum(document.getElementById('vpSet' + id + 'P').value, g.minPlus);
+                g.maxMinus = vpNum(document.getElementById('vpSet' + id + 'M').value, g.maxMinus);
+                g.minCriticals = vpNum(document.getElementById('vpSet' + id + 'C').value, g.minCriticals);
+                g.riskFactor = vpNum(document.getElementById('vpSet' + id + 'R').value, g.riskFactor * 100) / 100;
+            });
+            vpSettings.vetoBlocks = document.getElementById('vpSetVeto').checked;
+            vpSettings.stopBreak = document.getElementById('vpSetStopBreak').value.trim() || VP_DEFAULTS.stopBreak;
+            vpSettings.stopLp = document.getElementById('vpSetStopLp').value.trim() || VP_DEFAULTS.stopLp;
+            vpSettings.baseRisk = vpNum(document.getElementById('vpSetBaseRisk').value, vpSettings.baseRisk);
+            [['vpSetBcStrongTrue', 'bcStrongTrue'], ['vpSetBcSoftFalse', 'bcSoftFalse'],
+             ['vpSetBcMidTrue', 'bcMidTrue'], ['vpSetBcStrongFalse', 'bcStrongFalse'],
+             ['vpSetBcHardFalse', 'bcHardFalse']].forEach(function (pair) {
+                const el = document.getElementById(pair[0]);
+                if (el) vpSettings[pair[1]] = vpNum(el.value, vpSettings[pair[1]]);
+            });
+            vpSaveSettingsToStorage();
+            vpCloseSettings();
+            vpRefreshScore();
+            showNotification('Пороги входа сохранены', 'success');
+        }
+        function vpResetSettings() {
+            vpSettings = JSON.parse(JSON.stringify(VP_DEFAULTS));
+            vpSaveSettingsToStorage();
+            vpOpenSettings();
+            vpRefreshScore();
+            showNotification('Пороги сброшены к значениям по умолчанию', 'success');
+        }
+
+        // ---- ДЕЙСТВИЯ ПАНЕЛИ --------------------------------------------------
+        function vpResetCurrent() {
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            if (!active) { showNotification('Сначала откройте блок предпосылок', 'error'); return; }
+            active.querySelectorAll('input[type="checkbox"]').forEach(function (cb) { cb.checked = false; });
+            vpClearBlockState(active.id.replace(/Text$/, ''));
+            vpSaveState();
+            vpRefreshScore();
+            showNotification('Блок сброшен', 'success');
+        }
+        function vpCopyReport() {
+            const rep = vpScoreReport();
+            const active = document.querySelector('.text-display[style*="display: block"]');
+            let itemsText = '';
+            if (active) {
+                const checked = active.querySelectorAll('input[type="checkbox"]:checked');
+                if (checked.length) {
+                    const h3 = active.querySelector('h3');
+                    itemsText = '\n\n' + (h3 ? h3.textContent.trim() + '\n' : '') +
+                        Array.from(checked).map(function (cb, i) {
+                            const sp = cb.parentNode.querySelector('.item-text');
+                            const bd = cb.parentNode.querySelector('.vp-w');
+                            return (i + 1) + '. ☑ ' + (sp ? sp.textContent.trim() : '') + (bd ? ' [' + bd.textContent.trim() + ']' : '');
+                        }).join('\n');
+                }
+            }
+            const full = rep.text + itemsText;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(full)
+                    .then(function () { showNotification('Отчёт с баллами скопирован', 'success'); })
+                    .catch(function () { vpFallbackCopy(full); });
+            } else { vpFallbackCopy(full); }
+        }
+        function vpFallbackCopy(text) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                showNotification('Отчёт скопирован', 'success');
+            } catch (e) { showNotification('Не удалось скопировать', 'error'); }
+        }
+
+        // ---- ИНИЦИАЛИЗАЦИЯ ----------------------------------------------------
+        (function vpInit() {
+            vpSettings = vpLoadSettings();
+            vpDecorateItems();
+            const restored = vpRestoreState();
+
+            document.querySelectorAll('.checkbox-item input[type="checkbox"]').forEach(function (cb) {
+                cb.addEventListener('change', function () { vpSaveState(); vpRefreshScore(); });
+            });
+
+            const dailyBtns = document.getElementById('dailyButtons');
+            const minuteBtns = document.getElementById('minuteButtons');
+            if (dailyBtns && dailyBtns.style.display === 'flex') vpCurrentTf = 'daily';
+            else if (minuteBtns && minuteBtns.style.display === 'flex') vpCurrentTf = 'minute';
+
+            const overlay = document.getElementById('vpSettingsOverlay');
+            if (overlay) {
+                overlay.addEventListener('click', function (e) { if (e.target === overlay) vpCloseSettings(); });
+            }
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') {
+                    const o = document.getElementById('vpSettingsOverlay');
+                    if (o && o.style.display === 'flex') vpCloseSettings();
+                }
+            });
+
+            vpUpdatePanelVisibility();
+            if (restored) console.info('[VP Score] восстановлено отметок предпосылок: ' + restored);
+            console.info('[VP Score] система баллов активна. Порог входа A: ≥' + vpSettings.grades[0].minPlus +
+                '% предпосылок, ≤' + vpSettings.grades[0].maxMinus + '% минусов, ★≥' + vpSettings.grades[0].minCriticals);
+        })();
     </script>
 </body>
 </html>
