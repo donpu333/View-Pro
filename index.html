@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -3262,17 +3263,36 @@ setTimeout(function() {
 })();
 </script>
 <script>
+    // =====================================================================
+    // ОКНО «ПРЕДПОСЫЛКИ И ТВХ»: перетаскивание за заголовок, изменение
+    // размера, режим «на весь экран», «прозрачный фон» (видно график) и
+    // запоминание позиции в localStorage.
+    // =====================================================================
     document.addEventListener('DOMContentLoaded', function() {
         const btn = document.getElementById('premisesBtn');
         if (!btn) return;
 
-        // Создаём оверлей с iframe
+        const STORE_KEY = 'premises_window_state';  // позиция и размер окна
+        // Затемнение хранится ОТДЕЛЬНО и пишется только по клику на 👁.
+        // Старая версия окна писала ghost:false в premises_window_state, из-за чего
+        // график продолжал затемняться — это легаси-значение теперь игнорируется.
+        const DIM_KEY = 'premises_dim_bg';          // '1' = затемнять, '0' = нет, нет ключа = дефолт
+        // ПО УМОЛЧАНИЮ график НЕ затемняется: оверлей прозрачный и пропускает клики,
+        // окно «Предпосылки» просто плавает поверх графика.
+        const DEFAULT_GHOST = true;
+        const loadState = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } };
+        const saveState = (patch) => {
+            try { localStorage.setItem(STORE_KEY, JSON.stringify(Object.assign(loadState(), patch))); } catch (e) {}
+        };
+
+        // ---- оверлей + окно -------------------------------------------
         const overlay = document.createElement('div');
         overlay.id = 'premisesOverlay';
         overlay.style.cssText = `
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7);
+            background: transparent;
+            pointer-events: none;
             z-index: 9999;
             display: none;
             align-items: center;
@@ -3280,7 +3300,7 @@ setTimeout(function() {
             padding: 20px;
         `;
         overlay.innerHTML = `
-            <div style="
+            <div id="premisesWindow" style="
                 background: #1E1E1E;
                 border-radius: 12px;
                 width: 100%;
@@ -3291,50 +3311,318 @@ setTimeout(function() {
                 overflow: hidden;
                 box-shadow: 0 8px 32px rgba(0,0,0,0.6);
                 border: 1px solid rgba(33,150,243,0.2);
+                display: flex;
+                flex-direction: column;
+                pointer-events: auto;
             ">
-                <button id="premisesCloseBtn" style="
-                    position: absolute;
-                    top: 10px;
-                    right: 15px;
-                    background: none;
-                    border: none;
-                    color: #9CA3AF;
-                    font-size: 28px;
-                    cursor: pointer;
-                    z-index: 10;
-                ">✕</button>
-                <iframe src="./premises.html" style="
+                <div id="premisesTitleBar" title="Перетащите окно за этот заголовок" style="
+                    flex: 0 0 38px; height: 38px;
+                    display: flex; align-items: center; gap: 4px;
+                    padding: 0 8px 0 14px;
+                    background: #252526;
+                    border-bottom: 1px solid rgba(255,255,255,0.08);
+                    cursor: move; user-select: none; touch-action: none;
+                ">
+                    <span style="flex: 1; color: #E0E0E0; font-size: 13px; font-weight: bold; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        &#128203; Предпосылки и ТВХ
+                        <span style="color: #6E6E6E; font-weight: normal; font-size: 11px;">&nbsp;&mdash; тащите за заголовок, двойной клик = в центр</span>
+                    </span>
+                    <button id="premisesMinBtn" title="Свернуть окно (оставить только заголовок)" style="background:none; border:none; color:#9CA3AF; font-size:16px; cursor:pointer; padding:2px 7px; border-radius:4px; line-height:1;">&#8212;</button>
+                    <button id="premisesGhostBtn" title="Затемнить фон (клики перестанут проходить на график)" style="background:none; border:none; color:#9CA3AF; font-size:15px; cursor:pointer; padding:4px 6px; border-radius:4px;">&#128065;</button>
+                    <button id="premisesMaxBtn" title="На весь экран / восстановить" style="background:none; border:none; color:#9CA3AF; font-size:15px; cursor:pointer; padding:4px 6px; border-radius:4px;">&#10530;</button>
+                    <button id="premisesResetBtn" title="Сбросить позицию и размер" style="background:none; border:none; color:#9CA3AF; font-size:15px; cursor:pointer; padding:4px 6px; border-radius:4px;">&#10226;</button>
+                    <button id="premisesCloseBtn" title="Закрыть (Esc)" style="background:none; border:none; color:#9CA3AF; font-size:22px; cursor:pointer; padding:0 6px; border-radius:4px; line-height:1;">&#10005;</button>
+                </div>
+                <iframe id="premisesFrame" src="./premises.html" style="
+                    flex: 1 1 auto;
                     width: 100%;
-                    height: 100%;
                     border: none;
                     background: #1E1E1E;
                 "></iframe>
+                <div id="premisesResize" title="Потяните, чтобы изменить размер" style="
+                    position: absolute; right: 0; bottom: 0;
+                    width: 18px; height: 18px; cursor: nwse-resize; z-index: 11;
+                    background: linear-gradient(135deg, transparent 0 50%, rgba(255,255,255,0.25) 50% 60%, transparent 60% 70%, rgba(255,255,255,0.25) 70% 80%, transparent 80%);
+                "></div>
             </div>
         `;
+        // ПО УМОЛЧАНИЮ: подложка прозрачная и не перехватывает клики —
+        // график не затемняется, с ним можно работать прямо под окном.
+        overlay.style.background = 'transparent';
+        overlay.style.pointerEvents = 'none';
         document.body.appendChild(overlay);
 
-        // Открытие
+        const style = document.createElement('style');
+        style.textContent = '#premisesTitleBar button:hover{background:rgba(255,255,255,.1);color:#fff;}' +
+            '#premisesOverlay.dragging #premisesFrame{pointer-events:none;}';
+        document.head.appendChild(style);
+
+        const win = document.getElementById('premisesWindow');
+        const titleBar = document.getElementById('premisesTitleBar');
+        const frame = document.getElementById('premisesFrame');
+        const minBtn = document.getElementById('premisesMinBtn');
+        const ghostBtn = document.getElementById('premisesGhostBtn');
+        const maxBtn = document.getElementById('premisesMaxBtn');
+        const resetBtn = document.getElementById('premisesResetBtn');
+        const closeBtn = document.getElementById('premisesCloseBtn');
+
+        let maximized = false;
+        let ghost = DEFAULT_GHOST;
+        let minimized = false;
+        let heightBeforeMin = null;
+        let restoreRect = null;
+
+        // ---- позиционирование ------------------------------------------
+        const DEF = { width: '100%', maxWidth: '1200px', height: '90vh', maxHeight: '90vh' };
+
+        // переводим окно из «flex по центру» в абсолютные координаты
+        function toAbsolute() {
+            if (win.style.position === 'absolute') return;
+            const r = win.getBoundingClientRect();
+            win.style.position = 'absolute';
+            win.style.left = r.left + 'px';
+            win.style.top = r.top + 'px';
+            win.style.width = r.width + 'px';
+            win.style.height = r.height + 'px';
+            win.style.maxWidth = 'none';
+            win.style.maxHeight = 'none';
+            overlay.style.alignItems = 'flex-start';
+            overlay.style.justifyContent = 'flex-start';
+            overlay.style.padding = '0';
+        }
+
+        // не даём окну уехать за экран (заголовок всегда должен быть виден)
+        function clampToScreen() {
+            const w = win.offsetWidth, h = win.offsetHeight;
+            const keep = 100; // сколько пикселей заголовка должно остаться на экране
+            let x = parseFloat(win.style.left) || 0;
+            let y = parseFloat(win.style.top) || 0;
+            x = Math.min(Math.max(x, Math.min(0, keep - w)), Math.max(0, window.innerWidth - keep));
+            y = Math.min(Math.max(y, 0), Math.max(0, window.innerHeight - 38));
+            win.style.left = x + 'px';
+            win.style.top = y + 'px';
+            return { left: x, top: y, width: w, height: h };
+        }
+
+        function persist() {
+            if (maximized) return;
+            const r = clampToScreen();
+            saveState(r);
+        }
+
+        function resetPosition() {
+            maximized = false;
+            restoreRect = null;
+            maxBtn.innerHTML = '&#10530;';
+            if (minimized) setMinimized(false, false);
+            win.style.position = 'relative';
+            win.style.left = win.style.top = '';
+            win.style.width = DEF.width;
+            win.style.maxWidth = DEF.maxWidth;
+            win.style.height = DEF.height;
+            win.style.maxHeight = DEF.maxHeight;
+            win.style.borderRadius = '12px';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.style.padding = '20px';
+            saveState({ left: null, top: null, width: null, height: null });
+        }
+
+        function applyState() {
+            const st = loadState();
+            // легаси-ключ ghost от прошлой версии окна — удаляем, чтобы не мешал
+            if (st.ghost !== undefined) {
+                delete st.ghost;
+                try { localStorage.setItem(STORE_KEY, JSON.stringify(st)); } catch (e) {}
+            }
+            let savedDim = null;
+            try { savedDim = localStorage.getItem(DIM_KEY); } catch (e) {}
+            setGhost(savedDim === null ? DEFAULT_GHOST : savedDim !== '1', false);
+            maximized = false;
+            maxBtn.innerHTML = '&#10530;';
+            if (st.left !== null && st.left !== undefined && st.width) {
+                toAbsolute();
+                win.style.left = st.left + 'px';
+                win.style.top = st.top + 'px';
+                win.style.width = st.width + 'px';
+                win.style.height = st.height + 'px';
+                win.style.borderRadius = '12px';
+                clampToScreen();
+            } else {
+                resetPosition();
+            }
+            if (st.min) setMinimized(true, false);
+        }
+
+        // ---- перетаскивание за заголовок --------------------------------
+        titleBar.addEventListener('pointerdown', function(e) {
+            if (e.button !== 0) return;
+            if (e.target.closest('button')) return; // за кнопки не тащим
+            if (maximized) return;                  // полноэкранное окно не двигается
+            e.preventDefault();
+            toAbsolute();
+            overlay.classList.add('dragging');      // гасит iframe, чтобы не «съедал» мышь
+            const startX = e.clientX, startY = e.clientY;
+            const origLeft = parseFloat(win.style.left) || 0;
+            const origTop = parseFloat(win.style.top) || 0;
+            titleBar.setPointerCapture(e.pointerId);
+
+            const move = (ev) => {
+                win.style.left = (origLeft + ev.clientX - startX) + 'px';
+                win.style.top = (origTop + ev.clientY - startY) + 'px';
+                clampToScreen();
+            };
+            const up = () => {
+                overlay.classList.remove('dragging');
+                titleBar.removeEventListener('pointermove', move);
+                titleBar.removeEventListener('pointerup', up);
+                titleBar.removeEventListener('pointercancel', up);
+                persist();
+            };
+            titleBar.addEventListener('pointermove', move);
+            titleBar.addEventListener('pointerup', up);
+            titleBar.addEventListener('pointercancel', up);
+        });
+
+        // двойной клик по заголовку — вернуть в центр
+        titleBar.addEventListener('dblclick', function(e) {
+            if (e.target.closest('button')) return;
+            resetPosition();
+        });
+
+        // ---- изменение размера за правый нижний угол --------------------
+        document.getElementById('premisesResize').addEventListener('pointerdown', function(e) {
+            if (e.button !== 0 || maximized) return;
+            e.preventDefault();
+            e.stopPropagation();
+            toAbsolute();
+            overlay.classList.add('dragging');
+            const startX = e.clientX, startY = e.clientY;
+            const startW = win.offsetWidth, startH = win.offsetHeight;
+            this.setPointerCapture(e.pointerId);
+
+            const move = (ev) => {
+                win.style.width = Math.max(360, startW + ev.clientX - startX) + 'px';
+                win.style.height = Math.max(240, startH + ev.clientY - startY) + 'px';
+            };
+            const up = () => {
+                overlay.classList.remove('dragging');
+                document.getElementById('premisesResize').removeEventListener('pointermove', move);
+                document.getElementById('premisesResize').removeEventListener('pointerup', up);
+                document.getElementById('premisesResize').removeEventListener('pointercancel', up);
+                persist();
+            };
+            document.getElementById('premisesResize').addEventListener('pointermove', move);
+            document.getElementById('premisesResize').addEventListener('pointerup', up);
+            document.getElementById('premisesResize').addEventListener('pointercancel', up);
+        });
+
+        // ---- «на весь экран» / восстановить -----------------------------
+        maxBtn.addEventListener('click', function() {
+            if (!maximized) {
+                const r = win.getBoundingClientRect();
+                restoreRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+                toAbsolute();
+                maximized = true;
+                win.style.left = '0px';
+                win.style.top = '0px';
+                win.style.width = window.innerWidth + 'px';
+                win.style.height = window.innerHeight + 'px';
+                win.style.borderRadius = '0';
+                maxBtn.innerHTML = '&#128471;';
+            } else {
+                maximized = false;
+                maxBtn.innerHTML = '&#10530;';
+                if (restoreRect) {
+                    toAbsolute();
+                    win.style.left = restoreRect.left + 'px';
+                    win.style.top = restoreRect.top + 'px';
+                    win.style.width = restoreRect.width + 'px';
+                    win.style.height = restoreRect.height + 'px';
+                    win.style.borderRadius = '12px';
+                    persist();
+                } else {
+                    resetPosition();
+                }
+            }
+        });
+
+        // ---- «свернуть»: остаётся только полоска заголовка, окно можно оттащить в угол
+        function setMinimized(on, remember) {
+            if (on === minimized) return;
+            const resizeHandle = document.getElementById('premisesResize');
+            if (on) {
+                toAbsolute(); // фиксируем текущие размеры в px
+                heightBeforeMin = win.style.height || DEF.height;
+                win.style.height = '38px';
+                frame.style.display = 'none';
+                if (resizeHandle) resizeHandle.style.display = 'none';
+            } else {
+                win.style.height = heightBeforeMin || DEF.height;
+                frame.style.display = '';
+                if (resizeHandle) resizeHandle.style.display = '';
+            }
+            minimized = on;
+            minBtn.innerHTML = on ? '&#9633;' : '&#8212;';
+            minBtn.title = on ? 'Развернуть окно' : 'Свернуть окно (оставить только заголовок)';
+            if (remember !== false) saveState({ min: on });
+        }
+        minBtn.addEventListener('click', function() {
+            if (maximized) maxBtn.click();  // сначала выходим из полноэкранного режима
+            setMinimized(!minimized);
+        });
+
+        // ---- «прозрачный фон»: окно поверх графика, клики проходят на график
+        function setGhost(on, remember) {
+            ghost = on;
+            overlay.style.background = on ? 'transparent' : 'rgba(0,0,0,0.7)';
+            overlay.style.pointerEvents = on ? 'none' : 'auto';
+            win.style.pointerEvents = 'auto';
+            ghostBtn.style.color = on ? '#4A90E2' : '#9CA3AF';
+            ghostBtn.title = on
+                ? 'Затемнить фон (клики перестанут проходить на график)'
+                : 'Убрать затемнение: окно поверх графика, клики проходят на график';
+            if (remember) {
+                try { localStorage.setItem(DIM_KEY, on ? '0' : '1'); } catch (e) {}
+            }
+        }
+        ghostBtn.addEventListener('click', function() { setGhost(!ghost, true); });
+
+        resetBtn.addEventListener('click', resetPosition);
+
+        // ---- открытие / закрытие ---------------------------------------
+        function openWindow() {
+            overlay.style.display = 'flex';
+            applyState();
+            frame.src = './premises.html'; // перезагружаем при каждом открытии
+        }
+        function closeWindow() {
+            overlay.style.display = 'none';
+        }
+
         btn.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            overlay.style.display = 'flex';
-            // Перезагружаем iframe при каждом открытии (опционально)
-            const iframe = overlay.querySelector('iframe');
-            if (iframe) iframe.src = './premises.html';
+            openWindow();
         });
 
-        // Закрытие
-        document.getElementById('premisesCloseBtn').addEventListener('click', function() {
-            overlay.style.display = 'none';
-        });
+        closeBtn.addEventListener('click', closeWindow);
         overlay.addEventListener('click', function(e) {
-            if (e.target === overlay) overlay.style.display = 'none';
+            if (e.target === overlay && !ghost) closeWindow();
         });
 
-        // Закрытие по Escape
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && overlay.style.display === 'flex') {
-                overlay.style.display = 'none';
+            if (e.key === 'Escape' && overlay.style.display === 'flex') closeWindow();
+        });
+
+        // при изменении размера браузера удерживаем окно на экране
+        window.addEventListener('resize', function() {
+            if (overlay.style.display !== 'flex') return;
+            if (maximized) {
+                win.style.width = window.innerWidth + 'px';
+                win.style.height = window.innerHeight + 'px';
+            } else if (win.style.position === 'absolute') {
+                persist();
             }
         });
     });
