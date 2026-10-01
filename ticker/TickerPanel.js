@@ -64,6 +64,9 @@ class TickerPanel {
         this.allBinanceSpot = this.storage.allBinanceSpot;
         this.allBybitFutures = this.storage.allBybitFutures;
         this.allBybitSpot = this.storage.allBybitSpot;
+        // 📈 Акции/ETF (TradFi): отдельные списки для модалки и фильтра
+        this.allBinanceStocks = this.storage.allBinanceStocks || [];
+        this.allBybitStocks = this.storage.allBybitStocks || [];
         this.formatCache = this.storage.formatCache;
         this.cacheMaxAge = this.storage.cacheMaxAge;
         this.settings = this.storage.settings;
@@ -77,6 +80,12 @@ class TickerPanel {
         this._suppressWatchlistLoad = false;
         this._restDebounceTimer = null;
         this._renderPending = false;
+
+        // 📈 Акции: цены парных рынков (spot ↔ futures) и служебные индексы
+        this.pairPrices = new Map();          // pairKey -> price
+        this._stockPairHandlers = new Map();  // cardKey -> { pairKey, handler }
+        this._assetClassIndex = new Map();    // key -> 'crypto'|'stocks'
+        this._stockPairIndex = new Map();     // cardKey -> { pairKey, pairLabel, pairTitle }
 
         this._rowDomCache = new Map();
         this._subscribedSymbols = new Set();
@@ -439,17 +448,24 @@ class TickerPanel {
         const MAX_SYMBOLS = 4000;
         let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
 
+        // 📈 TradFi-типы Bybit Linear: токенизированные акции, ETF, товары, форекс
+        const BYBIT_LINEAR_TRADFI = ['stock', 'ETF', 'commodity', 'forex'];
+
         if (results[0]?.symbols) {
-            binanceFuturesList = results[0].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'futures' }));
+            // Binance Futures: contractType === 'TRADIFI_PERPETUAL' — перпы на акции/ETF/товары (TSLAUSDT, SPYUSDT, XAUUSDT...)
+            binanceFuturesList = results[0].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'futures', assetClass: s.contractType === 'TRADIFI_PERPETUAL' ? 'stocks' : 'crypto' }));
         }
         if (results[1]?.symbols) {
-            binanceSpotList = results[1].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'spot' }));
+            // Binance Spot: токенизированных акций нет — вся крипта
+            binanceSpotList = results[1].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'spot', assetClass: 'crypto' }));
         }
         if (results[2]?.retCode === 0 && results[2]?.result?.list) {
-            bybitFuturesList = results[2].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'futures' }));
+            // Bybit Linear: symbolType 'stock'/'ETF'/'commodity'/'forex' — традиционные рынки
+            bybitFuturesList = results[2].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'futures', assetClass: BYBIT_LINEAR_TRADFI.includes(s.symbolType) ? 'stocks' : 'crypto' }));
         }
         if (results[3]?.retCode === 0 && results[3]?.result?.list) {
-            bybitSpotList = results[3].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'spot' }));
+            // Bybit Spot: symbolType 'xstocks' — токенизированные акции/ETF (TSLAXUSDT...)
+            bybitSpotList = results[3].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'spot', assetClass: s.symbolType === 'xstocks' ? 'stocks' : 'crypto' }));
         }
 
         this.binanceSymbolsCache = this._deduplicateSymbols([...binanceFuturesList, ...binanceSpotList]);
@@ -457,12 +473,138 @@ class TickerPanel {
         this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
         this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
 
-        this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures').slice(0, MAX_SYMBOLS);
-        this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot').slice(0, MAX_SYMBOLS);
-        this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures').slice(0, MAX_SYMBOLS);
-        this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot').slice(0, MAX_SYMBOLS);
+        // Крипто-вкладки FUTURES/SPOT больше не содержат акции — они живут во вкладке «Акции/ETF»
+        const isStocks = s => s.assetClass === 'stocks';
+        this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures' && !isStocks(s)).slice(0, MAX_SYMBOLS);
+        this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot' && !isStocks(s)).slice(0, MAX_SYMBOLS);
+        this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures' && !isStocks(s)).slice(0, MAX_SYMBOLS);
+        this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot' && !isStocks(s)).slice(0, MAX_SYMBOLS);
+        this.allBinanceStocks = this.binanceSymbolsCache.filter(isStocks).slice(0, MAX_SYMBOLS);
+        this.allBybitStocks = this.bybitSymbolsCache.filter(isStocks).slice(0, MAX_SYMBOLS);
         this.allSymbolsCache = [...this.binanceSymbolsCache, ...this.bybitSymbolsCache];
+        this._buildAssetClassIndex();
+        this._buildStockPairIndex();
+        this._restampTickersAssetClass();
         this.updateModalCount();
+    }
+
+    // =========================================================================
+    // 📈 АКЦИИ/ETF (TradFi): классификация, пары «спот ↔ фьючерс»
+    // =========================================================================
+    _buildAssetClassIndex() {
+        this._assetClassIndex = new Map();
+        for (const s of this.allSymbolsCache || []) {
+            if (!s?.symbol) continue;
+            this._assetClassIndex.set(`${s.symbol}:${s.exchange}:${s.marketType}`, s.assetClass || 'crypto');
+        }
+    }
+
+    _assetClassOf(symbol, exchange, marketType) {
+        return this._assetClassIndex?.get(`${symbol}:${exchange}:${marketType}`) || 'crypto';
+    }
+
+    _buildStockPairIndex() {
+        // Для каждого инструмента акций ищем парный рынок:
+        //   Bybit spot xStock (TSLAXUSDT) ↔ Bybit perp (TSLAUSDT)
+        //   Bybit perp / Binance perp (TSLAUSDT) ↔ Bybit spot xStock (TSLAXUSDT)
+        this._stockPairIndex = new Map();
+        const bybitSpotByBase = new Map();
+        const bybitFutByBase = new Map();
+        for (const s of this.bybitSymbolsCache || []) {
+            if (s.assetClass !== 'stocks') continue;
+            const base = s.symbol.replace(/USDT$/, '');
+            if (s.marketType === 'spot') {
+                bybitSpotByBase.set(base.replace(/X$/, ''), s.symbol);
+                bybitSpotByBase.set(base, s.symbol);
+            } else {
+                bybitFutByBase.set(base, s.symbol);
+            }
+        }
+        for (const s of this.allSymbolsCache || []) {
+            if (s.assetClass !== 'stocks') continue;
+            const cardKey = `${s.symbol}:${s.exchange}:${s.marketType}`;
+            const base = s.symbol.replace(/USDT$/, '');
+            let pair = null;
+            if (s.exchange === 'bybit' && s.marketType === 'spot') {
+                const futSym = bybitFutByBase.get(base.replace(/X$/, '')) || bybitFutByBase.get(base);
+                if (futSym) pair = { pairKey: `${futSym}:bybit:futures`, pairLabel: 'FUT', pairTitle: `Bybit perpetual: ${futSym}` };
+            } else {
+                const spotSym = bybitSpotByBase.get(base);
+                if (spotSym) pair = { pairKey: `${spotSym}:bybit:spot`, pairLabel: 'SPOT', pairTitle: `Bybit xStock (spot): ${spotSym}` };
+            }
+            if (pair && pair.pairKey !== cardKey) this._stockPairIndex.set(cardKey, pair);
+        }
+    }
+
+    /** После обновления кэша бирж проставляем assetClass/пары уже созданным тикерам. */
+    _restampTickersAssetClass() {
+        if (!this.tickersMap || this.tickersMap.size === 0) return;
+        let changed = 0;
+        for (const [key, t] of this.tickersMap.entries()) {
+            const ac = this._assetClassOf(t.symbol, t.exchange, t.marketType);
+            if (t.assetClass !== ac) { t.assetClass = ac; changed++; }
+            const pair = ac === 'stocks' ? this._stockPairIndex.get(key) : null;
+            const newPairKey = pair ? pair.pairKey : null;
+            if (t.pairKey !== newPairKey) {
+                this._unsubscribeStockPair(key);
+                t.pairKey = newPairKey;
+                t.pairLabel = pair ? pair.pairLabel : null;
+                t.pairTitle = pair ? pair.pairTitle : null;
+                if (newPairKey) this._subscribeStockPair(key, newPairKey);
+                changed++;
+            }
+        }
+        if (changed > 0) {
+            this.filterCache = null;
+            this._scheduleRender();
+        }
+    }
+
+    /** «Теневая» подписка на цену парного рынка для плашки акции. */
+    _subscribeStockPair(cardKey, pairKey) {
+        const pm = window.priceManagerInstance;
+        if (!pm || this._isDestroyed || this._stockPairHandlers.has(cardKey)) return;
+        const handler = (data) => {
+            if (this._isDestroyed) return;
+            const price = (data && typeof data === 'object') ? parseFloat(data.price) : parseFloat(data);
+            if (!price || isNaN(price)) return;
+            this.pairPrices.set(pairKey, price);
+            try { this.renderer.updatePairPrice(cardKey, price); } catch (e) {}
+        };
+        try { pm.subscribe(pairKey, handler); } catch (e) { return; }
+        this._stockPairHandlers.set(cardKey, { pairKey, handler });
+        this._fetchStockPairPrice(pairKey, cardKey);
+    }
+
+    _unsubscribeStockPair(cardKey) {
+        const rec = this._stockPairHandlers.get(cardKey);
+        if (!rec) return;
+        const pm = window.priceManagerInstance;
+        if (pm) { try { pm.unsubscribe(rec.pairKey, rec.handler); } catch (e) {} }
+        this._stockPairHandlers.delete(cardKey);
+    }
+
+    _unsubscribeAllStockPairs() {
+        for (const cardKey of [...this._stockPairHandlers.keys()]) this._unsubscribeStockPair(cardKey);
+    }
+
+    /** Разовый REST-запрос, чтобы чип пары не был пустым до первого WS-тика. */
+    async _fetchStockPairPrice(pairKey, cardKey) {
+        try {
+            const [symbol, exchange, marketType] = pairKey.split(':');
+            const url = exchange === 'binance'
+                ? (marketType === 'futures'
+                    ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+                    : `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
+                : `https://api.bybit.com/v5/market/tickers?category=${marketType === 'futures' ? 'linear' : 'spot'}&symbol=${symbol}`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+            const price = exchange === 'binance' ? parseFloat(data?.lastPrice) : parseFloat(data?.result?.list?.[0]?.lastPrice);
+            if (!price || isNaN(price)) return;
+            this.pairPrices.set(pairKey, price);
+            try { this.renderer.updatePairPrice(cardKey, price); } catch (e) {}
+        } catch (e) {}
     }
 
     _deduplicateSymbols(symbols) {
@@ -670,6 +812,7 @@ class TickerPanel {
             }
             this._subscribedSymbols.clear();
         }
+        this._unsubscribeAllStockPairs();
         this._priceEngineStarted = false;
     }
 
@@ -723,6 +866,7 @@ class TickerPanel {
                 window.priceManagerInstance.unsubscribe(key, this._pmPriceHandler);
             }
         }
+        this._unsubscribeAllStockPairs();
 
         this.tickers.length = 0;
         this.tickersMap.clear();
@@ -821,10 +965,18 @@ class TickerPanel {
             return true;
         }
 
+        // 📈 Для акций помним класс актива и пару «спот ↔ фьючерс»
+        const assetClass = this._assetClassOf(symbol, exchange, marketType);
+        const pair = assetClass === 'stocks' ? (this._stockPairIndex?.get(key) || null) : null;
+
         const newTicker = {
             symbol, price: 0, change: 0, volume: 0, trades: null,
             custom: true, prevPrice: 0, exchange, marketType,
-            flag: this.state.flags[key] || null
+            flag: this.state.flags[key] || null,
+            assetClass,
+            pairKey: pair ? pair.pairKey : null,
+            pairLabel: pair ? pair.pairLabel : null,
+            pairTitle: pair ? pair.pairTitle : null
         };
 
         this.tickers.push(newTicker);
@@ -835,6 +987,7 @@ class TickerPanel {
             window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
             this._subscribedSymbols.add(key);
         }
+        if (newTicker.pairKey) this._subscribeStockPair(key, newTicker.pairKey);
 
         this.filterCache = null;
         this._lastSymbolsSig = null; // ✅ ФИКС
@@ -864,10 +1017,17 @@ class TickerPanel {
             const key = `${symbol}:${exchange}:${marketType}`;
 
             if (!this.tickersMap.has(key)) {
+                // 📈 Для акций помним класс актива и пару «спот ↔ фьючерс»
+                const assetClass = this._assetClassOf(symbol, exchange, marketType);
+                const pair = assetClass === 'stocks' ? (this._stockPairIndex?.get(key) || null) : null;
                 const newTicker = {
                     symbol, price: 0, change: 0, volume: 0, trades: null,
                     custom: true, prevPrice: 0, exchange, marketType,
-                    flag: this.state.flags[key] || null
+                    flag: this.state.flags[key] || null,
+                    assetClass,
+                    pairKey: pair ? pair.pairKey : null,
+                    pairLabel: pair ? pair.pairLabel : null,
+                    pairTitle: pair ? pair.pairTitle : null
                 };
                 this.tickers.push(newTicker);
                 this.tickersMap.set(key, newTicker);
@@ -877,6 +1037,7 @@ class TickerPanel {
                     window.priceManagerInstance.subscribe(key, this._pmPriceHandler);
                     this._subscribedSymbols.add(key);
                 }
+                if (newTicker.pairKey) this._subscribeStockPair(key, newTicker.pairKey);
             }
         });
 
@@ -1104,6 +1265,7 @@ class TickerPanel {
         this.tickersMap.delete(key);
         this._rowDomCache.delete(key);
         this._subscribedSymbols.delete(key);
+        this._unsubscribeStockPair(key);
         this._lastUiUpdateMap.delete(key);
         this.state.customSymbols = this.state.customSymbols.filter(s => s !== key);
         this.state.favorites = this.state.favorites.filter(s => s !== symbol);
