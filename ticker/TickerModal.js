@@ -33,6 +33,7 @@ class TickerModal {
         const modalBybitBtn = document.getElementById('modalBybitBtn');
         const modalFuturesBtn = document.getElementById('modalFuturesBtn');
         const modalSpotBtn = document.getElementById('modalSpotBtn');
+        const modalStocksBtn = document.getElementById('modalStocksBtn');
         const modalAddAllBtn = document.getElementById('modalAddAllBtn');
 
         // =========================================================================
@@ -181,6 +182,17 @@ class TickerModal {
             });
         }
 
+        // 📈 ВКЛАДКА «АКЦИИ/ETF» — только токенизированные акции и ETF (TradFi)
+        if (modalStocksBtn) {
+            modalStocksBtn.addEventListener('click', () => { 
+                this.parent.state.modalMarketType = 'stocks'; 
+                this.parent.state.modalPage = 0;
+                this.updateModalButtons();
+                this.parent.updateModalCount();
+                this.updateModalResults(true); 
+            });
+        }
+
         // =========================================================================
         // 8. ➕ КНОПКА "ДОБАВИТЬ ВСЕ"
         // =========================================================================
@@ -188,13 +200,9 @@ class TickerModal {
             modalAddAllBtn.addEventListener('click', async () => {
                 if (this.parent.state.isAddingAllInProgress) return;
                 
-                const cache = this.parent.state.modalExchange === 'binance' 
-                    ? this.parent.binanceSymbolsCache 
-                    : this.parent.bybitSymbolsCache;
-                    
-                const allPairs = cache.filter(s => 
-                    s.exchange === this.parent.state.modalExchange && 
-                    s.marketType === this.parent.state.modalMarketType && 
+                // ✅ Источник берём из текущей вкладки (futures/spot — только крипта,
+                // stocks — только токенизированные акции и ETF)
+                const allPairs = this._getModalSource().filter(s => 
                     s.symbol && 
                     s.symbol.endsWith('USDT')
                 );
@@ -440,11 +448,28 @@ class TickerModal {
         const bybitBtn = document.getElementById('modalBybitBtn');
         const futuresBtn = document.getElementById('modalFuturesBtn');
         const spotBtn = document.getElementById('modalSpotBtn');
+        const stocksBtn = document.getElementById('modalStocksBtn');
         
         if (binanceBtn) binanceBtn.classList.toggle('active', this.parent.state.modalExchange === 'binance');
         if (bybitBtn) bybitBtn.classList.toggle('active', this.parent.state.modalExchange === 'bybit');
         if (futuresBtn) futuresBtn.classList.toggle('active', this.parent.state.modalMarketType === 'futures');
         if (spotBtn) spotBtn.classList.toggle('active', this.parent.state.modalMarketType === 'spot');
+        if (stocksBtn) stocksBtn.classList.toggle('active', this.parent.state.modalMarketType === 'stocks');
+    }
+
+    // =========================================================================
+    // 📂 ИСТОЧНИК ДАННЫХ ДЛЯ ТЕКУЩЕЙ ВКЛАДКИ МОДАЛКИ
+    //    futures/spot — только крипта, stocks — только акции и ETF (TradFi)
+    // =========================================================================
+    _getModalSource() {
+        const st = this.parent.state;
+        if (st.modalMarketType === 'stocks') {
+            return (st.modalExchange === 'binance' ? this.parent.allBinanceStocks : this.parent.allBybitStocks) || [];
+        }
+        if (st.modalExchange === 'binance') {
+            return (st.modalMarketType === 'futures' ? this.parent.allBinanceFutures : this.parent.allBinanceSpot) || [];
+        }
+        return (st.modalMarketType === 'futures' ? this.parent.allBybitFutures : this.parent.allBybitSpot) || [];
     }
 
     // =========================================================================
@@ -463,17 +488,8 @@ updateModalResults(reset = false) {
         resultsContainer.scrollTop = 0;
     }
     
-    // Выбираем источник данных
-    let source;
-    if (this.parent.state.modalExchange === 'binance') {
-        source = this.parent.state.modalMarketType === 'futures' 
-            ? this.parent.allBinanceFutures 
-            : this.parent.allBinanceSpot;
-    } else {
-        source = this.parent.state.modalMarketType === 'futures' 
-            ? this.parent.allBybitFutures 
-            : this.parent.allBybitSpot;
-    }
+    // Выбираем источник данных (в т.ч. вкладка «Акции/ETF»)
+    const source = this._getModalSource();
     
     if (!source || source.length === 0) {
         resultsContainer.innerHTML = '<div class="no-results">Загрузка данных...</div>';
@@ -491,7 +507,12 @@ updateModalResults(reset = false) {
     }
     
     // ✅ СОРТИРОВКА: приоритет популярным тикерам, остальные по алфавиту
-    const priorityPrefixes = [
+    const isStocksTab = this.parent.state.modalMarketType === 'stocks';
+    const priorityPrefixes = isStocksTab ? [
+        'TSLA', 'AAPL', 'NVDA', 'AMZN', 'META', 'GOOGL', 'MSFT', 'SPY', 'QQQ',
+        'MSTR', 'COIN', 'PLTR', 'XAU', 'CRCL', 'HOOD', 'AMD', 'AVGO', 'BABA',
+        'SPCX', 'OPENAI', 'NFLX', 'MU', 'INTC', 'JPM', 'DIS', 'UBER', 'WMT', 'ARM'
+    ] : [
         'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 
         'DOT', 'MATIC', 'LINK', 'LTC', 'TRX', 'ATOM', 'NEAR', 
         'APT', 'ARB', 'OP', 'SUI', 'SEI', 'TIA', 'INJ', 'FET',
@@ -618,7 +639,11 @@ updateModalResults(reset = false) {
         
         // HTML элемента результата
         const exchangeLabel = symbolData.exchange === 'binance' ? 'Binance' : 'Bybit';
-        const marketLabel = symbolData.marketType === 'futures' ? 'Futures' : 'Spot';
+        // 📈 На вкладке акций показываем тип инструмента: Perp (бессрочный) или Spot xStock
+        const isStockRow = symbolData.assetClass === 'stocks' || this.parent.state.modalMarketType === 'stocks';
+        const marketLabel = isStockRow
+            ? (symbolData.marketType === 'futures' ? 'Perp 📈' : 'Spot xStock 📈')
+            : (symbolData.marketType === 'futures' ? 'Futures' : 'Spot');
         
         if (isAdded) {
             html += `
@@ -734,19 +759,9 @@ updateModalResults(reset = false) {
         
         const modalAddAllBtn = document.getElementById('modalAddAllBtn');
         
-        // Берём данные из того же источника
-        let source;
-        if (this.parent.state.modalExchange === 'binance') {
-            source = this.parent.state.modalMarketType === 'futures' 
-                ? this.parent.allBinanceFutures 
-                : this.parent.allBinanceSpot;
-        } else {
-            source = this.parent.state.modalMarketType === 'futures' 
-                ? this.parent.allBybitFutures 
-                : this.parent.allBybitSpot;
-        }
-        
-        let allPairs = [...source];
+        // ✅ Берём данные из того же источника (в т.ч. вкладка «Акции/ETF» —
+        //    в вотчлист попадут только акции и ETF)
+        let allPairs = [...this._getModalSource()];
         
         // Применяем фильтр поиска
         if (this.parent.state.modalSearchQuery) {
