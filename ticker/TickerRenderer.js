@@ -186,6 +186,24 @@ class TickerRenderer {
         }
     }
 
+    // =========================================================================
+    // 📈 Обновление цены парного рынка (спот ↔ фьючерс) в плашке акции
+    // =========================================================================
+    updatePairPrice(cardKey, price) {
+        const el = this.tickerElements.get(cardKey);
+        const pairEl = el?._cachedEls?.pair;
+        if (!pairEl || !price || isNaN(price)) return;
+        const txt = this.formatPrice(price);
+        if (pairEl.textContent === txt) return;
+        const prev = parseFloat((pairEl.textContent || '').replace(/[^\d.\-]/g, ''));
+        pairEl.textContent = txt;
+        if (!isNaN(prev) && prev > 0 && prev !== price) {
+            pairEl.style.color = price > prev ? '#26a65b' : '#ea3943';
+            clearTimeout(pairEl._pairColorTimer);
+            pairEl._pairColorTimer = setTimeout(() => { pairEl.style.color = ''; }, 700);
+        }
+    }
+
     updatePriceForSymbol(key, price, change, volume, trades) {
         const el = this.tickerElements.get(key);
         if (!el || !el.isConnected) return;
@@ -294,8 +312,12 @@ class TickerRenderer {
                         result = Array.from(map.values());
                     } else {
                         let filteredKeys = [...sourceKeys];
-                        if (state.marketFilter && state.marketFilter !== 'all') {
-                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter));
+                        if (state.marketFilter === 'stocks') {
+                            // 📈 только токенизированные акции и ETF
+                            filteredKeys = filteredKeys.filter(k => map.get(k)?.assetClass === 'stocks');
+                        } else if (state.marketFilter && state.marketFilter !== 'all') {
+                            // фьючерс/спот — только крипта (акции вынесены в свой фильтр)
+                            filteredKeys = filteredKeys.filter(k => k.endsWith(':' + state.marketFilter) && map.get(k)?.assetClass !== 'stocks');
                         }
                         if (state.exchangeFilter && state.exchangeFilter !== 'all') {
                             filteredKeys = filteredKeys.filter(k => {
@@ -551,7 +573,17 @@ class TickerRenderer {
 
         const isFavorite = this.parent?.state?.favorites?.includes(ticker.symbol) ? 'favorite' : '';
         const markerLetter = ticker.marketType === 'futures' ? 'F' : 'S';
-        const markerClass = ticker.marketType === 'futures' ? 'futures' : 'spot';
+
+        // 📈 Акции/ETF: дополнительная плашка с ценой парного рынка (спот ↔ фьючерс)
+        const isStock = ticker.assetClass === 'stocks';
+        const markerClass = (ticker.marketType === 'futures' ? 'futures' : 'spot') + (isStock ? ' stock' : '');
+        const showPair = isStock && !!ticker.pairKey;
+        const pairSeedPrice = showPair ? this.parent?.pairPrices?.get(ticker.pairKey) : null;
+        const pairSeed = pairSeedPrice ? this.formatPrice(pairSeedPrice) : '…';
+        const pairTag = ticker.pairLabel || (ticker.marketType === 'spot' ? 'FUT' : 'SPOT');
+        const pairTagColor = pairTag === 'FUT' ? '#f0b90b' : '#26a65b';
+        const pairTagBg = pairTag === 'FUT' ? 'rgba(240,185,11,0.13)' : 'rgba(38,166,91,0.13)';
+        const pairTitle = this._escapeHtml(ticker.pairTitle || (ticker.marketType === 'spot' ? 'Perpetual futures' : 'Spot xStock'));
 
         let rawName = ticker.symbol.replace('USDT', '');
         const match = rawName.match(/^(\d+)([A-Z]+)$/);
@@ -568,7 +600,14 @@ class TickerRenderer {
                 <span class="symbol-text" title="${this._escapeHtml(ticker.symbol)}" style="font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${displayName}</span>
                 <span class="star ${isFavorite}" data-symbol="${this._escapeHtml(ticker.symbol)}" title="Избранное" style="flex-shrink:0;margin-left:2px;">★</span>
             </div>
-            <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatPrice(ticker.price)}</div>
+            ${showPair ? `
+            <div class="ticker-price-cell" style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;overflow:hidden;line-height:1.15;">
+                <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatPrice(ticker.price)}</div>
+                <div class="ticker-pair" title="${pairTitle}" style="display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:8px;font-family:monospace;color:#848e9c;margin-top:1px;">
+                    <span class="pair-tag" style="padding:0 3px;border-radius:3px;background:${pairTagBg};color:${pairTagColor};font-weight:700;">${pairTag}</span><span class="pair-val">${pairSeed}</span>
+                </div>
+            </div>` : `
+            <div class="ticker-price ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatPrice(ticker.price)}</div>`}
             <div class="ticker-change ${priceClass}" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatChange(ticker.change)}%</div>
             <div class="ticker-volume" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatVolume(ticker.volume)}</div>
             <div class="ticker-trades" style="text-align:right;white-space:nowrap;font-size:0.7rem;font-family:monospace;">${this.formatTrades(ticker.trades)}</div>
@@ -578,7 +617,8 @@ class TickerRenderer {
             price: div.querySelector('.ticker-price'),
             change: div.querySelector('.ticker-change'),
             volume: div.querySelector('.ticker-volume'),
-            trades: div.querySelector('.ticker-trades')
+            trades: div.querySelector('.ticker-trades'),
+            pair: div.querySelector('.pair-val')
         };
 
         const cacheKey = `${ticker.symbol}:${ticker.exchange}:${ticker.marketType}`;
