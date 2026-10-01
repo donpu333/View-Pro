@@ -42,6 +42,9 @@ class TickerStorage {
         this.allSymbolsCache = [];
         this.binanceSymbolsCache = [];
         this.bybitSymbolsCache = [];
+        // 📈 Акции/ETF (TradFi) — отдельный список для вкладки «Акции/ETF»
+        this.allBinanceStocks = [];
+        this.allBybitStocks = [];
         this.allBinanceFutures = [];
         this.allBinanceSpot = [];
         this.allBybitFutures = [];
@@ -157,22 +160,27 @@ class TickerStorage {
         }
         
         try {
+            // ✅ v2: кэш теперь содержит assetClass ('crypto'|'stocks').
+            // Старый кэш без версии игнорируем — панель перечитает его с API.
+            const CACHE_VERSION = 2;
             const binanceCache = await window.db.get('symbolCaches', 'binance');
-            if (binanceCache && binanceCache.data && binanceCache.data.length > 0) {
+            if (binanceCache && binanceCache.data && binanceCache.data.length > 0 && binanceCache.version === CACHE_VERSION) {
                 this.binanceSymbolsCache = binanceCache.data;
                 this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
-                this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures');
-                this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot');
-                console.log(`✅ Binance из IndexedDB: ${this.binanceSymbolsCache.length}`);
+                this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures' && s.assetClass !== 'stocks');
+                this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot' && s.assetClass !== 'stocks');
+                this.allBinanceStocks = this.binanceSymbolsCache.filter(s => s.assetClass === 'stocks');
+                console.log(`✅ Binance из IndexedDB: ${this.binanceSymbolsCache.length} (акций/ETF: ${this.allBinanceStocks.length})`);
             }
             
             const bybitCache = await window.db.get('symbolCaches', 'bybit');
-            if (bybitCache && bybitCache.data && bybitCache.data.length > 0) {
+            if (bybitCache && bybitCache.data && bybitCache.data.length > 0 && bybitCache.version === CACHE_VERSION) {
                 this.bybitSymbolsCache = bybitCache.data;
                 this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
-                this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures');
-                this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot');
-                console.log(`✅ Bybit из IndexedDB: ${this.bybitSymbolsCache.length}`);
+                this.allBybitFutures = this.bybitSymbolsCache.filter(s => s.marketType === 'futures' && s.assetClass !== 'stocks');
+                this.allBybitSpot = this.bybitSymbolsCache.filter(s => s.marketType === 'spot' && s.assetClass !== 'stocks');
+                this.allBybitStocks = this.bybitSymbolsCache.filter(s => s.assetClass === 'stocks');
+                console.log(`✅ Bybit из IndexedDB: ${this.bybitSymbolsCache.length} (акций/ETF: ${this.allBybitStocks.length})`);
             }
             
             this.allSymbolsCache = [...this.binanceSymbolsCache, ...this.bybitSymbolsCache];
@@ -253,6 +261,7 @@ class TickerStorage {
         try {
             localStorage.setItem('binanceSymbolsCache', JSON.stringify(this.binanceSymbolsCache));
             localStorage.setItem('bybitSymbolsCache', JSON.stringify(this.bybitSymbolsCache));
+            localStorage.setItem('symbolsCacheVersion', '2');
         } catch (e) {
             console.warn('localStorage переполнен, кэш символов не сохранён');
         }
@@ -267,6 +276,7 @@ class TickerStorage {
                 await window.db.put('symbolCaches', {
                     exchange: 'binance',
                     data: sortedBinance,
+                    version: 2,
                     timestamp: now
                 });
             }
@@ -276,6 +286,7 @@ class TickerStorage {
                 await window.db.put('symbolCaches', {
                     exchange: 'bybit',
                     data: sortedBybit,
+                    version: 2,
                     timestamp: now
                 });
             }
