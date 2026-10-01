@@ -1,4 +1,5 @@
 
+
 /* ===== CSS ПЕРЕМЕННЫЕ ===== */
 :root {
     --bg-black: #000000;
@@ -2226,6 +2227,8 @@ svg, svg * { font-family: none !important; }
 .market-sup { font-size: 7px; font-weight: bold; margin-left: 1px; vertical-align: super; position: relative; top: -2px; }
 .market-sup.futures { color: var(--accent-blue); }
 .market-sup.spot { color: var(--accent-green); }
+/* 📈 Акции/ETF (TradFi) — золотой маркер рынка */
+.market-sup.stock { color: #f0b90b; }
 
 /* ===== МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ ===== */
 .modal-overlay {
