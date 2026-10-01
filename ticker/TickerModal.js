@@ -642,7 +642,7 @@ updateModalResults(reset = false) {
         // 📈 На вкладке акций показываем тип инструмента: Perp (бессрочный) или Spot xStock
         const isStockRow = symbolData.assetClass === 'stocks' || this.parent.state.modalMarketType === 'stocks';
         const marketLabel = isStockRow
-            ? (symbolData.marketType === 'futures' ? 'Perp 📈' : 'Spot xStock 📈')
+            ? (symbolData.marketType === 'futures' ? 'Perp ' : 'Spot xStock ')
             : (symbolData.marketType === 'futures' ? 'Futures' : 'Spot');
         
         if (isAdded) {
