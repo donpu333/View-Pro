@@ -605,19 +605,21 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             const atrArray = rma(ranges, period);
             const lastIdx = ranges.length - 1;
             const lastCandle = data[lastIdx];
-            
+
             // ✅ БАЗА ATR: ATR предыдущей закрытой свечи (стабильный базис)
             const baselineATR = lastIdx > 0 ? atrArray[lastIdx - 1] : atrArray[lastIdx];
-            
-            // ✅ ПРОГРЕСС: Полный размах High-Low (как в классическом ATR)
-            const dist = lastCandle.high - lastCandle.low;
+
+            // ✅ ПРОГРЕСС ОТ ОТКРЫТИЯ (|close − open|).
+            // Если свеча сходила вверх и вернулась к open — прогресс ≈ 0,
+            // остаток ≈ 100% (раньше брали high − low, и остаток «сгорал»).
+            const dist = Math.abs(lastCandle.close - lastCandle.open);
             const prog = baselineATR > 0 ? (dist / baselineATR) * 100 : 0;
 
             return {
                 atr: baselineATR,
                 natr: lastCandle.close > 0 ? (baselineATR / lastCandle.close) * 100 : 0,
                 progress: prog,
-                // ✅ ОСТАТОК: Может быть отрицательным (свеча пробила ATR)
+                // ✅ ОСТАТОК: Может быть отрицательным (свеча ушла от open больше ATR)
                 remaining: 100 - prog,
                 remainingPoints: baselineATR - dist,
                 trueRange: ranges[lastIdx],
@@ -686,14 +688,14 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
         const lastIdx = ranges.length - 1;
         const lastCandle = data[lastIdx];
         const lastRange = ranges[lastIdx];
-        
+
         const prevATR = lastIdx > 0 ? filteredATR[lastIdx - 1] : filteredATR[lastIdx];
         const baselineATR = prevATR;
 
         const isCurrentlyAnomaly = lastRange > upperBound || lastRange < lowerBound;
-        
-        // ✅ Полный размах High-Low
-        const distFromOpen = lastCandle.high - lastCandle.low;
+
+        // ✅ ПРОГРЕСС ОТ ОТКРЫТИЯ (|close − open|), а не high − low.
+        const distFromOpen = Math.abs(lastCandle.close - lastCandle.open);
         const progress = baselineATR > 0 ? (distFromOpen / baselineATR) * 100 : 0;
 
         return {
@@ -756,14 +758,18 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             ? (live.high - live.low)
             : lastRange;
         const liveClose = (live && isFinite(live.close) && live.close > 0) ? live.close : last.close;
-        const progress = atr > 0 ? (liveRange / atr) * 100 : 0;
+        const liveOpen  = (live && isFinite(live.open)) ? live.open : liveClose;
+
+        // ✅ ПРОГРЕСС ОТ ОТКРЫТИЯ (живой свечи).
+        const distFromOpen = Math.abs(liveClose - liveOpen);
+        const progress = atr > 0 ? (distFromOpen / atr) * 100 : 0;
 
         return {
             atr,
             natr: liveClose > 0 ? (atr / liveClose) * 100 : 0,
             progress,
             remaining: 100 - progress,
-            remainingPoints: atr - liveRange,
+            remainingPoints: atr - distFromOpen,
             trueRange: liveRange,
             rangeRatio: atr > 0 ? (liveRange / atr) * 100 : 0,
             _selectedLastRange: lastRange,
@@ -1032,8 +1038,8 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
             <span style="color:#AAA" title="Normalized ATR = ATR / цена закрытия × 100">NATR:</span>
             <span style="color:#4FC3F7; font-weight:600;" title="${hasATR ? `ATR ${formatATR(m.atr)} / close × 100` : 'недостаточно данных для расчёта'}">${natrText}</span>
             <span style="color:#444; margin: 0 4px;">|</span>
-            <span style="color:#AAA" title="Сколько ATR осталось пройти текущей свече (100% − прогресс). Отрицательный = свеча уже пробила ATR">Ост:</span>
-            <span style="color:${remColor}; font-weight:600;" title="${hasATR ? `прогресс свечи: ${m.progress.toFixed(1)}% ATR` : 'недостаточно данных для расчёта'}">${remText}</span>
+            <span style="color:#AAA" title="Остаток хода от открытия: 100% − |close − open| / ATR × 100. Отрицательный = свеча прошла больше ATR от open">Ост:</span>
+            <span style="color:${remColor}; font-weight:600;" title="${hasATR ? `прогресс от open: ${m.progress.toFixed(1)}% ATR` : 'недостаточно данных для расчёта'}">${remText}</span>
             <span id="multiatr-close" style="margin-left: 8px; color: #666; cursor: pointer; font-size: 10px;" title="Удалить">✕</span>
         `;
 
