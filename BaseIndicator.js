@@ -99,7 +99,17 @@ class BaseIndicator {
                 color: this.settings.color || this.data.color,
                 lineWidth: this.settings.lineWidth || 2,
                 lastValueVisible: false,
-                priceLineVisible: false
+                priceLineVisible: false,
+                // [FIX-DOT] ТОЧКА ПРИ НАВЕДЕНИИ НА СРЕДНИЕ СКОЛЬЗЯЩИЕ.
+                // У LineSeries в lightweight-charts crosshairMarkerVisible по
+                // умолчанию TRUE. IndicatorPanelManager.addSeries() гасит маркер
+                // ([FIX-I6]), но этот метод создаёт серию НАПРЯМУЮ через
+                // chart.addSeries(), минуя панель — поэтому фикс не применялся.
+                // Именно отсюда точка на SMA/EMA и прочих линейных индикаторах
+                // главной панели. _createEmptySeries() в наследниках маркер гасит,
+                // но IndicatorManager.addIndicator() вызывает createSeries(),
+                // а _createEmptySeries() в проекте не вызывается НИГДЕ.
+                crosshairMarkerVisible: false
             });
             this.series = [series];
         } else {
@@ -109,7 +119,8 @@ class BaseIndicator {
                     color: this.settings.color || this.data.color,
                     lineWidth: this.settings.lineWidth || 2,
                     lastValueVisible: false,
-                    priceLineVisible: false
+                    priceLineVisible: false,
+                    crosshairMarkerVisible: false   // [FIX-DOT] см. комментарий выше
                 });
                 this.series = [series];
             }
