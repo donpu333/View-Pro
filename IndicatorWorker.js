@@ -225,10 +225,43 @@ function calculateATR(data, period = 14) {
     return res;
 }
 
+/**
+ * [FIX-W24] Скользящая сумма объёма за 24 часа.
+ *
+ * БЫЛО: windowSize = params.windowSize || 288 — окно задавалось В БАРАХ.
+ * 288 баров = 24 часа ТОЛЬКО на пятиминутном графике. На 1m это 4.8 часа,
+ * на 15m — 3 суток, на 1h — 12 суток. Отсюда и «на разных таймфреймах разный
+ * объём за 24 часа»: одно и то же число баров покрывало разное время.
+ *
+ * СТАЛО: окно задаётся В СЕКУНДАХ (по умолчанию 86400), а число баров
+ * выводится из фактического шага свечей. windowSize в барах по-прежнему
+ * поддерживается как явное переопределение.
+ */
 function calculateVolume24H(data, params) {
     if (!data || !data.length) return [];
-    const windowSize = params.windowSize || 288;
+    const p = params || {};
+    const DAY_SEC = 86400;
+
+    // фактический шаг свечей: медиана соседних интервалов (устойчиво к пропускам)
+    const gaps = [];
+    for (let i = 1; i < data.length && gaps.length < 50; i++) {
+        const d = data[i].time - data[i - 1].time;
+        if (d > 0) gaps.push(d);
+    }
+    if (!gaps.length) return [];
+    gaps.sort((a, b) => a - b);
+    const barSec = gaps[Math.floor(gaps.length / 2)] || 0;
+    if (!(barSec > 0)) return [];
+
+    let windowSize;
+    if (p.windowSize > 0) {
+        windowSize = Math.floor(p.windowSize);              // явное переопределение в барах
+    } else {
+        const windowSec = p.windowSeconds > 0 ? p.windowSeconds : DAY_SEC;
+        windowSize = Math.max(1, Math.round(windowSec / barSec));
+    }
     if (windowSize <= 0) return [];
+
     const result = new Array(data.length);
     let rollingSum = 0;
     for (let i = 0; i < data.length; i++) {
