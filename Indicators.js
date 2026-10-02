@@ -2179,15 +2179,9 @@ class VolumeProfileIndicator extends BaseIndicator {
     // область с риском конфликта имён с другими индикаторами.
     static STORAGE_KEY = 'volumeprofile_settings';
     static DEFAULTS = {
-        // [AUTO] barsMode: 'auto' — число баров подбирается под таймфрейм так,
-        // чтобы профиль всегда покрывал autoDays суток. Это главный дефолт:
-        // фиксированное bbars не может быть правильным для всех ТФ сразу
-        // (150 баров на 1m = 2.5 часа, на 1d = 5 месяцев).
-        barsMode: 'auto',    // 'auto' | 'fixed'
-        autoDays: 7,         // сколько суток покрывает профиль в режиме auto (0.5..90)
-        bbars: 168,          // Number of Bars — используется только в режиме 'fixed' (1..5000)
-        cnum: 48,            // Row Size (5..100) — 48 как рабочий вариант для интрадея
-        percent: 70,         // Value Area Volume % (0..100) — стандарт Market Profile
+        bbars: 150,          // Number of Bars (1..500)
+        cnum: 24,            // Row Size (5..100)
+        percent: 70,         // Value Area Volume % (0..100)
 
         pocColor: '#FF0000', // POC Color
         pocWidth: 2,         // POC Width (1..5)
@@ -2204,23 +2198,9 @@ class VolumeProfileIndicator extends BaseIndicator {
         // --- добавлено при портировании (в оригинале зашито константами) ---
         widthDivisor: 3,     // максимальная длина ряда = bbars / widthDivisor свечей
         gapDivisor: 500,     // зазор между рядами = (top - bot) / gapDivisor
-        showVaLines: true,   // линии и метки VAH / VAL — полезны как уровни
+        showVaLines: false,  // линии и метки VAH / VAL
         vaLineColor: '#FFFFFF',
-        extendPocRight: true, // продлевать линию POC вправо до края панели
-        // Куда растёт гистограмма. true — от ПОСЛЕДНЕЙ свечи влево: профиль всегда
-        // прижат к правому краю, к текущей цене, и виден при любом зуме.
-        // false — от ПЕРВОЙ свечи диапазона вправо (поведение оригинального скрипта):
-        // на длинном диапазоне при приближении левый край уходит за экран.
-        anchorRight: true
-    };
-
-    // Секунды в баре — та же карта, что INTERVAL_SECONDS_MAP в ChartManager.js.
-    // Держим свою копию: та объявлена top-level const в чужом файле, и полагаться
-    // на её доступность из другого скрипта ненадёжно.
-    static INTERVAL_SECONDS = {
-        '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-        '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
-        '1d': 86400, '1w': 604800, '1M': 2592000
+        extendPocRight: true // продлевать линию POC вправо до края панели
     };
 
     // meta обязателен: IndicatorFactory.getIndicatorsList() строит меню по нему
@@ -2234,9 +2214,6 @@ class VolumeProfileIndicator extends BaseIndicator {
         const saved = this._loadSettings();
         this.settings = Object.assign({}, this.constructor.DEFAULTS, this.settings, saved);
         this.settings.color = this.settings.color || this.constructor.DEFAULTS.upColor;
-        // сохранённое в localStorage могло быть записано старой версией или
-        // повреждено — нормализуем до первого использования
-        this._sanitizeSettings();
 
         this._profile = null;          // кэш рассчитанного профиля
         this._settingsSig = '';        // сигнатура настроек (для автпересчёта)
@@ -2292,52 +2269,6 @@ class VolumeProfileIndicator extends BaseIndicator {
     calculateAsync() {}
     onCalculateResult() {}
 
-    /**
-     * Приводит settings к допустимым значениям. Нужно потому, что updateSettings()
-     * могут вызвать программно с чем угодно, и это значение потом уедет в
-     * localStorage. computeProfile() клампит на входе, поэтому расчёт всегда
-     * безопасен, но храниться должен уже нормализованный объект.
-     */
-    _sanitizeSettings() {
-        const s = this.settings;
-        const D = this.constructor.DEFAULTS;
-        s.barsMode = (s.barsMode === 'fixed') ? 'fixed' : 'auto';
-        s.autoDays = this._clampFloat(s.autoDays, D.autoDays, 0.5, 90);
-        s.bbars = this._clampInt(s.bbars, D.bbars, 1, 5000);
-        s.cnum = this._clampInt(s.cnum, D.cnum, 5, 100);
-        s.percent = this._clampFloat(s.percent, D.percent, 0, 100);
-        s.widthDivisor = this._clampFloat(s.widthDivisor, D.widthDivisor, 0.5, 20);
-        s.gapDivisor = this._clampFloat(s.gapDivisor, D.gapDivisor, 50, 100000);
-        s.pocWidth = this._clampInt(s.pocWidth, D.pocWidth, 1, 5);
-        s.vaAlpha = this._clampFloat(s.vaAlpha, D.vaAlpha, 0, 1);
-        s.bodyAlpha = this._clampFloat(s.bodyAlpha, D.bodyAlpha, 0, 1);
-        s.pocColor = this._normHex(s.pocColor, D.pocColor);
-        s.vaUpColor = this._normHex(s.vaUpColor, D.vaUpColor);
-        s.vaDownColor = this._normHex(s.vaDownColor, D.vaDownColor);
-        s.upColor = this._normHex(s.upColor, D.upColor);
-        s.downColor = this._normHex(s.downColor, D.downColor);
-        s.vaLineColor = this._normHex(s.vaLineColor, D.vaLineColor);
-        s.showPoc = s.showPoc !== false;
-        s.showVaLines = !!s.showVaLines;
-        s.extendPocRight = s.extendPocRight !== false;
-        s.anchorRight = !!s.anchorRight;
-        return s;
-    }
-
-    /**
-     * BaseIndicator.updateSettings() после применения настроек дёргает
-     * calculateAsync(), а он у нас — no-op (worker не используется).
-     * Без этого переопределения программный вызов
-     * `vp.updateSettings({ bbars: 300 })` не пересчитал бы профиль сразу —
-     * его подхватил бы только фолбэк-таймер через 500 мс.
-     */
-    updateSettings(newSettings) {
-        super.updateSettings(newSettings);
-        this._sanitizeSettings();
-        this._colorCache.clear();
-        this.recompute();
-    }
-
     // Примитив рисуется поверх серии, отдельные series не нужны.
     // ВАЖНО: IndicatorManager.addIndicator() требует truthy-возврат,
     // поэтому возвращаем массив (пустой массив — truthy).
@@ -2365,25 +2296,13 @@ class VolumeProfileIndicator extends BaseIndicator {
         } catch (e) {}
     }
 
-    /**
-     * «Пустое» значение — то, из которого нельзя понять намерение пользователя.
-     * ВАЖНО: null и '' сюда входят, потому что Number(null) === 0 и Number('') === 0 —
-     * без этой проверки cnum:null дал бы МИНИМУМ (5 рядов) вместо дефолта (48).
-     */
-    _isBlank(v) {
-        return v === undefined || v === null || v === '' ||
-            (typeof v === 'string' && v.trim() === '');
-    }
-
     _clampInt(v, fallback, min, max) {
-        if (this._isBlank(v)) return fallback;
         const n = Math.round(Number(v));
         if (!isFinite(n)) return fallback;
         return Math.min(max, Math.max(min, n));
     }
 
     _clampFloat(v, fallback, min, max) {
-        if (this._isBlank(v)) return fallback;
         const n = Number(v);
         if (!isFinite(n)) return fallback;
         return Math.min(max, Math.max(min, n));
@@ -2397,41 +2316,13 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     _settingsSignature() {
         const s = this.settings;
-        // [AUTO] currentInterval входит в сигнатуру: в авто-режиме число баров
-        // зависит от таймфрейма, поэтому смена ТФ обязана вызывать пересчёт.
-        const cm = this.manager && this.manager.chartManager;
-        return [cm && cm.currentInterval, s.barsMode, s.autoDays,
-            s.bbars, s.cnum, s.percent, s.widthDivisor, s.gapDivisor,
+        return [s.bbars, s.cnum, s.percent, s.widthDivisor, s.gapDivisor,
             s.pocColor, s.pocWidth, s.showPoc, s.vaUpColor, s.vaDownColor, s.vaAlpha,
             s.upColor, s.downColor, s.bodyAlpha, s.showVaLines, s.vaLineColor,
-            s.extendPocRight, s.anchorRight].join('|');
+            s.extendPocRight].join('|');
     }
 
     /* ------------------------- расчёт профиля ------------------------- */
-
-    /**
-     * [AUTO] Сколько баров брать под профиль.
-     *   'fixed' — settings.bbars как есть;
-     *   'auto'  — autoDays суток, пересчитанные в бары текущего таймфрейма.
-     * Результат клампится к 1..5000 и к фактическому числу свечей.
-     */
-    _effectiveBars(dataLen) {
-        const s = this.settings;
-        if (s.barsMode === 'fixed') {
-            return this._clampInt(s.bbars, this.constructor.DEFAULTS.bbars, 1, 5000);
-        }
-        const cm = this.manager && this.manager.chartManager;
-        const iv = (cm && cm.currentInterval) || '1h';
-        const sec = this.constructor.INTERVAL_SECONDS[iv];
-        if (!sec) {
-            // неизвестный ТФ — откатываемся к фиксированному значению
-            return this._clampInt(s.bbars, this.constructor.DEFAULTS.bbars, 1, 5000);
-        }
-        const days = this._clampFloat(s.autoDays, this.constructor.DEFAULTS.autoDays, 0.5, 90);
-        const bars = Math.round((days * 86400) / sec);
-        const clamped = this._clampInt(bars, this.constructor.DEFAULTS.bbars, 1, 5000);
-        return (typeof dataLen === 'number' && dataLen > 0) ? Math.min(clamped, dataLen) : clamped;
-    }
 
     /**
      * Распределяет объём ценового отрезка [pFrom, pTo] по рядам.
@@ -2458,11 +2349,7 @@ class VolumeProfileIndicator extends BaseIndicator {
      */
     computeProfile(data, options) {
         const opt = options || {};
-        // opt.bbars имеет приоритет (его передают тесты и computeProfile извне);
-        // иначе — авто-подбор под таймфрейм через _effectiveBars().
-        const barsReq = (opt.bbars !== undefined)
-            ? this._clampInt(opt.bbars, this.constructor.DEFAULTS.bbars, 1, 5000)
-            : this._effectiveBars(data ? data.length : 0);
+        const barsReq = this._clampInt(opt.bbars !== undefined ? opt.bbars : this.settings.bbars, this.constructor.DEFAULTS.bbars, 1, 5000);
         const rows = this._clampInt(opt.cnum !== undefined ? opt.cnum : this.settings.cnum, this.constructor.DEFAULTS.cnum, 2, 500);
         const percent = this._clampFloat(opt.percent !== undefined ? opt.percent : this.settings.percent, this.constructor.DEFAULTS.percent, 0, 100);
 
@@ -2597,7 +2484,6 @@ class VolumeProfileIndicator extends BaseIndicator {
                     pocRow: p.pocRow, vaHighRow: p.vaHighRow, vaLowRow: p.vaLowRow,
                     totalVolume: p.sum, vaVolume: p.vaTotal,
                     vaPercentActual: p.vaPercentActual,
-                    barsMode: this.settings.barsMode, autoDays: this.settings.autoDays,
                     rangeHigh: p.top, rangeLow: p.bot,
                     rows: p.rows, bars: p.bars,
                     isValid: true
@@ -2794,10 +2680,7 @@ class VolumeProfileIndicator extends BaseIndicator {
 
         const s = this.settings;
         const bs = this._barSpacing(timeScale);
-        // anchorRight: гистограмма растёт ВЛЕВО от правого края последней свечи,
-        // иначе — ВПРАВО от первой свечи диапазона (как в оригинале).
-        const anchorRight = !!s.anchorRight;
-        const x0 = this._xForIndex(timeScale, anchorRight ? p.lastIndex + 1 : p.startIndex, data);
+        const x0 = this._xForIndex(timeScale, p.startIndex, data);
         if (x0 === null) return;
 
         const widthDivisor = this._clampFloat(s.widthDivisor, this.constructor.DEFAULTS.widthDivisor, 0.5, 20);
@@ -2840,25 +2723,13 @@ class VolumeProfileIndicator extends BaseIndicator {
                 const lenUp = (p.up[x] / p.maxVol) * maxLenPx;
                 const lenDn = (p.dn[x] / p.maxVol) * maxLenPx;
 
-                if (anchorRight) {
-                    // зеркально: «ап» у правого края, «даун» левее него
-                    if (lenUp > 0) {
-                        ctx.fillStyle = inVA ? fillVaUp : fillUp;
-                        ctx.fillRect(xStart - lenUp * hpr, top, lenUp * hpr, height);
-                    }
-                    if (lenDn > 0) {
-                        ctx.fillStyle = inVA ? fillVaDown : fillDown;
-                        ctx.fillRect(xStart - (lenUp + lenDn) * hpr, top, lenDn * hpr, height);
-                    }
-                } else {
-                    if (lenUp > 0) {
-                        ctx.fillStyle = inVA ? fillVaUp : fillUp;
-                        ctx.fillRect(xStart, top, lenUp * hpr, height);
-                    }
-                    if (lenDn > 0) {
-                        ctx.fillStyle = inVA ? fillVaDown : fillDown;
-                        ctx.fillRect(xStart + lenUp * hpr, top, lenDn * hpr, height);
-                    }
+                if (lenUp > 0) {
+                    ctx.fillStyle = inVA ? fillVaUp : fillUp;
+                    ctx.fillRect(xStart, top, lenUp * hpr, height);
+                }
+                if (lenDn > 0) {
+                    ctx.fillStyle = inVA ? fillVaDown : fillDown;
+                    ctx.fillRect(xStart + lenUp * hpr, top, lenDn * hpr, height);
                 }
             }
 
@@ -2875,18 +2746,13 @@ class VolumeProfileIndicator extends BaseIndicator {
                 const yPoc = priceToY(p.pocPrice);
                 if (yPoc !== null) {
                     const w = this._clampInt(s.pocWidth, this.constructor.DEFAULTS.pocWidth, 1, 5);
-                    // extendPocRight=false -> линия только внутри профиля
-                    const fromX = (s.extendPocRight === false && !anchorRight) ? x0 : 0;
+                    const fromX = s.extendPocRight === false ? x0 : 0;
                     this._drawHLine(ctx, yPoc, hpr, vpr, mediaW, s.pocColor, w, fromX);
 
                     // метка: 15 свечей правее последнего бара (как в оригинале),
                     // но не дальше правого края панели
                     const xLast = this._xForIndex(timeScale, p.lastIndex, data);
-                    // 15 баров от последней свечи; при anchorRight уносим метку влево,
-                    // чтобы она не наезжала на гистограмму
-                    let labelX = (xLast !== null
-                        ? (anchorRight ? xLast - 15 * bs : xLast + 15 * bs)
-                        : mediaW - 10);
+                    let labelX = (xLast !== null ? xLast + 15 * bs : mediaW - 10);
                     this._drawPocLabel(ctx, 'POC: ' + this._fmt(p.pocPrice), labelX, yPoc,
                         hpr, vpr, mediaW, s.pocColor, data[data.length - 1]);
                 }
@@ -3017,20 +2883,8 @@ class VolumeProfileIndicator extends BaseIndicator {
                 <div style="margin-bottom:12px;">
                     <div style="color:#2196F3; margin-bottom:8px;">📊 Диапазон и ряды</div>
                     <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Авто — число баров подбирается под таймфрейм так, чтобы профиль покрывал заданное число суток. Фиксированно — всегда одно и то же число баров.">Баров:</label>
-                        <select id="vp_barsMode" onchange="var a=this.value==='auto';document.getElementById('vp_autoDays_row').style.display=a?'flex':'none';document.getElementById('vp_bbars_row').style.display=a?'none':'flex';" style="${rowStyle}">
-                            <option value="auto" ${s.barsMode === 'auto' ? 'selected' : ''}>Авто (по таймфрейму)</option>
-                            <option value="fixed" ${s.barsMode === 'fixed' ? 'selected' : ''}>Фиксированно</option>
-                        </select>
-                    </div>
-                    <div id="vp_autoDays_row" style="${rowDiv} display:${s.barsMode === 'auto' ? 'flex' : 'none'};">
-                        <label style="${labelStyle}" title="Сколько суток истории входит в профиль. На 1h при 7 днях это 168 баров, на 5m — 2016.">Период, суток:</label>
-                        <input type="number" id="vp_autoDays" value="${s.autoDays}" min="0.5" max="90" step="0.5" style="${numStyle}">
-                        <span style="color:#888; font-size:10px;">≈ ${this._effectiveBars()} баров</span>
-                    </div>
-                    <div id="vp_bbars_row" style="${rowDiv} display:${s.barsMode === 'fixed' ? 'flex' : 'none'};">
                         <label style="${labelStyle}" title="Сколько последних свечей входит в расчёт">Количество баров:</label>
-                        <input type="number" id="vp_bbars" value="${s.bbars}" min="1" max="5000" style="${numStyle}">
+                        <input type="number" id="vp_bbars" value="${s.bbars}" min="1" max="500" style="${numStyle}">
                     </div>
                     <div style="${rowDiv}">
                         <label style="${labelStyle}" title="На сколько горизонтальных рядов делится ценовой диапазон">Число рядов:</label>
@@ -3060,10 +2914,6 @@ class VolumeProfileIndicator extends BaseIndicator {
                     <div style="${rowDiv}">
                         <label style="${labelStyle}" title="Продлевать линию POC вправо до края панели">Линия вправо:</label>
                         <input type="checkbox" id="vp_extendPocRight" ${chk(s.extendPocRight)} style="accent-color:#4A90E2;">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Гистограмма растёт влево от последней свечи. Включайте на длинном диапазоне (1000+ баров), иначе профиль уходит за левый край экрана">От правого края:</label>
-                        <input type="checkbox" id="vp_anchorRight" ${chk(s.anchorRight)} style="accent-color:#4A90E2;">
                     </div>
                 </div>
                 <div style="margin-bottom:12px;">
@@ -3125,11 +2975,6 @@ class VolumeProfileIndicator extends BaseIndicator {
             const e = el(id);
             return (e && typeof e.checked === 'boolean') ? e.checked : fallback;
         };
-        const oneOf = (id, allowed, fallback) => {
-            const e = el(id);
-            const v = (e && e.value != null && e.value !== '') ? e.value : fallback;
-            return allowed.includes(v) ? v : fallback;
-        };
         const color = (id, fallback) => {
             const e = el(id);
             return (e && typeof e.value === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.value))
@@ -3137,13 +2982,7 @@ class VolumeProfileIndicator extends BaseIndicator {
         };
         const s = this.settings;
 
-        // 5000 вместо 500 из оригинала: замер показал ~1 мс на 5000 баров x 100 рядов,
-        // а на минутных ТФ 500 баров — это меньше суток, профиль получается бессмысленным.
-        s.barsMode = oneOf('vp_barsMode', ['auto', 'fixed'], s.barsMode);
-        s.autoDays = num('vp_autoDays', s.autoDays, 0.5, 90);
-        // 5000 вместо 500 из оригинала: замер показал ~1 мс на 5000 баров x 100 рядов,
-        // а на минутных ТФ 500 баров — это меньше суток, профиль получается бессмысленным.
-        s.bbars = int('vp_bbars', s.bbars, 1, 5000);
+        s.bbars = int('vp_bbars', s.bbars, 1, 500);
         s.cnum = int('vp_cnum', s.cnum, 5, 100);
         s.percent = num('vp_percent', s.percent, 0, 100);
         s.widthDivisor = num('vp_widthDivisor', s.widthDivisor, 0.5, 20);
@@ -3152,7 +2991,6 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.pocColor = color('vp_pocColor', s.pocColor);
         s.pocWidth = int('vp_pocWidth', s.pocWidth, 1, 5);
         s.extendPocRight = bool('vp_extendPocRight', s.extendPocRight);
-        s.anchorRight = bool('vp_anchorRight', s.anchorRight);
 
         s.vaUpColor = color('vp_vaUpColor', s.vaUpColor);
         s.vaDownColor = color('vp_vaDownColor', s.vaDownColor);
@@ -3165,7 +3003,6 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.vaLineColor = color('vp_vaLineColor', s.vaLineColor);
 
         this._saveSettings();
-        this._sanitizeSettings();
         this._colorCache.clear();
         this.recompute();
         if (super.applySettingsFromForm) super.applySettingsFromForm();
@@ -3181,11 +3018,6 @@ class VolumeProfileIndicator extends BaseIndicator {
         const out = {
             'свечей в chartData': data.length,
             'currentInterval': cm && cm.currentInterval,
-            'barsMode': this.settings && this.settings.barsMode,
-            'autoDays': this.settings && this.settings.autoDays,
-            'эффективно баров': this._effectiveBars(data.length),
-            'anchorRight': !!(this.settings && this.settings.anchorRight),
-            'showVaLines': !!(this.settings && this.settings.showVaLines),
             'баров в профиле': p ? p.bars : 0,
             'рядов': p ? p.rows : 0,
             'диапазон': p ? (this._fmt(p.bot) + ' .. ' + this._fmt(p.top)) : '—',
@@ -3220,9 +3052,8 @@ class VolumeProfileIndicator extends BaseIndicator {
         this._requestUpdate = null;
         this._profile = null;
         this._colorCache.clear();
-        // super.destroy() сам делает _removeAllSeries() + manager = null
-        // (series у нас пустой, поэтому обращение к chart безопасно)
-        super.destroy();
+        this._removeAllSeries();
+        this.manager = null;
     }
 }
 
