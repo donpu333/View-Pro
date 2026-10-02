@@ -137,8 +137,11 @@ class ChartManager {
         this._lastVisibleRange = null;
         this._isViewingHistory = false;
         this._historyLoadQueue = [];
-        this._preloadThreshold = 400;
-        this._batchSize = 1000;
+        // [INFINITE-SCROLL] схема как в TradingView: страница истории — 800 свечей,
+        // догрузка стартует, когда до левого края данных остаётся ~100 свечей
+        // (или один видимый экран — если график отдалён сильнее, см. _preloadThresholdFor).
+        this._preloadThreshold = 100;
+        this._batchSize = 800;
         this._minLoadDelay = 1000;
         this._lastHistoryLoadTime = 0;
         this._pendingHistoryLoad = false;
@@ -159,9 +162,10 @@ class ChartManager {
         //   3) каждая страница тянула полный setData по всем ~5000 свечей + пересборку
         //      объёмов + пересчёт индикаторов, причём массив баров собирался заново
         //      (spread {...c} + Map + sort) на КАЖДУЮ догрузку и КАЖДЫЙ trim.
-        // Ниже: упреждающий prefetch цепочкой (без остановки у края), пачка 1500 вместо
-        // 1000 на коротких ТФ, локальный кэш страниц истории в IndexedDB (повторная
-        // прокрутка того же участка — без сети, мгновенно) и кэш LW-баров.
+        // Ниже: упреждающий prefetch цепочкой (без остановки у края), единая страница
+        // 800 свечей на ВСЕХ ТФ и биржах (лимит Bybit v5 и Binance spot — 1000, futures —
+        // 1500; 800 работает везде одинаково), локальный кэш страниц истории в IndexedDB
+        // (повторная прокрутка того же участка — без сети, мгновенно) и кэш LW-баров.
         // =================================================================================
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         this._historyCheckThrottleMs = 120;   // как часто проверяем край ВО ВРЕМЯ скролла
@@ -194,6 +198,12 @@ class ChartManager {
 
         // [HIST-FIX] isMobile поднят выше (нужен параметрам истории)
         this._maxCandlesInMemory = isMobile ? 3000 : 8000;   // было 5000: реже trim и реже «пилот» у левого края
+        // [INFINITE-SCROLL] Абсолютный потолок памяти — защита при ОЧЕНЬ долгом
+        // непрерывном листании истории. Между _maxCandlesInMemory и этим потолком
+        // массив растёт свободно: trim спереди выполняется только когда пользователь
+        // ушёл от левого края (иначе бесконечный скролл «запирался» на потолке).
+        // 40 000 свечей на 1m — это ~27 дней непрерывного листания влево.
+        this._hardMaxCandles = isMobile ? 15000 : 40000;
         this._leftBuffer = isMobile ? 1000 : 2000;
         this._rightBuffer = isMobile ? 500 : 1000;
         this._trimDebounceTimeout = null;
@@ -2311,7 +2321,7 @@ class ChartManager {
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
             let isFromCache = !!candles;
             if (!isFromCache) {
-                candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, 1000);
+                candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, this._batchSize || 800);
             }
             await precisionPromise;
             if (this._activeGeneration !== generationId) return;
@@ -2452,7 +2462,7 @@ class ChartManager {
             // нового шага дописывались в массив старого — серия превращалась в кашу.
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval);
             let isFromCache = !!candles;
-            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, 1000);
+            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, this._batchSize || 800);
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных');
 
@@ -2554,7 +2564,7 @@ class ChartManager {
 
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
             const isFromCache = !!(candles && candles.length > 0);
-            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, 1000);
+            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, this._batchSize || 800);
             await precisionPromise;
             if (this._activeGeneration !== generationId) { finish(); return; }
             if (!candles || candles.length === 0) { console.warn('⚠️ loadInitialData: нет данных'); finish(); return; }
@@ -3620,8 +3630,8 @@ class ChartManager {
     // =============== HISTORY LOAD / TRIM ===============
     onVisibleLogicalRangeChange(range) {
         if (!range || !this.chartData.length || !this._isChartValid()) return;
-        // [HIST-FIX] порог догрузки теперь зависит от ширины видимой области и от ТФ
-        // (было фиксированных 400 баров — на 1m это меньше экрана при сильном зуме)
+        // [INFINITE-SCROLL] порог догрузки: ~100 свечей до левого края (или один
+        // видимый экран при сильном отдалении) — см. _preloadThresholdFor
         if (this._historyNeededNow(range)) { this._lastHistoryCheckAt = performance.now(); this._loadHistoryAsync(); }
         this._scheduleTrim(range);
     }
@@ -3656,23 +3666,19 @@ class ChartManager {
         // в момент, когда пользователь тащит график.
         if (this._isScrolling || this._isScrollingFast) return;
         if (this.chartData.length <= this._maxCandlesInMemory) return;
+        // [INFINITE-SCROLL] Подрезаем ТОЛЬКО слева — старую историю, куда пользователь
+        // уже не смотрит (при возврате она мгновенно достаётся из IndexedDB-кэша
+        // страниц, без сети). Правую сторону НЕ трогаем ВОВСЕ: прежний правый trim
+        // при просмотре истории отрезал «живой хвост» (последние свечи вместе с
+        // текущей), после чего первый же WS-тик видел дыру и запускал
+        // _catchUpMissedCandles + полное перерисование — отсюда «перегрузы».
         const keepFrom = Math.max(0, Math.floor(fromIndex - (this._leftBuffer * 1.5)));
-        let keepTo = Math.min(this.chartData.length, Math.ceil(toIndex + (this._rightBuffer * 1.5)));
-        const minKeepRight = Math.min(this.chartData.length, 120);
-        keepTo = Math.max(keepTo, this.chartData.length - minKeepRight);
-        const liveFloorTime = this._alignTimeToInterval(Math.floor(Date.now() / 1000)) - this._getIntervalSeconds() * 2;
-        let liveIdx = this.chartData.length;
-        while (liveIdx > 0 && this.chartData[liveIdx - 1].time >= liveFloorTime) liveIdx--;
-        keepTo = Math.max(keepTo, liveIdx);
-        keepTo = Math.min(keepTo, this.chartData.length);
-
-        const leftTrim = keepFrom, rightTrim = this.chartData.length - keepTo;
-        if (leftTrim === 0 && rightTrim === 0) return;
-        if (keepFrom >= keepTo) return;
+        if (keepFrom === 0) return;
+        const leftTrim = keepFrom, rightTrim = 0;
 
         this._isTrimming = true;
         try {
-            this.chartData = this.chartData.slice(keepFrom, keepTo);
+            this.chartData = this.chartData.slice(keepFrom);
             this._rebuildTimeMap();
             this._nearestTimeCacheGen = null;   // [PERF-PAN] данные изменились — сброс кэша привязки
             this._volumeDataDirty = true;
@@ -3697,28 +3703,29 @@ class ChartManager {
         } catch (e) {} finally { this._isTrimming = false; }
     }
 
-    // =============== [HIST-FIX] HISTORY LOAD / PREFETCH ===============
-    // Сколько свечей просить за одну страницу истории.
-    // Binance/Bybit отдают максимум 1500 за запрос — на коротких ТФ берём максимум,
-    // чтобы страниц (и полных setData) было в полтора раза меньше.
+    // =============== [INFINITE-SCROLL] HISTORY LOAD / PREFETCH ===============
+    // Сколько свечей просить за одну страницу истории — ЕДИНЫЕ 800 на всех ТФ.
+    // Почему не 1500/1200, как было:
+    //   • Bybit v5 /market/kline: limit максимум 1000 -> страница 1500 возвращалась
+    //     урезанной/с ошибкой, а проверка «page.length < batchSize» после этого
+    //     навсегда ставила hasMoreData=false — история на Bybit заканчивалась
+    //     после первой же страницы;
+    //   • Binance spot /api/v3/klines: limit тоже максимум 1000 (1500 — только futures);
+    //   • 800 < 1000 -> одинаково корректно на всех биржах, ТФ и рынках,
+    //     догрузка предсказуемая: «осталось ~100 свечей -> приехало ещё 800».
     _historyBatchFor(interval) {
-        const sec = this._getIntervalSecondsFor(interval);
-        if (sec <= 1800) return 1500;   // 1m..30m
-        if (sec <= 14400) return 1200;  // 1h..4h
-        return 1000;                    // 6h..1M
+        return this._batchSize || 800;
     }
 
-    // Насколько рано стартовать догрузку: на коротких ТФ листают намного быстрее
-    // (в свечах/секунду), поэтому и запас нужен больше.
+    // [INFINITE-SCROLL] Насколько рано стартовать догрузку: когда до левого края
+    // данных остаётся ~100 свечей. Если график отдалён так, что в видимой области
+    // больше 100 баров, порог = ширина экрана (иначе триггер срабатывал бы уже
+    // на самом краю). Пока пользователь долистывает эти ~100 свечей, страница 800
+    // успевает приехать из сети или (чаще) из IndexedDB-кэша — край отодвигается
+    // раньше, чем в него упираются. Так же работает TradingView.
     _preloadThresholdFor(range) {
         const visible = (range && isFinite(range.from) && isFinite(range.to)) ? Math.max(10, Math.ceil(range.to - range.from)) : 200;
-        const sec = this._getIntervalSecondsFor(this.currentInterval);
-        let mult = 1.0;
-        if (sec <= 300) mult = 3.0;        // 1m..5m
-        else if (sec <= 1800) mult = 2.2;  // 15m..30m
-        else if (sec <= 14400) mult = 1.5; // 1h..4h
-        const t = Math.round(visible * mult);
-        return Math.max(this._preloadThreshold, Math.min(t, 2500));
+        return Math.max(this._preloadThreshold, Math.min(visible, 1500));
     }
 
     // Нужна ли догрузка прямо сейчас (range.from НЕ клампим: за левым краем он отрицательный)
@@ -3850,9 +3857,33 @@ class ChartManager {
         const addedCount = uniqueOlder.length;
         let combined = [...uniqueOlder, ...this.chartData];
         let trimmedFromFront = 0;
-        if (combined.length > this._maxCandlesInMemory + 500) {
-            trimmedFromFront = combined.length - this._maxCandlesInMemory;
-            combined = combined.slice(trimmedFromFront);
+        if (combined.length > this._maxCandlesInMemory) {
+            // [INFINITE-SCROLL] Было: на потолке памяти спереди БЕЗУСЛОВНО срезалось
+            // «лишнее» — т.е. ровно только что добавленная страница (netShift = 0).
+            // Левый край переставал отодвигаться, бесконечный скролл запирался на
+            // ~8000 свечей, а каждая страница всё равно тянула полный setData —
+            // те самые «перегрузы и тормоза».
+            // Стало: спереди режем ТОЛЬКО свечи, которые гарантированно далеко слева
+            // от видимого окна (пользователь ушёл от края — их можно отдать обратно
+            // в IndexedDB-кэш). У левого края массив просто растёт — до _hardMaxCandles.
+            const needed = combined.length - this._maxCandlesInMemory;
+            const visibleFrom = (cr && isFinite(cr.from)) ? Math.max(0, Math.floor(cr.from)) : combined.length;
+            const newVisibleFrom = visibleFrom + addedCount;   // видимый край ПОСЛЕ prepend
+            const safeToTrim = Math.max(0, newVisibleFrom - this._leftBuffer);
+            trimmedFromFront = Math.min(needed, safeToTrim);
+            if (combined.length - trimmedFromFront > this._hardMaxCandles) {
+                trimmedFromFront = combined.length - this._hardMaxCandles;  // абсолютная защита памяти
+            }
+            // Достигнут абсолютный потолок памяти И пользователь у самого левого края:
+            // страница не отодвинет край (netShift <= 0) — получился бы бессмысленный
+            // полный setData на каждый триггер («беговая дорожка»). Аккуратно останавливаем
+            // историю в рамках сессии: потолок 40 000 свечей (~27 дней на 1m) на
+            // практике недостижим, а при смене монеты/ТФ hasMoreData снова true.
+            if (visibleFrom < this._leftBuffer && addedCount - trimmedFromFront <= 0) {
+                this.hasMoreData = false;
+                return null;
+            }
+            if (trimmedFromFront > 0) combined = combined.slice(trimmedFromFront);
         }
         this.chartData = combined;
         this._rebuildTimeMap();
