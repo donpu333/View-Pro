@@ -137,11 +137,18 @@ class ChartManager {
         this._lastVisibleRange = null;
         this._isViewingHistory = false;
         this._historyLoadQueue = [];
-        // [INFINITE-SCROLL] схема как в TradingView: страница истории — 800 свечей,
-        // догрузка стартует, когда до левого края данных остаётся ~100 свечей
-        // (или один видимый экран — если график отдалён сильнее, см. _preloadThresholdFor).
+        // [INFINITE-SCROLL] схема пагинации истории (как в TradingView):
+        //   • стартовая загрузка — 1000 свечей (как в оригинале);
+        //   • страница догрузки — максимум, который конкретная биржа/рынок отдаёт
+        //     за один запрос: Binance futures 1500, Binance spot и Bybit v5 1000
+        //     (см. _historyBatchFor). Меньше — чаще страницы и чаще полный setData
+        //     (микротормоза), больше — нельзя: ответ урезается и проверка
+        //     «page.length < batchSize» ложно закрывает историю;
+        //   • триггер догрузки — когда до левого края остаётся ~100 свечей
+        //     (или один видимый экран при сильном отдалении, см. _preloadThresholdFor).
         this._preloadThreshold = 100;
-        this._batchSize = 800;
+        this._initialBatch = 1000;
+        this._batchSize = 1000;
         this._minLoadDelay = 1000;
         this._lastHistoryLoadTime = 0;
         this._pendingHistoryLoad = false;
@@ -162,10 +169,10 @@ class ChartManager {
         //   3) каждая страница тянула полный setData по всем ~5000 свечей + пересборку
         //      объёмов + пересчёт индикаторов, причём массив баров собирался заново
         //      (spread {...c} + Map + sort) на КАЖДУЮ догрузку и КАЖДЫЙ trim.
-        // Ниже: упреждающий prefetch цепочкой (без остановки у края), единая страница
-        // 800 свечей на ВСЕХ ТФ и биржах (лимит Bybit v5 и Binance spot — 1000, futures —
-        // 1500; 800 работает везде одинаково), локальный кэш страниц истории в IndexedDB
-        // (повторная прокрутка того же участка — без сети, мгновенно) и кэш LW-баров.
+        // Ниже: упреждающий prefetch цепочкой (без остановки у края), страница истории
+        // = максимум API биржи (Binance futures 1500, Binance spot и Bybit v5 1000),
+        // локальный кэш страниц истории в IndexedDB (повторная прокрутка того же
+        // участка — без сети, мгновенно) и кэш LW-баров.
         // =================================================================================
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         this._historyCheckThrottleMs = 120;   // как часто проверяем край ВО ВРЕМЯ скролла
@@ -2321,7 +2328,7 @@ class ChartManager {
             let candles = await this.loadCandlesFromCache(symbol, exchange, marketType, this.currentInterval);
             let isFromCache = !!candles;
             if (!isFromCache) {
-                candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, this._batchSize || 800);
+                candles = await this.fetchKlines(symbol, exchange, marketType, this.currentInterval, this._initialBatch || 1000);
             }
             await precisionPromise;
             if (this._activeGeneration !== generationId) return;
@@ -2462,7 +2469,7 @@ class ChartManager {
             // нового шага дописывались в массив старого — серия превращалась в кашу.
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval);
             let isFromCache = !!candles;
-            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, this._batchSize || 800);
+            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, this._initialBatch || 1000);
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных');
 
@@ -2564,7 +2571,7 @@ class ChartManager {
 
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval);
             const isFromCache = !!(candles && candles.length > 0);
-            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, this._batchSize || 800);
+            if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, this._initialBatch || 1000);
             await precisionPromise;
             if (this._activeGeneration !== generationId) { finish(); return; }
             if (!candles || candles.length === 0) { console.warn('⚠️ loadInitialData: нет данных'); finish(); return; }
@@ -3704,17 +3711,23 @@ class ChartManager {
     }
 
     // =============== [INFINITE-SCROLL] HISTORY LOAD / PREFETCH ===============
-    // Сколько свечей просить за одну страницу истории — ЕДИНЫЕ 800 на всех ТФ.
-    // Почему не 1500/1200, как было:
-    //   • Bybit v5 /market/kline: limit максимум 1000 -> страница 1500 возвращалась
-    //     урезанной/с ошибкой, а проверка «page.length < batchSize» после этого
-    //     навсегда ставила hasMoreData=false — история на Bybit заканчивалась
-    //     после первой же страницы;
-    //   • Binance spot /api/v3/klines: limit тоже максимум 1000 (1500 — только futures);
-    //   • 800 < 1000 -> одинаково корректно на всех биржах, ТФ и рынках,
-    //     догрузка предсказуемая: «осталось ~100 свечей -> приехало ещё 800».
+    // Оптимальная страница истории = максимум, который API конкретной биржи/рынка
+    // отдаёт за ОДИН запрос:
+    //   • Binance futures /fapi/v1/klines — 1500;
+    //   • Binance spot /api/v3/klines     — 1000;
+    //   • Bybit v5 /market/kline          — 1000.
+    // Почему именно максимум:
+    //   • меньше размер -> больше страниц -> чаще полный setData/объёмы/индикаторы
+    //     (главный источник микротормозов при листании) и чаще сетевые запросы;
+    //   • больше нельзя: ответ урезается по лимиту биржи, и проверка
+    //     «page.length < batchSize» ложно ставила hasMoreData=false — история
+    //     «заканчивалась» после первой страницы (так было на Bybit со страницей 1500).
+    // Одна страница отодвигает левый край на 1000-1500 свечей — при триггере
+    // «осталось ~100» запас хода всегда больше, чем путь до края, поэтому скролл
+    // бесконечный и без остановок.
     _historyBatchFor(interval) {
-        return this._batchSize || 800;
+        if (this.currentExchange === 'binance' && this.currentMarketType === 'futures') return 1500;
+        return this._batchSize || 1000;
     }
 
     // [INFINITE-SCROLL] Насколько рано стартовать догрузку: когда до левого края
