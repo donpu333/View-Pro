@@ -1710,6 +1710,25 @@ class MultiTimeframeATRIndicator extends BaseIndicator {
 class Volume24HIndicator extends BaseIndicator {
     static meta = { name: 'Vol 24H', category: 'info', panel: 'vol24h', color: '#2962FF' };
 
+    // [VOL24-FIX] Константы расчёта. Раньше 24h-объём считался по 388 пяти-минутным
+    // барам (32.3 часа), а скользящее 24-часовое окно требует 288 баров LOOKBACK —
+    // поэтому корректное окно было только у последних 100 баров, а остальные 288
+    // (74% данных) получали ЗАНИЖЕННУЮ сумму по неполному окну.
+    static BASE_TF = '5m';
+    static BASE_SEC = 300;
+    static DAY_SEC = 86400;
+    static PAGE_SIZE = 1000;   // максимум баров за один запрос к бирже
+    static MAX_PAGES = 4;      // 4000 x 5m ≈ 13.9 суток базы
+    static CACHE_TTL_MS = 45000;
+
+    // Секунды в баре — та же карта, что INTERVAL_SECONDS_MAP в ChartManager.js.
+    // Держим свою копию: та объявлена top-level const в чужом файле.
+    static INTERVAL_SECONDS = {
+        '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+        '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
+        '1d': 86400, '1w': 604800, '1M': 2592000
+    };
+
     constructor(manager) {
         super(manager, 'volume24h', 'Vol 24H', '#2962FF', 'vol24h');
         this.settings.color = '#2962FF';
@@ -1723,6 +1742,12 @@ class Volume24HIndicator extends BaseIndicator {
         this._volumeMap = new Map();
         this._tooltipEl = null;
         this._crosshairTimer = null;
+
+        // [VOL24-FIX] кэш базовых 5m-данных и наблюдатель за сменой таймфрейма
+        this._baseCache = null;      // { from, to, bars, rolling, at }
+        this._tfTimer = null;
+        this._inflight = false;
+
         this._initTooltip();
         setTimeout(() => this._bindCrosshair(), 300);
 
@@ -1743,14 +1768,28 @@ class Volume24HIndicator extends BaseIndicator {
                 priceLineVisible: false,
                 lastValueVisible: true,
                 priceScaleId: 'right',
-                crosshairMarkerVisible: true,
-                crosshairMarkerRadius: 5,
-                crosshairMarkerBorderColor: '#ffffff',
-                crosshairMarkerBackgroundColor: this.settings.color,
+                // [VOL24-FIX] ТОЧКА ПРИ НАВЕДЕНИИ.
+                // IndicatorPanelManager.addSeries() подставляет
+                // crosshairMarkerVisible:false ([FIX-I6]), но Object.assign({...}, options)
+                // отдаёт приоритет options — поэтому раньше здесь стояло true и точка
+                // возвращалась. Теперь false задано ЯВНО, а не «опция удалена»:
+                // результат не зависит от чужих дефолтов и от порядка Object.assign.
+                crosshairMarkerVisible: false,
+                crosshairMarkerRadius: 0
             })
         ];
+        // Страховка: если панель создала серию с маркером (старая версия
+        // IndicatorPanelManager / кэш), гасим его принудительно.
+        try {
+            const s0 = this.series[0];
+            if (s0 && typeof s0.applyOptions === 'function') {
+                s0.applyOptions({ crosshairMarkerVisible: false, crosshairMarkerRadius: 0 });
+            }
+        } catch (e) {}
         return this.series;
     }
+
+    /* ========================= подписки ========================= */
 
     _setupListeners() {
         const cm = this.manager?.chartManager;
@@ -1759,6 +1798,7 @@ class Volume24HIndicator extends BaseIndicator {
         if (cm._subscribeToSymbolChange) {
             cm._subscribeToSymbolChange(() => {
                 this._baseVolumes = [];
+                this._baseCache = null;      // [VOL24-FIX] другой символ — база не годится
                 this._dataLoaded = false;
                 if (this._pendingTimer) clearTimeout(this._pendingTimer);
                 this._waitForChartData(cm);
@@ -1769,7 +1809,39 @@ class Volume24HIndicator extends BaseIndicator {
             if (this._dataLoaded) this.fetchAndCalculate();
         }, 60000);
 
+        // [VOL24-FIX] Наблюдатель за сменой таймфрейма / заменой данных.
+        // В ChartManager нет колбэка на смену интервала (есть только
+        // _subscribeToSymbolChange), поэтому раньше при переключении ТФ гистограмма
+        // оставалась со СТАРЫМИ метками времени и чужими значениями — и «чинилась»
+        // только через 60 с, когда срабатывал таймер обновления. Отсюда и эффект
+        // «на разных таймфреймах показывает разное».
+        this._startTfWatcher();
+
         this._waitForChartData(cm);
+    }
+
+    _startTfWatcher() {
+        if (this._tfTimer) return;
+        let lastIv = null, lastFirst = null, lastLen = -1;
+        this._tfTimer = setInterval(() => {
+            const cm = this.manager?.chartManager;
+            if (!cm || !cm.chartData || !cm.chartData.length) return;
+
+            const iv = cm.currentInterval;
+            const first = cm.chartData[0].time;
+            const len = cm.chartData.length;
+
+            // Смена ТФ или полная замена набора данных (другой символ/диапазон)
+            if (iv !== lastIv || first !== lastFirst) {
+                lastIv = iv; lastFirst = first; lastLen = len;
+                this._dataLoaded = true;
+                // база 5m кэширована — если она покрывает новый диапазон,
+                // пересчёт пройдёт без сети и мгновенно
+                this.fetchAndCalculate();
+                return;
+            }
+            lastLen = len;
+        }, 500);
     }
 
     _waitForChartData(cm) {
@@ -1783,110 +1855,247 @@ class Volume24HIndicator extends BaseIndicator {
         }, 200);
     }
 
+    /* ========================= расчёт ========================= */
+
     async fetchAndCalculate() {
         const cm = this.manager?.chartManager;
         if (!cm?.currentSymbol || !this._dataLoaded) return;
+        if (this._inflight) return;          // не плодим параллельные запросы
+        this._inflight = true;
 
         try {
-            const currentTF = cm.currentInterval;
             const chartData = cm.chartData;
             if (!chartData || chartData.length === 0) return;
 
-            if (currentTF === '1d' && chartData.length > 1) {
-                const daysNeeded = chartData.length + 50;
-                const dailyBars = await this._fetchKlines(
-                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
-                    '1d', daysNeeded
-                );
-                if (!dailyBars || dailyBars.length === 0) return;
+            const ivSec = this.constructor.INTERVAL_SECONDS[cm.currentInterval];
 
-                const dailyMap = new Map(dailyBars.map(b => [b.time, b.volume]));
-                const historyData = chartData.map(candle => ({
-                    time: candle.time,
-                    value: dailyMap.get(candle.time) || 0
-                }));
-
-                const live5m = await this._fetchKlines(
-                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
-                    '5m', 300
-                );
-                if (live5m && live5m.length > 0) {
-                    const msIn24h = 24 * 60 * 60 * 1000;
-                    const lastTime = live5m[live5m.length - 1].time * 1000;
-                    let sum = 0;
-                    for (let i = live5m.length - 1; i >= 0; i--) {
-                        if (lastTime - live5m[i].time * 1000 > msIn24h) break;
-                        sum += live5m[i].volume || 0;
-                    }
-                    if (historyData.length > 0) {
-                        historyData[historyData.length - 1].value = sum;
-                    }
-                }
-
-                this.series[0].setData(historyData);
-                this._volumeData = historyData.filter(d => d.value > 0);
-                this._volumeMap = new Map(historyData.map(d => [d.time, d.value]));
-
+            // [VOL24-FIX] Для ТФ >= 1d скользящее 24h-окно из пятиминутных баров
+            // физически недоступно (недели истории), поэтому там считается сумма
+            // дневных объёмов, попадающих в свечу графика. Это корректно и для 1d
+            // (свеча = сутки), и для 1w/1M (свеча = неделя/месяц) — раньше 1w и 1M
+            // попадали в «пятиминутную» ветку и показывали объём ~8 часов вместо недели.
+            if (!ivSec || ivSec >= this.constructor.DAY_SEC) {
+                await this._calcAggregated(cm, chartData);
             } else {
-                const data = await this._fetchKlines(
-                    cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
-                    '5m', 388
-                );
-                if (!data || data.length === 0) return;
-
-                const msIn24h = 24 * 60 * 60 * 1000;
-                const calculated = [];
-                for (let i = 0; i < data.length; i++) {
-                    let sum = 0;
-                    for (let j = i; j >= 0; j--) {
-                        if (data[i].time * 1000 - data[j].time * 1000 <= msIn24h) {
-                            sum += data[j].volume || 0;
-                        } else break;
-                    }
-                    calculated.push({ time: data[i].time, value: sum });
-                }
-                this._baseVolumes = calculated;
-                this._alignToMainChart();
+                await this._calcRolling(cm, chartData, ivSec);
             }
         } catch (e) {
             console.warn('Vol 24H: Ошибка', e);
+        } finally {
+            this._inflight = false;
         }
     }
 
-    _alignToMainChart() {
-        if (!this.series[0] || !this._baseVolumes.length) return;
-        const chartData = this.manager.chartManager.chartData;
-        if (!chartData || chartData.length === 0) return;
+    /**
+     * [VOL24-FIX] Скользящий 24-часовой объём для внутридневных ТФ.
+     * Значение привязано к МОМЕНТУ ВРЕМЕНИ, а не к номеру свечи, поэтому на любом
+     * таймфрейме один и тот же момент даёт одно и то же число.
+     */
+    async _calcRolling(cm, chartData, ivSec) {
+        const DAY = this.constructor.DAY_SEC;
+        const BASE = this.constructor.BASE_SEC;
+
+        // Какое время должна покрывать база:
+        //   от (close первой свечи графика − 24h) до close последней свечи.
+        const needTo = chartData[chartData.length - 1].time + ivSec;
+        const needFrom = chartData[0].time + ivSec - DAY;
+
+        const base = await this._getBaseRange(cm, needFrom, needTo);
+        if (!base || base.length === 0) return;
+
+        const rolling = this._rolling24h(base);
+        if (!rolling.length) return;
 
         const aligned = [];
-        let vIdx = 0;
-        const lastIdx = this._baseVolumes.length - 1;
+        const n = rolling.length;
+        let idx = 0;
 
         for (let i = 0; i < chartData.length; i++) {
-            const mainTime = chartData[i].time;
-            if (i === chartData.length - 1) {
-                aligned.push({ time: mainTime, value: this._baseVolumes[lastIdx].value });
-                continue;
-            }
-            while (vIdx < lastIdx && this._baseVolumes[vIdx + 1].time <= mainTime) {
-                vIdx++;
-            }
-            aligned.push({ time: mainTime, value: this._baseVolumes[vIdx].value });
+            const c = chartData[i];
+            const isLast = (i === chartData.length - 1);
+            // Момент, на который нужно значение:
+            //   обычная свеча     -> её close, т.е. базовый бар (close − 5m)
+            //   формирующаяся     -> сейчас, т.е. последний базовый бар
+            const targetBaseTime = isLast ? rolling[n - 1].time : (c.time + ivSec - BASE);
+
+            while (idx + 1 < n && rolling[idx + 1].time <= targetBaseTime) idx++;
+            const r = rolling[idx];
+
+            // [VOL24-FIX] Если для свечи нет базового бара (свеча старше загруженной
+            // базы) или окно неполное — точку НЕ рисуем. Раньше vIdx оставался 0 и все
+            // такие свечи получали _baseVolumes[0].value — одну и ту же заниженную
+            // константу, из-за чего левая часть графика была плоской и неверной.
+            if (!r || r.time > targetBaseTime || !r.valid) continue;
+
+            aligned.push({ time: c.time, value: r.value });
         }
-        this.series[0].setData(aligned);
-        this._volumeData = aligned.filter(d => d.value > 0);
-        this._volumeMap = new Map(aligned.map(d => [d.time, d.value]));
+
+        this._baseVolumes = rolling;
+        this._applySeriesData(aligned);
     }
 
-    async _fetchKlines(symbol, exchange, marketType, tf, limit) {
+    /**
+     * [VOL24-FIX] Скользящая сумма за 24 часа по базовым барам.
+     * Окно — (t − 24h, t], то есть РОВНО 288 пятиминутных баров.
+     * Раньше условие было `t_i − t_j <= 86400`, из-за чего в окно попадал и бар
+     * ровно 24 часа назад: 289 баров = 24ч 05м (off-by-one).
+     */
+    _rolling24h(base) {
+        const DAY = this.constructor.DAY_SEC;
+        const need = Math.round(DAY / this.constructor.BASE_SEC) - 1;   // 287 -> 288 баров
+        const out = [];
+        let sum = 0, left = 0;
+
+        for (let i = 0; i < base.length; i++) {
+            sum += base[i].volume;
+            // строго '<': бар ровно 24h назад в окно НЕ входит
+            while (base[i].time - base[left].time >= DAY) {
+                sum -= base[left].volume;
+                left++;
+            }
+            out.push({
+                time: base[i].time,
+                value: sum,
+                // окно полное, если в нём действительно 288 баров
+                valid: (i - left) >= need
+            });
+        }
+        return out;
+    }
+
+    /**
+     * [VOL24-FIX] База 5m, покрывающая [fromSec, toSec], с докачкой страницами.
+     * Один запрос к бирже даёт максимум ~1000 баров (83 часа), а для корректного
+     * 24h-окна на всём видимом диапазоне нужно больше — поэтому идём назад
+     * страницами, пока не покроем диапазон или не упрёмся в лимит.
+     */
+    async _getBaseRange(cm, fromSec, toSec) {
+        const now = Date.now();
+        const c = this._baseCache;
+        // [VOL24-FIX] Покрываем ли диапазон — проверяем по ЗАПРОШЕННЫМ границам,
+        // а не по фактически полученным. Биржа никогда не отдаёт бары из будущего,
+        // поэтому c.to всегда меньше toSec (close формирующейся свечи), и проверка
+        // `c.to >= toSec` не проходила НИКОГДА -> каждый пересчёт лез в сеть.
+        // Аналогично слева: если история началась позже fromSec, c.from > fromSec.
+        if (c && (now - c.at) < this.constructor.CACHE_TTL_MS &&
+            c.fromReq <= fromSec && c.toReq >= toSec) {
+            return c.bars;      // кэш покрывает нужный диапазон — без сети
+        }
+
+        const all = [];
+        let cursorMs = toSec * 1000;
+        const minMs = fromSec * 1000;
+
+        for (let page = 0; page < this.constructor.MAX_PAGES; page++) {
+            const batch = await this._fetchKlines(
+                cm.currentSymbol, cm.currentExchange, cm.currentMarketType,
+                this.constructor.BASE_TF, this.constructor.PAGE_SIZE, cursorMs
+            );
+            if (!batch || batch.length === 0) break;
+
+            all.unshift(...batch);                       // batch по возрастанию времени
+            const oldest = batch[0].time * 1000;
+            if (oldest <= minMs) break;                  // диапазон покрыт
+            if (batch.length < this.constructor.PAGE_SIZE) break;   // история кончилась
+            cursorMs = oldest - 1;
+        }
+
+        if (!all.length) return c ? c.bars : [];         // сеть недоступна — берём старый кэш
+
+        // дедупликация и сортировка (страницы могли пересечься)
+        const seen = new Map();
+        for (const b of all) {
+            if (b && isFinite(b.time) && isFinite(b.volume)) seen.set(b.time, b.volume);
+        }
+        const bars = [...seen.keys()].sort((a, b) => a - b)
+            .map(t => ({ time: t, volume: seen.get(t) }));
+
+        this._baseCache = {
+            from: bars.length ? bars[0].time : 0,
+            to: bars.length ? bars[bars.length - 1].time : 0,
+            fromReq: fromSec,      // что реально запрашивали — для проверки покрытия
+            toReq: toSec,
+            bars, at: Date.now()
+        };
+        return bars;
+    }
+
+    /**
+     * [VOL24-FIX] Для ТФ >= 1d: сумма дневных объёмов, попадающих в каждую свечу
+     * главного графика. Работает одинаково для 1d, 1w и 1M.
+     *
+     * Раньше на 1d рисовался объём КАЛЕНДАРНОГО дня, но ПОСЛЕДНЯЯ свеча
+     * перезаписывалась скользящим 24h из отдельного запроса 5m — то есть последний
+     * столбик означал одно, а все остальные другое.
+     */
+    async _calcAggregated(cm, chartData) {
+        const DAY = this.constructor.DAY_SEC;
+        const spanDays = Math.ceil((chartData[chartData.length - 1].time - chartData[0].time) / DAY);
+        const daysNeeded = Math.min(1000, Math.max(60, spanDays + 40));
+
+        const dailyBars = await this._fetchKlines(
+            cm.currentSymbol, cm.currentExchange, cm.currentMarketType, '1d', daysNeeded
+        );
+        if (!dailyBars || dailyBars.length === 0) return;
+
+        const sums = new Float64Array(chartData.length);
+        const has = new Uint8Array(chartData.length);
+
+        for (const b of dailyBars) {
+            if (!b || !isFinite(b.time)) continue;
+            const i = this._findBucketIndex(chartData, b.time);
+            if (i < 0) continue;
+            sums[i] += b.volume || 0;
+            has[i] = 1;
+        }
+
+        const data = [];
+        for (let i = 0; i < chartData.length; i++) {
+            // свеча, на которую не пришлось ни одного дневного бара, не рисуется
+            // (раньше рисовался 0 — выглядело как «объёма не было»)
+            if (!has[i]) continue;
+            data.push({ time: chartData[i].time, value: sums[i] });
+        }
+        this._applySeriesData(data);
+    }
+
+    /** Индекс свечи, в которую попадает момент t: наибольший i с chartData[i].time <= t */
+    _findBucketIndex(chartData, t) {
+        let lo = 0, hi = chartData.length - 1, res = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (chartData[mid].time <= t) { res = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return res;
+    }
+
+    /** Единая точка применения данных: серия + кэши для тултипа */
+    _applySeriesData(data) {
+        if (!this.series || !this.series[0]) return;
+        this.series[0].setData(data);
+        this._volumeData = data.filter(d => d.value > 0);
+        this._volumeMap = new Map(data.map(d => [d.time, d.value]));
+    }
+
+    /* ========================= сеть ========================= */
+
+    /**
+     * @param {number} [endMs] [VOL24-FIX] граница «до» для дозагрузки страницами.
+     *   Binance: &endTime=, Bybit v5: &end= (отдаёт по убыванию, разворачиваем).
+     */
+    async _fetchKlines(symbol, exchange, marketType, tf, limit, endMs = null) {
         const bybitMap = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '1d': 'D', '1w': 'W' };
+        const end = (endMs && isFinite(endMs)) ? Math.floor(endMs) : null;
         let url;
         if (exchange === 'binance') {
             const base = marketType === 'futures' ? 'https://fapi.binance.com/fapi/v1/klines' : 'https://api.binance.com/api/v3/klines';
             url = `${base}?symbol=${symbol}&interval=${tf}&limit=${limit}`;
+            if (end) url += `&endTime=${end}`;
         } else {
             const category = marketType === 'futures' ? 'linear' : 'spot';
             url = `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${symbol}&interval=${bybitMap[tf] || tf}&limit=${limit}`;
+            if (end) url += `&end=${end}`;
         }
 
         const controller = new AbortController();
@@ -1909,7 +2118,8 @@ class Volume24HIndicator extends BaseIndicator {
         }
     }
 
-    // ---------- ТУЛТИП ----------
+    /* ========================= ТУЛТИП ========================= */
+
     _initTooltip() {
         if (document.getElementById('vol24h-tooltip')) return;
         const el = document.createElement('div');
@@ -1960,6 +2170,8 @@ class Volume24HIndicator extends BaseIndicator {
                 this._tooltipEl.style.left = (rect.left + 10) + 'px';
             }
         } else {
+            // [VOL24-FIX] для свечи без корректного 24h-значения тултип прячем,
+            // а не показываем устаревшее число с прошлой свечи
             this._tooltipEl.style.display = 'none';
         }
     }
@@ -1972,10 +2184,46 @@ class Volume24HIndicator extends BaseIndicator {
         return v.toFixed(2) + ' $';
     }
 
+    /* ========================= диагностика ========================= */
+
+    /** В консоли браузера: __vol24hDebug() */
+    _debugDump() {
+        const cm = this.manager?.chartManager;
+        const data = (cm && cm.chartData) || [];
+        const iv = cm && cm.currentInterval;
+        const ivSec = this.constructor.INTERVAL_SECONDS[iv];
+        const c = this._baseCache;
+        const shown = this._volumeData.length;
+        const out = {
+            'свечей на графике': data.length,
+            'таймфрейм': iv,
+            'секунд в баре': ivSec || '—',
+            'режим': (!ivSec || ivSec >= this.constructor.DAY_SEC) ? 'агрегация дневных' : 'скользящие 24h',
+            'диапазон графика': data.length
+                ? (new Date(data[0].time * 1000).toISOString().slice(0, 16) + ' … ' +
+                   new Date(data[data.length - 1].time * 1000).toISOString().slice(0, 16))
+                : '—',
+            'базы 5m загружено': c ? c.bars.length : 0,
+            'база покрывает': c && c.bars.length
+                ? ((c.to - c.from) / 3600).toFixed(1) + ' ч'
+                : '—',
+            'полных 24h-окон': this._baseVolumes.filter(r => r.valid).length,
+            'нарисовано столбиков': shown,
+            'свечей без значения': Math.max(0, data.length - shown),
+            'последнее значение': shown ? this._fmt(this._volumeData[shown - 1].value) : '—',
+            'серия': !!(this.series && this.series[0]),
+            'тултип': !!this._tooltipEl
+        };
+        try { console.table(out); } catch (e) { console.log(out); }
+        return out;
+    }
+
     destroy() {
         if (this._updateInterval) clearInterval(this._updateInterval);
         if (this._pendingTimer) clearTimeout(this._pendingTimer);
         if (this._crosshairTimer) clearTimeout(this._crosshairTimer);
+        if (this._tfTimer) { clearInterval(this._tfTimer); this._tfTimer = null; }   // [VOL24-FIX]
+        this._baseCache = null;
         if (this._tooltipEl) {
             this._tooltipEl.remove();
             this._tooltipEl = null;
@@ -2156,51 +2404,94 @@ class StochRSIIndicator extends BaseIndicator {
 // на архитектуру проекта: BaseIndicator + lightweight-charts primitive.
 // Реализация самостоятельная (JS), не дословный перевод исходника.
 //
-// Что делает:
-//   • берёт последние N свечей (fixed range) и разбивает их ценовой диапазон
-//     на R горизонтальных рядов;
-//   • распределяет объём каждой свечи по рядам: тело получает вес 1, каждая тень
-//     вес 2 (как в оригинале — denom = 2*topWick + 2*botWick + body), объём тени
-//     делится пополам между «ап» и «даун» частями, объём тела уходит целиком
-//     в «ап» на растущей свече и в «даун» на падающей;
-//   • находит POC (ряд с максимальным суммарным объёмом) и Value Area
-//     (расширение от POC вверх/вниз, пока не набрано X% объёма);
-//   • рисует горизонтальную гистограмму в основной панели + линию и метку POC.
-//
-//
-// Класс объявлен прямо в Indicators.js (как остальные индикаторы проекта) и
-// регистрируется в bootIndicators() + экспортируется в window — отдельные
-// <script> и саморегистрация не нужны.
+// [VP-STABLE] Ключевое требование — профиль НЕ должен «скакать»:
+//   1. авто-подбор числа баров убран: на каждый таймфрейм bars/rows задаются
+//      явно (вкладка настроек под каждый ТФ) и не меняются сами;
+//   2. профиль привязан к ВРЕМЕНИ, а не к индексу свечи: при подгрузке истории
+//      во время скролла все логические индексы съезжают, и привязка к индексу
+//      телепортировала гистограмму. Теперь координата якоря каждый кадр
+//      пересчитывается из сохранённого времени;
+//   3. пересчёт запускается только по осмысленным событиям (смена ТФ/символа/
+//      настроек, закрытие свечи) — НЕ на каждый тик и НЕ на подгрузку истории.
+//      Скролл и зум пересчёт не вызывают вообще, только перерисовку.
 // =============================================================================
-
 class VolumeProfileIndicator extends BaseIndicator {
-    // ключ localStorage и дефолты держим в static-полях класса:
-    // Indicators.js — обычный скрипт, и top-level const попал бы в глобальную
-    // область с риском конфликта имён с другими индикаторами.
+    // ключ localStorage и дефолты — в static-полях класса: Indicators.js обычный
+    // скрипт, top-level const попал бы в глобальную область с риском конфликта имён.
     static STORAGE_KEY = 'volumeprofile_settings';
+    // Версия схемы настроек. При несовпадении поля, чей ДЕФОЛТ изменился,
+    // сбрасываются к новому дефолту — иначе значение из localStorage прежней
+    // сборки перекроет его (v2: расположение профиля по умолчанию стало «слева»).
+    static SETTINGS_VERSION = 2;
+
+    // Секунды в баре — только для подписи «≈ N суток» во вкладках настроек.
+    static INTERVAL_SECONDS = {
+        '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+        '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
+        '1d': 86400, '1w': 604800, '1M': 2592000
+    };
+
+    // Порядок вкладок в настройках
+    static TF_ORDER = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '1w', '1M'];
+
+    /**
+     * Рекомендуемые bars/rows под каждый таймфрейм.
+     * Логика: скальпинг — 1 сутки и много рядов; интрадей — 1 неделя;
+     * свинг — 1 месяц и меньше рядов. Все значения помещаются в лимит 5000 баров.
+     */
+    static PER_TF_DEFAULTS = {
+        '1m':  { bars: 1440, rows: 60 },   // 1 сутки
+        '3m':  { bars: 1440, rows: 60 },   // 3 суток
+        '5m':  { bars: 2016, rows: 60 },   // 7 суток
+        '15m': { bars: 672,  rows: 48 },   // 7 суток
+        '30m': { bars: 336,  rows: 48 },   // 7 суток
+        '1h':  { bars: 168,  rows: 48 },   // 7 суток
+        '2h':  { bars: 168,  rows: 48 },   // 14 суток
+        '4h':  { bars: 180,  rows: 36 },   // 30 суток
+        '6h':  { bars: 120,  rows: 36 },   // 30 суток
+        '12h': { bars: 60,   rows: 36 },   // 30 суток
+        '1d':  { bars: 90,   rows: 24 },   // 3 месяца
+        '1w':  { bars: 104,  rows: 24 },   // 2 года
+        '1M':  { bars: 120,  rows: 24 }    // 10 лет
+    };
+
     static DEFAULTS = {
-        bbars: 150,          // Number of Bars (1..500)
-        cnum: 24,            // Row Size (5..100)
-        percent: 70,         // Value Area Volume % (0..100)
+        // [VP-STABLE] авто-режима больше нет: bars/rows берутся из perTF[текущий ТФ]
+        perTF: null,             // заполняется в конструкторе из PER_TF_DEFAULTS
+        fallbackBars: 168,       // если текущий ТФ неизвестен
+        fallbackRows: 48,
 
-        pocColor: '#FF0000', // POC Color
-        pocWidth: 2,         // POC Width (1..5)
-        showPoc: true,       // Show POC Label
+        // [VP-STABLE] когда пересчитывать профиль:
+        //   'bar'    — только когда закрылась свеча (дефолт: стабильно, не скачет)
+        //   'tick'   — на каждое изменение цены/объёма (живой, но дрожит)
+        //   'manual' — только по смене ТФ/символа/настроек и кнопкой
+        refreshMode: 'bar',
 
-        vaUpColor: '#2196F3',   // Value Area Up
-        vaDownColor: '#FF9800', // Value Area Down
+        percent: 70,             // Value Area Volume % — стандарт Market Profile
+
+        pocColor: '#FF0000',
+        pocWidth: 2,
+        showPoc: true,
+
+        vaUpColor: '#2196F3',
+        vaDownColor: '#FF9800',
         vaAlpha: 0.70,
 
-        upColor: '#2196F3',     // UP Volume
-        downColor: '#FF9800',   // Down Volume
+        upColor: '#2196F3',
+        downColor: '#FF9800',
         bodyAlpha: 0.25,
 
-        // --- добавлено при портировании (в оригинале зашито константами) ---
-        widthDivisor: 3,     // максимальная длина ряда = bbars / widthDivisor свечей
-        gapDivisor: 500,     // зазор между рядами = (top - bot) / gapDivisor
-        showVaLines: false,  // линии и метки VAH / VAL
+        widthDivisor: 3,         // максимальная длина ряда = bars / widthDivisor свечей
+        gapDivisor: 500,         // зазор между рядами = (top - bot) / gapDivisor
+        showVaLines: true,       // линии и метки VAH / VAL
         vaLineColor: '#FFFFFF',
-        extendPocRight: true // продлевать линию POC вправо до края панели
+        extendPocRight: true,
+        // [VP-PLACE] Расположение профиля (в TradingView — «Profile Placement»):
+        //   false = СЛЕВА  — гистограмма растёт ВПРАВО от первой свечи диапазона.
+        //                    Это поведение оригинального скрипта и дефолт TradingView.
+        //   true  = СПРАВА — растёт ВЛЕВО от последней свечи, профиль прижат к
+        //                    текущей цене (удобно, но перекрывает последние свечи).
+        anchorRight: false
     };
 
     // meta обязателен: IndicatorFactory.getIndicatorsList() строит меню по нему
@@ -2209,44 +2500,56 @@ class VolumeProfileIndicator extends BaseIndicator {
     constructor(manager) {
         super(manager, 'volumeprofile', 'Volume Profile', '#2196F3', 'main');
 
-        // BaseIndicator.constructor уже записал this.settings = {color, lineWidth}
-        // и вызвал this.visible = true — setter ниже это переживает (см. guard).
         const saved = this._loadSettings();
+        // миграция: сохранение от прошлой версии схемы не должно перекрывать
+        // новые дефолты (в v1 anchorRight=true, в v2 — false/«слева»)
+        if (saved && saved.__v !== this.constructor.SETTINGS_VERSION) {
+            delete saved.anchorRight;
+        }
         this.settings = Object.assign({}, this.constructor.DEFAULTS, this.settings, saved);
         this.settings.color = this.settings.color || this.constructor.DEFAULTS.upColor;
+        this.settings.__v = this.constructor.SETTINGS_VERSION;
 
-        this._profile = null;          // кэш рассчитанного профиля
-        this._settingsSig = '';        // сигнатура настроек (для автпересчёта)
+        // perTF всегда должен быть полным: дополняем сохранённое дефолтами,
+        // иначе после обновления списка ТФ новых вкладок не будет
+        this.settings.perTF = this._mergePerTF(this.settings.perTF);
+
+        this._profile = null;
+        this._settingsSig = '';
         this._primitive = null;
         this._attachedSeries = null;
         this._requestUpdate = null;
         this._attachTimeout = null;
         this._recomputeTimeout = null;
         this._fallbackTimer = null;
-        this._lastDataLen = -1;
-        this._lastBarSig = '';
         this._colorCache = new Map();
         this._destroyed = false;
         this._initialized = true;
+
+        // [VP-STABLE] состояние наблюдателя: что именно уже видели
+        this._seen = { tf: null, symbol: null, sig: null, barTime: null };
+        // счётчик подгрузок истории — нужен только для диагностики
+        this._recomputeReasons = {};
 
         this.metrics = {
             poc: null, vah: null, val: null,
             pocRow: -1, vaHighRow: -1, vaLowRow: -1,
             totalVolume: 0, vaVolume: 0, vaPercentActual: 0,
             rangeHigh: null, rangeLow: null, rows: 0, bars: 0,
+            tf: null, refreshMode: 'bar',
+            firstTime: null, lastTime: null,
             isValid: false
         };
 
+        this._initTabsHelper();
         this._setupListeners();
         this._attach();
 
-        // диагностика: в консоли браузера выполнить  __vpDebug()
         try {
             if (typeof window !== 'undefined') window.__vpDebug = () => this._debugDump();
         } catch (e) {}
 
-        // первичный расчёт: данные могут ещё не быть загружены
-        setTimeout(() => { this.recompute(); }, 600);
+        setTimeout(() => { this.recompute('init'); }, 600);
     }
 
     /* ------------------------- видимость ------------------------- */
@@ -2255,8 +2558,8 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     set visible(value) {
         this._visible = !!value;
-        // guard: сеттер вызывается из конструктора BaseIndicator,
-        // когда _primitive ещё не существует
+        // guard: сеттер вызывается из конструктора BaseIndicator, когда
+        // _primitive ещё не существует
         if (this._initialized && this._primitive && this._primitive.requestRedraw) {
             try { this._primitive.requestRedraw(); } catch (e) {}
         }
@@ -2264,14 +2567,12 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     /* ------------------------- интеграция ------------------------- */
 
-    // Worker не используется: расчёт лёгкий и синхронный, рисуем примитивом.
     getWorkerType() { return null; }
     calculateAsync() {}
     onCalculateResult() {}
 
     // Примитив рисуется поверх серии, отдельные series не нужны.
-    // ВАЖНО: IndicatorManager.addIndicator() требует truthy-возврат,
-    // поэтому возвращаем массив (пустой массив — truthy).
+    // ВАЖНО: IndicatorManager.addIndicator() требует truthy-возврат.
     createSeries() {
         this.series = [];
         return this.series;
@@ -2279,30 +2580,71 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     _createEmptySeries() { this.series = []; }
 
-    updateSeriesData() { this.scheduleRecompute(); }
+    updateSeriesData() { /* пересчёт решает наблюдатель, а не worker */ }
+
+    /**
+     * BaseIndicator.updateSettings() после применения настроек дёргает
+     * calculateAsync(), а он у нас no-op. Без переопределения программный вызов
+     * updateSettings() не пересчитал бы профиль сразу.
+     */
+    updateSettings(newSettings) {
+        super.updateSettings(newSettings);
+        if (newSettings && newSettings.perTF) {
+            this.settings.perTF = this._mergePerTF(this.settings.perTF);
+        }
+        this._sanitizeSettings();
+        this._colorCache.clear();
+        this.recompute('settings');
+    }
 
     /* ------------------------- настройки ------------------------- */
 
     _loadSettings() {
         try {
-            const raw = localStorage && localStorage.getItem(this.constructor.STORAGE_KEY);
+            const raw = localStorage.getItem(this.constructor.STORAGE_KEY);
             return raw ? (JSON.parse(raw) || {}) : {};
         } catch (e) { return {}; }
     }
 
     _saveSettings() {
         try {
-            if (localStorage) localStorage.setItem(this.constructor.STORAGE_KEY, JSON.stringify(this.settings));
+            localStorage.setItem(this.constructor.STORAGE_KEY, JSON.stringify(this.settings));
         } catch (e) {}
     }
 
+    /** perTF всегда полный: сохранённые значения поверх рекомендованных дефолтов */
+    _mergePerTF(saved) {
+        const D = this.constructor.PER_TF_DEFAULTS;
+        const out = {};
+        for (const tf of Object.keys(D)) {
+            const src = (saved && saved[tf]) || {};
+            out[tf] = {
+                bars: this._clampInt(src.bars, D[tf].bars, 1, 5000),
+                rows: this._clampInt(src.rows, D[tf].rows, 5, 100)
+            };
+        }
+        return out;
+    }
+
+    /**
+     * «Пустое» значение — то, из которого нельзя понять намерение пользователя.
+     * null и '' входят сюда, потому что Number(null) === 0 и Number('') === 0 —
+     * без этой проверки cnum:null дал бы МИНИМУМ вместо дефолта.
+     */
+    _isBlank(v) {
+        return v === undefined || v === null || v === '' ||
+            (typeof v === 'string' && v.trim() === '');
+    }
+
     _clampInt(v, fallback, min, max) {
+        if (this._isBlank(v)) return fallback;
         const n = Math.round(Number(v));
         if (!isFinite(n)) return fallback;
         return Math.min(max, Math.max(min, n));
     }
 
     _clampFloat(v, fallback, min, max) {
+        if (this._isBlank(v)) return fallback;
         const n = Number(v);
         if (!isFinite(n)) return fallback;
         return Math.min(max, Math.max(min, n));
@@ -2314,20 +2656,92 @@ class VolumeProfileIndicator extends BaseIndicator {
         return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s) ? s : fallback;
     }
 
+    _sanitizeSettings() {
+        const s = this.settings;
+        const D = this.constructor.DEFAULTS;
+        s.perTF = this._mergePerTF(s.perTF);
+        s.fallbackBars = this._clampInt(s.fallbackBars, D.fallbackBars, 1, 5000);
+        s.fallbackRows = this._clampInt(s.fallbackRows, D.fallbackRows, 5, 100);
+        s.refreshMode = ['bar', 'tick', 'manual'].includes(s.refreshMode) ? s.refreshMode : 'bar';
+        s.percent = this._clampFloat(s.percent, D.percent, 0, 100);
+        s.widthDivisor = this._clampFloat(s.widthDivisor, D.widthDivisor, 0.5, 20);
+        s.gapDivisor = this._clampFloat(s.gapDivisor, D.gapDivisor, 50, 100000);
+        s.pocWidth = this._clampInt(s.pocWidth, D.pocWidth, 1, 5);
+        s.vaAlpha = this._clampFloat(s.vaAlpha, D.vaAlpha, 0, 1);
+        s.bodyAlpha = this._clampFloat(s.bodyAlpha, D.bodyAlpha, 0, 1);
+        s.pocColor = this._normHex(s.pocColor, D.pocColor);
+        s.vaUpColor = this._normHex(s.vaUpColor, D.vaUpColor);
+        s.vaDownColor = this._normHex(s.vaDownColor, D.vaDownColor);
+        s.upColor = this._normHex(s.upColor, D.upColor);
+        s.downColor = this._normHex(s.downColor, D.downColor);
+        s.vaLineColor = this._normHex(s.vaLineColor, D.vaLineColor);
+        s.showPoc = s.showPoc !== false;
+        s.showVaLines = !!s.showVaLines;
+        s.extendPocRight = s.extendPocRight !== false;
+        s.anchorRight = !!s.anchorRight;
+        return s;
+    }
+
+    /** Нормализованный ключ текущего таймфрейма ('60' -> '1h', '1M' остаётся месяцем) */
+    _tfKey() {
+        const cm = this.manager && this.manager.chartManager;
+        const raw = cm && cm.currentInterval;
+        if (!raw) return '1h';
+        const s = String(raw).trim();
+        if (s === '1M' || s === 'M' || s.toLowerCase() === 'month') return '1M';
+        const i = s.toLowerCase();
+        const map = {
+            '1': '1m', '1m': '1m', 'm1': '1m',
+            '3': '3m', '3m': '3m',
+            '5': '5m', '5m': '5m',
+            '15': '15m', '15m': '15m',
+            '30': '30m', '30m': '30m',
+            '60': '1h', '1h': '1h', 'h1': '1h',
+            '120': '2h', '2h': '2h',
+            '240': '4h', '4h': '4h',
+            '360': '6h', '6h': '6h',
+            '720': '12h', '12h': '12h',
+            '1d': '1d', 'd': '1d', 'day': '1d',
+            '1w': '1w', 'w': '1w', 'week': '1w'
+        };
+        return map[i] || null;
+    }
+
+    /** bars/rows для текущего таймфрейма (из perTF, иначе fallback) */
+    _tfSettings() {
+        const key = this._tfKey();
+        const s = this.settings;
+        const per = key && s.perTF ? s.perTF[key] : null;
+        if (per) {
+            return {
+                key: key,
+                bars: this._clampInt(per.bars, s.fallbackBars, 1, 5000),
+                rows: this._clampInt(per.rows, s.fallbackRows, 5, 100)
+            };
+        }
+        return {
+            key: key,
+            bars: this._clampInt(s.fallbackBars, this.constructor.DEFAULTS.fallbackBars, 1, 5000),
+            rows: this._clampInt(s.fallbackRows, this.constructor.DEFAULTS.fallbackRows, 5, 100)
+        };
+    }
+
     _settingsSignature() {
         const s = this.settings;
-        return [s.bbars, s.cnum, s.percent, s.widthDivisor, s.gapDivisor,
-            s.pocColor, s.pocWidth, s.showPoc, s.vaUpColor, s.vaDownColor, s.vaAlpha,
-            s.upColor, s.downColor, s.bodyAlpha, s.showVaLines, s.vaLineColor,
-            s.extendPocRight].join('|');
+        // ТФ входит в сигнатуру: bars/rows теперь зависят от таймфрейма
+        const tf = this._tfSettings();
+        return [tf.key, tf.bars, tf.rows, s.refreshMode, s.percent,
+            s.widthDivisor, s.gapDivisor, s.pocColor, s.pocWidth, s.showPoc,
+            s.vaUpColor, s.vaDownColor, s.vaAlpha, s.upColor, s.downColor, s.bodyAlpha,
+            s.showVaLines, s.vaLineColor, s.extendPocRight, s.anchorRight].join('|');
     }
 
     /* ------------------------- расчёт профиля ------------------------- */
 
     /**
      * Распределяет объём ценового отрезка [pFrom, pTo] по рядам.
-     * volPerPrice — объём на единицу цены внутри отрезка; суммарно по всем
-     * рядам добавится ровно volPerPrice * (pTo - pFrom), т.е. объём сохраняется.
+     * volPerPrice — объём на единицу цены; суммарно по рядам добавится ровно
+     * volPerPrice * (pTo - pFrom), то есть объём сохраняется.
      */
     _distribute(pFrom, pTo, volPerPrice, target, bot, step, rows) {
         if (!(pTo > pFrom) || !(volPerPrice > 0)) return;
@@ -2343,22 +2757,24 @@ class VolumeProfileIndicator extends BaseIndicator {
     }
 
     /**
-     * Полный пересчёт профиля. Возвращает объект профиля или null.
-     * Сложность O(bars * рядов_на_свечу) — благодаря ограничению диапазона
-     * рядов по цене свечи это заметно дешевле «в лоб» O(bars * rows).
+     * Полный пересчёт профиля.
+     * @param {Array} data        свечи
+     * @param {Object} [options]  { bars, rows, percent } — явные переопределения
+     *                            (для вызова извне и из тестов)
      */
     computeProfile(data, options) {
         const opt = options || {};
-        const barsReq = this._clampInt(opt.bbars !== undefined ? opt.bbars : this.settings.bbars, this.constructor.DEFAULTS.bbars, 1, 5000);
-        const rows = this._clampInt(opt.cnum !== undefined ? opt.cnum : this.settings.cnum, this.constructor.DEFAULTS.cnum, 2, 500);
-        const percent = this._clampFloat(opt.percent !== undefined ? opt.percent : this.settings.percent, this.constructor.DEFAULTS.percent, 0, 100);
+        const tf = this._tfSettings();
+        const barsReq = this._clampInt(opt.bbars !== undefined ? opt.bbars : opt.bars, tf.bars, 1, 5000);
+        const rows = this._clampInt(opt.cnum !== undefined ? opt.cnum : opt.rows, tf.rows, 5, 100);
+        const percent = this._clampFloat(opt.percent !== undefined ? opt.percent : this.settings.percent,
+            this.constructor.DEFAULTS.percent, 0, 100);
 
         if (!Array.isArray(data) || data.length < 2) return null;
 
         const bars = Math.max(1, Math.min(barsReq, data.length));
         const start = data.length - bars;
 
-        // --- границы диапазона ---
         let top = -Infinity, bot = Infinity;
         for (let i = start; i < data.length; i++) {
             const h = Number(data[i].high), l = Number(data[i].low);
@@ -2394,8 +2810,8 @@ class VolumeProfileIndicator extends BaseIndicator {
             const green = cl >= o;
 
             if (!(denom > 0)) {
-                // h == l == o == c: весь объём в один ряд (в оригинале здесь
-                // возникал 0/0 -> na и «отравлял» ряд; у нас — явная ветка)
+                // h == l == o == c: весь объём в один ряд
+                // (в оригинальном скрипте здесь возникал 0/0 -> na и «отравлял» ряд)
                 let x = Math.floor((cl - bot) / step);
                 if (x < 0) x = 0;
                 if (x >= rows) x = rows - 1;
@@ -2407,11 +2823,9 @@ class VolumeProfileIndicator extends BaseIndicator {
             const twVol = 2 * topWick * v / denom;
             const bwVol = 2 * botWick * v / denom;
 
-            // тело: целиком в «ап» на растущей свече, в «даун» на падающей
             if (body > 0 && bodyVol > 0) {
                 this._distribute(bodyBot, bodyTop, bodyVol / body, green ? up : dn, bot, step, rows);
             }
-            // тени: объём делится пополам между «ап» и «даун»
             if (topWick > 0 && twVol > 0) {
                 const half = (twVol / topWick) / 2;
                 this._distribute(bodyTop, h, half, up, bot, step, rows);
@@ -2424,7 +2838,6 @@ class VolumeProfileIndicator extends BaseIndicator {
             }
         }
 
-        // --- итоги, POC ---
         const total = new Float64Array(rows);
         let sum = 0, maxVol = 0, pocRow = 0;
         for (let x = 0; x < rows; x++) {
@@ -2435,7 +2848,6 @@ class VolumeProfileIndicator extends BaseIndicator {
         }
         if (!(maxVol > 0) || !(sum > 0)) return null;
 
-        // --- Value Area: расширение от POC в сторону большего объёма ---
         const vaTarget = sum * percent / 100;
         let vaTotal = total[pocRow];
         let vaHighRow = pocRow, vaLowRow = pocRow;
@@ -2448,29 +2860,27 @@ class VolumeProfileIndicator extends BaseIndicator {
             else { vaTotal += lowerVol; vaLowRow--; }
         }
 
-        const levelAt = (x) => bot + step * x;
-
         return {
-            rows, bars, start,
-            startIndex: start,
-            lastIndex: data.length - 1,
+            rows, bars, tf: tf.key,
+            // [VP-STABLE] привязка к ВРЕМЕНИ, а не к индексу
             firstTime: data[start] ? data[start].time : null,
+            lastTime: data[data.length - 1] ? data[data.length - 1].time : null,
+            firstIndexAtCalc: start,
             top, bot, step,
-            levels: levelAt,               // функция, чтобы не хранить массив
             up, dn, total,
             maxVol, sum,
             pocRow,
             pocPrice: bot + step * (pocRow + 0.5),
             vaHighRow, vaLowRow,
-            vah: levelAt(vaHighRow + 1),
-            val: levelAt(vaLowRow),
+            vah: bot + step * (vaHighRow + 1),
+            val: bot + step * vaLowRow,
             vaTotal, vaTarget,
             vaPercentActual: sum > 0 ? (vaTotal / sum) * 100 : 0,
             volumeSum
         };
     }
 
-    recompute() {
+    recompute(reason) {
         if (this._destroyed) return;
         try {
             const cm = this.manager && this.manager.chartManager;
@@ -2478,6 +2888,7 @@ class VolumeProfileIndicator extends BaseIndicator {
             const p = this.computeProfile(data);
             this._profile = p;
 
+            const tf = this._tfSettings();
             if (p) {
                 this.metrics = {
                     poc: p.pocPrice, vah: p.vah, val: p.val,
@@ -2486,86 +2897,113 @@ class VolumeProfileIndicator extends BaseIndicator {
                     vaPercentActual: p.vaPercentActual,
                     rangeHigh: p.top, rangeLow: p.bot,
                     rows: p.rows, bars: p.bars,
+                    tf: p.tf, refreshMode: this.settings.refreshMode,
+                    firstTime: p.firstTime, lastTime: p.lastTime,
                     isValid: true
                 };
             } else {
                 this.metrics = {
                     poc: null, vah: null, val: null, pocRow: -1, vaHighRow: -1, vaLowRow: -1,
                     totalVolume: 0, vaVolume: 0, vaPercentActual: 0,
-                    rangeHigh: null, rangeLow: null, rows: 0, bars: 0, isValid: false
+                    rangeHigh: null, rangeLow: null, rows: 0, bars: 0,
+                    tf: tf.key, refreshMode: this.settings.refreshMode,
+                    firstTime: null, lastTime: null, isValid: false
                 };
             }
 
-            this._lastDataLen = data ? data.length : 0;
             this._settingsSig = this._settingsSignature();
+            if (reason) this._recomputeReasons[reason] = (this._recomputeReasons[reason] || 0) + 1;
             this.requestRedraw();
         } catch (e) {
             console.warn('[VolumeProfile] recompute:', e);
         }
     }
 
-    scheduleRecompute() {
-        if (this._destroyed || this._recomputeTimeout) return;
-        // троттлинг: профиль считается не чаще раза в 200 мс
+    scheduleRecompute(reason) {
+        if (this._destroyed || this._recomputeTimeout !== null) return;
         this._recomputeTimeout = setTimeout(() => {
             this._recomputeTimeout = null;
-            this.recompute();
+            this.recompute(reason || 'scheduled');
         }, 200);
     }
 
-    /* ------------------------- события ------------------------- */
+    /* ------------------------- наблюдатель ------------------------- */
 
     _setupListeners() {
         const cm = this.manager && this.manager.chartManager;
         if (!cm) return;
 
         if (typeof cm._subscribeToSymbolChange === 'function') {
-            this._symbolUnsub = true;
             cm._subscribeToSymbolChange(() => {
-                setTimeout(() => { this._attach(true); this.recompute(); }, 400);
+                setTimeout(() => { this._attach(true); this.recompute('symbol'); }, 400);
             });
         }
         if (typeof cm.on === 'function') {
             cm.on('dataUpdate', () => this._onDataUpdate());
         }
+        this._startWatcher();
+    }
 
-        // фолбэк-таймер: dataUpdate есть не во всех ветках загрузки данных
-        let lastLen = -1, lastSig = '';
+    /**
+     * [VP-STABLE] Единственное место, где принимается решение о пересчёте.
+     *
+     * Пересчёт — ТОЛЬКО по осмысленным событиям:
+     *   смена таймфрейма, смена символа, смена настроек, закрытие свечи
+     *   (и то лишь в режимах 'bar'/'tick').
+     *
+     * Чего пересчёт НЕ делает:
+     *   • скролл и зум — данные не меняются, меняется только отрисовка;
+     *   • подгрузка ИСТОРИИ при скролле влево — chartData.length растёт, но
+     *     время последней свечи то же. Раньше именно это и вызывало «скачок»:
+     *     окно «последние N баров» съезжало, плюс логические индексы всех свечей
+     *     смещались, а профиль был привязан к индексу.
+     */
+    _startWatcher() {
+        // [VP-STABLE] проверяем на null, а не на truthy: идентификатор таймера
+        // может быть равен 0, и `if (this._fallbackTimer)` завёл бы ВТОРОЙ
+        // наблюдатель, а destroy() не смог бы его остановить.
+        if (this._fallbackTimer !== null) return;
         this._fallbackTimer = setInterval(() => {
             if (this._destroyed) return;
-            const data = this.manager && this.manager.chartManager && this.manager.chartManager.chartData;
+            const cm = this.manager && this.manager.chartManager;
+            if (!cm) return;
+            const data = cm.chartData;
             if (!data || !data.length) return;
 
-            const last = data[data.length - 1];
-            const sig = data.length + ':' + (last ? last.close + '/' + last.volume : '');
-            const sigChanged = sig !== lastSig;
-            lastLen = data.length;
-            lastSig = sig;
+            const tf = this._tfKey();
+            const sym = cm.currentSymbol || null;
+            const sig = this._settingsSignature();
+            const barTime = data[data.length - 1].time;
+            const seen = this._seen;
 
-            // смена типа графика (candle <-> bar) -> переприсоединяем примитив
+            const tfChanged = seen.tf !== null && tf !== seen.tf;
+            const symChanged = seen.symbol !== null && sym !== seen.symbol;
+            const sigChanged = seen.sig !== null && sig !== seen.sig;
+            const newBar = seen.barTime !== null && barTime !== seen.barTime;
+            const first = (seen.tf === null);
+
+            seen.tf = tf; seen.symbol = sym; seen.sig = sig; seen.barTime = barTime;
+
+            // переприсоединяем примитив, если сменился тип графика (candle <-> bar)
             this._attach(true);
 
-            const settingsSig = this._settingsSignature();
-            if (sigChanged || settingsSig !== this._settingsSig) {
-                this.recompute();
-            } else {
-                this.requestRedraw();
-            }
+            if (first) { this.recompute('first'); return; }
+            if (tfChanged) { this.recompute('timeframe'); return; }
+            if (symChanged) { this.recompute('symbol'); return; }
+            if (sigChanged) { this.recompute('settings'); return; }
+
+            const mode = this.settings.refreshMode;
+            if (mode === 'manual') return;                 // только перерисовка
+            if (newBar) { this.recompute('newbar'); return; }
+            if (mode === 'tick') { this.scheduleRecompute('tick'); return; }
+            // режим 'bar': внутри свечи профиль НЕ пересчитываем — он стабильный
         }, 500);
     }
 
     _onDataUpdate() {
-        const data = this.manager && this.manager.chartManager && this.manager.chartManager.chartData;
-        const last = data && data.length ? data[data.length - 1] : null;
-        const sig = last ? (last.close + '/' + last.volume) : '';
-        // пересчитываем только если изменилась длина или последняя свеча
-        if (data && data.length === this._lastDataLen && sig === this._lastBarSig &&
-            this._settingsSig === this._settingsSignature()) {
-            this.requestRedraw();
-            return;
-        }
-        this._lastBarSig = sig;
-        this.scheduleRecompute();
+        // dataUpdate приходит на каждый тик; решение о пересчёте всё равно
+        // принимает наблюдатель, поэтому здесь только дешёвая перерисовка
+        this.requestRedraw();
     }
 
     /* ------------------------- примитив ------------------------- */
@@ -2580,12 +3018,13 @@ class VolumeProfileIndicator extends BaseIndicator {
         if (this._destroyed) return;
         const series = this._getSeries();
         if (!series || typeof series.attachPrimitive !== 'function') {
-            if (!this._attachTimeout) this._attachTimeout = setTimeout(() => { this._attachTimeout = null; this._attach(); }, 500);
+            if (this._attachTimeout === null) {
+                this._attachTimeout = setTimeout(() => { this._attachTimeout = null; this._attach(); }, 500);
+            }
             return;
         }
         if (this._primitive && this._attachedSeries === series && !force) return;
 
-        // отсоединяем от прежней серии (смена типа графика / пересоздание чарта)
         if (this._primitive && this._attachedSeries && this._attachedSeries !== series) {
             try { this._attachedSeries.detachPrimitive(this._primitive); } catch (e) {}
             this._primitive = null;
@@ -2620,7 +3059,7 @@ class VolumeProfileIndicator extends BaseIndicator {
         }
     }
 
-    /* ------------------------- рисование ------------------------- */
+    /* ------------------------- отрисовка ------------------------- */
 
     _rgba(hex, alpha) {
         const key = hex + '|' + alpha;
@@ -2644,7 +3083,31 @@ class VolumeProfileIndicator extends BaseIndicator {
         return 8;
     }
 
+    /**
+     * [VP-STABLE] Индекс свечи ПО ВРЕМЕНИ.
+     * Хранить индекс из момента расчёта нельзя: при подгрузке истории во время
+     * скролла все логические индексы смещаются, и профиль «телепортировался».
+     */
+    _indexByTime(data, time) {
+        if (time == null || !data || !data.length) return null;
+        const cm = this.manager && this.manager.chartManager;
+        const map = cm && cm._candleTimeMap;
+        if (map) {
+            const i = map.get(time);
+            if (i !== undefined && i >= 0 && i < data.length && data[i].time === time) return i;
+        }
+        let lo = 0, hi = data.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const t = data[mid].time;
+            if (t === time) return mid;
+            if (t < time) lo = mid + 1; else hi = mid - 1;
+        }
+        return null;
+    }
+
     _xForIndex(timeScale, index, data) {
+        if (index == null) return null;
         try {
             if (typeof timeScale.logicalToCoordinate === 'function') {
                 const x = timeScale.logicalToCoordinate(index);
@@ -2678,17 +3141,27 @@ class VolumeProfileIndicator extends BaseIndicator {
         const data = cm.chartData;
         if (!data || !data.length) return;
 
+        // [VP-STABLE] индексы пересчитываем из ВРЕМЕНИ каждый кадр
+        const startIdx = this._indexByTime(data, p.firstTime);
+        if (startIdx === null) {
+            // свеча диапазона исчезла (другой символ/глубокая подгрузка) —
+            // профиль больше не актуален, просим пересчёт и ничего не рисуем
+            this.scheduleRecompute('stale');
+            return;
+        }
+        let lastIdx = this._indexByTime(data, p.lastTime);
+        if (lastIdx === null) lastIdx = data.length - 1;
+
         const s = this.settings;
         const bs = this._barSpacing(timeScale);
-        const x0 = this._xForIndex(timeScale, p.startIndex, data);
+        const anchorRight = !!s.anchorRight;
+        const x0 = this._xForIndex(timeScale, anchorRight ? lastIdx + 1 : startIdx, data);
         if (x0 === null) return;
 
         const widthDivisor = this._clampFloat(s.widthDivisor, this.constructor.DEFAULTS.widthDivisor, 0.5, 20);
         const gapDivisor = this._clampFloat(s.gapDivisor, this.constructor.DEFAULTS.gapDivisor, 50, 100000);
-        // максимальная длина ряда в пикселях (в оригинале — bbars/3 свечей)
         const maxLenPx = (p.bars / widthDivisor) * bs;
         if (!(maxLenPx > 0)) return;
-        // зазор между рядами, как dist = (top - bot) / 500 в оригинале
         const gapPrice = (p.top - p.bot) / gapDivisor;
 
         const priceToY = (price) => series.priceToCoordinate(price);
@@ -2706,11 +3179,9 @@ class VolumeProfileIndicator extends BaseIndicator {
 
             const xStart = x0 * hpr;
 
-            // --- гистограмма ---
             for (let x = 0; x < p.rows; x++) {
                 const pBot = p.bot + p.step * x;
                 const pTop = pBot + p.step;
-                // сужаем ряд на gapPrice сверху и снизу (аналог dist в оригинале)
                 const yTop = priceToY(pTop - gapPrice);
                 const yBot = priceToY(pBot + gapPrice);
                 if (yTop === null || yBot === null) continue;
@@ -2723,37 +3194,45 @@ class VolumeProfileIndicator extends BaseIndicator {
                 const lenUp = (p.up[x] / p.maxVol) * maxLenPx;
                 const lenDn = (p.dn[x] / p.maxVol) * maxLenPx;
 
-                if (lenUp > 0) {
-                    ctx.fillStyle = inVA ? fillVaUp : fillUp;
-                    ctx.fillRect(xStart, top, lenUp * hpr, height);
-                }
-                if (lenDn > 0) {
-                    ctx.fillStyle = inVA ? fillVaDown : fillDown;
-                    ctx.fillRect(xStart + lenUp * hpr, top, lenDn * hpr, height);
+                if (anchorRight) {
+                    if (lenUp > 0) {
+                        ctx.fillStyle = inVA ? fillVaUp : fillUp;
+                        ctx.fillRect(xStart - lenUp * hpr, top, lenUp * hpr, height);
+                    }
+                    if (lenDn > 0) {
+                        ctx.fillStyle = inVA ? fillVaDown : fillDown;
+                        ctx.fillRect(xStart - (lenUp + lenDn) * hpr, top, lenDn * hpr, height);
+                    }
+                } else {
+                    if (lenUp > 0) {
+                        ctx.fillStyle = inVA ? fillVaUp : fillUp;
+                        ctx.fillRect(xStart, top, lenUp * hpr, height);
+                    }
+                    if (lenDn > 0) {
+                        ctx.fillStyle = inVA ? fillVaDown : fillDown;
+                        ctx.fillRect(xStart + lenUp * hpr, top, lenDn * hpr, height);
+                    }
                 }
             }
 
-            // --- линии VAH / VAL (опционально) ---
             if (s.showVaLines) {
-                this._drawHLine(ctx, priceToY(p.vah), hpr, vpr, mediaW, s.vaLineColor, 1, x0);
-                this._drawHLine(ctx, priceToY(p.val), hpr, vpr, mediaW, s.vaLineColor, 1, x0);
+                this._drawHLine(ctx, priceToY(p.vah), hpr, vpr, mediaW, s.vaLineColor, 1, 0);
+                this._drawHLine(ctx, priceToY(p.val), hpr, vpr, mediaW, s.vaLineColor, 1, 0);
                 this._drawTag(ctx, 'VAH ' + this._fmt(p.vah), priceToY(p.vah), hpr, vpr, mediaW, s.vaLineColor);
                 this._drawTag(ctx, 'VAL ' + this._fmt(p.val), priceToY(p.val), hpr, vpr, mediaW, s.vaLineColor);
             }
 
-            // --- POC ---
             if (s.showPoc !== false) {
                 const yPoc = priceToY(p.pocPrice);
                 if (yPoc !== null) {
                     const w = this._clampInt(s.pocWidth, this.constructor.DEFAULTS.pocWidth, 1, 5);
-                    const fromX = s.extendPocRight === false ? x0 : 0;
+                    const fromX = (s.extendPocRight === false && !anchorRight) ? x0 : 0;
                     this._drawHLine(ctx, yPoc, hpr, vpr, mediaW, s.pocColor, w, fromX);
 
-                    // метка: 15 свечей правее последнего бара (как в оригинале),
-                    // но не дальше правого края панели
-                    const xLast = this._xForIndex(timeScale, p.lastIndex, data);
-                    let labelX = (xLast !== null ? xLast + 15 * bs : mediaW - 10);
-                    this._drawPocLabel(ctx, 'POC: ' + this._fmt(p.pocPrice), labelX, yPoc,
+                    let labelX = (anchorRight ? (lastIdx - 15) : (lastIdx + 15));
+                    const xLabel = this._xForIndex(timeScale, Math.max(0, labelX), data);
+                    this._drawPocLabel(ctx, 'POC: ' + this._fmt(p.pocPrice),
+                        xLabel !== null ? xLabel : mediaW - 10, yPoc,
                         hpr, vpr, mediaW, s.pocColor, data[data.length - 1]);
                 }
             }
@@ -2774,7 +3253,7 @@ class VolumeProfileIndicator extends BaseIndicator {
         ctx.restore();
     }
 
-    _measure(ctx, text, vpr) {
+    _measure(ctx, text) {
         ctx.save();
         ctx.font = '11px "JetBrains Mono", monospace';
         const w = ctx.measureText(text).width;
@@ -2784,7 +3263,7 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     _drawTag(ctx, text, yMedia, hpr, vpr, mediaW, color) {
         if (yMedia === null || !isFinite(yMedia)) return;
-        const m = this._measure(ctx, text, vpr);
+        const m = this._measure(ctx, text);
         const padX = 5, padY = 3;
         const w = (m.w + padX * 2) * hpr;
         const h = (m.h + padY) * vpr;
@@ -2802,7 +3281,7 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     _drawPocLabel(ctx, text, xMedia, yMedia, hpr, vpr, mediaW, color, lastCandle) {
         if (yMedia === null || !isFinite(yMedia)) return;
-        const m = this._measure(ctx, text, vpr);
+        const m = this._measure(ctx, text);
         const padX = 6, padY = 4;
         const w = (m.w + padX * 2) * hpr;
         const h = (m.h + padY * 2) * vpr;
@@ -2811,21 +3290,19 @@ class VolumeProfileIndicator extends BaseIndicator {
         if (x + w > mediaW * hpr - 2 * hpr) x = mediaW * hpr - w - 2 * hpr;
         if (x < 2 * hpr) x = 2 * hpr;
 
-        // стиль метки: выше линии, если цена над POC, и ниже — если под (как в оригинале)
-        const above = lastCandle && isFinite(Number(lastCandle.close)) && Number(lastCandle.close) >= this._profile.pocPrice;
+        const above = lastCandle && isFinite(Number(lastCandle.close)) &&
+            Number(lastCandle.close) >= this._profile.pocPrice;
         const tail = 6 * vpr;
         const y = above ? (yMedia * vpr - h - tail) : (yMedia * vpr + tail);
 
         ctx.save();
         ctx.fillStyle = color;
         ctx.beginPath();
-        // прямоугольник со «хвостом» к линии
         const r = 3 * vpr;
         const cx = x + w / 2;
         ctx.moveTo(x + r, y);
         ctx.lineTo(x + w - r, y);
         ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        if (!above) { ctx.lineTo(cx + 5 * hpr, y); }
         ctx.lineTo(x + w, y + h - r);
         ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
         if (above) {
@@ -2868,94 +3345,196 @@ class VolumeProfileIndicator extends BaseIndicator {
         return price.toPrecision(4);
     }
 
-    /* ------------------------- UI настроек ------------------------- */
+    /* ------------------------- вкладки настроек ------------------------- */
+
+    _initTabsHelper() {
+        try {
+            if (typeof window === 'undefined' || window.__vpTab) return;
+            window.__vpTab = function (id) {
+                const panes = document.querySelectorAll('[id^="vp_tab_"]');
+                for (let i = 0; i < panes.length; i++) panes[i].style.display = 'none';
+                const btns = document.querySelectorAll('[id^="vp_tabbtn_"]');
+                for (let i = 0; i < btns.length; i++) {
+                    btns[i].style.background = '#1E1E1E';
+                    btns[i].style.color = '#B0B0B0';
+                    btns[i].style.borderColor = '#404040';
+                }
+                const pane = document.getElementById('vp_tab_' + id);
+                if (pane) pane.style.display = 'block';
+                const btn = document.getElementById('vp_tabbtn_' + id);
+                if (btn) {
+                    btn.style.background = '#2196F3';
+                    btn.style.color = '#FFFFFF';
+                    btn.style.borderColor = '#2196F3';
+                }
+            };
+        } catch (e) {}
+    }
+
+    _daysLabel(tf, bars) {
+        const sec = this.constructor.INTERVAL_SECONDS[tf];
+        if (!sec) return '';
+        const days = (bars * sec) / 86400;
+        if (days < 1) {
+            const hours = (bars * sec) / 3600;
+            return '≈ ' + (hours < 1 ? (hours * 60).toFixed(0) + ' мин' : hours.toFixed(1) + ' ч');
+        }
+        if (days < 60) return '≈ ' + (days % 1 === 0 ? days.toFixed(0) : days.toFixed(1)) + ' сут';
+        if (days < 730) return '≈ ' + (days / 30).toFixed(1) + ' мес';
+        return '≈ ' + (days / 365).toFixed(1) + ' лет';
+    }
 
     getSettingsHTML() {
         const s = this.settings;
+        const D = this.constructor.DEFAULTS;
+        const PD = this.constructor.PER_TF_DEFAULTS;
+        const TF = this.constructor.TF_ORDER;
+
         const rowStyle = 'background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;';
-        const numStyle = rowStyle + ' width:80px;';
+        const numStyle = rowStyle + ' width:90px;';
         const labelStyle = 'color:#B0B0B0; width:150px;';
         const rowDiv = 'margin-bottom:8px; display:flex; align-items:center; gap:10px;';
         const chk = (v) => v ? 'checked' : '';
+        const curTf = this._tfKey() || '1h';
+
+        // --- кнопки вкладок ---
+        const tabs = ['general'].concat(TF);
+        const tabLabels = { general: 'Общие' };
+        TF.forEach(tf => { tabLabels[tf] = tf + (tf === curTf ? ' ●' : ''); });
+        const btnStyle = 'background:#1E1E1E; border:1px solid #404040; color:#B0B0B0; border-radius:4px;' +
+            ' padding:3px 7px; cursor:pointer; font-size:11px; font-family:inherit;';
+        const btns = tabs.map((id, i) => {
+            const active = i === 0;
+            const st = active
+                ? 'background:#2196F3; border:1px solid #2196F3; color:#FFFFFF; border-radius:4px; padding:3px 7px; cursor:pointer; font-size:11px; font-family:inherit;'
+                : btnStyle;
+            return `<button type="button" id="vp_tabbtn_${id}" style="${st}" onclick="window.__vpTab && window.__vpTab('${id}')">${tabLabels[id]}</button>`;
+        }).join('');
+
+        // --- вкладка «Общие» ---
+        const general = `
+            <div id="vp_tab_general" style="display:block;">
+                <div style="color:#2196F3; margin:8px 0;">🔄 Обновление профиля</div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="На новой свече — профиль стабильный, не дрожит при движении цены. На каждом тике — живой, но перерисовывается постоянно. Вручную — только при смене ТФ/символа/настроек.">Пересчитывать:</label>
+                    <select id="vp_refreshMode" style="${rowStyle}">
+                        <option value="bar" ${s.refreshMode === 'bar' ? 'selected' : ''}>На новой свече (стабильно)</option>
+                        <option value="tick" ${s.refreshMode === 'tick' ? 'selected' : ''}>На каждом тике (живой)</option>
+                        <option value="manual" ${s.refreshMode === 'manual' ? 'selected' : ''}>Вручную</option>
+                    </select>
+                </div>
+                <div style="color:#888; font-size:10px; line-height:1.45; margin-bottom:10px;">
+                    Скролл и зум пересчёт не вызывают никогда. Подгрузка истории
+                    при скролле влево — тоже: профиль привязан ко времени, а не к номеру свечи.
+                </div>
+
+                <div style="color:#2196F3; margin:8px 0;">📊 Общие</div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Сколько процентов объёма должно попасть в Value Area">Value Area, %:</label>
+                    <input type="number" id="vp_percent" value="${s.percent}" min="0" max="100" step="1" style="${numStyle}">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Максимальная длина ряда = баров / делитель">Ширина (делитель):</label>
+                    <input type="number" id="vp_widthDivisor" value="${s.widthDivisor}" min="0.5" max="20" step="0.5" style="${numStyle}">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Применяется, только если текущий таймфрейм не распознался">Баров (резерв):</label>
+                    <input type="number" id="vp_fallbackBars" value="${s.fallbackBars}" min="1" max="5000" style="${numStyle}">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Применяется, только если текущий таймфрейм не распознался">Рядов (резерв):</label>
+                    <input type="number" id="vp_fallbackRows" value="${s.fallbackRows}" min="5" max="100" style="${numStyle}">
+                </div>
+
+                <div style="color:#2196F3; margin:8px 0;">🎯 POC и уровни</div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Показывать POC:</label>
+                    <input type="checkbox" id="vp_showPoc" ${chk(s.showPoc)} style="accent-color:#4A90E2;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Цвет POC:</label>
+                    <input type="color" id="vp_pocColor" value="${s.pocColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
+                    <label style="color:#B0B0B0;">Толщина:</label>
+                    <input type="number" id="vp_pocWidth" value="${s.pocWidth}" min="1" max="5" style="width:60px; background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Продлевать линию POC вправо до края панели">Линия POC вправо:</label>
+                    <input type="checkbox" id="vp_extendPocRight" ${chk(s.extendPocRight)} style="accent-color:#4A90E2;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Линии и метки границ Value Area">Показывать VAH/VAL:</label>
+                    <input type="checkbox" id="vp_showVaLines" ${chk(s.showVaLines)} style="accent-color:#4A90E2;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Цвет VAH/VAL:</label>
+                    <input type="color" id="vp_vaLineColor" value="${s.vaLineColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Слева — гистограмма растёт вправо от первой свечи диапазона (как в оригинальном скрипте TradingView). Справа — растёт влево от последней свечи, профиль прижат к текущей цене.">Расположение профиля:</label>
+                    <select id="vp_placement" style="${rowStyle}">
+                        <option value="left" ${s.anchorRight ? '' : 'selected'}>Слева (как в TradingView)</option>
+                        <option value="right" ${s.anchorRight ? 'selected' : ''}>Справа (у текущей цены)</option>
+                    </select>
+                </div>
+
+                <div style="color:#2196F3; margin:8px 0;">🎨 Цвета</div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Value Area вверх:</label>
+                    <input type="color" id="vp_vaUpColor" value="${s.vaUpColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
+                    <label style="color:#B0B0B0;">Прозрачность:</label>
+                    <input type="number" id="vp_vaAlpha" value="${s.vaAlpha}" min="0" max="1" step="0.05" style="width:70px; background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Value Area вниз:</label>
+                    <input type="color" id="vp_vaDownColor" value="${s.vaDownColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Объём вверх:</label>
+                    <input type="color" id="vp_upColor" value="${s.upColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
+                    <label style="color:#B0B0B0;">Прозрачность:</label>
+                    <input type="number" id="vp_bodyAlpha" value="${s.bodyAlpha}" min="0" max="1" step="0.05" style="width:70px; background:#1E1E1E; border:1px solid #404040; color:#fff; border-radius:4px; padding:4px 8px;">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}">Объём вниз:</label>
+                    <input type="color" id="vp_downColor" value="${s.downColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
+                </div>
+
+                <div style="margin-top:10px; display:flex; gap:8px;">
+                    <button type="button" onclick="window.__vpResetTF && window.__vpResetTF()" style="${btnStyle}">Сбросить все ТФ к рекомендуемым</button>
+                </div>
+            </div>`;
+
+        // --- вкладки по таймфреймам ---
+        const tfTabs = TF.map(tf => {
+            const cur = (s.perTF && s.perTF[tf]) || PD[tf];
+            const def = PD[tf];
+            const isCur = tf === curTf;
+            return `
+            <div id="vp_tab_${tf}" style="display:none;">
+                <div style="color:#2196F3; margin:8px 0;">⏱ Таймфрейм ${tf}${isCur ? ' <span style="color:#22E00F;">(текущий)</span>' : ''}</div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Сколько последних свечей этого таймфрейма входит в профиль">Количество баров:</label>
+                    <input type="number" id="vp_bars_${tf}" value="${cur.bars}" min="1" max="5000" style="${numStyle}">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="На сколько горизонтальных рядов делится ценовой диапазон. Высота ряда = (top - bot) / рядов; держите её в пределах 0.1-0.5 ATR">Число рядов:</label>
+                    <input type="number" id="vp_rows_${tf}" value="${cur.rows}" min="5" max="100" style="${numStyle}">
+                </div>
+                <div style="color:#888; font-size:10px; line-height:1.5; margin-top:6px;">
+                    Покрывает: <span style="color:#4FC3F7;">${this._daysLabel(tf, cur.bars)}</span><br>
+                    Высота ряда при диапазоне 10%: <span style="color:#4FC3F7;">${(10 / cur.rows).toFixed(3)}%</span><br>
+                    Рекомендуемое: ${def.bars} баров / ${def.rows} рядов (${this._daysLabel(tf, def.bars)})
+                </div>
+            </div>`;
+        }).join('');
 
         return `
-            <div style="max-height:400px; overflow-y:auto; padding-right:5px; scrollbar-width: thin; scrollbar-color: #4A4A4A #1E1E1E;">
-                <div style="margin-bottom:12px;">
-                    <div style="color:#2196F3; margin-bottom:8px;">📊 Диапазон и ряды</div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Сколько последних свечей входит в расчёт">Количество баров:</label>
-                        <input type="number" id="vp_bbars" value="${s.bbars}" min="1" max="500" style="${numStyle}">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="На сколько горизонтальных рядов делится ценовой диапазон">Число рядов:</label>
-                        <input type="number" id="vp_cnum" value="${s.cnum}" min="5" max="100" style="${numStyle}">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Сколько процентов объёма должно попасть в Value Area">Value Area, %:</label>
-                        <input type="number" id="vp_percent" value="${s.percent}" min="0" max="100" step="1" style="${numStyle}">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Максимальная длина ряда = баров / делитель">Ширина (делитель):</label>
-                        <input type="number" id="vp_widthDivisor" value="${s.widthDivisor}" min="0.5" max="20" step="0.5" style="${numStyle}">
-                    </div>
+            <div style="max-height:420px; overflow-y:auto; padding-right:5px; scrollbar-width: thin; scrollbar-color: #4A4A4A #1E1E1E;">
+                <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px; position:sticky; top:0; background:#141420; padding-bottom:6px;">
+                    ${btns}
                 </div>
-                <div style="margin-bottom:12px;">
-                    <div style="color:#2196F3; margin-bottom:8px;">🎯 POC</div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Показывать POC:</label>
-                        <input type="checkbox" id="vp_showPoc" ${chk(s.showPoc)} style="accent-color:#4A90E2;">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Цвет POC:</label>
-                        <input type="color" id="vp_pocColor" value="${s.pocColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
-                        <label style="color:#B0B0B0;">Толщина:</label>
-                        <input type="number" id="vp_pocWidth" value="${s.pocWidth}" min="1" max="5" style="${numStyle}">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Продлевать линию POC вправо до края панели">Линия вправо:</label>
-                        <input type="checkbox" id="vp_extendPocRight" ${chk(s.extendPocRight)} style="accent-color:#4A90E2;">
-                    </div>
-                </div>
-                <div style="margin-bottom:12px;">
-                    <div style="color:#2196F3; margin-bottom:8px;">🎨 Цвета</div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Value Area вверх:</label>
-                        <input type="color" id="vp_vaUpColor" value="${s.vaUpColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
-                        <label style="color:#B0B0B0;">Прозрачность:</label>
-                        <input type="number" id="vp_vaAlpha" value="${s.vaAlpha}" min="0" max="1" step="0.05" style="${numStyle}">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Value Area вниз:</label>
-                        <input type="color" id="vp_vaDownColor" value="${s.vaDownColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Объём вверх:</label>
-                        <input type="color" id="vp_upColor" value="${s.upColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
-                        <label style="color:#B0B0B0;">Прозрачность:</label>
-                        <input type="number" id="vp_bodyAlpha" value="${s.bodyAlpha}" min="0" max="1" step="0.05" style="${numStyle}">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Объём вниз:</label>
-                        <input type="color" id="vp_downColor" value="${s.downColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
-                    </div>
-                </div>
-                <div style="margin-bottom:12px;">
-                    <div style="color:#2196F3; margin-bottom:8px;">📏 Value Area линии</div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}" title="Рисовать горизонтальные линии и метки VAH/VAL">Показывать VAH/VAL:</label>
-                        <input type="checkbox" id="vp_showVaLines" ${chk(s.showVaLines)} style="accent-color:#4A90E2;">
-                    </div>
-                    <div style="${rowDiv}">
-                        <label style="${labelStyle}">Цвет VAH/VAL:</label>
-                        <input type="color" id="vp_vaLineColor" value="${s.vaLineColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
-                    </div>
-                </div>
-                <div style="color:#888; font-size:10px; line-height:1.5;">
-                    Профиль считается по последним N барам и перерисовывается
-                    автоматически. Объём свечи распределяется по рядам: тело — вес 1,
-                    каждая тень — вес 2, объём тени делится пополам между
-                    «ап» и «даун» частями ряда.
-                </div>
+                ${general}
+                ${tfTabs}
             </div>
         `;
     }
@@ -2975,6 +3554,11 @@ class VolumeProfileIndicator extends BaseIndicator {
             const e = el(id);
             return (e && typeof e.checked === 'boolean') ? e.checked : fallback;
         };
+        const oneOf = (id, allowed, fallback) => {
+            const e = el(id);
+            const v = (e && e.value != null && e.value !== '') ? e.value : fallback;
+            return allowed.includes(v) ? v : fallback;
+        };
         const color = (id, fallback) => {
             const e = el(id);
             return (e && typeof e.value === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.value))
@@ -2982,15 +3566,21 @@ class VolumeProfileIndicator extends BaseIndicator {
         };
         const s = this.settings;
 
-        s.bbars = int('vp_bbars', s.bbars, 1, 500);
-        s.cnum = int('vp_cnum', s.cnum, 5, 100);
+        s.refreshMode = oneOf('vp_refreshMode', ['bar', 'tick', 'manual'], s.refreshMode);
         s.percent = num('vp_percent', s.percent, 0, 100);
         s.widthDivisor = num('vp_widthDivisor', s.widthDivisor, 0.5, 20);
+        s.fallbackBars = int('vp_fallbackBars', s.fallbackBars, 1, 5000);
+        s.fallbackRows = int('vp_fallbackRows', s.fallbackRows, 5, 100);
 
         s.showPoc = bool('vp_showPoc', s.showPoc);
         s.pocColor = color('vp_pocColor', s.pocColor);
         s.pocWidth = int('vp_pocWidth', s.pocWidth, 1, 5);
         s.extendPocRight = bool('vp_extendPocRight', s.extendPocRight);
+        s.showVaLines = bool('vp_showVaLines', s.showVaLines);
+        s.vaLineColor = color('vp_vaLineColor', s.vaLineColor);
+        // [VP-PLACE] расположение профиля: 'left' / 'right'
+        const placement = oneOf('vp_placement', ['left', 'right'], s.anchorRight ? 'right' : 'left');
+        s.anchorRight = (placement === 'right');
 
         s.vaUpColor = color('vp_vaUpColor', s.vaUpColor);
         s.vaDownColor = color('vp_vaDownColor', s.vaDownColor);
@@ -2999,12 +3589,25 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.downColor = color('vp_downColor', s.downColor);
         s.bodyAlpha = num('vp_bodyAlpha', s.bodyAlpha, 0, 1);
 
-        s.showVaLines = bool('vp_showVaLines', s.showVaLines);
-        s.vaLineColor = color('vp_vaLineColor', s.vaLineColor);
+        // per-TF: читаем только те таймфреймы, поля которых реально есть в форме
+        const perTF = {};
+        for (const tf of this.constructor.TF_ORDER) {
+            const bEl = el('vp_bars_' + tf);
+            const rEl = el('vp_rows_' + tf);
+            const prev = (s.perTF && s.perTF[tf]) || this.constructor.PER_TF_DEFAULTS[tf];
+            perTF[tf] = {
+                bars: int('vp_bars_' + tf, prev.bars, 1, 5000),
+                rows: int('vp_rows_' + tf, prev.rows, 5, 100)
+            };
+            // если полей не было вообще — не трогаем значение
+            if (!bEl && !rEl) perTF[tf] = { bars: prev.bars, rows: prev.rows };
+        }
+        s.perTF = perTF;
 
+        this._sanitizeSettings();
         this._saveSettings();
         this._colorCache.clear();
-        this.recompute();
+        this.recompute('form');
         if (super.applySettingsFromForm) super.applySettingsFromForm();
     }
 
@@ -3015,20 +3618,28 @@ class VolumeProfileIndicator extends BaseIndicator {
         const cm = this.manager && this.manager.chartManager;
         const data = (cm && cm.chartData) || [];
         const p = this._profile;
+        const tf = this._tfSettings();
         const out = {
             'свечей в chartData': data.length,
             'currentInterval': cm && cm.currentInterval,
+            'ключ ТФ': tf.key,
+            'баров (настройка ТФ)': tf.bars,
+            'рядов (настройка ТФ)': tf.rows,
+            'refreshMode': this.settings.refreshMode,
+            'anchorRight': !!this.settings.anchorRight,
             'баров в профиле': p ? p.bars : 0,
-            'рядов': p ? p.rows : 0,
+            'рядов в профиле': p ? p.rows : 0,
             'диапазон': p ? (this._fmt(p.bot) + ' .. ' + this._fmt(p.top)) : '—',
+            'firstTime профиля': p && p.firstTime ? new Date(p.firstTime * 1000).toISOString().slice(0, 16) : '—',
+            'lastTime профиля': p && p.lastTime ? new Date(p.lastTime * 1000).toISOString().slice(0, 16) : '—',
+            'firstTime найден в данных': p ? (this._indexByTime(data, p.firstTime) !== null) : false,
             'POC': p ? this._fmt(p.pocPrice) : '—',
-            'POC ряд': p ? p.pocRow : -1,
             'VAH': p ? this._fmt(p.vah) : '—',
             'VAL': p ? this._fmt(p.val) : '—',
             'VA ряды': p ? (p.vaLowRow + '..' + p.vaHighRow) : '—',
-            'объём всего': p ? p.volumeSum.toFixed(2) : 0,
-            'объём в VA': p ? p.vaTotal.toFixed(2) : 0,
-            'VA фактически %': p ? p.vaPercentActual.toFixed(1) : 0,
+            'VA фактически %': p ? p.vaPercentActual.toFixed(1) : '—',
+            'объём всего': p ? Math.round(p.sum) : 0,
+            'пересчётов по причинам': JSON.stringify(this._recomputeReasons),
             'примитив присоединён': !!this._primitive,
             'серия': this._getSeries() ? 'есть' : 'нет',
             'visible': this.visible
@@ -3041,9 +3652,9 @@ class VolumeProfileIndicator extends BaseIndicator {
 
     destroy() {
         this._destroyed = true;
-        if (this._attachTimeout) { clearTimeout(this._attachTimeout); this._attachTimeout = null; }
-        if (this._recomputeTimeout) { clearTimeout(this._recomputeTimeout); this._recomputeTimeout = null; }
-        if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
+        if (this._attachTimeout !== null) { clearTimeout(this._attachTimeout); this._attachTimeout = null; }
+        if (this._recomputeTimeout !== null) { clearTimeout(this._recomputeTimeout); this._recomputeTimeout = null; }
+        if (this._fallbackTimer !== null) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
         if (this._primitive && this._attachedSeries) {
             try { this._attachedSeries.detachPrimitive(this._primitive); } catch (e) {}
         }
@@ -3052,9 +3663,27 @@ class VolumeProfileIndicator extends BaseIndicator {
         this._requestUpdate = null;
         this._profile = null;
         this._colorCache.clear();
-        this._removeAllSeries();
-        this.manager = null;
+        // super.destroy() сам делает _removeAllSeries() + manager = null
+        super.destroy();
     }
+}
+
+// Глобальный сброс per-TF настроек к рекомендуемым (кнопка во вкладке «Общие»)
+if (typeof window !== 'undefined' && !window.__vpResetTF) {
+    window.__vpResetTF = function () {
+        try {
+            const im = window.chartManagerInstance && window.chartManagerInstance.indicatorManager;
+            const ind = im && im.activeIndicators && im.activeIndicators.find(i => i.type === 'volumeprofile');
+            if (!ind) { console.warn('[VolumeProfile] индикатор не добавлен на график'); return; }
+            const PD = VolumeProfileIndicator.PER_TF_DEFAULTS;
+            const perTF = {};
+            for (const tf of Object.keys(PD)) perTF[tf] = { bars: PD[tf].bars, rows: PD[tf].rows };
+            ind.updateSettings({ perTF: perTF });
+            // перерисовываем панель настроек, чтобы поля показали новые значения
+            if (im && im._renderUI) im._renderUI();
+            console.log('[VolumeProfile] настройки всех таймфреймов сброшены к рекомендуемым');
+        } catch (e) { console.warn('[VolumeProfile] сброс настроек:', e); }
+    };
 }
 
 // === РЕГИСТРАЦИЯ В РЕЕСТРЕ (ОБЯЗАТЕЛЬНО ДЛЯ МЕНЮ) ===
