@@ -9725,6 +9725,7 @@ class TradeLevelManager {
                 }
                 this._tempTrade.stopLossPrice = price;
                 this._tempTrade.manualTP = false;
+                this._tempTrade.manualTP2 = false;
                 this._tempTrade.update();
                 this._requestRedraw();
             }
@@ -9764,7 +9765,7 @@ class TradeLevelManager {
                 const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
                 if (startPriceY !== null) {
                     const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
-                    if (newPrice !== null) { this._dragTrade.stopLossPrice = newPrice; this._dragTrade.manualTP = false; }
+                    if (newPrice !== null) { this._dragTrade.stopLossPrice = newPrice; this._dragTrade.manualTP = false; this._dragTrade.manualTP2 = false; }
                 }
             } else if (this._dragType === 'tp') {
                 const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
@@ -10311,9 +10312,12 @@ class TradeLevelManager {
                 this._editingTrade.takeProfitPrice = tp;
                 this._editingTrade.manualTP = true;
                 this._editingTrade.riskRewardRatio = risk > 0 ? (Math.abs(tp - entry) / risk) : rr;
+                this._editingTrade.manualTP2 = false; // второй тейк следует за соотношением riskRewardRatio2
+                this._editingTrade.updateTP();        // пересчитать TP2 под новый риск
             } else {
                 this._editingTrade.manualTP = false;
                 this._editingTrade.riskRewardRatio = rr;
+                this._editingTrade.manualTP2 = false;
                 this._editingTrade.update();
             }
             this._editingTrade = null;
