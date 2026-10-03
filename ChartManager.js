@@ -502,18 +502,20 @@ class ChartManager {
         let barSpacing = this._savedBarSpacing || ts.options().barSpacing || 25;
         if (!barSpacing || barSpacing <= 0) barSpacing = 25;
 
-        // [ZOOM-DRIFT] Раньше здесь вручную считались visibleBars и вызывался
-        // setVisibleLogicalRange({from, to}) с поправкой «-8 px» к ширине:
-        //     width = containerW - priceScaleWidth - 8;  visibleBars = width / barSpacing;
-        // В lightweight-charts v5 setVisibleLogicalRange -> TimeScale.setLogicalRange ->
-        // setVisibleRange() делает _setBarSpacing(this._width / length), т.е. ПЕРЕСЧИТЫВАЕТ
-        // barSpacing из фактической ширины таймскейла. Из-за «-8» получалось
-        // barSpacing * W/(W-8) (~+0.6% при W=1400), и это завышенное значение через 150 мс
-        // писалось в localStorage (см. setupOptimizedSubscriptions) — зум накопительно
-        // «наезжал» при каждом переключении ТФ/символа из истории.
-        // Теперь задаём ТОЛЬКО barSpacing + rightOffset: видимый диапазон LW выведет сам
-        // из фактической ширины, barSpacing остаётся ровно тем, что сохранён в localStorage.
+        // [FIX] Ширину берём от контейнера минус реальная ширина правой шкалы.
+        // Раньше использовался ts.width(), который меняется асинхронно после
+        // autoscale / смены точности — из-за этого visibleBars для разных монет
+        // был разным и зум "уплывал". Этот расчёт стабилен всегда.
+        let psW = 0;
+        try { psW = this.chart.priceScale('right')?.width?.() || 0; } catch (e) {}
+        const containerW = this.chartContainer?.clientWidth || 800;
+        const width = Math.max(50, containerW - psW - 8);
+
+        const visibleBars = width / barSpacing;
+        const to = lastIndex + rightOffset;
+        const from = to - visibleBars;
         try { ts.applyOptions({ barSpacing, rightOffset }); } catch (e) {}
+        try { ts.setVisibleLogicalRange({ from, to }); } catch (e) {}
     }
 
     // =============== PRICE SCALE WIDTH ===============
@@ -1433,11 +1435,8 @@ class ChartManager {
                 this._isScrollingFast = false;
                 // [PERF-GATE2] читаем barSpacing один раз при остановке
                 try {
-                    const rawSpacing = this.chart?.timeScale()?.options()?.barSpacing;
-                    // [ZOOM-DRIFT] options().barSpacing возвращает внутренний float, который
-                    // LW пересчитывает из ширины окна. Округляем до сотых, чтобы в
-                    // localStorage не накапливался «шум» и зум не дрейфовал между сессиями.
-                    if (rawSpacing) this._pendingBarSpacing = Math.round(rawSpacing * 100) / 100;
+                    const barSpacing = this.chart?.timeScale()?.options()?.barSpacing;
+                    if (barSpacing) this._pendingBarSpacing = barSpacing;
                 } catch (e) {}
                 if (this._pendingBarSpacing && this._pendingBarSpacing !== this._lastSavedBarSpacing) {
                     this._lastSavedBarSpacing = this._pendingBarSpacing;
