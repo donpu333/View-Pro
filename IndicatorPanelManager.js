@@ -357,17 +357,44 @@ class IndicatorPanelManager {
         }
         panelData._syncState.crosshairLine = line;
         
+        // [CROSSHAIR-PERF] Раньше этот обработчик выполнялся на КАЖДОМ событии
+        // mousemove (высокочастотная мышь = 125-1000 событий/с) и каждый раз звал
+        // getBoundingClientRect() — принудительный синхронный пересчёт layout всей
+        // страницы — плюс 4 записи стилей. Именно из-за этого перекрестие двигалось
+        // медленнее курсора и «отлипало» при быстрых движениях.
+        // Теперь: событие только запоминает параметр, вся работа — один раз за кадр
+        // (rAF), rect кэшируется на 300 мс, стили пишутся лишь когда изменились.
+        let linePending = null, lineRaf = null, lineRect = null, lineRectAt = 0;
+        let lineLastLeft = '', lineLastTop = '', lineLastHeight = '';
+        const applyCrosshairLine = () => {
+            lineRaf = null;
+            const p = linePending;
+            linePending = null;
+            if (!p || !p.time || !p.point) {
+                if (line.style.display !== 'none') line.style.display = 'none';
+                return;
+            }
+            const nowMs = performance.now();
+            if (!lineRect || nowMs - lineRectAt > 300) {
+                lineRect = panelData.wrapper.getBoundingClientRect();
+                lineRectAt = nowMs;
+            }
+            const left = p.point.x + 'px';
+            const top = lineRect.top + 'px';
+            const height = (lineRect.height - 28) + 'px';
+            if (line.style.display !== 'block') line.style.display = 'block';
+            if (left !== lineLastLeft) { line.style.left = left; lineLastLeft = left; }
+            if (top !== lineLastTop) { line.style.top = top; lineLastTop = top; }
+            if (height !== lineLastHeight) { line.style.height = height; lineLastHeight = height; }
+        };
         const crosshairHandler = (p) => {
-            if (!p?.time || !p?.point) { line.style.display = 'none'; return; }
-            const rect = panelData.wrapper.getBoundingClientRect();
-            line.style.display = 'block';
-            line.style.left = p.point.x + 'px';
-            line.style.top = rect.top + 'px';
-            line.style.height = (rect.height - 28) + 'px';
+            linePending = p;
+            if (lineRaf === null) lineRaf = requestAnimationFrame(applyCrosshairLine);
         };
         mainChart.subscribeCrosshairMove(crosshairHandler);
         panelData._syncState.unsubscribers.push(() => {
             try { mainChart.unsubscribeCrosshairMove(crosshairHandler); } catch(e) {}
+            if (lineRaf !== null) { cancelAnimationFrame(lineRaf); lineRaf = null; }
         });
 
         // [FIX-X1] Reverse crosshair: hovering THIS panel drives the main chart crosshair,
