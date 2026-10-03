@@ -89,6 +89,17 @@ class ChartManager {
         this._crosshairRafId = null;
         this._latestCrosshairData = null;
         this._pendingCrosshairParam = null;
+        // [CROSSHAIR-PERF] Флаг «пользователь двигает перекрестие» + таймер «успокоения».
+        // Пока флаг взведён, IndicatorManager откладывает полный пересчёт индикаторов:
+        // на глубокой истории (десятки тысяч свечей) пересчёт (structured-clone в worker
+        // + setData результатов) блокировал main thread на десятки мс, и перекрестию
+        // не хватало кадров — оно lag'ало и «отлипало» от курсора. Пересчёт выполняется
+        // через 150 мс после остановки мыши (flushPendingIndicatorsUpdate).
+        this._crosshairActive = false;
+        this._crosshairIdleTimeout = null;
+        // [CROSSHAIR-PERF] Де-дупликатор перекрестия панелей: setCrosshairPosition
+        // (= полная перерисовка панели) вызывается только при реальном смене time/value.
+        this._panelCrosshairLast = new Map();
         this._refreshingAfterHidden = false;
         this._periodicSyncInterval = null;
         this._quarantineTimeout = null;
@@ -1440,8 +1451,10 @@ class ChartManager {
             // примитив отрисуется в том же кадре — вызов лишь плодил инвалидации.
 
             if (range && this.indicatorManager?.panelManager && !this._isSyncing) {
-                const panels = this.indicatorManager.panelManager.panels;
-                if (panels && panels.length > 0 && !this._panelsSyncRafId) {
+                // [CROSSHAIR-PERF] panels — Map: раньше panels.length был undefined,
+                // и синхронизация панелей при скролле НЕ выполнялась никогда.
+                const panels = this._getPanelsList();
+                if (panels.length > 0 && !this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
                         this._panelsSyncRafId = null;
                         this._isSyncing = true;
@@ -1454,8 +1467,9 @@ class ChartManager {
                         const prevLock = pm ? pm._rangeSyncLock : false;
                         if (pm) pm._rangeSyncLock = true;
                         try {
-                            for (let i = 0; i < panels.length; i++) {
-                                const panel = panels[i];
+                            const panelsNow = this._getPanelsList();
+                            for (let i = 0; i < panelsNow.length; i++) {
+                                const panel = panelsNow[i];
                                 if (panel.chart && !panel.isCollapsed) {
                                     try { panel.chart.timeScale().setVisibleLogicalRange(r); } catch (e) {}
                                 }
@@ -2588,6 +2602,16 @@ class ChartManager {
     // =============== CROSSHAIR ===============
     onCrosshairMove(param) {
         this._pendingCrosshairParam = param;
+        // [CROSSHAIR-PERF] Пока мышь движется по графику — тяжёлые пересчёты
+        // индикаторов не запускаются (см. IndicatorManager.updateAllIndicators).
+        // Через 150 мс покоя флаг снимается и отложенное выполняется разом.
+        this._crosshairActive = true;
+        if (this._crosshairIdleTimeout) clearTimeout(this._crosshairIdleTimeout);
+        this._crosshairIdleTimeout = setTimeout(() => {
+            this._crosshairIdleTimeout = null;
+            this._crosshairActive = false;
+            try { this.indicatorManager?.flushPendingIndicatorsUpdate?.(); } catch (e) {}
+        }, 150);
         if (this._crosshairRafId) return;
         this._crosshairRafId = requestAnimationFrame(() => {
             this._crosshairRafId = null;
@@ -2630,30 +2654,70 @@ class ChartManager {
         this._syncPanelsCrosshairOptimized();
     }
 
-    _clearPanelsCrosshair() {
+    // [CROSSHAIR-PERF] panelManager.panels — это Map (и panel.series — тоже Map),
+    // а здесь их исторически перебирали как массив (panels.length / panels[i] /
+    // for..of по Map без .values()). Все эти циклы МОЛЧА не выполнялись:
+    // синхронизация панелей (скролл, перекрестие, resize) была мертва.
+    // Хелперы возвращают нормальный массив из любой формы.
+    _getPanelsList() {
         const panels = this.indicatorManager?.panelManager?.panels;
-        if (!panels) return;
+        if (!panels) return [];
+        if (Array.isArray(panels)) return panels;
+        if (typeof panels.values === 'function') { try { return Array.from(panels.values()); } catch (e) { return []; } }
+        return [];
+    }
+
+    _getPanelFirstSeries(panel) {
+        const series = panel?.series;
+        if (!series) return null;
+        if (Array.isArray(series)) return series.length ? series[0] : null;
+        if (typeof series.values === 'function') {
+            for (const s of series.values()) { if (s) return s; }
+        }
+        return null;
+    }
+
+    _clearPanelsCrosshair() {
+        const panels = this._getPanelsList();
+        if (panels.length === 0) return;
         for (let i = 0; i < panels.length; i++) {
             const panel = panels[i];
-            if (panel.chart && !panel.isCollapsed) { try { panel.chart.clearCrosshairPosition(); } catch (e) {} }
+            if (!panel.chart || panel.isCollapsed) continue;
+            // [CROSSHAIR-PERF] де-дуп: не дёргаем clearCrosshairPosition (= redraw
+            // панели) каждый кадр, если перекрестие уже снято.
+            if (!this._panelCrosshairLast.has(panel)) continue;
+            this._panelCrosshairLast.delete(panel);
+            try { panel.chart.clearCrosshairPosition(); } catch (e) {}
         }
     }
 
     _syncPanelsCrosshairOptimized() {
         if (!this._latestCrosshairData || !this._latestCrosshairData.visible) { this._clearPanelsCrosshair(); return; }
-        const panels = this.indicatorManager?.panelManager?.panels;
-        if (!panels) return;
-        const { time, pointX } = this._latestCrosshairData;
+        const panels = this._getPanelsList();
+        if (panels.length === 0) return;
+        const { time } = this._latestCrosshairData;
+        const idx = this._candleTimeMap.get(time);
         for (let i = 0; i < panels.length; i++) {
             const panel = panels[i];
             if (!panel.chart || panel.isCollapsed) continue;
             try {
-                let targetSeries = null;
-                for (const series of panel.series) { targetSeries = series; break; }
-                if (!targetSeries) { panel.chart.clearCrosshairPosition(); continue; }
-                const dataPoint = targetSeries.dataByIndex?.(this._candleTimeMap.get(time));
-                if (dataPoint && dataPoint.value !== undefined) panel.chart.setCrosshairPosition(dataPoint.value, time, pointX);
-                else panel.chart.clearCrosshairPosition();
+                const targetSeries = this._getPanelFirstSeries(panel);
+                if (!targetSeries) continue;
+                const dataPoint = (idx !== undefined) ? targetSeries.dataByIndex?.(idx) : null;
+                if (dataPoint && dataPoint.value !== undefined) {
+                    // [CROSSHAIR-PERF] де-дуп: setCrosshairPosition = перерисовка панели.
+                    // Мышь в пределах одной свечи (time/value те же) — не перерисовываем.
+                    const last = this._panelCrosshairLast.get(panel);
+                    if (last && last.time === time && last.value === dataPoint.value) continue;
+                    this._panelCrosshairLast.set(panel, { time, value: dataPoint.value });
+                    // [FIX] LW v5: setCrosshairPosition(price, time, SERIES). Раньше
+                    // третьим аргументом передавали pointX (число) — LW молча выходил
+                    // (this.ug.get(n) === undefined), перекрестие панелей не работало.
+                    panel.chart.setCrosshairPosition(dataPoint.value, time, targetSeries);
+                } else if (this._panelCrosshairLast.has(panel)) {
+                    this._panelCrosshairLast.delete(panel);
+                    panel.chart.clearCrosshairPosition();
+                }
             } catch (e) {}
         }
     }
@@ -2863,12 +2927,15 @@ class ChartManager {
         this._applyVolumeScaleOptions();
 
         if (this.indicatorManager?.panelManager) {
-            const panels = this.indicatorManager.panelManager.panels;
-            if (panels && Array.isArray(panels)) {
+            // [CROSSHAIR-PERF] panels — Map (Array.isArray всегда false — блок был
+            // мёртв), а поле панели называется content, не container.
+            const panels = this._getPanelsList();
+            if (panels.length > 0) {
                 panels.forEach(panel => {
-                    if (panel.chart && !panel.isCollapsed && panel.container) {
+                    const pc = panel.content || panel.container;
+                    if (panel.chart && !panel.isCollapsed && pc) {
                         try {
-                            const ph = panel.container.clientHeight, pw = panel.container.clientWidth;
+                            const ph = pc.clientHeight, pw = pc.clientWidth;
                             if (ph > 0 && pw > 0) panel.chart.resize(pw, ph);
                         } catch (e) {}
                     }
@@ -3353,6 +3420,9 @@ class ChartManager {
         this._historyPrefetchRunning = false;
         if (this._historyThrottleRetry) { clearTimeout(this._historyThrottleRetry); this._historyThrottleRetry = null; }
         if (this._updateTimeout) { clearTimeout(this._updateTimeout); this._updateTimeout = null; }
+        // [CROSSHAIR-PERF]
+        if (this._crosshairIdleTimeout) { clearTimeout(this._crosshairIdleTimeout); this._crosshairIdleTimeout = null; }
+        this._crosshairActive = false;
         if (this._trimDebounceTimeout) { clearTimeout(this._trimDebounceTimeout); this._trimDebounceTimeout = null; }
         if (this._candleCheckerTimeout) { clearTimeout(this._candleCheckerTimeout); this._candleCheckerTimeout = null; }
         this._fetchPromise = null;
