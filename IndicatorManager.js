@@ -17,6 +17,14 @@ class IndicatorManager {
         this._updateThrottleTimeout = null;
         this._lastIndicatorUpdateAt = 0;
         this._indicatorThrottleMs = 150;
+        // [CROSSHAIR-PERF] На глубокой истории (десятки тысяч свечей) полный
+        // пересчёт дорог: structured-clone массива в worker + setData результатов
+        // блокируют main thread. Окно расчёта ограничено хвостом массива —
+        // недостающие точки превращаются в whitespace при применении ([FIX-I1]),
+        // поэтому выравнивание логических индексов панелей 1:1 не ломается.
+        this._calcWindowCandles = 12000;
+        // [DRAW-PERF] таймер отложенного повторного flush (драг/скролл)
+        this._flushRetryTimeout = null;
         
         // [FIX] Батч результатов: собираем результаты worker'а и применяем в одном RAF
         this._batchResults = [];
@@ -46,8 +54,11 @@ class IndicatorManager {
     _flushBatch() {
         this._batchRafId = null;
         if (this._batchResults.length === 0) return;
-        const batch = this._batchResults;
-        this._batchResults = [];
+        // [DRAW-PERF] Применяем результаты ПОРЦИЯМИ (не больше 2 индикаторов за кадр).
+        // onCalculateResult -> setData по всему массиву свечей; на глубокой истории
+        // (20-40 тыс.) пачка из всех индикаторов в одном кадре блокировала main thread
+        // на 100-300 мс — перетаскивание алертов/трендов «заикалось».
+        const batch = this._batchResults.splice(0, 2);
         for (const { indicator, res } of batch) {
             // Проверяем, что индикатор всё ещё активен (не удалён между сбором и применением)
             if (!this.activeIndicators.includes(indicator)) continue;
@@ -56,6 +67,11 @@ class IndicatorManager {
                 result: res.result, 
                 success: true 
             });
+        }
+        if (this._batchResults.length > 0) {
+            // остальные — в следующих кадрах
+            this._scheduleBatchFlush();
+            return;
         }
         // [FIX-I5] после применения новых данных индикаторов выравниваем шкалы панелей
         this.panelManager?.syncPanelsNow?.();
@@ -73,7 +89,10 @@ class IndicatorManager {
             if (!indicator || !res.success) return;
 
             // Если идёт скролл — откладываем применение результата
-            if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming) {
+            // [CROSSHAIR-PERF] ...или пользователь двигает перекрестие: setData
+            // результатов — тяжёлая операция, она не должна вклиниваться между
+            // кадрами движения крестика. Применится через flush после остановки.
+            if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming || this.chartManager?._crosshairActive || this.chartManager?._isDrawingDragActive?.()) {
                 this._pendingIndicatorResults.set(indicator.id, res);
                 return;
             }
@@ -251,20 +270,28 @@ class IndicatorManager {
         if (!this.worker) return;
         
         // Не запускаем расчёт во время скролла/зума
-        if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming) {
+        // [CROSSHAIR-PERF] ...и пока пользователь двигает перекрестие: пересчёт
+        // блокирует main thread, и крестик «отлипает» от курсора. Ставим в очередь —
+        // flushPendingIndicatorsUpdate() выполнит её через 150 мс после остановки мыши.
+        if (this.chartManager?._isScrolling || this.chartManager?._isScrollingFast || this.chartManager?._isVerticalZooming || this.chartManager?._crosshairActive || this.chartManager?._isDrawingDragActive?.()) {
             this._pendingIndicatorsUpdate = true;
             return;
         }
         
         // [FIX] Троттлинг: не чаще одного пересчёта за _indicatorThrottleMs
+        // [CROSSHAIR-PERF] Троттлинг адаптивный: чем больше данных в памяти,
+        // тем дороже пересчёт (clone + mapping + setData по всей длине) — тем реже
+        // его делаем. На типичных 1000-8000 свечей остаётся прежние 150 мс.
+        const dataLen = this.chartManager?.chartData?.length || 0;
+        const throttleMs = dataLen > 20000 ? 600 : dataLen > 10000 ? 350 : this._indicatorThrottleMs;
         const now = performance.now();
         const elapsed = now - this._lastIndicatorUpdateAt;
-        if (elapsed < this._indicatorThrottleMs) {
+        if (elapsed < throttleMs) {
             if (!this._updateThrottleTimeout) {
                 this._updateThrottleTimeout = setTimeout(() => {
                     this._updateThrottleTimeout = null;
                     this.updateAllIndicators();
-                }, this._indicatorThrottleMs - elapsed);
+                }, throttleMs - elapsed);
             }
             return;
         }
@@ -300,11 +327,19 @@ class IndicatorManager {
                     indicator.result = null;
                 }
                 
+                // [CROSSHAIR-PERF] В worker отправляем только хвост массива
+                // (_calcWindowCandles). Structured-clone 40 000 объектов
+                // блокировал main thread на десятки мс каждые 150 мс — именно
+                // это роняло кадры перекрестия на глубокой истории. Прогрев
+                // индикаторов (SMA/RSI/...) много меньше окна, а недостающие
+                // старые точки станут whitespace ([FIX-I1]) — выравнивание панелей целое.
+                const win = this._calcWindowCandles || 12000;
+                const data = chartData.length > win ? chartData.slice(chartData.length - win) : chartData;
                 calculations.push({
                     indicatorId: indicator.id,
                     type: workerType,
                     // [FIX] Не копируем массив — postMessage всё равно сделает structured clone
-                    data: chartData,
+                    data: data,
                     params: indicator.getWorkerParams()
                 });
             }
@@ -316,6 +351,23 @@ class IndicatorManager {
     }
     
     flushPendingIndicatorsUpdate() {
+        // [DRAW-PERF] Пока тащат рисовалку или идёт скролл — не применяем тяжёлые
+        // результаты (setData по всему массиву на каждый индикатор). Раньше flush
+        // взрывался ровно в паузе перетаскивания алерта (150 мс покоя мыши) —
+        // отсюда «алерты стали плохо перемещаться при повторном» хвате.
+        const cm = this.chartManager;
+        const busy = cm && (cm._isScrolling || cm._isScrollingFast || cm._isVerticalZooming ||
+            (typeof cm._isDrawingDragActive === 'function' && cm._isDrawingDragActive()));
+        if (busy) {
+            if (!this._flushRetryTimeout) {
+                this._flushRetryTimeout = setTimeout(() => {
+                    this._flushRetryTimeout = null;
+                    this.flushPendingIndicatorsUpdate();
+                }, 200);
+            }
+            return;
+        }
+        if (this._flushRetryTimeout) { clearTimeout(this._flushRetryTimeout); this._flushRetryTimeout = null; }
         if (this._pendingIndicatorsUpdate) {
             this._pendingIndicatorsUpdate = false;
             this.updateAllIndicators();
