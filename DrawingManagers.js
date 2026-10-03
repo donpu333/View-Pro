@@ -963,7 +963,15 @@ class HorizontalRayManager {
     // (при drag), либо через RAF (при hover).
        _processMouseMove(e) {
         const container = this._chartManager.chartContainer;
-        const rect = container.getBoundingClientRect();
+        // [DRAW-PERF] rect кэшируется на 300 мс: getBoundingClientRect() на каждом
+        // кадре мыши — принудительный layout всей страницы; на насыщенном DOM
+        // перетаскивание становилось «тяжёлым».
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
         const cssX = e.clientX - rect.left;
         const cssY = e.clientY - rect.top;
         
@@ -1517,10 +1525,13 @@ _showSettings(ray) {
     }
     
 
-    wind// ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
-if (typeof window.makePanelDraggable === 'function') {
-    window.makePanelDraggable(settings);
-}ow.makePanelDraggable(settings);
+    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+    // [FIX] Здесь было повреждение после неудачного merge («wind// ... }ow.makePanelDraggable(...);»):
+    // строка window.makePanelDraggable оказалась разорвана вклеенным if-блоком, и при
+    // КАЖДОМ открытии настроек луча бросался ReferenceError: wind is not defined.
+    if (typeof window.makePanelDraggable === 'function') {
+        window.makePanelDraggable(settings);
+    }
 }
 
     _renderTimeframeCheckboxes(ray) {
@@ -6381,7 +6392,15 @@ class AlertLineManager {
 
     _processMouseMove(e) {
         const container = this._chartManager.chartContainer;
-        const rect = container.getBoundingClientRect();
+        // [DRAW-PERF] rect кэшируется на 300 мс: getBoundingClientRect() на каждом
+        // кадре мыши — принудительный layout всей страницы; на насыщенном DOM
+        // перетаскивание становилось «тяжёлым».
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
         const cssX = e.clientX - rect.left;
         const cssY = e.clientY - rect.top;
 
@@ -6431,7 +6450,9 @@ class AlertLineManager {
         } else {
             const hit = this.hitTest(bmX, bmY);
             const hitAlert = hit ? hit.alert : null;
-            container.style.cursor = hitAlert ? 'grab' : 'crosshair';
+            // [DRAW-PERF] запись style.cursor каждый кадр дёргала стили; теперь только при смене
+            const cursor = hitAlert ? 'grab' : 'crosshair';
+            if (container.style.cursor !== cursor) container.style.cursor = cursor;
             if (this._hoveredAlert !== hitAlert) {
                 if (this._hoveredAlert) this._hoveredAlert.hovered = false;
                 this._hoveredAlert = hitAlert;
@@ -8084,7 +8105,15 @@ class TextManager {
     // (при drag), либо через RAF (при hover).
        _processMouseMove(e) {
         const container = this._chartManager.chartContainer;
-        const rect = container.getBoundingClientRect();
+        // [DRAW-PERF] rect кэшируется на 300 мс: getBoundingClientRect() на каждом
+        // кадре мыши — принудительный layout всей страницы; на насыщенном DOM
+        // перетаскивание становилось «тяжёлым».
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
         const cssX = e.clientX - rect.left;
         const cssY = e.clientY - rect.top;
         
@@ -9709,7 +9738,13 @@ class TradeLevelManager {
         const container = this._chartManager.chartContainer;
         this._lastMouseClientX = e.clientX;
         this._lastMouseClientY = e.clientY;
-        const rect = container.getBoundingClientRect();
+        // [DRAW-PERF] кэш rect — см. комментарий в остальных менеджерах
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
         const x = (e.clientX - rect.left) * this._pixelRatio;
         const y = (e.clientY - rect.top) * this._pixelRatio;
 
@@ -9958,10 +9993,13 @@ class TradeLevelManager {
             row.style.fontSize = '12px';
             row.style.color = '#B0B0B0';
             row.innerHTML = `<span>Объём позиции: </span><span id="tradePreviewPosition" style="color:#E0E0E0; font-weight:600;">—</span>`;
-            if (rewardEl && rewardEl.parentElement) {
-                rewardEl.parentElement.parentElement
-                    ? rewardEl.closest('.setting-row')?.parentElement?.insertBefore(row, rewardEl.closest('.setting-row').nextSibling)
-                    : rewardEl.parentElement.insertBefore(row, rewardEl.nextSibling);
+            // [UI-UNIFY] Раньше строка вставлялась, только если rewardEl лежал внутри
+            // .setting-row — в разметке панели такого предка не было, и «Объём позиции»
+            // молча не появлялся вовсе (опциональная цепочка коротко замыкалась).
+            // Теперь якорь — сам блок предпросмотра (.trade-preview).
+            const anchorBox = rewardEl ? (rewardEl.closest('.trade-preview') || rewardEl.parentElement?.parentElement) : null;
+            if (anchorBox && anchorBox.parentElement) {
+                anchorBox.parentElement.insertBefore(row, anchorBox.nextSibling);
             } else {
                 panel.appendChild(row);
             }
@@ -10005,6 +10043,12 @@ class TradeLevelManager {
             if (createBtn) createBtn.textContent = 'Создать';
             this._tpManuallySet = false;
         }
+        // [UI-UNIFY] Единый футер как у луча/тренда/алерта/линейки/текста:
+        // редактирование сделки — «Сохранить» + «Удалить», создание — «Создать» + «Отмена».
+        const tradeDeleteBtn = document.getElementById('tradeDeleteDrawing');
+        const tradeCancelBtn = document.getElementById('tradeCancelBtn');
+        if (tradeDeleteBtn) tradeDeleteBtn.style.display = trade ? '' : 'none';
+        if (tradeCancelBtn) tradeCancelBtn.style.display = trade ? 'none' : '';
         [entryInput, slInput, tpInput, rrInput, riskInput].forEach(inp => { if (inp) inp.oncontextmenu = (e) => e.stopPropagation(); });
         panel.onmousedown = (e) => e.stopPropagation();
         panel.onmousemove = (e) => e.stopPropagation();
@@ -10020,6 +10064,14 @@ class TradeLevelManager {
         if (longBtn) longBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('long'); this._updatePreview(); };
         if (shortBtn) shortBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('short'); this._updatePreview(); };
         createBtn.onclick = (e) => { e.stopPropagation(); this._handlePanelSubmit(); };
+        // [UI-UNIFY] «Удалить» — как в луче и других рисовалках: удаляет редактируемую
+        // сделку и закрывает панель. В режиме создания кнопка скрыта.
+        if (tradeDeleteBtn) tradeDeleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            const t = this._editingTrade;
+            if (t) this.deleteTrade(t.id);
+            this._closePanel();
+        };
         document.getElementById('tradeCancelBtn').onclick = (e) => { e.stopPropagation(); this._closePanel(); };
         document.getElementById('closeTradeCreate').onclick = (e) => { e.stopPropagation(); this._closePanel(); };
         panel.style.display = 'block';
@@ -10035,8 +10087,10 @@ class TradeLevelManager {
         this._updatePreview();
 
         this._renderTimeframeCheckboxes(trade);
-        const stylePanel = panel.querySelector('#stylePanel');
-        const visibilityPanel = panel.querySelector('#visibilityPanel');
+        // [UI-UNIFY] id вкладок с префиксом trade*: раньше #stylePanel/#visibilityPanel
+        // дублировали id панели луча (getElementById всегда брал лучевую панель).
+        const stylePanel = panel.querySelector('#tradeStylePanel');
+        const visibilityPanel = panel.querySelector('#tradeVisibilityPanel');
         const tabStyle = panel.querySelector('#tabStyle');
         const tabVisibility = panel.querySelector('#tabVisibility');
 
@@ -10120,11 +10174,8 @@ class TradeLevelManager {
         const switchTab = (tabName) => {
             tradeTabs.forEach(t => {
                 const active = t.name === tabName;
-                if (t.btn) {
-                    t.btn.style.background = active ? '#4A90E2' : '#2D2D2D';
-                    t.btn.style.color = active ? '#fff' : '#B0B0B0';
-                    t.btn.style.border = active ? 'none' : '1px solid #404040';
-                }
+                // [UI-UNIFY] вкладки — общий класс .settings-tab(.active), как у луча/тренда/алерта
+                if (t.btn) t.btn.classList.toggle('active', active);
                 if (t.body) t.body.style.display = active ? 'block' : 'none';
             });
             if (tabName === 'atr' && this._atrController) this._atrController.onTabShow();
@@ -10140,7 +10191,9 @@ class TradeLevelManager {
     _renderTimeframeCheckboxes(trade) {
         const panel = document.getElementById('tradeCreatePanel');
         if (!panel) return;
-        const container = panel.querySelector('#timeframeCheckboxList');
+        // [UI-UNIFY] id с префиксом trade*: раньше дублировали id панели луча, и
+        // <label for="tf_1m"> отсюда переключал чекбокс ЧУЖОЙ панели (первый id в DOM).
+        const container = panel.querySelector('#tradeTimeframeCheckboxList');
         if (!container) return;
         const tfLabels = { '1m': '1 мин', '3m': '3 мин', '5m': '5 мин', '15m': '15 мин', '30m': '30 мин', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
         let html = '';
@@ -10148,7 +10201,7 @@ class TradeLevelManager {
         const visibility = trade ? trade.timeframeVisibility : {};
         timeframes.forEach(tf => {
             const isChecked = visibility[tf] !== false;
-            html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="tf_${tf}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="tf_${tf}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
+            html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="trade_tf_${tf}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="trade_tf_${tf}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
         });
         container.innerHTML = html;
         container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
@@ -10160,9 +10213,9 @@ class TradeLevelManager {
                 }
             };
         });
-        const selectAllBtn = panel.querySelector('#selectAllTimeframes');
-        const deselectAllBtn = panel.querySelector('#deselectAllTimeframes');
-        const selectMinutesBtn = panel.querySelector('#selectMinutesTimeframes');
+        const selectAllBtn = panel.querySelector('#tradeSelectAllTimeframes');
+        const deselectAllBtn = panel.querySelector('#tradeDeselectAllTimeframes');
+        const selectMinutesBtn = panel.querySelector('#tradeSelectMinutesTimeframes');
         if (selectAllBtn) {
             selectAllBtn.onclick = (e) => {
                 e.stopPropagation();
