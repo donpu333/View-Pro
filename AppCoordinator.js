@@ -40,7 +40,11 @@ class AppCoordinator {
         
         // ✅ Безопасное создание TimeframeManager
         if (typeof TimeframeManager !== 'undefined' && this.timerManager) {
-            this.tfManager = new TimeframeManager(this.chartManager, this.wsManager, this.timerManager);
+            // [ZOOM-TF] restoreViewportOnSwitch: при переключении таймфрейма сохраняем
+            // видимый ПЕРИОД (как в TradingView), а не число свечей и не прыжок к правому краю.
+            this.tfManager = new TimeframeManager(this.chartManager, this.wsManager, this.timerManager, {
+                restoreViewportOnSwitch: true
+            });
         } else {
             console.error('❌ TimeframeManager не загружен или TimerManager отсутствует!');
         }
