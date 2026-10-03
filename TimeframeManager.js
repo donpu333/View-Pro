@@ -1,8 +1,4 @@
 
-const RESTORE_RIGHT_WHITESPACE = 15;
-// Минимум свечей на экране после восстановления: при 1m -> 1d сохранённый период
-// может оказаться меньше одной дневной свечи, и график «встал бы» на максимум зума.
-const RESTORE_MIN_VISIBLE_BARS = 5;
 
 const DEFAULT_OPTIONS = {
     restoreViewportOnSwitch: false,  // TF6: по умолчанию поведение прежнее (не восстанавливаем)
@@ -28,10 +24,6 @@ class TimeframeManager {
         this.savedCenterTime = null;
         this.savedTimeSpan = null;
         this.savedVisibleBars = 0;
-        // [ZOOM-TF] период, который переносится на новый таймфрейм:
-        this.savedLogicalSpan = null;   // ширина видимого окна В СВЕЧАХ старого ТФ
-        this.savedInterval = null;      // интервал, на котором она измерена
-        this._switchInProgress = false; // на время переключения автосохранение выключено
         this._timeScaleUnsubscribe = null;
         this._abortController = null;
         this._saveTimeout = null;
@@ -176,11 +168,6 @@ class TimeframeManager {
 
     _handleVisibleRangeChange() {
         if (this._destroyed) return;
-        // [ZOOM-TF] во время переключения ТФ график сам дёргает видимый диапазон
-        // (setData + scroll к правому краю + автошкала). Если это сохранить,
-        // savedCenterTime/savedLogicalSpan перезапишутся НОВЫМ вьюпортом и
-        // восстанавливать в конце _doSwitch будет уже нечего.
-        if (this._switchInProgress) return;
         if (this._saveTimeout) cancelAnimationFrame(this._saveTimeout);
         this._saveTimeout = requestAnimationFrame(() => {
             this._saveTimeout = null;
@@ -190,7 +177,6 @@ class TimeframeManager {
 
     saveCurrentPosition() {
         if (this._destroyed) return;
-        if (this._switchInProgress) return;   // [ZOOM-TF] см. _handleVisibleRangeChange
 
         const timeScale = this.chartManager?.chart?.timeScale?.();
         if (!timeScale?.getVisibleLogicalRange) return;
@@ -218,30 +204,8 @@ class TimeframeManager {
                 this.savedTimeSpan = tTo - tFrom;
                 // ИНДЕКСЫ в данных, без учёта пустого правого отступа (rightOffset).
                 this.savedVisibleBars = Math.max(0, toIndex - fromIndex + 1);
-                // [ZOOM-TF] точная ширина окна в свечах СТАРОГО ТФ (вместе с правым
-                // whitespace) + сам интервал. Период = savedLogicalSpan * secOld,
-                // на новом ТФ это savedLogicalSpan * secOld / secNew свечей.
-                this.savedLogicalSpan = Math.max(1, visibleRange.to - visibleRange.from);
-                this.savedInterval = this.chartManager.currentInterval || this.currentInterval;
             }
         }
-    }
-
-    // [ZOOM-TF] длительность интервала в секундах. Берём у ChartManager
-    // (INTERVAL_SECONDS_MAP), при недоступности — разбираем строку ТФ сами.
-    _intervalSeconds(tf) {
-        const cm = this.chartManager;
-        if (cm && typeof cm._getIntervalSecondsFor === 'function') {
-            const s = cm._getIntervalSecondsFor(tf);
-            if (s > 0) return s;
-        }
-        if (typeof INTERVAL_SECONDS_MAP !== 'undefined' && INTERVAL_SECONDS_MAP[tf]) return INTERVAL_SECONDS_MAP[tf];
-        const m = /^(\d+)([mhdwM])$/.exec(tf || '');
-        if (m) {
-            const mult = { m: 60, h: 3600, d: 86400, w: 604800, M: 2592000 }[m[2]];
-            if (mult) return parseInt(m[1], 10) * mult;
-        }
-        return 3600;
     }
 
     restorePosition(force = false) {
@@ -255,15 +219,7 @@ class TimeframeManager {
 
         const firstTime = data[0].time;
         const lastTime = data[data.length - 1].time;
-        // [ZOOM-TF] Центр СТАРЕЕ загруженных данных нового ТФ — восстанавливать нечего
-        // (история ещё не подгружена), оставляем вид по умолчанию у правого края.
-        if (this.savedCenterTime < firstTime) return;
-        // [ZOOM-TF] Центр МОЛОЖЕ последней свечи нового ТФ — штатная ситуация при
-        // переходе с короткого ТФ на длинный: центр окна попадает внутрь текущей,
-        // ещё не закрытой дневной/недельной/месячной свечи (её time = начало периода).
-        // Раньше здесь был общий return, из-за чего перенос масштаба молча не работал
-        // для 1m/5m/15m/1h -> 1d/1w/1M, т.е. ровно в самом частом сценарии.
-        const centerAfterLastBar = this.savedCenterTime > lastTime;
+        if (this.savedCenterTime < firstTime || this.savedCenterTime > lastTime) return;
 
         if (!force) {
             let currentRange = null;
@@ -276,63 +232,37 @@ class TimeframeManager {
         }
 
         let left = 0, right = data.length - 1, centerIndex = -1;
-        if (centerAfterLastBar) {
-            centerIndex = data.length - 1;
-        } else while (left <= right) {
+        while (left <= right) {
             const mid = Math.floor((left + right) / 2);
             if (data[mid].time === this.savedCenterTime) { centerIndex = mid; break; }
             data[mid].time < this.savedCenterTime ? left = mid + 1 : right = mid - 1;
         }
 
-        if (centerIndex === -1 && !centerAfterLastBar) {
-            // [ZOOM-TF] на новом ТФ точного совпадения времени почти никогда нет
-            // (центр 10:07 с 1m отсутствует в дневных данных) — берём БЛИЖАЙШУЮ свечу,
-            // а не точку вставки, иначе окно уезжает на полсвечи вперёд.
-            const nextIdx = Math.max(0, Math.min(data.length - 1, left));
-            const prevIdx = nextIdx - 1;
-            centerIndex = (prevIdx >= 0 &&
-                Math.abs(data[prevIdx].time - this.savedCenterTime) <= Math.abs(data[nextIdx].time - this.savedCenterTime))
-                ? prevIdx : nextIdx;
-        }
+        if (centerIndex === -1) centerIndex = left;
         centerIndex = Math.max(0, Math.min(centerIndex, data.length - 1));
 
-        // [ZOOM-TF] Масштаб переносится ВРЕМЕНЕМ, а не числом свечей.
-        // Раньше приоритет был у savedVisibleBars: отдалившись на 1m до ~700 свечей
-        // (~12 часов) и переключившись на 1d, пользователь получал те же 700 ДНЕЙ
-        // (≈2 года) вместо тех же 12 часов. Теперь:
-        //     bars_new = bars_old * secOld / secNew   (тот же период, как в TradingView)
-        const newInterval = this.chartManager.currentInterval || this.currentInterval;
-        const secOld = this._intervalSeconds(this.savedInterval);
-        const secNew = this._intervalSeconds(newInterval);
+        let from, to;
 
-        let visibleBars = 0;
-        if (this.savedLogicalSpan > 0 && secOld > 0 && secNew > 0) {
-            visibleBars = this.savedLogicalSpan * secOld / secNew;
-        } else if (this.savedTimeSpan > 0 && secNew > 0) {
-            visibleBars = this.savedTimeSpan / secNew;
-        } else if (this.savedVisibleBars > 2) {
-            visibleBars = this.savedVisibleBars;   // последний fallback — прежнее поведение
+        if (this.savedVisibleBars > 2) {
+            const half = Math.floor(this.savedVisibleBars / 2);
+            from = centerIndex - half;
+            to = centerIndex + half;
+        } else {
+            let radius = 40;
+            if (this.savedTimeSpan > 0 && data.length > 1) {
+                const avg = (data[data.length - 1].time - data[0].time) / (data.length - 1);
+                if (avg > 0) {
+                    radius = Math.round((this.savedTimeSpan / 2) / avg);
+                    radius = Math.max(15, Math.min(radius, 250));
+                }
+            }
+            const padding = Math.max(3, Math.floor(radius * 0.15));
+            from = centerIndex - radius - padding;
+            to = centerIndex + radius + padding;
         }
-        if (!isFinite(visibleBars) || visibleBars <= 0) visibleBars = RESTORE_MIN_VISIBLE_BARS;
-        // сверху ограничиваем длиной данных: иначе LW упрётся в minBarSpacing и
-        // молча прижмёт вид к правому краю.
-        visibleBars = Math.max(RESTORE_MIN_VISIBLE_BARS,
-            Math.min(visibleBars, Math.max(RESTORE_MIN_VISIBLE_BARS, data.length)));
 
-        const half = visibleBars / 2;
-        // Вправо разрешаем уходить в whitespace (как rightOffset = 15), влево — нет:
-        // за границей данных LW сработает _minRightOffset и сдвинет всё окно.
-        const maxTo = data.length - 1 + RESTORE_RIGHT_WHITESPACE;
-        let from = centerIndex - half;
-        let to = centerIndex + half;
-        // [ZOOM-TF] Если центр близко к правому краю, окно НЕ ОБРЕЗАЕМ (иначе LW
-        // пересчитает barSpacing из укороченного диапазона и масштаб «подпрыгнет»),
-        // а СДВИГАЕМ влево целиком — период остаётся тем же.
-        if (to > maxTo) { const d = to - maxTo; to -= d; from -= d; }
-        if (from < 0) { const d = -from; from += d; to += d; }
-        if (to > maxTo) to = maxTo;   // данных физически не хватает — окно сузится
         from = Math.max(0, Math.floor(from));
-        to = Math.ceil(to);
+        to = Math.min(data.length - 1, Math.ceil(to));
 
         if (from < to) {
             try {
@@ -510,29 +440,13 @@ class TimeframeManager {
         }
     }
 
-    // [ZOOM-TF] Обёртка: до подмены данных сохраняем текущий вьюпорт, затем на всё
-    // время переключения глушим автосохранение (_switchInProgress) и гарантированно
-    // снимаем флаг в finally — в _doSwitchInner несколько досрочных return
-    // (ошибка сети, rollback, новый клик пользователя).
     async _doSwitch(tf) {
         if (this._destroyed) return;
         if (tf === this.currentInterval) return;
 
-        this.saveCurrentPosition();
-
-        this._switchInProgress = true;
-        try {
-            await this._doSwitchInner(tf);
-        } finally {
-            this._switchInProgress = false;
-        }
-    }
-
-    async _doSwitchInner(tf) {
-        if (this._destroyed) return;
-        if (tf === this.currentInterval) return;
-
         console.log('🔄 Переключение на таймфрейм:', tf);
+
+        this.saveCurrentPosition();
 
         document.querySelectorAll('.timeframe-item').forEach(i => {
             i.classList.toggle('active', i.dataset.tf === tf);
@@ -588,12 +502,7 @@ class TimeframeManager {
             if (this._destroyed) return;
             const price = this.chartManager.currentRealPrice ?? this.chartManager.lastCandle?.close;
             if (price != null) this.timerManager?.updatePrice?.(price);
-            // [CLEANUP] Здесь был this.chartManager._applyPriceScaleWidth?.() — такого
-            // метода в ChartManager НЕТ (есть _lockPriceScaleWidth / _relockPriceScaleWidth /
-            // _resetPriceScaleWidth), т.е. вызов был мёртвым (?. глотал отсутствие метода).
-            // Ширина шкалы цены уже зафиксирована в setDataQuick -> finalizeAfterRescale
-            // (_lockPriceScaleWidth). Дёргать здесь _relockPriceScaleWidth нельзя: он меняет
-            // minimumWidth после усадки layout и сбивает зум (см. комментарий в setDataQuick).
+            try { this.chartManager._applyPriceScaleWidth?.(); } catch (e) { console.error('⚠️ _applyPriceScaleWidth:', e); }
         });
 
         // TF5: раньше это был один блок без try/catch. Исключение в первом же
@@ -611,12 +520,8 @@ class TimeframeManager {
             }
         });
 
-        // TF6 / [ZOOM-TF]: восстановление вьюпорта. Переносим на новый ТФ ВИДИМЫЙ ПЕРИОД
-        // (restorePosition считает bars_new = bars_old * secOld / secNew), поэтому
-        // отдалившись на коротком ТФ и переключившись на 1d, пользователь видит то же
-        // время, а не то же число свечей. Опция включается в AppCoordinator.
-        // Вызываем синхронно после await switchInterval: к этому моменту setDataQuick
-        // уже отработал onReady (позиционирование + автошкала завершены).
+        // TF6: восстановление вьюпорта — опционально (по умолчанию выключено,
+        // чтобы не менять текущее поведение).
         if (this.opts.restoreViewportOnSwitch) this.restorePosition(true);
 
         console.log('✅ Таймфрейм переключен:', tf);
