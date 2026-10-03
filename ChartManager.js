@@ -97,6 +97,8 @@ class ChartManager {
         // через 150 мс после остановки мыши (flushPendingIndicatorsUpdate).
         this._crosshairActive = false;
         this._crosshairIdleTimeout = null;
+        // [DRAW-DRAG] заблокирован ли скролл графика на время перетаскивания рисовалки
+        this._drawingScrollLock = false;
         // [CROSSHAIR-PERF] Де-дупликатор перекрестия панелей: setCrosshairPosition
         // (= полная перерисовка панели) вызывается только при реальном смене time/value.
         this._panelCrosshairLast = new Map();
@@ -1457,6 +1459,11 @@ class ChartManager {
                 if (panels.length > 0 && !this._panelsSyncRafId) {
                     this._panelsSyncRafId = requestAnimationFrame(() => {
                         this._panelsSyncRafId = null;
+                        // [TF-SWITCH] Во время переключения символа/таймфрейма панели НЕ синхронизируем:
+                        // их серии ещё содержат данные СТАРОГО ТФ, а новый диапазон главного графика
+                        // показывал бы в них «чужое» окно — визуально гэпы/мусор, пока не приедет
+                        // пересчёт индикаторов. После пересчёта панели выровняет syncPanelsNow().
+                        if (this._switchingSymbol || this._isSwitchingInterval) return;
                         this._isSyncing = true;
                         // [PERF-PAN] берём САМЫЙ СВЕЖИЙ диапазон (за кадр могло
                         // прийти несколько событий) и глушим «эхо» панелей:
@@ -1524,6 +1531,9 @@ class ChartManager {
         this.chartContainer.addEventListener('mouseleave', this._mouseLeaveHandler);
 
         this._globalMouseUpHandler = (e) => {
+            // [DRAW-DRAG] разблок скролла на ЛЮБОМ mouseup (window, capture) —
+            // страховка: даже если менеджер рисовалок «потерял» отпускание.
+            this.unlockChartScrollForDrawing();
             if (!this.chartContainer) return;
             const canvas = this.chartContainer.querySelector('canvas');
             if (!canvas) return;
@@ -1535,6 +1545,7 @@ class ChartManager {
         window.addEventListener('mouseup', this._globalMouseUpHandler, true);
 
         this._blurHandler = () => {
+            this.unlockChartScrollForDrawing();   // [DRAW-DRAG]
             this._fixStuckAxisDrag();
             if (window.trendLineManager?.cancelDrag) window.trendLineManager.cancelDrag();
             if (window.rayManager?.cancelDrag) window.rayManager.cancelDrag();
@@ -2692,6 +2703,30 @@ class ChartManager {
             (w.tradeLevelManager && w.tradeLevelManager._isDragging));
     }
 
+    // =============== [DRAW-DRAG] БЛОКИРОВКА СКРОЛЛА НА ВРЕМЯ ДРАГА ===============
+    // Поведение как в TradingView: взял линию/алерт/тренд — график замер, отпустил —
+    // снова скроллится. Без блокировки LW-панорамирование (handleScroll.pressedMouseMove)
+    // начиналось ОДНОВРЕМЕННО с перетаскиванием: range-события взводили _isScrolling,
+    // mousemove-обработчики рисовалок из-за этого сбрасывали события — линия «замерзала»
+    // в руке (алерт двигался рывками), а график и панели индикаторов перерисовывались
+    // каждый кадр. LW читает handleScroll на КАЖДОМ mousemove, поэтому блокировка,
+    // выставленная в mousedown, гасит панораму уже со следующего кадра.
+    lockChartScrollForDrawing() {
+        if (this._drawingScrollLock) return;
+        this._drawingScrollLock = true;
+        try { this.chart.applyOptions({ handleScroll: false }); } catch (e) {}
+    }
+
+    unlockChartScrollForDrawing() {
+        if (!this._drawingScrollLock) return;
+        this._drawingScrollLock = false;
+        try {
+            this.chart.applyOptions({
+                handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true }
+            });
+        } catch (e) {}
+    }
+
     _clearPanelsCrosshair() {
         const panels = this._getPanelsList();
         if (panels.length === 0) return;
@@ -3417,6 +3452,7 @@ class ChartManager {
         }
         if (this.timerManager) this.timerManager.stop();
         this._loadingSymbol = false;
+        this._drawingScrollLock = false;   // [DRAW-DRAG] график перестраивается — скролл включит setDataQuick
         this.isLoadingMore = false;
         this._updateScheduled = false;
         this._pendingUpdates = false;
