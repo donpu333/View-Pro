@@ -253,23 +253,23 @@ class HorizontalRayRenderer {
         const ray = this._ray;
         const pixelRatio = window.devicePixelRatio || 1;
 
-        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (Drag Point)
-        // Если луч выделен и готов к перетаскиванию, проверяем попадание СТРОГО в точку
-        if (ray.readyToDrag || ray.dragging) {
-            const xCoordinate = this._chartManager.timeToCoordinate(ray.time);
-            const yCoordinate = this._chartManager.priceToCoordinate(ray.price);
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания.
+        // Радиус 16 bitmap-px ≈ 8 CSS-px на Retina — комфортно для мыши и тачпада.
+        // Фолбэк на экранную координату цены, если _hitArea ещё не сформирована
+        // (первый кадр после загрузки / после смены ТФ).
+        if (this._alert.showDragPoint) {
+            const xCoordinate = this._chartManager.timeToCoordinate(this._alert.time);
+            const yCoordinate = this._chartManager.priceToCoordinate(this._alert.price);
             if (xCoordinate !== null && yCoordinate !== null) {
                 const pointX = Math.round(xCoordinate * pixelRatio);
-                // Берем центр линии из уже рассчитанной hit-области
-                const centerY = this._hitArea ? (this._hitArea.y + this._hitArea.height / 2) : (yCoordinate * pixelRatio);
-                
+                const centerY = this._hitArea
+                    ? (this._hitArea.y + this._hitArea.height / 2)
+                    : (yCoordinate * pixelRatio);
                 const dx = x - pointX;
                 const dy = y - centerY;
                 const distance = Math.sqrt(dx * dx + dy * dy);
-                
-                // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей для удобного клика
-                if (distance < 12) {
-                    return { type: 'dragPoint', ray: ray, distance: distance };
+                if (distance < 16) {
+                    return { type: 'dragPoint', alert: this._alert, distance: distance };
                 }
             }
         }
@@ -828,7 +828,6 @@ class HorizontalRayManager {
                 }
 
                 if (hit.ray.readyToDrag) {
-
                     this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
                     this._potentialDrag = {
                         ray: hit.ray,
@@ -2607,7 +2606,6 @@ class TrendLineManager {
                 this._lastClickTime = 0;
 
                 if (hit.trendLine.editMode) {
-
                     this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
                     hit.trendLine.editMode = false;
                     hit.trendLine.showDragPoint1 = false;
@@ -4335,7 +4333,6 @@ class RulerLineManager {
                 this._lastClickTime = 0;
                 
                 if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
-
                     this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
                     hit.ruler.showDragPoint1 = false;
                     hit.ruler.showDragPoint2 = false;
@@ -5250,76 +5247,70 @@ class AlertLineRenderer {
         ctx.closePath();
     }
 
-  hitTest(x, y) {
-    let bestHit = null;
-    let bestDistance = Infinity;
-    const pixelRatio = window.devicePixelRatio || 1;
+      hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+        const pixelRatio = window.devicePixelRatio || 1;
 
-    // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания.
-    // Радиус 16 bitmap-px ≈ 8 CSS-px на Retina — комфортно для мыши и тачпада.
-    // Фолбэк на экранную координату цены, если _hitArea ещё не сформирована
-    // (первый кадр после загрузки / после смены ТФ).
-    if (this._alert.showDragPoint) {
-        const xCoordinate = this._chartManager.timeToCoordinate(this._alert.time);
-        const yCoordinate = this._chartManager.priceToCoordinate(this._alert.price);
-
-        if (xCoordinate !== null && yCoordinate !== null) {
-            const pointX = Math.round(xCoordinate * pixelRatio);
-            const centerY = this._hitArea
-                ? (this._hitArea.y + this._hitArea.height / 2)
-                : (yCoordinate * pixelRatio);
-
-            const dx = x - pointX;
-            const dy = y - centerY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-
-            if (distance < 16) {
-                return { type: 'dragPoint', alert: this._alert, distance };
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (Drag Point)
+        if (this._alert.showDragPoint && this._hitArea) {
+            const xCoordinate = this._chartManager.timeToCoordinate(this._alert.time);
+            if (xCoordinate !== null) {
+                const pointX = Math.round(xCoordinate * pixelRatio);
+                const centerY = this._hitArea.y + this._hitArea.height / 2;
+                const dx = x - pointX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей
+                if (distance < 12) {
+                    return { type: 'dragPoint', alert: this._alert, distance: distance };
+                }
             }
         }
-    }
 
-    // ✅ 2. Ценовая метка (Label)
-    if (this._priceLabelHitArea) {
-        const padding = 10;
-        const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
-        const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
-
-        const inX = x >= this._priceLabelHitArea.x - padding &&
-                    x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
-        const inY = y >= this._priceLabelHitArea.y - padding &&
-                    y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
-
-        if (inX && inY) {
-            const dx = x - centerX;
-            const dy = y - centerY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < bestDistance) {
-                bestHit = { type: 'label', alert: this._alert, distance };
-                bestDistance = distance;
+        // ✅ 2. Ценовая метка (Label)
+        if (this._priceLabelHitArea) {
+            const padding = 10; // ✅ БЫЛО 15, СТАЛО 10
+            const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+            const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+            
+            const inX = x >= this._priceLabelHitArea.x - padding && 
+                        x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+            const inY = y >= this._priceLabelHitArea.y - padding && 
+                        y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+                        
+            if (inX && inY) {
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'label', alert: this._alert, distance: distance };
+                    bestDistance = distance;
+                }
             }
         }
-    }
 
-    // ✅ 3. Линия (буфер 4 px)
-    if (this._hitArea) {
-        const buffer = 4;
-        const centerY = this._hitArea.y + this._hitArea.height / 2;
-        const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
-        const inX = x >= this._hitArea.x1 - buffer && x <= this._hitArea.x2 + buffer;
-
-        if (inX && inY) {
-            const distance = Math.abs(y - centerY);
-            if (distance < bestDistance) {
-                bestHit = { type: 'line', alert: this._alert, distance };
-                bestDistance = distance;
+        // ✅ 3. Линия (с УМЕНЬШЕННЫМ буфером)
+        if (this._hitArea) {
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4
+            const centerY = this._hitArea.y + this._hitArea.height / 2;
+            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+            const inX = x >= this._hitArea.x1 - buffer && x <= this._hitArea.x2 + buffer;
+            
+            if (inX && inY) {
+                const distance = Math.abs(y - centerY);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'line', alert: this._alert, distance: distance };
+                    bestDistance = distance;
+                }
             }
         }
-    }
 
-    return bestHit;
+        return bestHit;
+    }
 }
-}
+
 class AlertLinePaneView {
     constructor(alert, chartManager) {
         this._alert = alert;
@@ -6262,164 +6253,152 @@ class AlertLineManager {
         });
     }
 
-   _setupEventListeners() {
-    const container = this._chartManager.chartContainer;
+    _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
 
-    container.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
 
-        if (e.target.closest('#alertSettings') ||
-            e.target.closest('#trendSettings') ||
-            e.target.closest('#textSettings') ||
-            e.target.closest('#rulerSettingsPanel') ||
-            e.target.closest('#drawingSettings')) {
-            return;
-        }
+            if (e.target.closest('#alertSettings') ||
+                e.target.closest('#trendSettings') ||
+                e.target.closest('#textSettings') ||
+                e.target.closest('#rulerSettingsPanel') ||
+                e.target.closest('#drawingSettings')) {
+                return;
+            }
 
-        const rect = container.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+            const rect = container.getBoundingClientRect();
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
 
-        const hit = this.hitTest(bmX, bmY);
+            const hit = this.hitTest(bmX, bmY);
+            if (hit) {
+                e.preventDefault();
+                e.stopPropagation();
 
-        if (hit) {
-            e.preventDefault();
-            e.stopPropagation();
+                const now = Date.now();
 
-            // ✅ Как у луча/тренда: клик по уже выделенному алерту → включаем drag-точку.
-            // НЕ требуем двойного клика. drag стартует со следующим движением мыши.
-            if (this._selectedAlert && this._selectedAlert === hit.alert) {
-                if (!hit.alert.showDragPoint) {
-                    hit.alert.showDragPoint = true;
+                if (this._dblClickTimer && this._potentialDblClickTarget === hit.alert && now - this._lastClickTime < this._dblClickTimeout) {
+                    clearTimeout(this._dblClickTimer);
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                    this._lastClickTime = 0;
+                    hit.alert.showDragPoint = true;   // [ALERT-DRAG] двойной клик больше не выключает драг
+                    this._requestRedraw();
+                    return;
                 }
-            } else {
-                if (this._selectedAlert) {
+
+                if (this._selectedAlert && this._selectedAlert !== hit.alert) {
                     this._selectedAlert.selected = false;
                     this._selectedAlert.showDragPoint = false;
                 }
                 hit.alert.selected = true;
-                hit.alert.showDragPoint = false; // первый клик — только выделение
+                // [ALERT-DRAG] Как у луча (readyToDrag=true на ПЕРВЫЙ клик):
+                // линия становится перетаскиваемой сразу. Раньше сначала нужен был
+                // «секретный» двойной клик (showDragPoint), а обычная попытка тянуть
+                // скроллила график — линия не двигалась («тяжело перетаскивается»).
+                hit.alert.showDragPoint = true;
                 this._selectedAlert = hit.alert;
-            }
 
-            // Синхронизируем экранные координаты drag-точки
-            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
-            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
-            if (alertX !== null && alertY !== null) {
-                hit.alert.dragPointX = alertX;
-                hit.alert.dragPointY = alertY;
-            }
+                this._potentialDblClickTarget = hit.alert;
+                this._lastClickTime = now;
+                if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = setTimeout(() => {
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                }, this._dblClickTimeout);
 
-            // Готовим potential drag — сработает как только мышь сдвинется
-            if (hit.alert.showDragPoint) {
-                this._potentialDrag = {
-                    alert: hit.alert,
-                    startX: bmX,
-                    startY: bmY,
-                    startPrice: hit.alert.price,
-                    startTime: hit.alert.time
-                };
+                // [ALERT-DRAG] вооружаем драг при любом попадании (линия/лейбл/точка) —
+                // раньше требовался предварительный двойной клик, и первая попытка
+                // тянуть линию вместо драга скроллила график.
+                {
+                    this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
+                    const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+                    const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+                    if (alertX !== null && alertY !== null) {
+                        hit.alert.dragPointX = alertX;
+                        hit.alert.dragPointY = alertY;
+                    }
+                    this._potentialDrag = { alert: hit.alert, startX: bmX, startY: bmY, startPrice: hit.alert.price, startTime: hit.alert.time };
+                }
+
+                this._requestRedraw();
             } else {
-                this._potentialDrag = null;
-            }
-
-            this._requestRedraw();
-        } else {
-            const alertMenu = document.getElementById('alertContextMenu');
-            if (alertMenu && alertMenu.style.display === 'flex') {
-                const menuRect = alertMenu.getBoundingClientRect();
-                const isClickInsideMenu =
-                    e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
-                    e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
-                if (isClickInsideMenu) return;
-            }
-            if (this._selectedAlert) {
-                this._selectedAlert.selected = false;
-                this._selectedAlert.showDragPoint = false;
-                this._selectedAlert = null;
-            }
-            if (alertMenu) alertMenu.style.display = 'none';
-            this._requestRedraw();
-        }
-    });
-
-    // ✅ [FIX] Fast path для drag: как у луча/тренда/текста/линейки.
-    // Раньше ВСЕ mousemove уходили в RAF-троттлинг, из-за чего drag «догонял» курсор
-    // с задержкой в кадр и дёргался при быстром движении.
-    container.addEventListener('mousemove', (e) => {
-        // Fast path: пользователь уже нажал на алерт или тащит его
-        if (this._potentialDrag || this._isDragging) {
-            this._processMouseMove(e);
-            return;
-        }
-
-        // Slow path: hover. Во время скролла hitTest не нужен
-        if (this._chartManager._isScrolling || this._chartManager._isScrollingFast) {
-            if (this._hoveredAlert) {
-                this._hoveredAlert.hovered = false;
-                this._hoveredAlert = null;
+                const alertMenu = document.getElementById('alertContextMenu');
+                if (alertMenu && alertMenu.style.display === 'flex') {
+                    const menuRect = alertMenu.getBoundingClientRect();
+                    const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+                    if (isClickInsideMenu) return;
+                }
+                if (this._selectedAlert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                    this._selectedAlert = null;
+                }
+                if (alertMenu) alertMenu.style.display = 'none';
                 this._requestRedraw();
             }
-            return;
-        }
-
-        // RAF-троттлинг: не чаще одного hitTest на кадр
-        this._pendingMouseEvent = e;
-        if (this._hoverRafId) return;
-        this._hoverRafId = requestAnimationFrame(() => {
-            this._hoverRafId = null;
-            this._processMouseMove(this._pendingMouseEvent);
         });
-    });
 
-    container.addEventListener('mouseup', (e) => {
-        this._potentialDrag = null;
-        if (this._isDragging) {
-            e.preventDefault();
-            e.stopPropagation();
-            this._isDragging = false;
-            if (this._dragAlert) {
-                this._dragAlert.dragging = false;
-                this._dragAlert.attached = false;
-                this._dragAlert.anchorTime = this._dragAlert.time;
-                this._saveAlerts();
-                this._dragAlert = null;
-                this._requestRedraw();
+        container.addEventListener('mousemove', (e) => {
+            if ((this._chartManager._isScrolling || this._chartManager._isScrollingFast) && !this._potentialDrag && !this._isDragging) {   // [DRAW-DRAG] свой драг не глушим
+                if (this._hoveredAlert) {
+                    this._hoveredAlert.hovered = false;
+                    this._hoveredAlert = null;
+                    this._requestRedraw();
+                }
+                return;
             }
+
+            this._pendingMouseEvent = e;
+            if (this._hoverRafId) return;
+
+            this._hoverRafId = requestAnimationFrame(() => {
+                this._hoverRafId = null;
+                this._processMouseMove(this._pendingMouseEvent);
+            });
+        });
+
+        container.addEventListener('mouseup', (e) => {
+            this._potentialDrag = null;
+            if (this._isDragging) {
+                e.preventDefault(); e.stopPropagation();
+                this._isDragging = false;
+                if (this._dragAlert) {
+                    this._dragAlert.dragging = false;
+                    this._dragAlert.attached = false;
+                    this._dragAlert.anchorTime = this._dragAlert.time;
+                    this._saveAlerts();
+                    this._dragAlert = null;
+                    this._requestRedraw();
+                }
+                container.style.cursor = 'crosshair';
+                setTimeout(() => {
+                    const moveEvent = new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY });
+                    container.dispatchEvent(moveEvent);
+                }, 10);
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            if (this._hoveredAlert) { this._hoveredAlert.hovered = false; this._hoveredAlert = null; this._requestRedraw(); }
             container.style.cursor = 'crosshair';
-            setTimeout(() => {
-                const moveEvent = new MouseEvent('mousemove', {
-                    clientX: e.clientX,
-                    clientY: e.clientY
-                });
-                container.dispatchEvent(moveEvent);
-            }, 10);
-        }
-    });
 
-    container.addEventListener('mouseleave', () => {
-        if (this._hoveredAlert) {
-            this._hoveredAlert.hovered = false;
-            this._hoveredAlert = null;
-            this._requestRedraw();
-        }
-        container.style.cursor = 'crosshair';
+            if (this._hoverRafId) {
+                cancelAnimationFrame(this._hoverRafId);
+                this._hoverRafId = null;
+            }
+            this._pendingMouseEvent = null;
+        });
 
-        if (this._hoverRafId) {
-            cancelAnimationFrame(this._hoverRafId);
-            this._hoverRafId = null;
-        }
-        this._pendingMouseEvent = null;
-    });
+        container.addEventListener('click', (e) => {
+            if (this._isDragging) { e.preventDefault(); e.stopPropagation(); }
+            if (this._isDrawingMode) this._handleChartClick(e);
+        });
 
-    container.addEventListener('click', (e) => {
-        if (this._isDragging) { e.preventDefault(); e.stopPropagation(); }
-        if (this._isDrawingMode) this._handleChartClick(e);
-    });
-
-    container.addEventListener('contextmenu', this._handleContextMenu);
-}
+        container.addEventListener('contextmenu', this._handleContextMenu);
+    }
 
     _processMouseMove(e) {
         const container = this._chartManager.chartContainer;
@@ -6447,6 +6426,8 @@ class AlertLineManager {
                 this._isDragging = true;
                 this._dragAlert = this._potentialDrag.alert;
                 this._dragAlert.dragging = true;
+                // [ALERT-DRAG] запоминаем элемент, чтобы перерисовывать во время драга только его
+                this._dragItem = this._alerts.find(it => it.alert === this._dragAlert) || null;
                 this._dragStartX = this._potentialDrag.startX;
                 this._dragStartY = this._potentialDrag.startY;
                 this._dragStartPrice = this._potentialDrag.startPrice;
@@ -6476,7 +6457,11 @@ class AlertLineManager {
                     this._dragAlert.dragPointX = newAlertX;
                     this._dragAlert.dragPointY = newAlertY;
                 }
-                this._requestRedraw();
+                // [ALERT-DRAG] перерисовываем ТОЛЬКО тащимый алерт (у тренда так же:
+                // «[ШАГ 3] Перерисовываем только эту линию»). Раньше каждый кадр драга
+                // дёргал ВСЕ алерты — чем их больше на графике, тем тяжелее шло перетаскивание.
+                if (this._dragItem?.primitive?.requestRedraw) this._dragItem.primitive.requestRedraw();
+                else this._requestRedraw();
             }
         } else {
             const hit = this.hitTest(bmX, bmY);
@@ -8007,7 +7992,6 @@ class TextManager {
                 }, this._dblClickTimeout);
 
                 if (hit.text.showDragPoint) {
-
                     this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
                     const textX = this._chartManager.timeToCoordinate(hit.text.time);
                     const textY = this._chartManager.priceToCoordinate(hit.text.price);
