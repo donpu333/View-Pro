@@ -2677,6 +2677,21 @@ class ChartManager {
         return null;
     }
 
+    // [DRAW-PERF] Тащит ли пользователь прямо сейчас какой-либо инструмент рисования
+    // (алерт, тренд, луч, линейку, текст, стоп/тейк)? Пока идёт перетаскивание,
+    // тяжёлые фоновые операции (пересчёт/применение индикаторов, синхронизация
+    // перекрестия панелей) откладываются — иначе они вклиниваются между кадрами
+    // и объект «дёргается» в руке.
+    _isDrawingDragActive() {
+        const w = window;
+        return !!((w.alertLineManager && w.alertLineManager._isDragging) ||
+            (w.trendLineManager && w.trendLineManager._isDragging) ||
+            (w.rayManager && w.rayManager._isDragging) ||
+            (w.rulerLineManager && w.rulerLineManager._isDragging) ||
+            (w.textManager && w.textManager._isDragging) ||
+            (w.tradeLevelManager && w.tradeLevelManager._isDragging));
+    }
+
     _clearPanelsCrosshair() {
         const panels = this._getPanelsList();
         if (panels.length === 0) return;
@@ -2693,6 +2708,9 @@ class ChartManager {
 
     _syncPanelsCrosshairOptimized() {
         if (!this._latestCrosshairData || !this._latestCrosshairData.visible) { this._clearPanelsCrosshair(); return; }
+        // [DRAW-PERF] Во время перетаскивания рисовалки синхронизацию панелей не гоняем:
+        // setCrosshairPosition — это лишняя перерисовка каждой панели на каждый кадр.
+        if (this._isDrawingDragActive()) return;
         const panels = this._getPanelsList();
         if (panels.length === 0) return;
         const { time } = this._latestCrosshairData;
