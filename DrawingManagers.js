@@ -1,3 +1,55 @@
+
+// ============================================================================
+const VISIBILITY_MINUTE_TFS = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
+
+/**
+ * Применяет пресет видимости к чекбоксам панели и к объекту рисовалки.
+ * @param {HTMLElement|null} container список чекбоксов (.timeframe-checkbox-list)
+ * @param {object|null} target         объект с полем timeframeVisibility
+ * @param {'all'|'none'|'minutes'} preset
+ * @returns {boolean} true, если что-то применили
+ */
+function applyTimeframePreset(container, target, preset) {
+    if (!container || !target || !target.timeframeVisibility) return false;
+    const boxes = container.querySelectorAll('input[type="checkbox"]');
+    if (!boxes.length) return false;
+    boxes.forEach(cb => {
+        const tf = cb.dataset.timeframe;
+        if (!tf) return;
+        const value = preset === 'all' ? true
+                    : preset === 'none' ? false
+                    : VISIBILITY_MINUTE_TFS.has(tf);
+        cb.checked = value;
+        target.timeframeVisibility[tf] = value;
+    });
+    return true;
+}
+
+/**
+ * Привязывает кнопки «Минутки / Выбрать всё / Снять всё».
+ * ВАЖНО: используется .onclick, поэтому повторный вызов при следующем открытии
+ * панели просто ПЕРЕЗАПИСЫВАЕТ обработчик — дублей и «залипших» замыканий нет.
+ * Все узлы и целевой объект резолвятся В МОМЕНТ КЛИКА.
+ */
+function bindTimeframePresetButtons(cfg) {
+    const { minutesBtnId, allBtnId, noneBtnId, containerId, getTarget, onChange } = cfg || {};
+    const handler = (preset) => (e) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        const container = containerId ? document.getElementById(containerId) : null;
+        const target = typeof getTarget === 'function' ? getTarget() : getTarget;
+        if (!applyTimeframePreset(container, target, preset)) return;
+        if (typeof onChange === 'function') onChange(target);
+    };
+    const bind = (id, preset) => {
+        if (!id) return;
+        const btn = document.getElementById(id);
+        if (btn) btn.onclick = handler(preset);
+    };
+    bind(minutesBtnId, 'minutes');
+    bind(allBtnId, 'all');
+    bind(noneBtnId, 'none');
+}
+
 class HorizontalRay {
   constructor(price, time, options = {}) {
     this.price = price;
@@ -1357,6 +1409,10 @@ class HorizontalRayManager {
     }
 _showSettings(ray) {
     const settings = document.getElementById('drawingSettings');
+
+    // [FIX-VIS] фиксируем ТЕКУЩИЙ луч: обработчики вкладки «Видимость» берут
+    // цель отсюда, а не из замыкания, созданного при первом открытии панели.
+    this._selectedRay = ray;
     
     document.getElementById('currentColorBox').style.backgroundColor = ray.options.color;
     document.getElementById('hexInputInline').value = ray.options.color;
@@ -1508,23 +1564,10 @@ _showSettings(ray) {
         this._requestRedraw();
     });
 
-    // ========== КНОПКА "МИНУТКИ" (добавляется один раз) ==========
-    if (!settings.dataset.minutesBound) {
-        settings.dataset.minutesBound = 'true';
-        const minutesBtn = document.getElementById('selectMinutesTimeframes');
-        if (minutesBtn) {
-            minutesBtn.addEventListener('click', () => {
-                const container = document.getElementById('timeframeCheckboxList');
-                if (!container) return;
-                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    const isMinute = minutesSet.has(cb.dataset.timeframe);
-                    cb.checked = isMinute;
-                    ray.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-                });
-            });
-        }
-    }
+    // ========== КНОПКА "МИНУТКИ" ==========
+    // [FIX-VIS] привязка переехала в _renderTimeframeCheckboxes(ray): там она
+    // выполняется при КАЖДОМ открытии панели через .onclick и всегда работает
+    // с текущим лучом + сразу делает redraw и save.
     
 
     // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
@@ -1565,44 +1608,29 @@ _showSettings(ray) {
         
         container.innerHTML = html;
         
+        // [FIX-VIS] цель всегда берём динамически — текущий открытый луч.
+        const getTarget = () => this._selectedRay || ray;
+
         container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => {
-                const tf = e.target.dataset.timeframe;
-                ray.timeframeVisibility[tf] = e.target.checked;
+            checkbox.onchange = (e) => {
+                const target = getTarget();
+                if (!target) return;
+                target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
                 this._requestRedraw();
-            });
+                this._saveRays();   // [FIX-VIS] видимость не сохранялась в IndexedDB
+            };
         });
-        
-        const selectAllBtn = document.getElementById('selectAllTimeframes');
-        const deselectAllBtn = document.getElementById('deselectAllTimeframes');
-        
-        if (selectAllBtn) {
-            const newSelectAll = selectAllBtn.cloneNode(true);
-            selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
-            
-            newSelectAll.addEventListener('click', () => {
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.checked = true;
-                    const tf = cb.dataset.timeframe;
-                    ray.timeframeVisibility[tf] = true;
-                });
-                this._requestRedraw();
-            });
-        }
-        
-        if (deselectAllBtn) {
-            const newDeselectAll = deselectAllBtn.cloneNode(true);
-            deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
-            
-            newDeselectAll.addEventListener('click', () => {
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.checked = false;
-                    const tf = cb.dataset.timeframe;
-                    ray.timeframeVisibility[tf] = false;
-                });
-                this._requestRedraw();
-            });
-        }
+
+        // [FIX-VIS] «Минутки / Выбрать всё / Снять всё» — .onclick (перезапись
+        // при каждом открытии панели), redraw + save после применения.
+        bindTimeframePresetButtons({
+            minutesBtnId: 'selectMinutesTimeframes',
+            allBtnId: 'selectAllTimeframes',
+            noneBtnId: 'deselectAllTimeframes',
+            containerId: 'timeframeCheckboxList',
+            getTarget,
+            onChange: () => { this._requestRedraw(); this._saveRays(); }
+        });
     }
     
     syncWithNewTimeframe() {
@@ -3166,22 +3194,8 @@ class TrendLineManager {
             });
         }
 
-        if (!settings.dataset.minutesBound) {
-            settings.dataset.minutesBound = 'true';
-            const minutesBtn = document.getElementById('trendSelectMinutesTimeframes');
-            if (minutesBtn) {
-                minutesBtn.addEventListener('click', () => {
-                    const container = document.getElementById('trendTimeframeCheckboxList');
-                    if (!container) return;
-                    const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-                    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                        const isMinute = minutesSet.has(cb.dataset.timeframe);
-                        cb.checked = isMinute;
-                        trendLine.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-                    });
-                });
-            }
-        }
+        // [FIX-VIS] кнопка «Минутки» привязывается в _renderTimeframeCheckboxes()
+        // при каждом открытии панели (раньше — один раз на всю сессию).
 
         if (typeof window.makePanelDraggable === 'function') {
             window.makePanelDraggable(settings);
@@ -3193,10 +3207,26 @@ class TrendLineManager {
         let html = ''; const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
         timeframes.forEach(tf => { const isChecked = trendLine.timeframeVisibility[tf] !== false; html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="trend_tf_${tf}_${trendLine.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label>${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`; });
         container.innerHTML = html;
-        container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.addEventListener('change', (e) => { trendLine.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked; }); });
-        const selectAll = document.getElementById('trendSelectAllTimeframes'), deselectAll = document.getElementById('trendDeselectAllTimeframes');
-        if (selectAll) { const ns = selectAll.cloneNode(true); selectAll.parentNode.replaceChild(ns, selectAll); ns.addEventListener('click', () => container.querySelectorAll('input').forEach(c => { c.checked = true; trendLine.timeframeVisibility[c.dataset.timeframe] = true; })); }
-        if (deselectAll) { const nd = deselectAll.cloneNode(true); deselectAll.parentNode.replaceChild(nd, deselectAll); nd.addEventListener('click', () => container.querySelectorAll('input').forEach(c => { c.checked = false; trendLine.timeframeVisibility[c.dataset.timeframe] = false; })); }
+        // [FIX-VIS] цель — ТЕКУЩАЯ линия (this._selectedLine), а не та, что была
+        // открыта первой; после изменения сразу redraw + save.
+        const getTarget = () => this._selectedLine || trendLine;
+        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.onchange = (e) => {
+                const target = getTarget();
+                if (!target) return;
+                target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+                this._requestRedraw();
+                this._saveTrendLines();
+            };
+        });
+        bindTimeframePresetButtons({
+            minutesBtnId: 'trendSelectMinutesTimeframes',
+            allBtnId: 'trendSelectAllTimeframes',
+            noneBtnId: 'trendDeselectAllTimeframes',
+            containerId: 'trendTimeframeCheckboxList',
+            getTarget,
+            onChange: () => { this._requestRedraw(); this._saveTrendLines(); }
+        });
     }
 
       _requestRedraw(item = null) {
@@ -6694,6 +6724,9 @@ class AlertLineManager {
         const settings = document.getElementById('alertSettings');
         if (!settings) return;
 
+        // [FIX-VIS] фиксируем текущий алерт для обработчиков вкладки «Видимость».
+        this._selectedAlert = alert;
+
         document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
         document.getElementById('alertHexInputInline').value = alert.options.color;
         document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
@@ -6830,40 +6863,30 @@ class AlertLineManager {
 
         container.innerHTML = html;
 
+        // [FIX-VIS] цель — ТЕКУЩИЙ алерт; redraw обязателен, иначе линия
+        // продолжала рисоваться до первой посторонней перерисовки чарта.
+        const getTarget = () => this._selectedAlert || alert;
+
         container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => {
-                const tf = e.target.dataset.timeframe;
-                alert.timeframeVisibility[tf] = e.target.checked;
+            checkbox.onchange = (e) => {
+                const target = getTarget();
+                if (!target) return;
+                target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+                this._requestRedraw();
                 this._saveAlerts();
-            });
+            };
         });
 
-        const selectAllBtn = document.getElementById('alertSelectAllTimeframes');
-        const deselectAllBtn = document.getElementById('alertDeselectAllTimeframes');
-
-        if (selectAllBtn) {
-            const newSelectAll = selectAllBtn.cloneNode(true);
-            selectAllBtn.parentNode.replaceChild(newSelectAll, selectAllBtn);
-            newSelectAll.addEventListener('click', () => {
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.checked = true;
-                    alert.timeframeVisibility[cb.dataset.timeframe] = true;
-                });
-                this._saveAlerts();
-            });
-        }
-
-        if (deselectAllBtn) {
-            const newDeselectAll = deselectAllBtn.cloneNode(true);
-            deselectAllBtn.parentNode.replaceChild(newDeselectAll, deselectAllBtn);
-            newDeselectAll.addEventListener('click', () => {
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.checked = false;
-                    alert.timeframeVisibility[cb.dataset.timeframe] = false;
-                });
-                this._saveAlerts();
-            });
-        }
+        // [FIX-VIS] у алерта кнопки «Минутки» раньше вообще не было — добавлена
+        // в index.html (#alertSelectMinutesTimeframes) для единообразия.
+        bindTimeframePresetButtons({
+            minutesBtnId: 'alertSelectMinutesTimeframes',
+            allBtnId: 'alertSelectAllTimeframes',
+            noneBtnId: 'alertDeselectAllTimeframes',
+            containerId: 'alertTimeframeCheckboxList',
+            getTarget,
+            onChange: () => { this._requestRedraw(); this._saveAlerts(); }
+        });
     }
 
     _startInfiniteHighlight(alertId) {
@@ -8740,22 +8763,8 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         });
     }
 
-    if (!settings.dataset.minutesBound) {
-        settings.dataset.minutesBound = 'true';
-        const minutesBtn = document.getElementById('textSelectMinutesTimeframes');
-        if (minutesBtn) {
-            minutesBtn.addEventListener('click', () => {
-                const container = document.getElementById('textTimeframeCheckboxList');
-                if (!container) return;
-                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    const isMinute = minutesSet.has(cb.dataset.timeframe);
-                    cb.checked = isMinute;
-                    text.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-                });
-            });
-        }
-    }
+    // [FIX-VIS] кнопка «Минутки» привязывается в _renderTimeframeCheckboxes()
+    // при каждом открытии панели (раньше — один раз на всю сессию).
 
     if (typeof window.makePanelDraggable === 'function') {
         window.makePanelDraggable(settings);
@@ -8816,23 +8825,28 @@ _detachAllPrimitivesForSymbol(symbolKey) {
         html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="text_tf_${tf}_${text.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="text_tf_${tf}_${text.id}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
     });
     container.innerHTML = html;
+    // [FIX-VIS] цель — ТЕКУЩИЙ текст (this._selectedText).
+    const getTarget = () => this._selectedText || text;
     container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener('change', (e) => { text.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked; });
+        checkbox.onchange = (e) => {
+            const target = getTarget();
+            if (!target) return;
+            target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+            this._requestRedraw();
+            this._saveTexts();
+        };
     });
-    const selectAllBtn = document.getElementById('textSelectAllTimeframes');
-    const deselectAllBtn = document.getElementById('textDeselectAllTimeframes');
-    if (selectAllBtn) {
-        selectAllBtn.onclick = null; // очищаем предыдущий обработчик
-        selectAllBtn.addEventListener('click', () => { 
-            container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; text.timeframeVisibility[cb.dataset.timeframe] = true; }); 
-        });
-    }
-    if (deselectAllBtn) {
-        deselectAllBtn.onclick = null;
-        deselectAllBtn.addEventListener('click', () => { 
-            container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; text.timeframeVisibility[cb.dataset.timeframe] = false; }); 
-        });
-    }
+    // [FIX-VIS] раньше здесь было `onclick = null` + addEventListener: onclick=null
+    // НЕ снимает слушатели, добавленные через addEventListener, поэтому они
+    // накапливались при каждом открытии панели и дёргали старые (чужие) тексты.
+    bindTimeframePresetButtons({
+        minutesBtnId: 'textSelectMinutesTimeframes',
+        allBtnId: 'textSelectAllTimeframes',
+        noneBtnId: 'textDeselectAllTimeframes',
+        containerId: 'textTimeframeCheckboxList',
+        getTarget,
+        onChange: () => { this._requestRedraw(); this._saveTexts(); }
+    });
 }
 
        _requestRedraw(item = null) {
@@ -10132,6 +10146,11 @@ class TradeLevelManager {
         this._potentialDrag = null;
         this._isDragging = false;
         this._editingTrade = trade;
+        // [FIX-VIS] Режим СОЗДАНИЯ сделки: объекта ещё нет, и вкладка «Видимость»
+        // правила «в пустоту» — чекбоксы переключались, но новая сделка всё равно
+        // создавалась со всеми ТФ. Заводим черновик, который переносится на сделку
+        // в _handlePanelSubmit(). При редактировании черновик не нужен.
+        this._pendingTradeVisibility = trade ? null : {};
         const entryInput = document.getElementById('tradeEntryInput');
         const slInput = document.getElementById('tradeSLInput');
         const tpInput = document.getElementById('tradeTPInput');
@@ -10316,7 +10335,16 @@ class TradeLevelManager {
         const tfLabels = { '1m': '1 мин', '3m': '3 мин', '5m': '5 мин', '15m': '15 мин', '30m': '30 мин', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
         let html = '';
         const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
-        const visibility = trade ? trade.timeframeVisibility : {};
+        // [FIX-VIS] цель: редактируемая сделка ИЛИ черновик видимости (создание).
+        if (!trade && !this._pendingTradeVisibility) this._pendingTradeVisibility = {};
+        const visibility = trade ? trade.timeframeVisibility : this._pendingTradeVisibility;
+        const setVis = (tf, val) => {
+            if (trade) trade.timeframeVisibility[tf] = val;
+            else if (this._pendingTradeVisibility) this._pendingTradeVisibility[tf] = val;
+        };
+        const getPresetTarget = () => (trade ? trade
+            : { timeframeVisibility: this._pendingTradeVisibility || (this._pendingTradeVisibility = {}) });
+        const afterChange = () => { if (trade) { this._requestRedraw(); this._saveTrades(); } };
         timeframes.forEach(tf => {
             const isChecked = visibility[tf] !== false;
             html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="trade_tf_${tf}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="trade_tf_${tf}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
@@ -10324,40 +10352,34 @@ class TradeLevelManager {
         container.innerHTML = html;
         container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
             checkbox.onchange = (e) => {
-                if (trade) {
-                    trade.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
-                    this._requestRedraw();
-                    this._saveTrades();
-                }
+                setVis(e.target.dataset.timeframe, e.target.checked);
+                afterChange();
             };
         });
         const selectAllBtn = panel.querySelector('#tradeSelectAllTimeframes');
         const deselectAllBtn = panel.querySelector('#tradeDeselectAllTimeframes');
         const selectMinutesBtn = panel.querySelector('#tradeSelectMinutesTimeframes');
+        // [FIX-VIS] единый помощник пресетов (см. начало файла) + .onclick:
+        // работает и при редактировании сделки, и при создании (черновик).
         if (selectAllBtn) {
             selectAllBtn.onclick = (e) => {
                 e.stopPropagation();
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; if(trade) trade.timeframeVisibility[cb.dataset.timeframe] = true; });
-                if(trade) { this._requestRedraw(); this._saveTrades(); }
+                applyTimeframePreset(container, getPresetTarget(), 'all');
+                afterChange();
             };
         }
         if (deselectAllBtn) {
             deselectAllBtn.onclick = (e) => {
                 e.stopPropagation();
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; if(trade) trade.timeframeVisibility[cb.dataset.timeframe] = false; });
-                if(trade) { this._requestRedraw(); this._saveTrades(); }
+                applyTimeframePreset(container, getPresetTarget(), 'none');
+                afterChange();
             };
         }
         if (selectMinutesBtn) {
             selectMinutesBtn.onclick = (e) => {
                 e.stopPropagation();
-                const minutesSet = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
-                container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    const isMinute = minutesSet.has(cb.dataset.timeframe);
-                    cb.checked = isMinute;
-                    if(trade) trade.timeframeVisibility[cb.dataset.timeframe] = isMinute;
-                });
-                if(trade) { this._requestRedraw(); this._saveTrades(); }
+                applyTimeframePreset(container, getPresetTarget(), 'minutes');
+                afterChange();
             };
         }
     }
@@ -10495,6 +10517,10 @@ class TradeLevelManager {
         } else {
             const tradeTime = this._pendingTradeTime || Date.now() / 1000;
             const trade = this.createTrade(entry, sl, { riskRewardRatio: rr, direction: direction, time: tradeTime, riskAmount: riskAmount }); // НОВЫЙ: riskAmount
+            // [FIX-VIS] переносим на новую сделку видимость, выбранную в панели
+            if (this._pendingTradeVisibility && Object.keys(this._pendingTradeVisibility).length) {
+                trade.timeframeVisibility = { ...trade.timeframeVisibility, ...this._pendingTradeVisibility };
+            }
             if (tp !== null && !isNaN(tp)) {
                 trade.takeProfitPrice = tp;
                 trade.manualTP = true;
@@ -10517,6 +10543,7 @@ class TradeLevelManager {
         this._isWaitingForSL = false;
         this._editingTrade = null;
         this._pendingTradeTime = null;
+        this._pendingTradeVisibility = null;   // [FIX-VIS] сброс черновика видимости
         this.setDrawingMode(false);
         this._saveTrades();
         this._requestRedraw();
