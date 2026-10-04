@@ -2422,7 +2422,7 @@ class VolumeProfileIndicator extends BaseIndicator {
     // Версия схемы настроек. При несовпадении поля, чей ДЕФОЛТ изменился,
     // сбрасываются к новому дефолту — иначе значение из localStorage прежней
     // сборки перекроет его (v2: расположение профиля по умолчанию стало «слева»).
-    static SETTINGS_VERSION = 2;
+    static SETTINGS_VERSION = 7;
 
     // Секунды в баре — только для подписи «≈ N суток» во вкладках настроек.
     static INTERVAL_SECONDS = {
@@ -2482,6 +2482,13 @@ class VolumeProfileIndicator extends BaseIndicator {
         bodyAlpha: 0.25,
 
         widthDivisor: 3,         // максимальная длина ряда = bars / widthDivisor свечей
+        // [VP-FIT] Потолок ширины ряда в CSS-пикселях. Без него на коротких ТФ
+        // (5m: 2016 баров / 3 = 672 свечи ≈ 16 800 px) гистограмма уезжала за
+        // экран. 0 = не ограничивать в px, брать долю видимой ширины (maxWidthRatio).
+        maxWidthPx: 320,
+        // [VP-FIT] Доля видимой ширины панели, которую может занять гистограмма
+        // (0..0.6). Работает только при maxWidthPx = 0.
+        maxWidthRatio: 0.25,
         gapDivisor: 500,         // зазор между рядами = (top - bot) / gapDivisor
         showVaLines: true,       // линии и метки VAH / VAL
         vaLineColor: '#FFFFFF',
@@ -2491,7 +2498,23 @@ class VolumeProfileIndicator extends BaseIndicator {
         //                    Это поведение оригинального скрипта и дефолт TradingView.
         //   true  = СПРАВА — растёт ВЛЕВО от последней свечи, профиль прижат к
         //                    текущей цене (удобно, но перекрывает последние свечи).
-        anchorRight: false
+        anchorRight: false,
+        // [VP-TV] Расположение гистограммы (заменяет anchorRight, он оставлен
+        // для совместимости со старыми сохранениями):
+        //   'screenLeft' — ПРИЖАТ к левому краю видимой области графика и растёт
+        //                   вправо: не зависит от скролла/зума, виден всегда
+        //                   (аналог «Volume Profile Visible Range» в TradingView).
+        //                   ДЕФОЛТ.
+        //   'left'       — от ПЕРВОЙ свечи диапазона вправо (оригинальный скрипт
+        //                   LonesomeTheBlue). На коротких ТФ уезжает далеко влево.
+        //   'right'      — от ПОСЛЕДНЕЙ свечи влево, профиль у текущей цены.
+        placement: 'screenLeft',
+        // [VP-VOL] Подписи объёма на гистограмме ('none' | 'poc' | 'va' | 'all').
+        // Шрифт подписи сам уменьшается под высоту ряда (10 -> 9 -> 8 px),
+        // ряды тоньше volumeMinHeight пропускаются (счётчик — в __vpDebug()).
+        showVolume: 'va',
+        volumeMinHeight: 8,      // px: минимальная высота ряда для подписи
+        volumeColor: '#FFFFFF',
     };
 
     // meta обязателен: IndicatorFactory.getIndicatorsList() строит меню по нему
@@ -2504,9 +2527,24 @@ class VolumeProfileIndicator extends BaseIndicator {
         // миграция: сохранение от прошлой версии схемы не должно перекрывать
         // новые дефолты (в v1 anchorRight=true, в v2 — false/«слева»)
         if (saved && saved.__v !== this.constructor.SETTINGS_VERSION) {
+            // v2 -> v3: появились maxWidthPx / maxWidthRatio. В старом сохранении
+            // их нет, и _clampFloat(undefined) дал бы 0 (= «без ограничения в px»),
+            // поэтому явно оставляем новые дефолты.
+            delete saved.maxWidthPx;
+            delete saved.maxWidthRatio;
+            if (Number(saved.__v) < 2) delete saved.anchorRight;
+        }
+        // [VP-TV] До v6 в UI не существовало ни placement, ни showVolume, поэтому
+        // ЛЮБОЕ старое сохранение (включая булев anchorRight) не должно перекрывать
+        // новые дефолты — иначе после установки патча «ничего не меняется».
+        // Осознанный выбор пользователя сохраняется только начиная с v6.
+        if (saved && Number(saved.__v) < 6) {
+            delete saved.placement;
             delete saved.anchorRight;
+            delete saved.showVolume;
         }
         this.settings = Object.assign({}, this.constructor.DEFAULTS, this.settings, saved);
+        this.settings.placement = this._normPlacement(this.settings.placement);
         this.settings.color = this.settings.color || this.constructor.DEFAULTS.upColor;
         this.settings.__v = this.constructor.SETTINGS_VERSION;
 
@@ -2547,6 +2585,7 @@ class VolumeProfileIndicator extends BaseIndicator {
 
         try {
             if (typeof window !== 'undefined') window.__vpDebug = () => this._debugDump();
+            if (typeof window !== 'undefined') window.__vpStatus = () => this._lastDraw;
         } catch (e) {}
 
         setTimeout(() => { this.recompute('init'); }, 600);
@@ -2666,6 +2705,8 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.percent = this._clampFloat(s.percent, D.percent, 0, 100);
         s.widthDivisor = this._clampFloat(s.widthDivisor, D.widthDivisor, 0.5, 20);
         s.gapDivisor = this._clampFloat(s.gapDivisor, D.gapDivisor, 50, 100000);
+        s.maxWidthPx = this._clampFloat(s.maxWidthPx, D.maxWidthPx, 0, 5000);
+        s.maxWidthRatio = this._clampFloat(s.maxWidthRatio, D.maxWidthRatio, 0, 0.6);
         s.pocWidth = this._clampInt(s.pocWidth, D.pocWidth, 1, 5);
         s.vaAlpha = this._clampFloat(s.vaAlpha, D.vaAlpha, 0, 1);
         s.bodyAlpha = this._clampFloat(s.bodyAlpha, D.bodyAlpha, 0, 1);
@@ -2678,7 +2719,11 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.showPoc = s.showPoc !== false;
         s.showVaLines = !!s.showVaLines;
         s.extendPocRight = s.extendPocRight !== false;
-        s.anchorRight = !!s.anchorRight;
+        s.placement = this._normPlacement(s.placement);
+        s.anchorRight = (s.placement === 'right');
+        s.showVolume = ['none', 'poc', 'va', 'all'].includes(s.showVolume) ? s.showVolume : 'va';
+        s.volumeMinHeight = this._clampFloat(s.volumeMinHeight, D.volumeMinHeight, 0, 100);
+        s.volumeColor = this._normHex(s.volumeColor, D.volumeColor);
         return s;
     }
 
@@ -2707,6 +2752,17 @@ class VolumeProfileIndicator extends BaseIndicator {
         return map[i] || null;
     }
 
+    /** [VP-TV] Нормализация расположения: строка важнее устаревшего булева флага */
+    _normPlacement(v) {
+        if (['left', 'right', 'screenLeft'].includes(v)) return v;
+        return this.settings && this.settings.anchorRight ? 'right' : 'left';
+    }
+
+    /** [VP-TV] Текущее расположение (строка). anchorRight оставлен для совместимости. */
+    _placement() {
+        return this._normPlacement(this.settings.placement);
+    }
+
     /** bars/rows для текущего таймфрейма (из perTF, иначе fallback) */
     _tfSettings() {
         const key = this._tfKey();
@@ -2733,7 +2789,8 @@ class VolumeProfileIndicator extends BaseIndicator {
         return [tf.key, tf.bars, tf.rows, s.refreshMode, s.percent,
             s.widthDivisor, s.gapDivisor, s.pocColor, s.pocWidth, s.showPoc,
             s.vaUpColor, s.vaDownColor, s.vaAlpha, s.upColor, s.downColor, s.bodyAlpha,
-            s.showVaLines, s.vaLineColor, s.extendPocRight, s.anchorRight].join('|');
+            s.showVaLines, s.vaLineColor, s.extendPocRight, this._placement(),
+            s.showVolume, s.volumeMinHeight, s.volumeColor].join('|');
     }
 
     /* ------------------------- расчёт профиля ------------------------- */
@@ -3037,6 +3094,9 @@ class VolumeProfileIndicator extends BaseIndicator {
 
         const self = this;
         this._primitive = {
+            // [VP-FIX3] гистограмма рисуется ПОД свечами: индикатор больше ничего
+            // не закрашивает и не перекрывает (zOrder поддержан в lightweight-charts v5)
+            zOrder: () => 'bottom',
             paneViews: () => [{ renderer: () => ({ draw: (target) => self._draw(target) }) }],
             attached: (params) => { self._requestUpdate = params && params.requestUpdate; },
             detached: () => { self._requestUpdate = null; },
@@ -3141,27 +3201,42 @@ class VolumeProfileIndicator extends BaseIndicator {
         const data = cm.chartData;
         if (!data || !data.length) return;
 
+        // [VP-TV] 'screenLeft' — гистограмма прижата к левому краю ВИДИМОЙ области,
+        // поэтому логические индексы свечей диапазона ей не нужны: профиль остаётся
+        // на месте при скролле, зуме, подгрузке истории и даже если первая свеча
+        // диапазона уже выгружена из памяти (trim).
+        const pinnedLeft = (this._placement() === 'screenLeft');
+        this._volSkippedRows = 0;
+        this._volLabelsDrawn = 0;
+        this._lvlSolid = 0;
+        this._lvlClamp = 0;
+        this._rowsDrawn = 0;
         // [VP-STABLE] индексы пересчитываем из ВРЕМЕНИ каждый кадр
-        const startIdx = this._indexByTime(data, p.firstTime);
+        const startIdx = pinnedLeft ? 0 : this._indexByTime(data, p.firstTime);
         if (startIdx === null) {
             // свеча диапазона исчезла (другой символ/глубокая подгрузка) —
             // профиль больше не актуален, просим пересчёт и ничего не рисуем
             this.scheduleRecompute('stale');
             return;
         }
-        let lastIdx = this._indexByTime(data, p.lastTime);
+        let lastIdx = pinnedLeft ? (data.length - 1) : this._indexByTime(data, p.lastTime);
         if (lastIdx === null) lastIdx = data.length - 1;
 
         const s = this.settings;
         const bs = this._barSpacing(timeScale);
-        const anchorRight = !!s.anchorRight;
-        const x0 = this._xForIndex(timeScale, anchorRight ? lastIdx + 1 : startIdx, data);
+        const placement = this._placement();
+        const anchorRight = (placement === 'right');
+        // [VP-TV] для 'screenLeft' якорь — левый край панели (x = 0), он существует
+        // всегда, поэтому профиль никогда не пропадает при скролле.
+        const x0 = pinnedLeft ? 0 : this._xForIndex(timeScale, anchorRight ? lastIdx + 1 : startIdx, data);
         if (x0 === null) return;
 
         const widthDivisor = this._clampFloat(s.widthDivisor, this.constructor.DEFAULTS.widthDivisor, 0.5, 20);
         const gapDivisor = this._clampFloat(s.gapDivisor, this.constructor.DEFAULTS.gapDivisor, 50, 100000);
-        const maxLenPx = (p.bars / widthDivisor) * bs;
-        if (!(maxLenPx > 0)) return;
+        // [VP-FIT] ширина ряда в СВЕЧАХ (как в оригинальном скрипте TradingView);
+        // перевод в пиксели и потолок — внутри scope, где известна ширина панели
+        const maxLenBars = p.bars / widthDivisor;
+        if (!(maxLenBars > 0)) return;
         const gapPrice = (p.top - p.bot) / gapDivisor;
 
         const priceToY = (price) => series.priceToCoordinate(price);
@@ -3171,6 +3246,17 @@ class VolumeProfileIndicator extends BaseIndicator {
             const hpr = scope.horizontalPixelRatio;
             const vpr = scope.verticalPixelRatio;
             const mediaW = scope.mediaSize.width;
+            const mediaH = scope.mediaSize.height;
+
+            // [VP-FIT] Потолок ширины в пикселях: на коротких ТФ bars/widthDivisor
+            // даёт сотни свечей (5m: 672 свечи ≈ 16 800 px при barSpacing 25), и
+            // гистограмма целиком уходила за левый край экрана. Теперь длина ряда
+            // не больше maxWidthPx, а при maxWidthPx = 0 — не больше maxWidthRatio
+            // от видимой ширины панели.
+            let maxLenPx = maxLenBars * bs;
+            const capPx = s.maxWidthPx > 0 ? s.maxWidthPx : (mediaW * s.maxWidthRatio);
+            if (capPx > 0 && maxLenPx > capPx) maxLenPx = capPx;
+            if (!(maxLenPx > 0)) return;
 
             const fillVaUp = this._rgba(s.vaUpColor, this._clampFloat(s.vaAlpha, this.constructor.DEFAULTS.vaAlpha, 0, 1));
             const fillVaDown = this._rgba(s.vaDownColor, this._clampFloat(s.vaAlpha, this.constructor.DEFAULTS.vaAlpha, 0, 1));
@@ -3189,6 +3275,7 @@ class VolumeProfileIndicator extends BaseIndicator {
                 const top = Math.min(yTop, yBot) * vpr;
                 const height = Math.abs(yBot - yTop) * vpr;
                 if (!(height > 0)) continue;
+                this._rowsDrawn++;
 
                 const inVA = x >= p.vaLowRow && x <= p.vaHighRow;
                 const lenUp = (p.up[x] / p.maxVol) * maxLenPx;
@@ -3215,11 +3302,22 @@ class VolumeProfileIndicator extends BaseIndicator {
                 }
             }
 
+            // [VP-VOL] подписи объёма рисуем ПОСЛЕ рядов — поверх гистограммы;
+            // [VP-FIX5] раскладка РАЗРЕЖЕННАЯ: сначала POC и самые объёмные ряды,
+            // без перекрытий, — поэтому объём виден и на тонких рядах при любом зуме
+            if (s.showVolume && s.showVolume !== 'none') {
+                this._drawVolumeLabels(ctx, p, s, priceToY, gapPrice, maxLenPx, xStart, hpr, vpr, mediaW, mediaH);
+            }
+
             if (s.showVaLines) {
-                this._drawHLine(ctx, priceToY(p.vah), hpr, vpr, mediaW, s.vaLineColor, 1, 0);
-                this._drawHLine(ctx, priceToY(p.val), hpr, vpr, mediaW, s.vaLineColor, 1, 0);
-                this._drawTag(ctx, 'VAH ' + this._fmt(p.vah), priceToY(p.vah), hpr, vpr, mediaW, s.vaLineColor);
-                this._drawTag(ctx, 'VAL ' + this._fmt(p.val), priceToY(p.val), hpr, vpr, mediaW, s.vaLineColor);
+                const yVah = priceToY(p.vah);
+                const yVal = priceToY(p.val);
+                // [VP-FIX4] линии уровней видны при ЛЮБОМ зуме: по реальной цене,
+                // а когда уровень вне окна — пунктиром у края панели вместе с плашкой
+                this._drawLevelLine(ctx, yVah, hpr, vpr, mediaW, mediaH, s.vaLineColor, 'top');
+                this._drawLevelLine(ctx, yVal, hpr, vpr, mediaW, mediaH, s.vaLineColor, 'bottom');
+                this._drawTagOrPin(ctx, 'VAH ' + this._fmt(p.vah), yVah, hpr, vpr, mediaW, mediaH, s.vaLineColor, 'top');
+                this._drawTagOrPin(ctx, 'VAL ' + this._fmt(p.val), yVal, hpr, vpr, mediaW, mediaH, s.vaLineColor, 'bottom');
             }
 
             if (s.showPoc !== false) {
@@ -3229,14 +3327,204 @@ class VolumeProfileIndicator extends BaseIndicator {
                     const fromX = (s.extendPocRight === false && !anchorRight) ? x0 : 0;
                     this._drawHLine(ctx, yPoc, hpr, vpr, mediaW, s.pocColor, w, fromX);
 
+                    // [VP-FIX3] плашка POC всегда на прежнем месте — у последней свечи
                     let labelX = (anchorRight ? (lastIdx - 15) : (lastIdx + 15));
                     const xLabel = this._xForIndex(timeScale, Math.max(0, labelX), data);
                     this._drawPocLabel(ctx, 'POC: ' + this._fmt(p.pocPrice),
                         xLabel !== null ? xLabel : mediaW - 10, yPoc,
                         hpr, vpr, mediaW, s.pocColor, data[data.length - 1]);
+                } else {
+                    // [VP-FIX4] POC вне окна: пунктирная линия у края панели + плашка
+                    const lastC = data[data.length - 1];
+                    const edge = (lastC && p.pocPrice > Number(lastC.close)) ? 'top' : 'bottom';
+                    this._drawLevelLine(ctx, null, hpr, vpr, mediaW, mediaH, s.pocColor, edge);
+                    this._drawTagOrPin(ctx, 'POC ' + this._fmt(p.pocPrice), null, hpr, vpr, mediaW, mediaH, s.pocColor, edge);
                 }
             }
+
+            // [VP-FIX5] снимок последнего кадра для быстрой диагностики:
+            // консоль -> __vpStatus(). null в yVAH/yVAL/yPOC = уровень вне ценового
+            // окна (тогда линия пунктиром у края, см. linesAtEdge).
+            this._lastDraw = {
+                when: new Date().toLocaleTimeString(),
+                placement: placement,
+                showVaLines: !!s.showVaLines,
+                showVolume: s.showVolume,
+                bars: p.bars, rows: p.rows,
+                rowsOnScreen: this._rowsDrawn,
+                volumeLabels: this._volLabelsDrawn,
+                linesByPrice: this._lvlSolid,
+                linesAtEdge: this._lvlClamp,
+                yVAH: priceToY(p.vah), yVAL: priceToY(p.val), yPOC: priceToY(p.pocPrice),
+                paneW: mediaW, paneH: mediaH
+            };
         });
+    }
+
+    /**
+     * [VP-VOL] Подпись объёма ряда. Текст кладётся ВНУТРЬ гистограммы у её левого
+     * края (там ряд самый плотный) с тёмным контуром — читается и на синих, и на
+     * оранжевых рядах. Размер шрифта подбирается под высоту ряда; если подпись не
+     * влезает в длину ряда — не рисуем.
+     */
+    _drawVolumeLabel(ctx, text, xStartBitmap, yTopBitmap, rowLenBitmap, rowHBitmap,
+                     color, isPoc, hpr, vpr, mediaW) {
+        if (!text) return;
+        const fontSize = rowHBitmap >= 13 * vpr ? 10 : (rowHBitmap >= 10 * vpr ? 9 : 8);
+        const padX = 2 * hpr;
+        // оценку ширины берём с запасом (_measure считает по 11px, факт — 8..10px),
+        // зато подпись гарантированно не вылезает за конец ряда
+        const textW = this._measure(ctx, text).w * (fontSize / 11) * hpr + padX * 2;
+        if (rowLenBitmap < textW) return;          // ряд короче подписи
+        const x = xStartBitmap + padX;
+        if (x + textW > mediaW * hpr) return;      // не вылезать за правый край панели
+        const y = yTopBitmap + rowHBitmap / 2;
+        ctx.save();
+        ctx.font = (isPoc ? 'bold ' : '') + fontSize + 'px "JetBrains Mono", monospace';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = Math.max(2, 2.5 * vpr);
+        ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = color;
+        ctx.fillText(text, x, y);
+        ctx.restore();
+    }
+
+    /**
+     * [VP-VOL] Компактный объём: тот же формат, что у Utils.formatVolume (K/M/B),
+     * но пороги >= и без его округления (Utils.formatVolume(999.9) дал бы '1000').
+     */
+    _fmtVolume(v) {
+        if (!isFinite(v) || v <= 0) return '';
+        if (v >= 1e12) return (v / 1e12).toFixed(2) + 'T';
+        if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+        if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+        if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+        // 999.9 не должно превращаться в '1000' — округление до следующего порядка
+        if (v >= 100) {
+            const r = v.toFixed(0);
+            return r === '1000' ? (v / 1e3).toFixed(1) + 'K' : r;
+        }
+        return v >= 1 ? v.toFixed(1) : v.toFixed(2);
+    }
+
+    /**
+     * [VP-FIX5] Подписи объёма с разряженной раскладкой: кандидаты сортируются
+     * (POC первым, затем по убыванию объёма) и ставятся только туда, где не
+     * перекроют уже поставленную подпись. Тонкие ряды больше не съедают объём:
+     * при ряду тоньше шрифта подписи просто расставляются реже.
+     */
+    _drawVolumeLabels(ctx, p, s, priceToY, gapPrice, maxLenPx, xStart, hpr, vpr, mediaW, mediaH) {
+        const volColor = s.volumeColor || '#FFFFFF';
+        const cands = [];
+        for (let x = 0; x < p.rows; x++) {
+            const vol = p.total[x];
+            if (!(vol > 0)) continue;
+            const inVA = x >= p.vaLowRow && x <= p.vaHighRow;
+            const isPoc = (x === p.pocRow);
+            if (s.showVolume === 'poc' && !isPoc) continue;
+            if (s.showVolume === 'va' && !inVA && !isPoc) continue;
+            const pBot = p.bot + p.step * x;
+            const pTop = pBot + p.step;
+            const yTop = priceToY(pTop - gapPrice);
+            const yBot = priceToY(pBot + gapPrice);
+            if (yTop === null || yBot === null) { this._volSkippedRows++; continue; }
+            const yMin = Math.min(yTop, yBot), rowH = Math.abs(yBot - yTop);
+            if (rowH < 2) { this._volSkippedRows++; continue; }
+            const lenRow = ((p.up[x] + p.dn[x]) / p.maxVol) * maxLenPx;
+            if (!(lenRow > 4)) continue;
+            cands.push({ vol, yMin, rowH, lenRow, isPoc });
+        }
+        cands.sort((a, b) => (b.isPoc - a.isPoc) || (b.vol - a.vol));
+        const placed = [];
+        let drawn = 0;
+        for (const c of cands) {
+            const fs2 = c.rowH >= 13 * vpr ? 10 : (c.rowH >= 10 * vpr ? 9 : 8);
+            const h = fs2 + 2;
+            const yC = c.yMin + c.rowH / 2;
+            const top = yC - h / 2, bot = yC + h / 2;
+            if (top < 0 || bot > mediaH) continue;
+            let busy = false;
+            for (const q of placed) {
+                if (top < q.bot + 2 && bot > q.top - 2) { busy = true; break; }
+            }
+            if (busy) continue;
+            placed.push({ top, bot });
+            this._drawVolumeLabel(ctx, this._fmtVolume(c.vol), xStart, top * vpr,
+                c.lenRow * hpr, h * vpr, volColor, c.isPoc, hpr, vpr, mediaW);
+            drawn++;
+        }
+        this._volLabelsDrawn = drawn;
+    }
+
+    /**
+     * [VP-FIX4] Линия уровня: сплошная по цене, если уровень в видимом ценовом окне;
+     * иначе пунктирная у верхнего/нижнего края панели — линия есть при любом зуме.
+     */
+    _drawLevelLine(ctx, yMedia, hpr, vpr, mediaW, mediaH, color, edge) {
+        let y = yMedia;
+        let dashed = false;
+        if (y === null || y === undefined || !isFinite(y)) {
+            y = (edge === 'top') ? 1 : mediaH - 1;
+            dashed = true;
+        } else if (y < 0) {
+            y = 1;
+            dashed = true;
+        } else if (y > mediaH) {
+            y = mediaH - 1;
+            dashed = true;
+        }
+        if (dashed) this._lvlClamp++; else this._lvlSolid++;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, 1 * vpr);
+        if (dashed && ctx.setLineDash) ctx.setLineDash([6 * hpr, 4 * hpr]);
+        ctx.beginPath();
+        ctx.moveTo(0, y * vpr);
+        ctx.lineTo(mediaW * hpr, y * vpr);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    /**
+     * [VP-FIX3] Плашка уровня: если уровень в видимом ценовом окне — рисуется по его
+     * цене (как раньше); если вне окна — прижимается к краю панели со стрелкой
+     * (вверх = уровень выше экрана, вниз = ниже), поэтому VAH/VAL видны всегда.
+     */
+    _drawTagOrPin(ctx, text, yMedia, hpr, vpr, mediaW, mediaH, color, edge) {
+        if (yMedia !== null && isFinite(yMedia) && yMedia >= 0 && yMedia <= mediaH) {
+            this._drawTag(ctx, text, yMedia, hpr, vpr, mediaW, color);
+            return;
+        }
+        const m = this._measure(ctx, text);
+        const padX = 5, padY = 3;
+        const w = (m.w + padX * 2) * hpr;
+        const h = (m.h + padY) * vpr;
+        const x = mediaW * hpr - w - 2 * hpr;
+        const y = (edge === 'top') ? 2 * vpr : (mediaH * vpr - h - 2 * vpr);
+        ctx.save();
+        ctx.fillStyle = this._rgba(color, 0.55);
+        ctx.fillRect(x, y, w, h);
+        // стрелка слева от плашки: куда находится сам уровень
+        const ax = x - 10 * hpr;
+        ctx.beginPath();
+        if (edge === 'top') {
+            ctx.moveTo(ax, y + h - 2 * vpr);
+            ctx.lineTo(ax + 8 * hpr, y + h - 2 * vpr);
+            ctx.lineTo(ax + 4 * hpr, y + 2 * vpr);
+        } else {
+            ctx.moveTo(ax, y + 2 * vpr);
+            ctx.lineTo(ax + 8 * hpr, y + 2 * vpr);
+            ctx.lineTo(ax + 4 * hpr, y + h - 2 * vpr);
+        }
+        ctx.closePath();
+        ctx.fillStyle = this._rgba(color, 0.9);
+        ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.font = '11px "JetBrains Mono", monospace';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x + padX * hpr, y + h / 2);
+        ctx.restore();
     }
 
     _drawHLine(ctx, yMedia, hpr, vpr, mediaW, color, width, fromXMedia) {
@@ -3396,6 +3684,7 @@ class VolumeProfileIndicator extends BaseIndicator {
         const rowDiv = 'margin-bottom:8px; display:flex; align-items:center; gap:10px;';
         const chk = (v) => v ? 'checked' : '';
         const curTf = this._tfKey() || '1h';
+        const pl = this._placement();          // [VP-TV]
 
         // --- кнопки вкладок ---
         const tabs = ['general'].concat(TF);
@@ -3438,6 +3727,14 @@ class VolumeProfileIndicator extends BaseIndicator {
                     <input type="number" id="vp_widthDivisor" value="${s.widthDivisor}" min="0.5" max="20" step="0.5" style="${numStyle}">
                 </div>
                 <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Жёсткий потолок длины ряда в пикселях. 0 — ограничивать долей экрана (следующее поле). Нужно, чтобы на коротких ТФ гистограмма не уезжала за экран.">Макс. ширина, px:</label>
+                    <input type="number" id="vp_maxWidthPx" value="${s.maxWidthPx}" min="0" max="5000" step="10" style="${numStyle}">
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Работает только при «Макс. ширина, px» = 0. Какая доля видимой ширины графика может быть занята гистограммой.">Макс. доля экрана:</label>
+                    <input type="number" id="vp_maxWidthRatio" value="${s.maxWidthRatio}" min="0" max="0.6" step="0.05" style="${numStyle}">
+                </div>
+                <div style="${rowDiv}">
                     <label style="${labelStyle}" title="Применяется, только если текущий таймфрейм не распознался">Баров (резерв):</label>
                     <input type="number" id="vp_fallbackBars" value="${s.fallbackBars}" min="1" max="5000" style="${numStyle}">
                 </div>
@@ -3472,9 +3769,29 @@ class VolumeProfileIndicator extends BaseIndicator {
                 <div style="${rowDiv}">
                     <label style="${labelStyle}" title="Слева — гистограмма растёт вправо от первой свечи диапазона (как в оригинальном скрипте TradingView). Справа — растёт влево от последней свечи, профиль прижат к текущей цене.">Расположение профиля:</label>
                     <select id="vp_placement" style="${rowStyle}">
-                        <option value="left" ${s.anchorRight ? '' : 'selected'}>Слева (как в TradingView)</option>
-                        <option value="right" ${s.anchorRight ? 'selected' : ''}>Справа (у текущей цены)</option>
+                        <option value="screenLeft" ${pl === 'screenLeft' ? 'selected' : ''}>Слева — прижать к экрану (видно всегда)</option>
+                        <option value="left" ${pl === 'left' ? 'selected' : ''}>Слева — от первой свечи диапазона</option>
+                        <option value="right" ${pl === 'right' ? 'selected' : ''}>Справа — у текущей цены</option>
                     </select>
+                </div>
+                <div style="color:#888; font-size:10px; line-height:1.45; margin:-4px 0 10px 160px;">
+                    «Прижать к экрану» — гистограмма стоит у левого края видимой области
+                    и не уезжает при скролле/зуме (как Volume Profile Visible Range в TradingView).
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Подписи объёма прямо на гистограмме, формат K/M/B. Шрифт сам уменьшается под высоту ряда.">Объём на рядах:</label>
+                    <select id="vp_showVolume" style="${rowStyle}">
+                        <option value="none" ${s.showVolume === 'none' ? 'selected' : ''}>Не показывать</option>
+                        <option value="poc" ${s.showVolume === 'poc' ? 'selected' : ''}>Только у POC</option>
+                        <option value="va" ${s.showVolume === 'va' ? 'selected' : ''}>В Value Area + POC</option>
+                        <option value="all" ${s.showVolume === 'all' ? 'selected' : ''}>У каждого ряда</option>
+                    </select>
+                </div>
+                <div style="${rowDiv}">
+                    <label style="${labelStyle}" title="Ряд тоньше этого значения рисуется без подписи. Если подписей нет — уменьшите значение или число рядов во вкладке таймфрейма (рекомендуется ≤ 48).">Мин. высота ряда, px:</label>
+                    <input type="number" id="vp_volumeMinHeight" value="${s.volumeMinHeight}" min="0" max="100" step="1" style="${numStyle}">
+                    <label style="color:#B0B0B0;">Цвет:</label>
+                    <input type="color" id="vp_volumeColor" value="${s.volumeColor}" style="width:50px; height:28px; background:#1E1E1E; border:1px solid #404040; border-radius:4px;">
                 </div>
 
                 <div style="color:#2196F3; margin:8px 0;">🎨 Цвета</div>
@@ -3569,6 +3886,8 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.refreshMode = oneOf('vp_refreshMode', ['bar', 'tick', 'manual'], s.refreshMode);
         s.percent = num('vp_percent', s.percent, 0, 100);
         s.widthDivisor = num('vp_widthDivisor', s.widthDivisor, 0.5, 20);
+        s.maxWidthPx = num('vp_maxWidthPx', s.maxWidthPx, 0, 5000);
+        s.maxWidthRatio = num('vp_maxWidthRatio', s.maxWidthRatio, 0, 0.6);
         s.fallbackBars = int('vp_fallbackBars', s.fallbackBars, 1, 5000);
         s.fallbackRows = int('vp_fallbackRows', s.fallbackRows, 5, 100);
 
@@ -3579,8 +3898,12 @@ class VolumeProfileIndicator extends BaseIndicator {
         s.showVaLines = bool('vp_showVaLines', s.showVaLines);
         s.vaLineColor = color('vp_vaLineColor', s.vaLineColor);
         // [VP-PLACE] расположение профиля: 'left' / 'right'
-        const placement = oneOf('vp_placement', ['left', 'right'], s.anchorRight ? 'right' : 'left');
+        const placement = oneOf('vp_placement', ['left', 'right', 'screenLeft'], this._placement());
+        s.placement = placement;
         s.anchorRight = (placement === 'right');
+        s.showVolume = oneOf('vp_showVolume', ['none', 'poc', 'va', 'all'], s.showVolume);
+        s.volumeMinHeight = num('vp_volumeMinHeight', s.volumeMinHeight, 0, 100);
+        s.volumeColor = color('vp_volumeColor', s.volumeColor);
 
         s.vaUpColor = color('vp_vaUpColor', s.vaUpColor);
         s.vaDownColor = color('vp_vaDownColor', s.vaDownColor);
@@ -3626,8 +3949,16 @@ class VolumeProfileIndicator extends BaseIndicator {
             'баров (настройка ТФ)': tf.bars,
             'рядов (настройка ТФ)': tf.rows,
             'refreshMode': this.settings.refreshMode,
-            'anchorRight': !!this.settings.anchorRight,
+            'расположение': this._placement(),
+            'anchorRight (устар.)': !!this.settings.anchorRight,
+            'объём на рядах': this.settings.showVolume,
+            'линии VAH/VAL (showVaLines)': this.settings.showVaLines,
+            'показывать POC (showPoc)': this.settings.showPoc,
+            'рядов без подписи (тонкие)': this._volSkippedRows || 0,
             'баров в профиле': p ? p.bars : 0,
+            'данных меньше, чем заказано': p
+                ? (p.bars < tf.bars ? ('да: ' + p.bars + ' из ' + tf.bars + ' — профиль по всем загруженным свечам, при догрузке истории «плывёт»') : 'нет')
+                : '—',
             'рядов в профиле': p ? p.rows : 0,
             'диапазон': p ? (this._fmt(p.bot) + ' .. ' + this._fmt(p.top)) : '—',
             'firstTime профиля': p && p.firstTime ? new Date(p.firstTime * 1000).toISOString().slice(0, 16) : '—',
@@ -3705,6 +4036,12 @@ function bootIndicators() {
     window.IndicatorRegistry.set('volumeprofile', VolumeProfileIndicator);
    
     console.log('✅ Зарегистрировано индикаторов:', window.IndicatorRegistry.size);
+    // [VP-BUILD] маркер сборки: по этой строке в консоли сразу видно,
+    // какой Indicators.js реально загрузился в браузере
+    try {
+        console.log('%c[VolumeProfile] сборка VP-FIT+VP-TV-VOL+FIX5: линии + объём при любом зуме, профиль ПОД свечами; диагностика __vpStatus(), схема настроек v' + VolumeProfileIndicator.SETTINGS_VERSION, 'color:#4FC3F7');
+        window.__vpBuild = () => 'VP-FIT+VP-TV-VOL+FIX5, SETTINGS_VERSION=' + VolumeProfileIndicator.SETTINGS_VERSION;
+    } catch (e) {}
 }
 bootIndicators();
 
