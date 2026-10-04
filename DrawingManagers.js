@@ -5396,6 +5396,7 @@ class AlertLineManager {
         this._pixelRatio = window.devicePixelRatio || 1;
         this._alerts = [];
         this._lastPrices = new Map();
+        this._lastTickAt = new Map();      // [VP-ALERT-FIX] время последнего тика по ключу
         this._chartManager = chartManager;
         this._selectedAlert = null;
         this._hoveredAlert = null;
@@ -5525,6 +5526,20 @@ class AlertLineManager {
                 const price = (typeof payload === 'object' && payload !== null) 
                     ? payload.price 
                     : payload;
+                // [VP-ALERT-FIX] «дыра» в подаче цены (сон/фон/обрыв WS): если между
+                // тиками > 60с, пересечение ищется ПО СВЕЧАМ за этот период и триггер
+                // получает фактическое время; тиковая проверка идёт ПОСЛЕ gap-прогона,
+                // чтобы не сработать «по пробуждению» и не задвоить.
+                const key = this._getSubscriptionKey(symbol, exchange, marketType);
+                const nowTick = Date.now();
+                const prevTick = this._lastTickAt.get(key);
+                this._lastTickAt.set(key, nowTick);
+                if (prevTick && nowTick - prevTick > 60000) {
+                    this._checkAlertsOnGap(symbol, price, exchange, marketType, prevTick)
+                        .catch(() => {})
+                        .then(() => this._checkAlerts(symbol, price, exchange, marketType));
+                    return;
+                }
                 this._checkAlerts(symbol, price, exchange, marketType);
             };
 
@@ -5567,6 +5582,78 @@ class AlertLineManager {
             try { window.priceManagerInstance.unsubscribe(key, handler); } catch (e) {}
         }
         this._subscriptions.delete(key);
+    }
+
+    /**
+     * [VP-ALERT-FIX] Поиск пересечений за период «дыры» в подаче цены.
+     * Берём минутные свечи за период и прогоняем пересечение по high/low:
+     * так алерт не опаздывает на время дыры и не пропускает пересечение,
+     * если цена за дыру ушла за уровень и вернулась.
+     */
+    async _checkAlertsOnGap(symbol, livePrice, exchange, market, gapStartMs) {
+        const cm = this._chartManager || (typeof window !== 'undefined' ? window.chartManagerInstance : null);
+        if (!cm || typeof cm.fetchKlines !== 'function') return;
+        const items = this._alerts.filter(it => {
+            const a = it.alert;
+            return a && a.status === 'active' &&
+                this._normalizeSymbol(a.symbol) === this._normalizeSymbol(symbol) &&
+                String(a.exchange || 'binance').toLowerCase() === String(exchange || 'binance').toLowerCase() &&
+                String(a.marketType || 'futures').toLowerCase() === String(market || 'futures').toLowerCase();
+        });
+        if (!items.length) return;
+        const now = Date.now();
+        const gapMin = Math.ceil((now - gapStartMs) / 60000) + 2;
+        const limit = Math.min(500, Math.max(2, gapMin));
+        let candles = null;
+        try {
+            candles = await cm.fetchKlines(symbol, exchange, market, '1m', limit, now, 'user');
+        } catch (e) { return; }
+        if (!Array.isArray(candles) || !candles.length) return;
+        const gap = candles.filter(c => c && c.time * 1000 >= gapStartMs - 60000 && c.time * 1000 <= now);
+        if (!gap.length) return;
+        for (const item of items) {
+            const alert = item.alert;
+            if (!alert || alert.status !== 'active') continue;
+            const triggerLimit = AlertLine.normalizeRepeatCount(alert.repeatCount);
+            if (alert.triggerCount >= triggerLimit) continue;
+            let prev = this._lastPrices.get(alert.id);
+            let crossedAt = null;
+            for (const c of gap) {
+                if (prev === undefined) { prev = c.close; continue; }
+                const up = prev <= alert.price && c.high >= alert.price;
+                const dn = prev >= alert.price && c.low <= alert.price;
+                const hit = (alert.direction === 'above' && up) ||
+                            (alert.direction === 'below' && dn) ||
+                            (alert.direction === 'both' && (up || dn));
+                if (hit) { crossedAt = c.time * 1000; break; }
+                prev = c.close;
+            }
+            // тиковая проверка продолжится с close последней свечи дыры — без задвоения
+            this._lastPrices.set(alert.id, gap[gap.length - 1].close);
+            if (crossedAt !== null) {
+                this._fireAlert(alert, alert.price, alert.triggerCount > 0, crossedAt);
+                if (alert.triggerCount >= triggerLimit) {
+                    alert.complete();
+                    this._handleAlertCompletion(alert);
+                }
+            }
+        }
+    }
+
+    /** [VP-ALERT-FIX] единая точка триггера; crossedAt — фактическое время пересечения */
+    _fireAlert(alert, price, isRepeat, crossedAt) {
+        const triggerLimit = AlertLine.normalizeRepeatCount(alert.repeatCount);
+        console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit === Infinity ? '∞' : triggerLimit})` +
+            (crossedAt ? ` [фактическое время пересечения: ${new Date(crossedAt).toLocaleString('ru-RU')}]` : ''));
+        alert.triggerCount++;
+        alert.lastTriggerTime = Date.now();
+        alert.active = true;
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._startInfiniteHighlight(alert.id);
+        this._showAlertNotification(alert, price, isRepeat, crossedAt);
+        this._sendTelegramAlert(alert, price, isRepeat, crossedAt);
+        this._requestRedraw();
     }
 
     _checkAlerts(symbol, price, exchange, market) {
@@ -5634,20 +5721,7 @@ class AlertLineManager {
             }
 
             if (shouldTrigger) {
-                const isRepeat = alert.triggerCount > 0;
-                console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit === Infinity ? '∞' : triggerLimit})`);
-
-                alert.triggerCount++;
-                alert.lastTriggerTime = now;
-                alert.active = true;
-
-                this._saveAlerts();
-                this._updateAlertsListUI();
-                this._startInfiniteHighlight(alert.id);
-                this._showAlertNotification(alert, price, isRepeat);
-                this._sendTelegramAlert(alert, price, isRepeat);
-                this._requestRedraw();
-
+                this._fireAlert(alert, price, alert.triggerCount > 0, null);
                 if (alert.triggerCount >= triggerLimit) {
                     alert.complete();
                     this._handleAlertCompletion(alert);
@@ -6897,12 +6971,16 @@ class AlertLineManager {
         }, 8000);
     }
 
-    _showAlertNotification(alert, currentPrice, isRepeat = false) {
+    _showAlertNotification(alert, currentPrice, isRepeat = false, crossedAt = null) {
         const notification = document.getElementById('alertNotification');
 
         const priceFormatted = Utils.formatPrice(currentPrice);
         const alertPriceFormatted = Utils.formatPrice(alert.price);
-        const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        // [VP-ALERT-FIX] при догонном пересечении (по свечам) показываем ФАКТИЧЕСКОЕ
+        // время пересечения, а не момент, когда обработчик наконец получил тик
+        const timeStr = crossedAt
+            ? new Date(crossedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ← время пересечения (уточнено по свечам)'
+            : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
         const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
 
@@ -6976,7 +7054,7 @@ class AlertLineManager {
         }
     }
 
-    _sendTelegramAlert(alert, currentPrice, isRepeat = false) {
+    _sendTelegramAlert(alert, currentPrice, isRepeat = false, crossedAt = null) {
         const chatId = localStorage.getItem('telegramChatId');
         if (!chatId) return;
 
@@ -6986,7 +7064,7 @@ class AlertLineManager {
         const direction = currentPrice > alert.price ? '⬆️ Выше' : '⬇️ Ниже';
         const repeatText = isRepeat ? `\n🔄 Повтор: ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}` : '';
 
-        const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${new Date().toLocaleString('ru-RU')}`;
+        const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${(crossedAt ? new Date(crossedAt) : new Date()).toLocaleString('ru-RU')}${crossedAt ? ' (фактическое пересечение, уточнено по свечам)' : ''}`;
 
         const formData = new URLSearchParams();
         formData.append('chat_id', chatId);
@@ -7277,18 +7355,24 @@ class AlertLineManager {
         // [НОВОЕ] Переход на график указанного символа — как в TickerModal (кнопка "прицелиться")
     _goToSymbol(symbol, exchange, marketType) {
         const cm = this._chartManager;
-        if (cm && cm.currentSymbol === symbol &&
+        const tp = (typeof window !== 'undefined')
+            ? (window.tickerPanelInstance || window.tickerPanel)
+            : null;
+        const same = cm && cm.currentSymbol === symbol &&
             cm.currentExchange === exchange &&
-            cm.currentMarketType === marketType) {
-            const panel = document.getElementById('alertHistoryPanel');
-            if (panel) panel.style.display = 'none';
-            return;
-        }
+            cm.currentMarketType === marketType;
 
-        if (window.app && typeof window.app.loadSymbol === 'function') {
+        // [VP-GOTO] как «прицел» в модальном окне: график + тикер-панель
+        // (скролл к строке, подсветка, подписи пары/биржи/рынка).
+        // focusOnSymbol сам переключает график, а на том же символе — без перезагрузки.
+        if (tp && typeof tp.focusOnSymbol === 'function') {
+            tp.focusOnSymbol(symbol, exchange, marketType);
+        } else if (same) {
+            const p = document.getElementById('alertHistoryPanel');
+            if (p) p.style.display = 'none';
+            return;
+        } else if (window.app && typeof window.app.loadSymbol === 'function') {
             window.app.loadSymbol(symbol, exchange, marketType);
-        } else if (window.tickerPanel && typeof window.tickerPanel.focusOnSymbol === 'function') {
-            window.tickerPanel.focusOnSymbol(symbol, exchange, marketType);
         } else if (cm && typeof cm.switchSymbol === 'function') {
             cm.switchSymbol(symbol, exchange, marketType);
         } else {
