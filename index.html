@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -1583,6 +1584,7 @@ html += `<div class="active-indicator-item" style="border-left-color: ${color}; 
 <span class="active-indicator-name">${name}</span>
 <div class="active-indicator-actions">
 <button class="eye-indicator" data-id="${indicator.id}" title="${isVisible ? 'Скрыть' : 'Показать'}">${eyeIcon}</button>
+${indicator.type === 'volumeprofile' ? '<button class="vollabel-indicator" data-id="' + indicator.id + '" title="' + ((indicator.settings && indicator.settings.showVolume === 'none') ? 'Показать подписи объёма' : 'Скрыть подписи объёма') + '" style="background:transparent;border:none;color:#B0B0B0;cursor:pointer;padding:4px;display:flex;align-items:center;' + ((indicator.settings && indicator.settings.showVolume === 'none') ? 'opacity:0.4;' : '') + '">' + '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">' + '<rect x="3" y="4" width="14" height="3"></rect><rect x="3" y="10" width="18" height="3"></rect>' + '<rect x="3" y="16" width="10" height="3"></rect></svg></button>' : ''}
 <button class="settings-indicator" data-id="${indicator.id}" title="Настройки">
 <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
 <path d="m234-480-12-60q-12-5-22.5-10.5T178-564l-58 18-40-68 46-40q-2-13-2-26t2-26l-46-40 40-68 58 18q11-8 21.5-13.5T222-820l12-60h80l12 60q12 5 22.5 10.5T370-796l58-18 40 68-46 40q2 13 2 26t-2 26l46 40-40 68-58-18q-11 8-21.5 13.5T326-540l-12 60h-80Zm96.5-143.5Q354-647 354-680t-23.5-56.5Q307-760 274-760t-56.5 23.5Q194-713 194-680t23.5 56.5Q241-600 274-600t56.5-23.5ZM592-40l-18-84q-17-6-31.5-14.5T514-158l-80 26-56-96 64-56q-2-18-2-36t2-36l-64-56 56-96 80 26q14-11 28.5-19.5T574-516l18-84h112l18 84q17 6 31.5 14.5T782-482l80-26 56 96-64 56q2 18 2 36t-2 36l64 56-56 96-80-26q-14 11-28.5 19.5T722-124l-18 84H592Z"/>
@@ -1602,6 +1604,25 @@ const id = btn.dataset.id;
 const indicator = indicators.find(i => i.id == id);
 if (indicator && window.chartManagerInstance && window.chartManagerInstance.indicatorManager) {
 window.chartManagerInstance.indicatorManager.toggleIndicatorVisibility(indicator);
+}
+});
+});
+activeIndicatorsList.querySelectorAll('.vollabel-indicator').forEach(btn => {
+btn.addEventListener('click', (e) => {
+e.stopPropagation();
+const id = btn.dataset.id;
+const indicator = indicators.find(i => i.id == id);
+if (indicator && indicator.settings) {
+// [VP-MENU] быстрое скрытие/возврат подписей объёма на гистограмме
+const cur = indicator.settings.showVolume || 'va';
+if (cur === 'none') {
+const prev = (indicator.settings._volumeMode && indicator.settings._volumeMode !== 'none') ? indicator.settings._volumeMode : 'va';
+indicator.updateSettings({ showVolume: prev });
+} else {
+indicator.updateSettings({ _volumeMode: cur, showVolume: 'none' });
+}
+if (typeof indicator._saveSettings === 'function') indicator._saveSettings();
+if (window.chartManagerInstance && window.chartManagerInstance.indicatorManager) window.chartManagerInstance.indicatorManager._renderUI();
 }
 });
 });
