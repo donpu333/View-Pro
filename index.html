@@ -923,8 +923,6 @@
         <div class="visibility-actions">
             <button class="visibility-btn select-all" id="alertSelectAllTimeframes">Выбрать всё</button>
             <button class="visibility-btn deselect-all" id="alertDeselectAllTimeframes">Снять всё</button>
-            <!-- [FIX-VIS] «Минутки» — как у луча/тренда/текста/стоп-тейка -->
-            <button class="visibility-btn select-minutes" id="alertSelectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
         </div>
     </div>
     <div class="settings-actions">
@@ -1572,7 +1570,8 @@ indicators.forEach((indicator) => {
 let name = 'Индикатор';
 let color = '#4A90E2';
 let isVisible = indicator.visible !== false;
-if (indicator.data && indicator.data.name) name = indicator.data.name;
+// [VP-MA] несколько средних различимы: к имени добавляем фактический период
+if (indicator.data && indicator.data.name) name = indicator.data.name + ((indicator.settings && indicator.settings.period) ? ' · P' + indicator.settings.period : '');
 else if (indicator.type) {
 const typeNames = { 'sma20':'SMA 20','sma50':'SMA 50','ema20':'EMA 20','rsi14':'RSI 14','macd':'MACD','volume':'Volume' };
 name = typeNames[indicator.type] || indicator.type;
