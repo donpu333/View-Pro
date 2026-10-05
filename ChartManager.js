@@ -2495,6 +2495,19 @@ class ChartManager {
             let candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval);
             let isFromCache = !!candles;
             if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, this._initialBatch || 1000);
+            // [VP-TF] первый REST после пробуждения страницы (сон/фон) или при
+            // ненаготовой сети может вернуть пусто — повторяем до 2 раз с паузой,
+            // иначе переключение ТФ падает с 'Нет данных' на ровном месте
+            for (let attempt = 1;
+                 (!candles || candles.length === 0) && attempt <= 2 && this._activeGeneration === generationId && !this._destroyed;
+                 attempt++) {
+                console.warn(`⚠️ [VP-TF] Нет данных для ${newInterval}, повтор ${attempt}/2 через 1.2с`);
+                await new Promise(r => setTimeout(r, 1200));
+                if (this._activeGeneration !== generationId || this._destroyed) return;
+                candles = await this.loadCandlesFromCache(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval);
+                isFromCache = !!candles;
+                if (!isFromCache) candles = await this.fetchKlines(this.currentSymbol, this.currentExchange, this.currentMarketType, newInterval, this._initialBatch || 1000);
+            }
             if (this._activeGeneration !== generationId) return;
             if (!candles || candles.length === 0) throw new Error('Нет данных');
 
