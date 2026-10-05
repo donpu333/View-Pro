@@ -93,7 +93,7 @@ class ATRIndicator extends BaseIndicator {
 }
 
 class EMAIndicator extends BaseIndicator {
-    static meta = { name: 'EMA 20', category: 'trend', panel: 'main', color: '#00E5FF' };
+    static meta = { name: 'EMA 20', category: 'trend', panel: 'main', color: '#00E5FF', multiple: true };   // [VP-MA]
 
     // [FIX-I4] дефолты для создания из реестра без аргументов
     constructor(manager, period = 20, name = 'EMA 20', color = '#00E5FF') {
@@ -2292,7 +2292,7 @@ class RSI14Indicator extends BaseIndicator {
 }
 
 class SMAIndicator extends BaseIndicator {
-    static meta = { name: 'SMA 20', category: 'trend', panel: 'main', color: '#FFD700' };
+    static meta = { name: 'SMA 20', category: 'trend', panel: 'main', color: '#FFD700', multiple: true };   // [VP-MA]
 
     // [FIX-I4] дефолты: реестр создаёт класс через new Class(manager),
     // без них period=undefined и серия пустая (type 'smaundefined').
@@ -2334,7 +2334,7 @@ class SMAIndicator extends BaseIndicator {
 
 // Специальный класс для SMA 50, чтобы Реестр мог отличить его от SMA 20
 class SMA50Indicator extends SMAIndicator {
-    static meta = { name: 'SMA 50', category: 'trend', panel: 'main', color: '#FF69B4' };
+    static meta = { name: 'SMA 50', category: 'trend', panel: 'main', color: '#FF69B4', multiple: true };   // [VP-MA]
     constructor(manager) {
         super(manager, 50, 'SMA 50', '#FF69B4');
         this.type = 'sma50';
@@ -3779,7 +3779,7 @@ class VolumeProfileIndicator extends BaseIndicator {
                     и не уезжает при скролле/зуме (как Volume Profile Visible Range в TradingView).
                 </div>
                 <div style="${rowDiv}">
-                    <label style="${labelStyle}" title="Подписи объёма прямо на гистограмме, формат K/M/B. Шрифт сам уменьшается под высоту ряда.">Объём на рядах:</label>
+                    <label style="${labelStyle}" title="Подписи объёма прямо на гистограмме, формат K/M/B. Шрифт сам уменьшается под высоту ряда.">Надписи объёма на гистограмме:</label>
                     <select id="vp_showVolume" style="${rowStyle}">
                         <option value="none" ${s.showVolume === 'none' ? 'selected' : ''}>Не показывать</option>
                         <option value="poc" ${s.showVolume === 'poc' ? 'selected' : ''}>Только у POC</option>
