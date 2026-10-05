@@ -10,7 +10,7 @@ class BaseIndicator {
         };
         this.settings = {
             color: color,
-            lineWidth: 2
+            lineWidth: 1          // [VP-MA] толщина по умолчанию = 1
         };
         this.series = [];
         this.isCalculating = false;
@@ -97,7 +97,7 @@ class BaseIndicator {
         if (this.data.panel === 'main') {
             const series = chart.addSeries(LightweightCharts.LineSeries, {
                 color: this.settings.color || this.data.color,
-                lineWidth: this.settings.lineWidth || 2,
+                lineWidth: this.settings.lineWidth || 1,
                 lastValueVisible: false,
                 priceLineVisible: false,
                 // [FIX-DOT] ТОЧКА ПРИ НАВЕДЕНИИ НА СРЕДНИЕ СКОЛЬЗЯЩИЕ.
@@ -117,7 +117,7 @@ class BaseIndicator {
             if (panel?.chart) {
                 const series = panel.chart.addSeries(LightweightCharts.LineSeries, {
                     color: this.settings.color || this.data.color,
-                    lineWidth: this.settings.lineWidth || 2,
+                    lineWidth: this.settings.lineWidth || 1,
                     lastValueVisible: false,
                     priceLineVisible: false,
                     crosshairMarkerVisible: false   // [FIX-DOT] см. комментарий выше
