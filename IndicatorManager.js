@@ -190,13 +190,27 @@ class IndicatorManager {
 
     addIndicator(type) {
         if (this._addingInProgress.has(type)) return false;
-        if (this.activeIndicators.some(i => i.type === type)) return false;
+        // [VP-MA] скользящие средние (и всё с meta.multiple) можно добавлять
+        // несколькими экземплярами с разными периодами и цветами
+        const IndClass = window.IndicatorRegistry && window.IndicatorRegistry.get(type);
+        const allowMultiple = !!(IndClass && IndClass.meta && IndClass.meta.multiple);
+        const sameCount = this.activeIndicators.filter(i => i.type === type).length;
+        if (!allowMultiple && sameCount > 0) return false;
         
         this._addingInProgress.add(type);
         
         try {
             const indicator = window.IndicatorFactory.createIndicator(type, this);
             if (!indicator) return false;
+
+            // [VP-MA] 2-й и следующие экземпляры того же типа получают цвет из
+            // палитры, иначе несколько скользящих средних сливаются в одну линию
+            if (allowMultiple && sameCount > 0) {
+                const palette = ['#FF9800', '#4CAF50', '#E91E63', '#00BCD4', '#FFEB3B', '#9C27B0', '#FF5722', '#3F51B5', '#8BC34A', '#009688'];
+                const autoColor = palette[(sameCount - 1) % palette.length];
+                indicator.settings.color = autoColor;
+                indicator.data.color = autoColor;
+            }
             
             if (indicator.data.panel !== 'main') {
                 this._showPanel(indicator.data.panel);
@@ -494,7 +508,10 @@ class IndicatorManager {
     
     _restoreIndicators(indicatorsData) {
         indicatorsData.forEach(data => {
-            if (this.activeIndicators.some(i => i.type === data.type)) return;
+            // [VP-MA] при восстановлении тоже разрешаем несколько экземпляров
+            const RestoreClass = window.IndicatorRegistry.get(data.type);
+            const allowMulti = !!(RestoreClass && RestoreClass.meta && RestoreClass.meta.multiple);
+            if (!allowMulti && this.activeIndicators.some(i => i.type === data.type)) return;
             
             const IndicatorClass = window.IndicatorRegistry.get(data.type);
             if (!IndicatorClass) return;
