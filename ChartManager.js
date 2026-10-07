@@ -1,4 +1,3 @@
-
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // [FIX-M3] '2h' в UI (TF_LABELS) отсутствует и оставлен в карте для обратной
@@ -641,7 +640,7 @@ class ChartManager {
 
     // [HIST-FIX] Было: на КАЖДЫЙ вызов создавалось по копии {...c} на каждую свечю
     // (5000 объектов), складывалось в Map и сортировалось. Вызов идёт на каждую страницу
-    // истории, на каждый trim и на каждое полное перерисование — на коротких ТФ это
+    // истории, на каждый trim и на каждое полное перерисовывание — на коротких ТФ это
     // главный источник «фризов» при листании. Теперь:
     //   • объект бара кэшируется в WeakMap по самой свече и пересоздаётся только если
     //     свеча реально изменилась (живая свеча) — мусора и работы почти нет;
@@ -2866,6 +2865,10 @@ class ChartManager {
         // [FIX-JUMP2] Флаги для «плавного» снятия затемнения (см. finally ниже).
         let intervalApplied = false;  // данные нового ТФ реально легли на график
         let bgRefreshDone = false;    // фоновый досинхрон кэша успел отработать ПОД оверлеем
+        // [FIX-REF] isFromCache объявляем ЗДЕСЬ, до try: раньше он был `let`-ом
+        // внутри try-блока, а читался в finally — блочная область видимости давала
+        // ReferenceError: isFromCache is not defined и роняла switchInterval.
+        let isFromCache = false;
 
         try {
             this._suspendAllUpdates();
@@ -2884,7 +2887,7 @@ class ChartManager {
             this._switchProgress();
             if (this._activeGeneration !== generationId || this._destroyed) return;
             let candles = loaded.candles;
-            let isFromCache = !!loaded.fromCache;
+            isFromCache = !!loaded.fromCache;   // [FIX-REF] без let — присваивание в объявленную выше переменную
             if (!candles || candles.length === 0) {
                 if (loaded.reason === 'aborted') return;
                 throw new Error(`${newInterval}: ${loaded.reason || 'нет данных'}`);
@@ -4929,7 +4932,7 @@ class ChartManager {
 
             const applied = this._applyHistoryPage(page, batchSize, genId, interval, fromNetwork);
             if (applied === true) {
-                // [HIST-FIX] добираем ещё صفحات подряд, пока край не отодвинется достаточно
+                // [HIST-FIX] добираем ещё страницы подряд, пока край не отодвинется достаточно
                 // далеко (или пока не кончится история). Именно отсутствие этой цепочки и
                 // давало «листнул — встал — подгрузилось — листнул — встал» на минутках.
                 this._chainPrefetch(genId, interval, 1);
