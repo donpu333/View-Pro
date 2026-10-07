@@ -1,16 +1,16 @@
 /* ============================================================================
-   TickerPanel.js — ПОЛНЫЙ КЛАСС (с фиксом стрелки + fullscreen)
+   TickerPanel.js — ПОЛНЫЙ КЛАСС (фикс стрелки + fullscreen, v2)
    Замени файл в репо: ticker/TickerPanel.js
    ============================================================================
-   ЧТО ИСПРАВЛЕНО (баг «стрелка + фуллскрин»):
-   Было две независимых точки правды:
-     • IIFE в index.html дёргал body.ticker-panel-hidden по клику на стрелку,
-       но иконку переключал ВРУЧНУЮ — она рассинхронивалась с реальным классом;
-     • handleFullscreenChange в index.html тоже трогал ticker-panel-hidden,
-       но не сообщал об этом стрелке.
-   Итог: в фуллскрине стрелка прятала панель, при выходе класс оставался,
-   иконка показывала обратное, следующий клик «съедался» впустую.
-   Теперь класс владеет и стрелкой, и fullscreen — единый источник правды.
+   ФИКС: панель тикеров больше НЕ залипает в скрытом состоянии после выхода
+   из полноэкранного режима. Логика синхронизации максимально тупая:
+     • вошли в fullscreen → прячем панель;
+     • вышли из fullscreen → показываем панель;
+     • клик по стрелке всегда сверяется с document.fullscreenElement и
+       принудительно снимает inline-скрытия.
+   Никаких userToggled / hiddenBefore — именно они оставляли класс
+   body.ticker-panel-hidden навсегда, из-за чего панель уезжала за край
+   и возвращалась только после перезагрузки страницы.
    ============================================================================ */
 const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
@@ -68,7 +68,7 @@ class TickerPanel {
         this.allBinanceSpot = this.storage.allBinanceSpot;
         this.allBybitFutures = this.storage.allBybitFutures;
         this.allBybitSpot = this.storage.allBybitSpot;
-        // 📈 Акции/ETF (TradFi): отдельные списки для модалки и фильтра
+        // 📈 Акции/ETF (TradFi)
         this.allBinanceStocks = this.storage.allBinanceStocks || [];
         this.allBybitStocks = this.storage.allBybitStocks || [];
         this.formatCache = this.storage.formatCache;
@@ -85,7 +85,6 @@ class TickerPanel {
         this._restDebounceTimer = null;
         this._renderPending = false;
 
-        // 📈 Акции: цены парных рынков (spot ↔ futures) и служебные индексы
         this.pairPrices = new Map();
         this._stockPairHandlers = new Map();
         this._assetClassIndex = new Map();
@@ -185,10 +184,7 @@ class TickerPanel {
         this.state.sortBy = savedSortBy === null ? 'volume' : (savedSortBy || null);
         this.state.sortDirection = savedSortDir === null ? 'desc' : (savedSortDir || null);
 
-        // ✅ ФИКС СТРЕЛКИ + FULLSCREEN: класс сам владеет кнопкой сворачивания панели
-        // и реагирует на вход/выход из полноэкранного режима. Единый источник
-        // правды — класс body.ticker-panel-hidden. Иконка стрелки всегда
-        // перерисовывается из фактического состояния класса, а не «на память».
+        // [FIX-TICKER-FS v2] Класс сам владеет стрелкой и синхронизацией с fullscreen
         this._setupPanelToggle();
         this._setupFullscreenSync();
 
@@ -196,12 +192,9 @@ class TickerPanel {
     }
 
     // ============================================================
-    // [FIX-TICKER-FS] СТРЕЛКА СВОРАЧИВАНИЯ ПАНЕЛИ ТИКЕРОВ
+    // [FIX-TICKER-FS v2] СТРЕЛКА СВОРАЧИВАНИЯ ПАНЕЛИ ТИКЕРОВ
     // ============================================================
     _setupPanelToggle() {
-        // Кнопку создаём ровно один раз за всю жизнь страницы. Если IIFE
-        // из старого index.html тоже пытается её создать — забираем уже
-        // существующую, чтобы не было двух кнопок-двойников.
         let btn = document.getElementById('floatingToggleBtn');
         if (!btn) {
             btn = document.createElement('div');
@@ -211,8 +204,6 @@ class TickerPanel {
         }
         this._toggleBtn = btn;
 
-        // Стили. transition только для визуальных свойств — размеры кнопки
-        // фиксированы, чтобы при hover ничего не «дёргалось» по границам.
         if (!document.getElementById('floatingToggleBtnStyles')) {
             const style = document.createElement('style');
             style.id = 'floatingToggleBtnStyles';
@@ -248,6 +239,7 @@ class TickerPanel {
                 .ticker-panel { transition: transform .3s ease !important; }
                 body.ticker-panel-hidden .ticker-panel {
                     transform: translateX(100%) !important;
+                    display: block !important;
                 }
                 body.ticker-panel-hidden #chart-container { width: 100vw !important; }
                 .chart-footer-buttons {
@@ -261,16 +253,27 @@ class TickerPanel {
             document.head.appendChild(style);
         }
 
-        // Клик по стрелке — единственный переключатель класса.
         this._toggleHandler = (e) => {
-            e.stopPropagation();
-            const hidden = document.body.classList.toggle('ticker-panel-hidden');
+            if (e) { e.stopPropagation(); e.preventDefault(); }
 
-            // Помечаем, что выбор сделан РУКАМИ пользователя — чтобы выход
-            // из полноэкранного режима не «отменил» его принудительно.
-            if (document.fullscreenElement) {
-                window.__vpTickerFs = window.__vpTickerFs || { hiddenBefore: null, userToggled: false };
-                window.__vpTickerFs.userToggled = true;
+            // Если мы НЕ в фуллскрине — принудительно снимаем fullscreen-mode
+            if (!document.fullscreenElement &&
+                document.body.classList.contains('fullscreen-mode')) {
+                document.body.classList.remove('fullscreen-mode');
+            }
+
+            // Переключаем класс состояния панели
+            const willHide = !document.body.classList.contains('ticker-panel-hidden');
+            if (willHide) document.body.classList.add('ticker-panel-hidden');
+            else document.body.classList.remove('ticker-panel-hidden');
+
+            // Если показываем — жёстко снимаем inline-скрытия
+            const panel = document.querySelector('.ticker-panel');
+            if (panel) {
+                panel.style.removeProperty('display');
+                panel.style.removeProperty('visibility');
+                panel.style.removeProperty('opacity');
+                void panel.offsetWidth;
             }
 
             this._syncToggleIcon();
@@ -278,23 +281,23 @@ class TickerPanel {
             setTimeout(() => {
                 const cm = window.chartManager || window.chartManagerInstance;
                 if (cm && cm._isChartValid && cm._isChartValid()) {
-                    cm.forceRedraw();
+                    cm.forceRedraw && cm.forceRedraw();
                     if (cm.timerManager && cm.timerManager.forceColorUpdate) {
                         cm.timerManager.forceColorUpdate();
                     }
                 }
                 this._recalcDrawingToolbar();
                 this._recalcFooterButtons();
+                this._placeButton(0);
             }, 350);
         };
-        // Снимаем прежний обработчик, если он остался от старой сборки
+
         if (this._toggleBtn._vpHandler) {
             this._toggleBtn.removeEventListener('click', this._toggleBtn._vpHandler);
         }
         this._toggleBtn.addEventListener('click', this._toggleHandler);
         this._toggleBtn._vpHandler = this._toggleHandler;
 
-        // Позиционирование кнопки по фактической ширине панели
         this._placeButton = (attempts = 0) => {
             if (attempts > 20) return;
             const panel = document.querySelector('.ticker-panel');
@@ -309,18 +312,15 @@ class TickerPanel {
         this._toggleResizeHandler = () => this._placeButton(0);
         window.addEventListener('resize', this._toggleResizeHandler);
 
-        // Первичная синхронизация иконки
         this._syncToggleIcon();
     }
 
-    /** Иконка стрелки = фактическое состояние body. */
     _syncToggleIcon() {
         if (!this._toggleBtn) return;
         const hidden = document.body.classList.contains('ticker-panel-hidden');
         this._toggleBtn.innerHTML = hidden ? '〈' : '〉';
     }
 
-    /** Пересчёт позиции панели рисовалок после изменения ширины графика. */
     _recalcDrawingToolbar() {
         const toolbar = document.getElementById('drawingToolbar');
         if (!toolbar) return;
@@ -330,58 +330,48 @@ class TickerPanel {
         const tbW = toolbar.offsetWidth, tbH = toolbar.offsetHeight;
         let curLeft = parseFloat(toolbar.style.left) || 20;
         let curTop  = parseFloat(toolbar.style.top)  || 60;
-        const maxLeft = parentRect.width  - tbW - 10;
-        const maxTop  = parentRect.height - tbH - 10;
-        const newLeft = Math.max(10, Math.min(maxLeft, curLeft));
-        const newTop  = Math.max(60, Math.min(maxTop,  curTop));
+        const newLeft = Math.max(10, Math.min(parentRect.width  - tbW - 10, curLeft));
+        const newTop  = Math.max(60, Math.min(parentRect.height - tbH - 10, curTop));
         toolbar.style.left = newLeft + 'px';
         toolbar.style.top  = newTop  + 'px';
         localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
         localStorage.setItem('drawingToolbarTop',  newTop  + 'px');
     }
 
-    /** Пересчёт позиции кнопок футера (A / Л / к последней свече). */
     _recalcFooterButtons() {
         const buttons = document.querySelector('.chart-footer-buttons');
         if (!buttons) return;
         const panelsContainer = document.getElementById('indicator-panels-container');
         let offset = 20;
-        if (panelsContainer && panelsContainer.offsetHeight > 0) {
-            offset += panelsContainer.offsetHeight;
-        }
+        if (panelsContainer && panelsContainer.offsetHeight > 0) offset += panelsContainer.offsetHeight;
         buttons.style.bottom = offset + 'px';
     }
 
     // ============================================================
-    // [FIX-TICKER-FS] СИНХРОНИЗАЦИЯ С ПОЛНОЭКРАННЫМ РЕЖИМОМ
+    // [FIX-TICKER-FS v2] СИНХРОНИЗАЦИЯ С ФУЛЛСКРИНОМ
+    // Логика максимально простая, без userToggled/hiddenBefore:
+    //   вошли → прячем; вышли → показываем.
     // ============================================================
     _setupFullscreenSync() {
-        window.__vpTickerFs = window.__vpTickerFs || { hiddenBefore: null, userToggled: false };
-
         const handler = () => {
             const isFull = !!document.fullscreenElement;
-            const fs = window.__vpTickerFs;
+            document.body.classList.toggle('fullscreen-mode', isFull);
 
             if (isFull) {
-                // Запомнили состояние до входа — чтобы вернуть как было
-                fs.hiddenBefore = document.body.classList.contains('ticker-panel-hidden');
-                fs.userToggled = false;
-                // В полноэкранном режиме панель по умолчанию убираем
                 document.body.classList.add('ticker-panel-hidden');
             } else {
-                // Выход из фуллскрина: если пользователь сам дёргал стрелку —
-                // уважаем его выбор, иначе возвращаем как было до входа.
-                if (!fs.userToggled && fs.hiddenBefore === false) {
-                    document.body.classList.remove('ticker-panel-hidden');
+                document.body.classList.remove('ticker-panel-hidden');
+                const panel = document.querySelector('.ticker-panel');
+                if (panel) {
+                    panel.style.removeProperty('display');
+                    panel.style.removeProperty('visibility');
+                    panel.style.removeProperty('opacity');
+                    void panel.offsetWidth;
                 }
-                fs.hiddenBefore = null;
-                fs.userToggled = false;
             }
 
-            // Иконка — всегда из фактического состояния класса
             this._syncToggleIcon();
 
-            // Перерисовать график под новый размер контейнера
             setTimeout(() => {
                 const cm = window.chartManagerInstance || window.chartManager;
                 if (cm && cm._isChartValid && cm._isChartValid()) {
@@ -1102,7 +1092,7 @@ class TickerPanel {
             this._priceUpdateRaf = null;
         }
 
-        // [FIX-TICKER-FS] аккуратно снимаем обработчики стрелки и fullscreen
+        // [FIX-TICKER-FS v2] аккуратно снимаем обработчики стрелки и fullscreen
         if (this._toggleBtn && this._toggleBtn._vpHandler) {
             this._toggleBtn.removeEventListener('click', this._toggleBtn._vpHandler);
             this._toggleBtn._vpHandler = null;
