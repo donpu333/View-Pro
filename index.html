@@ -1,7 +1,3 @@
-
-
-
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -9,19 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>View Pro </title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- PERF: шрифты грузятся неблокирующе (media=print + onload). Если
-     fonts.googleapis.com недоступен/медленный — страница рендерится
-     сразу, со системными/локальными шрифтами, без «белого экрана». -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="./styles.css?v=20261007b">
 
-<!-- ✅ ЛОКАЛЬНЫЕ ФАЙЛЫ (те, что ты скачал на Шаге 1) -->
 <link rel="stylesheet" href="all.min.css?v=20261007b">
-<!-- PERF: html2canvas.min.js (198 КБ) больше не грузится синхронно при
-     старте — он подгружается лениво при первом скриншоте (см. ensureHtml2Canvas) -->
 <script src="lightweight-charts.js?v=20261007b"></script>
-
-
 
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 </head>
@@ -614,7 +602,6 @@
         <button class="settings-tab" data-settings-tab="visibility">Видимость</button>
     </div>
     <div class="visibility-panel active" id="stylePanel">
-        <!-- Скрытый контейнер для JS (невидимый) -->
         <div class="current-color-box" id="currentColorBox" style="display:none;"></div>
         <div class="color-section">
             <span class="color-label">Цвет линии</span>
@@ -625,7 +612,6 @@
             </div>
             <div class="colors-grid" id="inlineColorsGrid"></div>
         </div>
-        <!-- остальные настройки (прозрачность, цена, шаблон, толщина) без изменений -->
         <div class="settings-row" id="colorOpacityRow" style="display: flex; margin-bottom: 15px;">
             <label>Прозрачность:</label>
             <input type="range" id="colorOpacity" min="0" max="100" value="100">
@@ -657,7 +643,6 @@
               <div class="visibility-actions">
     <button class="visibility-btn select-all" id="selectAllTimeframes">Выбрать всё</button>
     <button class="visibility-btn deselect-all" id="deselectAllTimeframes">Снять всё</button>
-    <!-- Новая кнопка -->
     <button class="visibility-btn select-minutes" id="selectMinutesTimeframes" style="margin-top: 4px;">Минутки</button>
 </div>
     </div>
@@ -666,9 +651,6 @@
         <button class="delete-btn" id="deleteDrawing">Удалить</button>
     </div>
 </div>
-
-
-
 
 <!-- ========== ПАНЕЛЬ «СТОП ТЕЙК» — [UI-UNIFY] единый стиль со всеми рисовалками ========== -->
 <div class="drawing-settings-panel" id="tradeCreatePanel">
@@ -719,7 +701,7 @@
         </div>
     </div>
 
-    <!-- ========== ВКЛАДКА ATR: стоп в % от ДНЕВНОГО ATR (данные из индикатора ATR Multi) ========== -->
+    <!-- ========== ВКЛАДКА ATR: стоп в % от ДНЕВНОГО ATR ========== -->
     <div id="tradeAtrPanel" style="display: none;">
         <div style="margin-bottom: 12px; padding: 10px; background: #2D2D2D; border-radius: 4px; border-left: 3px solid #FFA500;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
@@ -775,8 +757,6 @@
         </div>
     </div>
 
-    <!-- [UI-UNIFY] Единый футер как у луча/тренда/алерта/линейки/текста:
-         редактирование — «Сохранить» + «Удалить», создание — «Создать» + «Отмена» -->
     <div class="settings-actions">
         <button id="tradeCreateBtn">Создать</button>
         <button class="delete-btn" id="tradeDeleteDrawing" style="display: none;">Удалить</button>
@@ -789,13 +769,11 @@
 .timeframe-checkbox-item input[type="checkbox"] { accent-color: #4A90E2; width: 14px; height: 14px; }
 .timeframe-checkbox-item label { flex: 1; color: #E0E0E0; font-size: 12px; }
 .timeframe-checkbox-item .tf-badge { background: #404040; color: #B0B0B0; font-size: 10px; padding: 2px 6px; border-radius: 3px; }
-/* [UI-UNIFY] «Стоп Тейк»: поля формы в едином стиле панелей настроек */
 #tradeCreatePanel .trade-field { margin-bottom: 12px; }
 #tradeCreatePanel .trade-field > label { display: block; color: var(--text-secondary, #B0B0B0); font-size: 12px; margin-bottom: 4px; }
 #tradeCreatePanel .trade-field input[type="number"] { width: 100%; padding: 8px; background: var(--bg-panel, #2D2D2D); border: 1px solid var(--border-medium, #404040); border-radius: 4px; color: var(--text-white, #fff); font-size: 13px; box-sizing: border-box; }
 #tradeCreatePanel .trade-preview { margin-bottom: 5px; padding: 10px; background: var(--bg-panel, #2D2D2D); border-radius: 4px; border-left: 3px solid var(--accent-blue, #4A90E2); }
 </style>
-
 
 <!-- ========== ПАНЕЛЬ НАСТРОЕК ДЛЯ ТРЕНДОВЫХ ЛИНИЙ ========== -->
 <div class="drawing-settings-panel" id="trendSettings">
@@ -1255,9 +1233,9 @@ currentColorBox.style.backgroundColor = hex;
 });
 
 colorOpacity.addEventListener('input', function() { colorOpacityValue.textContent = this.value + '%'; });
-let toolbarWidth = 0, toolbarHeight = 0; // Кэш размеров
-let toolbarRafId = null; // Для плавности
-// ========== DRAG ПАНЕЛИ РИСОВАЛОК (ИСПРАВЛЕННАЯ ВЕРСИЯ) ==========
+let toolbarWidth = 0, toolbarHeight = 0;
+let toolbarRafId = null;
+// ========== DRAG ПАНЕЛИ РИСОВАЛОК ==========
 (function() {
     const toolbar = document.getElementById('drawingToolbar');
     const header  = document.getElementById('toolbarHeader');
@@ -1265,14 +1243,11 @@ let toolbarRafId = null; // Для плавности
 
     if (!toolbar || !header) return;
 
-    // 1. ВОССТАНОВЛЕНИЕ ПОЗИЦИИ
     const savedLeft = localStorage.getItem('drawingToolbarLeft');
     const savedTop  = localStorage.getItem('drawingToolbarTop');
     if (savedLeft) toolbar.style.left = savedLeft;
     if (savedTop)  toolbar.style.top  = savedTop;
 
-    // 🔥 iPad: отключаем скролл/зум/long-press на хедере, чтобы жест
-    // перехватывался нами, а не Safari
     header.style.touchAction = 'none';
     header.style.webkitUserSelect = 'none';
     header.style.userSelect = 'none';
@@ -1292,14 +1267,8 @@ let toolbarRafId = null; // Для плавности
 
     let resizeObserver = null;
 
-    // ============================================================
-    // 2. НАЧАЛО ПЕРЕТАСКИВАНИЯ (pointerdown — общий для мыши и пальца)
-    // ============================================================
     header.addEventListener('pointerdown', (e) => {
-        // Игнорируем клики по кнопкам управления
         if (e.target.closest('.toolbar-toggle') || e.target.closest('.toolbar-orientation')) return;
-
-        // Игнорируем правую/среднюю кнопку мыши
         if (e.pointerType === 'mouse' && e.button !== 0) return;
 
         isDragging = true;
@@ -1313,7 +1282,6 @@ let toolbarRafId = null; // Для плавности
         startLeft = toolbar.offsetLeft;
         startTop  = toolbar.offsetTop;
 
-        // Кэшируем размеры один раз при старте
         const parent = toolbar.offsetParent || document.body;
         containerWidth  = parent.clientWidth;
         containerHeight = parent.clientHeight;
@@ -1326,20 +1294,13 @@ let toolbarRafId = null; // Для плавности
 
         if (resizeObserver) resizeObserver.disconnect();
 
-        // 🔥 Ключевой момент для iPad: захватываем палец на хедере.
-        // Теперь pointermove/pointerup будут приходить хедеру, даже если
-        // палец физически вышел за его пределы.
         try {
             header.setPointerCapture(e.pointerId);
-        } catch (_) { /* старые браузеры — не критично */ }
+        } catch (_) {}
 
         e.preventDefault();
     });
 
-    // ============================================================
-    // 3. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ (pointermove на хедере, а не на document,
-    //    потому что pointer capture перенаправляет события в хедер)
-    // ============================================================
     function onPointerMove(e) {
         if (!isDragging) return;
         if (activePointerId !== null && e.pointerId !== activePointerId) return;
@@ -1366,13 +1327,9 @@ let toolbarRafId = null; // Для плавности
             toolbar.style.top  = newTop  + 'px';
         });
 
-        // Критично: на touch нужно остановить прокрутку страницы
         if (e.cancelable) e.preventDefault();
     }
 
-    // ============================================================
-    // 4. ЗАВЕРШЕНИЕ ПЕРЕТАСКИВАНИЯ
-    // ============================================================
     function onPointerUp(e) {
         if (!isDragging) return;
         if (activePointerId !== null && e.pointerId !== activePointerId) return;
@@ -1400,16 +1357,11 @@ let toolbarRafId = null; // Для плавности
         }
     }
 
-    // Вешаем pointermove/up/cancel прямо на header — это работает
-    // благодаря setPointerCapture и мыши, и на касаниях.
     header.addEventListener('pointermove',  onPointerMove);
     header.addEventListener('pointerup',    onPointerUp);
     header.addEventListener('pointercancel', onPointerUp);
     header.addEventListener('lostpointercapture', onPointerUp);
 
-    // 🔥 Страховка для очень старых iOS (если Pointer Events не поддерживаются),
-    // отдельно обрабатываем touch. В современных Safari это не понадобится,
-    // но безопасно и ничего не ломает.
     if (!window.PointerEvent) {
         header.addEventListener('touchstart', (e) => {
             if (e.touches.length !== 1) return;
@@ -1454,9 +1406,6 @@ let toolbarRafId = null; // Для плавности
         }, { passive: false });
     }
 
-    // ============================================================
-    // 5. СВОРАЧИВАНИЕ ПАНЕЛИ (pointerup, чтобы работало и на тач)
-    // ============================================================
     if (toggleBtn) {
         toggleBtn.style.touchAction = 'none';
         toggleBtn.addEventListener('click', () => {
@@ -1469,9 +1418,6 @@ let toolbarRafId = null; // Для плавности
         });
     }
 
-    // ============================================================
-    // 6. ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА
-    // ============================================================
     if (window.ResizeObserver && toolbar.offsetParent) {
         resizeObserver = new ResizeObserver(() => {
             if (isDragging) return;
@@ -1572,7 +1518,6 @@ indicators.forEach((indicator) => {
 let name = 'Индикатор';
 let color = '#4A90E2';
 let isVisible = indicator.visible !== false;
-// [VP-MA] несколько средних различимы: к имени добавляем фактический период
 if (indicator.data && indicator.data.name) name = indicator.data.name + ((indicator.settings && indicator.settings.period) ? ' · P' + indicator.settings.period : '');
 else if (indicator.type) {
 const typeNames = { 'sma20':'SMA 20','sma50':'SMA 50','ema20':'EMA 20','rsi14':'RSI 14','macd':'MACD','volume':'Volume' };
@@ -1616,7 +1561,6 @@ e.stopPropagation();
 const id = btn.dataset.id;
 const indicator = indicators.find(i => i.id == id);
 if (indicator && indicator.settings) {
-// [VP-MENU] быстрое скрытие/возврат подписей объёма на гистограмме
 const cur = indicator.settings.showVolume || 'va';
 if (cur === 'none') {
 const prev = (indicator.settings._volumeMode && indicator.settings._volumeMode !== 'none') ? indicator.settings._volumeMode : 'va';
@@ -1761,23 +1705,19 @@ const openBtn = document.getElementById('openChartColorPanel');
 const tabs = document.querySelectorAll('[data-color-tab]');
 const tabContents = document.querySelectorAll('.color-tab-content');
 
-// Заполняем сетки цветов
 fillColorGrid('bgColorsGrid', colorPalette.slice(0, 8), '#000000');
 fillColorGrid('bullishColorsGrid', ['#00bcd4','#4CAF50','#26A69A','#66BB6A','#00E5FF','#4A90E2','#9C27B0','#FF9800'], '#00bcd4');
 fillColorGrid('bearishColorsGrid', ['#f23645','#FF5252','#EF5350','#F44336','#D32F2F','#E91E63','#9C27B0','#795548'], '#f23645');
 fillColorGrid('separatorColorsGrid', ['#808080','#404040','#606060','#A0A0A0','#FFFFFF','#FF9800','#4A90E2','#333333'], '#808080');
 
-// Загружаем сохраненные цвета
 loadSavedColors();
 loadSeparatorSettings();
 
-// Открытие панели
 openBtn.addEventListener('click', (e) => {
 e.stopPropagation();
 panel.style.display = 'block';
 });
 
-// Переключение вкладок
 tabs.forEach(tab => {
 tab.addEventListener('click', () => {
 tabs.forEach(t => {
@@ -1798,7 +1738,6 @@ document.getElementById(`tab-${tabId}`).style.display = 'block';
 });
 });
 
-// === ✅ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ <input type="color"> ===
 const colorPickerBindings = [
 { picker: 'bgColorPicker',        box: 'bgCurrentColor',        grid: 'bgColorsGrid',        storageKey: 'chartBgColor' },
 { picker: 'bullishColorPicker',   box: 'bullishCurrentColor',   grid: 'bullishColorsGrid',   storageKey: 'chartBullishColor' },
@@ -1813,21 +1752,17 @@ el.addEventListener('input', (e) => {
 const color = e.target.value;
 const boxEl = document.getElementById(box);
 if (boxEl) boxEl.style.backgroundColor = color;
-// Подсветка квадрата в сетке
 document.querySelectorAll(`#${grid} .color-square`).forEach(s => {
 const sqColor = s.style.backgroundColor;
 const sqHex = rgbToHex(sqColor);
 s.style.border = (sqColor === color || sqHex.toLowerCase() === color.toLowerCase())
 ? '2px solid #4A90E2' : '1px solid transparent';
 });
-// Мгновенное сохранение
 localStorage.setItem(storageKey, color);
-// Применение к графику
 const bg = document.getElementById('bgColorPicker').value;
 const bullish = document.getElementById('bullishColorPicker').value;
 const bearish = document.getElementById('bearishColorPicker').value;
 applyColorsToChart(bg, bullish, bearish);
-// Если это разделитель — обновляем сразу
 if (picker === 'separatorColorPicker' && window._dailySeparator) {
 window._dailySeparator.updateSettings({
 enabled: document.getElementById('separatorsEnabled').checked,
@@ -1840,7 +1775,6 @@ opacity: parseInt(document.getElementById('separatorOpacity').value) / 100
 });
 });
 
-// Обработчики слайдеров разделителя
 document.getElementById('separatorLineWidth').addEventListener('input', function() {
 document.getElementById('separatorWidthValue').textContent = this.value + 'px';
 });
@@ -1848,7 +1782,6 @@ document.getElementById('separatorOpacity').addEventListener('input', function()
 document.getElementById('separatorOpacityValue').textContent = this.value + '%';
 });
 
-// ✅ Сохранение
 document.getElementById('saveChartColors').addEventListener('click', () => {
 const bgHex = document.getElementById('bgColorPicker').value;
 const bullishHex = document.getElementById('bullishColorPicker').value;
@@ -1878,9 +1811,7 @@ applyColorsToChart(bgHex, bullishHex, bearishHex);
 panel.style.display = 'none';
 });
 
-// ✅ Сброс — С СОХРАНЕНИЕМ СРАЗУ
 document.getElementById('resetChartColors').addEventListener('click', () => {
-// Сброс DOM
 document.getElementById('bgCurrentColor').style.backgroundColor = '#000000';
 document.getElementById('bgColorPicker').value = '#000000';
 document.getElementById('bullishCurrentColor').style.backgroundColor = '#00bcd4';
@@ -1896,7 +1827,6 @@ document.getElementById('separatorWidthValue').textContent = '1px';
 document.getElementById('separatorOpacity').value = 30;
 document.getElementById('separatorOpacityValue').textContent = '30%';
 
-// ✅ СОХРАНЕНИЕ ДЕФОЛТОВ В localStorage
 localStorage.setItem('chartBgColor', '#000000');
 localStorage.setItem('chartBullishColor', '#00bcd4');
 localStorage.setItem('chartBearishColor', '#f23645');
@@ -1906,7 +1836,6 @@ localStorage.setItem('separatorStyle', 'dashed');
 localStorage.setItem('separatorWidth', '1');
 localStorage.setItem('separatorOpacity', '30');
 
-// ✅ ПРИМЕНЕНИЕ К ГРАФИКУ СРАЗУ
 applyColorsToChart('#000000', '#00bcd4', '#f23645');
 
 if (window._dailySeparator) {
@@ -1915,11 +1844,9 @@ enabled: true, color: '#808080', style: 'dashed', width: 1, opacity: 0.3
 });
 }
 
-// ✅ ЗАКРЫВАЕМ ПАНЕЛЬ
 panel.style.display = 'none';
 });
 
-// Применять настройки разделителя СРАЗУ при изменении
 setTimeout(function() {
 document.getElementById('separatorColorPicker').addEventListener('input', applySeparatorNow);
 document.getElementById('separatorColorsGrid').addEventListener('click', function() { setTimeout(applySeparatorNow, 50); });
@@ -1940,7 +1867,6 @@ window._dailySeparator.updateSettings({ enabled, color, style, width, opacity })
 
 loadSeparatorSettings();
 
-// Закрытие при клике вне панели
 document.addEventListener('click', (e) => {
 if (!panel.contains(e.target) && !openBtn.contains(e.target) && panel.style.display === 'block') {
 panel.style.display = 'none';
@@ -1961,7 +1887,6 @@ if (!window._sessionHighlighter) return;
 window._sessionHighlighter.updateSettings({ opacity: percent / 100 });
 });
 
-// ✅ Живое обновление color picker'ов сессий
 ['Asian', 'European', 'American'].forEach(name => {
 const picker = document.getElementById(`session${name}Color`);
 if (picker) {
@@ -1980,7 +1905,6 @@ localStorage.setItem('sessionSettings', JSON.stringify(saved));
 }
 });
 
-// Загрузка сохраненных настроек сессий при старте
 function loadSessionSettings() {
 const saved = localStorage.getItem('sessionSettings');
 if (!saved) return;
@@ -2010,7 +1934,6 @@ window._sessionHighlighter.updateSettings({ colors: s.colors });
 }
 loadSessionSettings();
 
-// Загрузка настроек разделителя
 function loadSeparatorSettings() {
 const sepEnabled = localStorage.getItem('separatorEnabled') !== 'false';
 const sepColor = localStorage.getItem('separatorColor') || '#808080';
@@ -2027,7 +1950,6 @@ document.getElementById('separatorOpacity').value = sepOpacity;
 document.getElementById('separatorOpacityValue').textContent = sepOpacity + '%';
 }
 
-// ✅ fillColorGrid — С СОХРАНЕНИЕМ И ПРИМЕНЕНИЕМ ПРИ КЛИКЕ
 function fillColorGrid(gridId, colors, selectedColor) {
 const grid = document.getElementById(gridId);
 if (!grid) return;
@@ -2050,30 +1972,30 @@ square.style.border = '2px solid #4A90E2';
 if (gridId === 'bgColorsGrid') {
 document.getElementById('bgCurrentColor').style.backgroundColor = color;
 document.getElementById('bgColorPicker').value = color;
-localStorage.setItem('chartBgColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+localStorage.setItem('chartBgColor', color);
 applyColorsToChart(color,
 document.getElementById('bullishColorPicker').value,
-document.getElementById('bearishColorPicker').value);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
+document.getElementById('bearishColorPicker').value);
 } else if (gridId === 'bullishColorsGrid') {
 document.getElementById('bullishCurrentColor').style.backgroundColor = color;
 document.getElementById('bullishColorPicker').value = color;
-localStorage.setItem('chartBullishColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+localStorage.setItem('chartBullishColor', color);
 applyColorsToChart(
 document.getElementById('bgColorPicker').value,
 color,
-document.getElementById('bearishColorPicker').value);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
+document.getElementById('bearishColorPicker').value);
 } else if (gridId === 'bearishColorsGrid') {
 document.getElementById('bearishCurrentColor').style.backgroundColor = color;
 document.getElementById('bearishColorPicker').value = color;
-localStorage.setItem('chartBearishColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+localStorage.setItem('chartBearishColor', color);
 applyColorsToChart(
 document.getElementById('bgColorPicker').value,
 document.getElementById('bullishColorPicker').value,
-color);  // ✅ ПРИМЕНЕНИЕ СРАЗУ
+color);
 } else if (gridId === 'separatorColorsGrid') {
 document.getElementById('separatorCurrentColor').style.backgroundColor = color;
 document.getElementById('separatorColorPicker').value = color;
-localStorage.setItem('separatorColor', color);  // ✅ СОХРАНЕНИЕ СРАЗУ
+localStorage.setItem('separatorColor', color);
 if (window._dailySeparator) {
 window._dailySeparator.updateSettings({
 enabled: document.getElementById('separatorsEnabled').checked,
@@ -2106,16 +2028,13 @@ function applyColorsToChart(bg, bullish, bearish) {
     if (!window.chartManagerInstance) return;
     const cm = window.chartManagerInstance;
     
-    // 1. Обновляем фон
     cm.chart.applyOptions({ layout: { background: { color: bg } } });
     
-    // 2. 🔥 СОХРАНЯЕМ ПОЗИЦИЮ СКРОЛЛА, чтобы масштаб не скакал
     let savedRange = null;
     try {
         savedRange = cm.chart.timeScale().getVisibleLogicalRange();
     } catch(e) {}
 
-    // 3. Обновляем цвета свечей/баров/линии цены
     cm.bullishColor = bullish;
     cm.bearishColor = bearish;
     if (window.CONFIG) {
@@ -2141,23 +2060,18 @@ function applyColorsToChart(bg, bullish, bearish) {
         activeSeries.applyOptions({ priceLineColor: lineColor });
     }
 
-    // 4. 🔥 ПЕРЕРИСОВЫВАЕМ ВСЕ ОБЪЕМЫ С НОВЫМИ ЦВЕТАМИ
     if (cm.volumeSeries && cm.chartData.length > 0) {
-        // Сбрасываем индекс, чтобы метод сделал setData (все свечи), 
-        // а не update (только последняя свеча)
         cm._lastVolumeUpdateIndex = -1; 
         cm._volumeDataDirty = true;
         cm._updateVolumeOptimized();
     }
 
-    // 5. 🔥 ВОССТАНАВЛИВАЕМ ПОЗИЦИЮ СКРОЛЛА
     if (savedRange) {
         try {
             cm.chart.timeScale().setVisibleLogicalRange(savedRange);
         } catch(e) {}
     }
 
-    // 6. Обновляем линейки
     if (window.rulerLineManager) {
         window.rulerLineManager._rulers.forEach(item => {
             if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
@@ -2174,7 +2088,6 @@ return '#' + ((1 << 24) + (parseInt(match[1]) << 16) + (parseInt(match[2]) << 8)
 
 document.addEventListener('DOMContentLoaded', initChartColorPanel);
 
-// ✅ applySessionColor — через color picker
 window.applySessionColor = function(sessionName) {
 const capital = sessionName.charAt(0).toUpperCase() + sessionName.slice(1);
 const picker = document.getElementById(`session${capital}Color`);
@@ -2192,7 +2105,7 @@ localStorage.setItem('sessionSettings', JSON.stringify(saved));
 };
 })();
 
-// ========== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ ЦВЕТОВОЙ СЕТКИ С УДАЛЕНИЕМ (для рисовалок) ==========
+// ========== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ ЦВЕТОВОЙ СЕТКИ С УДАЛЕНИЕМ ==========
 function createColorGrid(gridId, colorBoxId, colorPickerId, hexInputId, selectedColor, addBtnId) {
 const grid = document.getElementById(gridId);
 if (!grid) return;
@@ -2231,7 +2144,6 @@ const hexInput = document.getElementById(hexInputId);
 const colorPicker = document.getElementById(colorPickerId);
 if (colorBox) colorBox.style.backgroundColor = c;
 if (hexInput) hexInput.value = c;
-// ✅ Триггерим событие input на color picker для мгновенного применения
 if (colorPicker) {
 colorPicker.value = c;
 colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2271,7 +2183,6 @@ const hexInput2 = document.getElementById(hexInputId);
 const colorPicker = document.getElementById(colorPickerId);
 if (colorBox) colorBox.style.backgroundColor = hex;
 if (hexInput2) hexInput2.value = hex;
-// ✅ Триггерим событие input на color picker для мгновенного применения
 if (colorPicker) {
 colorPicker.value = hex;
 colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2320,29 +2231,14 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
 }
 })();
 </script>
-<!-- СКРИПТ ПОЛНОЭКРАННОГО РЕЖИМА -->
+
+<!-- СКРИПТ ПОЛНОЭКРАННОГО РЕЖИМА (только ресайз графика; панелью тикеров управляет TickerPanel) -->
 <style>
-/* Плавное движение контейнера графика */
 #chart-container {
     transition: left 0.3s ease, right 0.3s ease, width 0.3s ease;
     will-change: left, right, width;
 }
 
-/* [FIX-TICKER-FS] Панель тикеров в полноэкранном режиме БОЛЬШЕ не прячется через
-   display:none — теперь этим занимается класс body.ticker-panel-hidden, ТОТ САМЫЙ,
-   которым управляет стрелка.
-   Было: display:none !important перебивал transform стрелки, поэтому
-     • клик по стрелке в полноэкранном режиме переключал класс и иконку, а панель
-       не реагировала вообще — «график на весь экран -> тикеры не выезжают»;
-     • класс, включённый в полноэкранном режиме, переживал выход из него, и панель
-       оставалась убранной, пока иконка стрелки показывала обратное.
-   Здесь оставляем только мгновенность (transition:none), чтобы вход/выход из
-   полноэкранного режима выглядел ровно так же, как раньше. */
-.fullscreen-mode .ticker-panel {
-    transition: none !important;
-}
-
-/* В полноэкранном режиме график занимает весь экран */
 .fullscreen-mode #chart-container {
     right: 0 !important;
     width: 100vw !important;
@@ -2356,17 +2252,9 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
     const body = document.body;
     const containerId = 'chart-container';
 
-    let animFrameId = null;          // ID requestAnimationFrame во время анимации
-    let savedLogicalRange = null;    // { from, to } – логический диапазон
-    // [FIX-TICKER-FS] общее состояние панели тикеров для двух независимых IIFE
-    // (эта — про полноэкранный режим, вторая — про стрелку):
-    //   hiddenBefore — была ли панель свёрнута ДО входа в полноэкранный режим;
-    //   userToggled  — дёргал ли пользователь стрелку, НАХОДЯСЬ в полноэкранном режиме.
-    window.__vpTickerFs = window.__vpTickerFs || { hiddenBefore: null, userToggled: false };
+    let animFrameId = null;
+    let savedLogicalRange = null;
 
-    // ============================================================
-    // Сохранить логический диапазон (как в оригинале)
-    // ============================================================
     function saveLogicalRange(cm) {
         if (!cm?.chart) return null;
         const ts = cm.chart.timeScale();
@@ -2377,17 +2265,11 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         return null;
     }
 
-    // ============================================================
-    // Восстановить логический диапазон
-    // ============================================================
     function restoreLogicalRange(cm, range) {
         if (!cm?.chart || !range) return;
         cm.chart.timeScale().setVisibleLogicalRange(range);
     }
 
-    // ============================================================
-    // Перерисовать оверлеи
-    // ============================================================
     function redrawOverlays(cm) {
         if (!cm) return;
         ['rayManager','trendLineManager','alertLineManager','rulerLineManager']
@@ -2398,9 +2280,6 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         cm.indicatorManager?.redrawAll?.();
     }
 
-    // ============================================================
-    // Основной ресайз графика под текущий размер контейнера
-    // ============================================================
     function resizeChart() {
         const cm = window.chartManagerInstance;
         const container = document.getElementById(containerId);
@@ -2410,7 +2289,6 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         const h = container.clientHeight;
         if (w <= 0 || h <= 0) return;
 
-        // Сохраняем диапазон при первом вызове в цепочке
         if (!savedLogicalRange) {
             savedLogicalRange = saveLogicalRange(cm);
         }
@@ -2426,14 +2304,10 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         redrawOverlays(cm);
     }
 
-    // ============================================================
-    // Запуск цикла плавного ресайза на время CSS-перехода
-    // ============================================================
     function startSmoothResize() {
         const cm = window.chartManagerInstance;
         if (!cm?.chart) return;
 
-        // Фиксируем диапазон перед началом анимации
         savedLogicalRange = saveLogicalRange(cm);
 
         function step() {
@@ -2442,23 +2316,21 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         }
         animFrameId = requestAnimationFrame(step);
 
-        // Остановка цикла по окончании CSS-перехода контейнера
         const container = document.getElementById(containerId);
         const onTransitionEnd = () => {
             if (animFrameId) {
                 cancelAnimationFrame(animFrameId);
                 animFrameId = null;
             }
-            savedLogicalRange = null;          // снимаем фиксацию
-            resizeChart();                     // финальный ресайз
+            savedLogicalRange = null;
+            resizeChart();
             container.removeEventListener('transitionend', onTransitionEnd);
         };
         container.addEventListener('transitionend', onTransitionEnd);
     }
 
-    // ============================================================
-    // Обработчик полноэкранного режима
-    // ============================================================
+    // [FIX-TICKER-FS] Панель тикеров (body.ticker-panel-hidden + стрелка) теперь
+    // управляется TickerPanel._setupFullscreenSync(). Здесь только ресайз графика.
     function handleFullscreenChange() {
         const isFull = !!document.fullscreenElement;
         body.classList.toggle('fullscreen-mode', isFull);
@@ -2467,28 +2339,9 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
             fullscreenBtn.style.backgroundColor = isFull ? '#4A4A4A' : '';
         }
 
-        // [FIX-TICKER-FS] панель убираем/возвращаем тем же классом, что и стрелка.
-        const fs = window.__vpTickerFs;
-        if (isFull) {
-            fs.hiddenBefore = body.classList.contains('ticker-panel-hidden');
-            fs.userToggled = false;
-            body.classList.add('ticker-panel-hidden');      // график на весь экран
-        } else {
-            // если пользователь сам дёргал стрелку в полноэкранном режиме —
-            // уважаем его последний выбор; иначе возвращаем как было до входа
-            if (!fs.userToggled && fs.hiddenBefore === false) {
-                body.classList.remove('ticker-panel-hidden');
-            }
-            fs.hiddenBefore = null;
-            fs.userToggled = false;
-        }
-
         startSmoothResize();
     }
 
-    // ============================================================
-    // Кнопка переключения
-    // ============================================================
     function toggleFullscreen() {
         if (!document.fullscreenElement) {
             document.documentElement.requestFullscreen?.()
@@ -2501,12 +2354,9 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         }
     }
 
-    // ============================================================
-    // Обработчик обычного изменения размера окна
-    // ============================================================
     let resizeDebounce;
     window.addEventListener('resize', () => {
-        if (animFrameId) return;   // не мешаем анимации
+        if (animFrameId) return;
         clearTimeout(resizeDebounce);
         resizeDebounce = setTimeout(() => {
             const cm = window.chartManagerInstance;
@@ -2516,18 +2366,12 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
         }, 50);
     });
 
-    // ============================================================
-    // Привязка событий
-    // ============================================================
     if (fullscreenBtn) {
         fullscreenBtn.addEventListener('click', toggleFullscreen);
     }
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
-    // ============================================================
-    // Первичная отрисовка после загрузки
-    // ============================================================
     window.addEventListener('load', () => {
         setTimeout(() => {
             savedLogicalRange = null;
@@ -2536,7 +2380,6 @@ isToolbarVisible = !drawingToolbar.classList.contains('collapsed');
     });
 })();
 </script>
-
 
 <!-- БЫСТРЫЙ СКРИПТ СКРИНШОТА (БЕЗ ИСКАЖЕНИЙ) -->
 <script>
@@ -2581,7 +2424,6 @@ function getSymbolAndTimeframe() {
   return { symbol, timeframe };
 }
 
-// PERF: ленивая загрузка html2canvas — только при первом скриншоте
 function ensureHtml2Canvas() {
   if (window.html2canvas) return Promise.resolve();
   if (!window._html2canvasLoading) {
@@ -2601,41 +2443,33 @@ function takeChartScreenshot() {
   const cleanSymbol = symbol.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `${cleanSymbol}_${timeframe}.png`;
 
-  // 1. Временно скрываем курсор мыши на всей странице
   document.body.style.cursor = 'none';
 
-  // 2. Запускаем html2canvas (библиотека подгружается лениво)
   ensureHtml2Canvas().then(() => html2canvas(document.documentElement, {
-    scale: 1, // Scale 1 работает быстро. (Scale 2 делал минуту)
+    scale: 1,
     useCORS: true,
     allowTaint: true,
     backgroundColor: '#000000',
     windowWidth: window.innerWidth,
     windowHeight: window.innerHeight,
     logging: false
-    // ВАЖНО: Мы полностью убрали блок onclone. Именно он ломал верстку (transform: none)!
   })).then(canvas => {
-    // 3. Возвращаем курсор мыши
     document.body.style.cursor = '';
 
-    // 4. Скачиваем через toBlob (не вешает интерфейс)
     canvas.toBlob(function(blob) {
       const link = document.createElement('a');
       link.download = filename;
       link.href = URL.createObjectURL(blob);
       link.click();
       
-      // Очищаем память
       setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     }, 'image/png');
   }).catch(err => {
-    // Возвращаем курсор, если вдруг произошла ошибка
     document.body.style.cursor = '';
     console.error("Ошибка скриншота:", err);
   });
 }
 
-// Обработчики (кнопка и горячая клавиша S)
 document.addEventListener('DOMContentLoaded', function() {
   const screenshotBtn = document.getElementById('toolScreenshot');
   if (screenshotBtn) {
@@ -2821,11 +2655,9 @@ const hexEl = document.getElementById(hexInput);
 const addBtnEl = document.getElementById(addBtn);
 
 if (pickerEl && hexEl) {
-// При выборе цвета в палитре — обновляем hex-input
 pickerEl.addEventListener('input', (e) => {
 hexEl.value = e.target.value;
 });
-// При изменении hex-input — обновляем палитру
 hexEl.addEventListener('input', (e) => {
 let hex = e.target.value.trim();
 if (!hex.startsWith('#')) hex = '#' + hex;
@@ -2833,7 +2665,6 @@ if (/^#[0-9A-F]{6}$/i.test(hex)) {
 pickerEl.value = hex;
 }
 });
-// При нажатии "Добавить" — синхронизируем палитру с hex-input
 if (addBtnEl) {
 addBtnEl.addEventListener('click', () => {
 let hex = hexEl.value.trim();
@@ -2852,15 +2683,12 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
 <script>
     
 (function() {
-    // Функция для применения цвета к выбранному объекту
     function applyColorToSelected(manager, color) {
     if (!manager) return false;
     
-    // 🔥 ПРАВИЛЬНЫЕ ИМЕНА СВОЙСТВ (с подчёркиванием!)
     const selected = manager._selectedRay || manager._selectedLine || manager._selectedAlert || manager._selectedText;
     if (!selected) return false;
     
-    // Определяем, где хранится цвет
     if (selected.options) {
         selected.options.color = color;
     } else if (selected.color !== undefined) {
@@ -2869,10 +2697,8 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
         return false;
     }
     
-    // Перерисовка
     if (manager._requestRedraw) manager._requestRedraw();
     
-    // Сохранение
     if (manager._saveRays) manager._saveRays();
     if (manager._saveTrends) manager._saveTrends();
     if (manager._saveAlerts) manager._saveAlerts();
@@ -2883,9 +2709,7 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
     return true;
 }
 
-    // Ждём, пока менеджеры будут созданы
     function setupColorPickers() {
-        // Проверяем, что хотя бы один менеджер уже создан
         if (!window.rayManager && !window.trendLineManager && !window.alertLineManager && !window.textManager) {
             console.log('⏳ Ожидание инициализации менеджеров рисования...');
             setTimeout(setupColorPickers, 300);
@@ -2894,7 +2718,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
 
         console.log('✅ Менеджеры рисования готовы, активируем пикеры');
 
-        // Обработчики для всех пикеров
         document.querySelectorAll('.color-picker-inline').forEach(picker => {
             picker.addEventListener('input', function(e) {
                 const color = e.target.value;
@@ -2923,7 +2746,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
                         break;
                 }
                 
-                // Если не удалось применить (нет выбранного объекта) — запоминаем цвет для будущих объектов
                 if (!applied) {
                     const manager = window[panelId === 'drawingSettings' ? 'rayManager' :
                                      panelId === 'trendSettings' ? 'trendLineManager' :
@@ -2937,7 +2759,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
             });
         });
 
-        // Синхронизация пикера при вводе hex
         document.querySelectorAll('.hex-input').forEach(hexInput => {
             hexInput.addEventListener('input', function(e) {
                 let hex = e.target.value.trim();
@@ -2955,7 +2776,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
         console.log('✅ Мгновенное применение цвета для рисовалок активировано');
     }
 
-    // Запускаем после загрузки DOM
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', setupColorPickers);
     } else {
@@ -2968,7 +2788,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
 // ========== МГНОВЕННОЕ ПРИМЕНЕНИЕ НАСТРОЕК РИСОВАЛОК ==========
 (function() {
     
-    // Универсальная функция для мгновенного применения
     function bindInstantApply(config) {
         const el = document.getElementById(config.elementId);
         if (!el) {
@@ -2977,15 +2796,12 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
         }
         
         el.addEventListener(config.eventType, function() {
-            // Ищем менеджер
             const manager = window[config.managerName];
             if (!manager) return;
             
-            // Ищем выбранный объект
             const selected = manager[config.selectedProp];
             if (!selected) return;
             
-            // Получаем значение
             let value;
             if (this.type === 'checkbox') {
                 value = this.checked;
@@ -2997,34 +2813,27 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
                 value = this.value;
             }
             
-            // Обновляем свойство объекта
             const target = selected.options || selected;
             target[config.optionKey] = value;
             
-            // Обновляем отображение процентов
             const displayEl = document.getElementById(config.displayId);
             if (displayEl && this.type === 'range') {
                 displayEl.textContent = this.value + '%';
             }
             
-            // Применяем к примитиву
             if (selected.primitive && config.applyToPrimitive) {
                 config.applyToPrimitive(selected.primitive, value, this);
             }
             
-            // Перерисовка
             if (manager._requestRedraw) manager._requestRedraw();
             
-            // Сохранение
             if (manager[config.saveMethod]) manager[config.saveMethod]();
             
             console.log('✅ Применено:', config.optionKey, '=', value);
         });
     }
 
-    // ========== НАСТРОЙКИ ДЛЯ КАЖДОГО ЭЛЕМЕНТА ==========
     const bindings = [
-        // === ЛУЧИ ===
         {
             elementId: 'settingThickness', eventType: 'input',
             managerName: 'rayManager', selectedProp: '_selectedRay',
@@ -3047,7 +2856,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
             }
         },
         
-        // === ТРЕНДОВЫЕ ЛИНИИ ===
         {
             elementId: 'trendSettingThickness', eventType: 'input',
             managerName: 'trendLineManager', selectedProp: '_selectedLine',
@@ -3070,7 +2878,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
             }
         },
         
-        // === АЛЕРТЫ ===
         {
             elementId: 'alertSettingThickness', eventType: 'input',
             managerName: 'alertLineManager', selectedProp: '_selectedAlert',
@@ -3093,7 +2900,6 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
             }
         },
         
-        // === ТЕКСТ ===
         {
             elementId: 'textFontSize', eventType: 'input',
             managerName: 'textManager', selectedProp: '_selectedText',
@@ -3120,10 +2926,8 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
         }
     ];
 
-    // Назначаем все обработчики
     bindings.forEach(bindInstantApply);
 
-    // ====== ЛИНЕЙКА (особый случай) ======
     const rulerOpacity = document.getElementById('rulerFillOpacity');
     if (rulerOpacity) {
         rulerOpacity.addEventListener('input', function() {
@@ -3146,13 +2950,9 @@ console.log('✅ Color picker\'ы для рисовалок синхронизи
 
     console.log('🚀 Обработчики мгновенного применения НАЗНАЧЕНЫ!');
 })();
-
-
-
 </script>
 <script>
 document.addEventListener('mousedown', function(e) {
-    // Не даём графику снять выделение с линии, когда мы кликаем внутри панели настроек
     if (e.target.closest('#trendSettings') ||
         e.target.closest('#textSettings') ||
         e.target.closest('#rulerSettingsPanel')) {
@@ -3163,7 +2963,6 @@ document.addEventListener('mousedown', function(e) {
 <script>
 // ========== СОЗДАНИЕ ОКНА КАЛЕНДАРЯ ==========
 (function() {
-    // Создаём плавающее окно
     var floatingWindow = document.createElement('div');
     floatingWindow.id = 'floatingCalendar';
     floatingWindow.style.cssText = 'display:none;position:fixed;width:420px;height:550px;background:#1E1E1E;border:1px solid #404040;border-radius:8px;z-index:10001;box-shadow:0 8px 32px rgba(0,0,0,0.6);flex-direction:column;left:50%;top:50%;transform:translate(-50%,-50%);';
@@ -3181,7 +2980,6 @@ document.addEventListener('mousedown', function(e) {
     document.body.appendChild(floatingWindow);
     console.log('✅ Окно календаря создано');
     
-    // Загрузка виджета
     var calendarLoaded = false;
     
   function loadCalendar() {
@@ -3197,7 +2995,6 @@ document.addEventListener('mousedown', function(e) {
     }
 }
     
-    // Перетаскивание
     var isDragging = false, startX, startY, startLeft, startTop;
     
     document.getElementById('calendarHeader').addEventListener('mousedown', function(e) {
@@ -3222,7 +3019,6 @@ document.addEventListener('mousedown', function(e) {
     
     document.addEventListener('mouseup', function() { isDragging = false; });
     
-    // Кнопки
     var minimized = false;
     document.getElementById('minimizeCalendarBtn').addEventListener('click', function() {
         var body = document.getElementById('calendarBody');
@@ -3235,7 +3031,6 @@ document.addEventListener('mousedown', function(e) {
         floatingWindow.style.display = 'none';
     });
     
-    // Обработчик кнопки в тулбаре
     var btn = document.getElementById('economicCalendarBtn');
     if (btn) {
         btn.addEventListener('click', function(e) {
@@ -3261,7 +3056,6 @@ setTimeout(function() {
         btn.onclick = function() {
             window.chartManagerInstance.manualAutoScale();
             
-            // Визуальная обратная связь
             btn.classList.add('active');
             setTimeout(() => btn.classList.remove('active'), 300);
         };
@@ -3281,7 +3075,6 @@ setTimeout(function() {
         const bullishColor = localStorage.getItem('chartBullishColor') || '#00bcd4';
         const bearishColor = localStorage.getItem('chartBearishColor') || '#f23645';
         
-        // 1. ЯВНОЕ УПРАВЛЕНИЕ ВИДИМОСТЬЮ И ЦВЕТАМИ
         if (cm.currentChartType === 'candle') {
             if (cm.candleSeries) {
                 cm.candleSeries.applyOptions({
@@ -3308,7 +3101,6 @@ setTimeout(function() {
             }
         }
         
-        // 2. Обновляем цвет линии цены только для активной серии
         const lastCandle = cm.chartData?.[cm.chartData.length - 1];
         const isBullish = lastCandle ? lastCandle.close >= lastCandle.open : true;
         const lineColor = isBullish ? bullishColor : bearishColor;
@@ -3320,37 +3112,24 @@ setTimeout(function() {
                 priceLineWidth: 1
             });
         }
-        
-        // ❌ УБРАНО: Блок "3. Обновляем объёмы", который вызывал setData() и ломал масштаб!
-        // ChartManager сам корректно обновит цвета объемов без сброса шкалы.
     }
     console.log('✅ Исправление подсветки баров/свечей активировано (с управлением видимостью)');
 })();
 </script>
 <script>
-    // =====================================================================
-    // ОКНО «ПРЕДПОСЫЛКИ И ТВХ»: перетаскивание за заголовок, изменение
-    // размера, режим «на весь экран», «прозрачный фон» (видно график) и
-    // запоминание позиции в localStorage.
-    // =====================================================================
+    // ОКНО «ПРЕДПОСЫЛКИ И ТВХ»
     document.addEventListener('DOMContentLoaded', function() {
         const btn = document.getElementById('premisesBtn');
         if (!btn) return;
 
-        const STORE_KEY = 'premises_window_state';  // позиция и размер окна
-        // Затемнение хранится ОТДЕЛЬНО и пишется только по клику на 👁.
-        // Старая версия окна писала ghost:false в premises_window_state, из-за чего
-        // график продолжал затемняться — это легаси-значение теперь игнорируется.
-        const DIM_KEY = 'premises_dim_bg';          // '1' = затемнять, '0' = нет, нет ключа = дефолт
-        // ПО УМОЛЧАНИЮ график НЕ затемняется: оверлей прозрачный и пропускает клики,
-        // окно «Предпосылки» просто плавает поверх графика.
+        const STORE_KEY = 'premises_window_state';
+        const DIM_KEY = 'premises_dim_bg';
         const DEFAULT_GHOST = true;
         const loadState = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } };
         const saveState = (patch) => {
             try { localStorage.setItem(STORE_KEY, JSON.stringify(Object.assign(loadState(), patch))); } catch (e) {}
         };
 
-        // ---- оверлей + окно -------------------------------------------
         const overlay = document.createElement('div');
         overlay.id = 'premisesOverlay';
         overlay.style.cssText = `
@@ -3411,8 +3190,6 @@ setTimeout(function() {
                 "></div>
             </div>
         `;
-        // ПО УМОЛЧАНИЮ: подложка прозрачная и не перехватывает клики —
-        // график не затемняется, с ним можно работать прямо под окном.
         overlay.style.background = 'transparent';
         overlay.style.pointerEvents = 'none';
         document.body.appendChild(overlay);
@@ -3437,10 +3214,8 @@ setTimeout(function() {
         let heightBeforeMin = null;
         let restoreRect = null;
 
-        // ---- позиционирование ------------------------------------------
         const DEF = { width: '100%', maxWidth: '1200px', height: '90vh', maxHeight: '90vh' };
 
-        // переводим окно из «flex по центру» в абсолютные координаты
         function toAbsolute() {
             if (win.style.position === 'absolute') return;
             const r = win.getBoundingClientRect();
@@ -3456,10 +3231,9 @@ setTimeout(function() {
             overlay.style.padding = '0';
         }
 
-        // не даём окну уехать за экран (заголовок всегда должен быть виден)
         function clampToScreen() {
             const w = win.offsetWidth, h = win.offsetHeight;
-            const keep = 100; // сколько пикселей заголовка должно остаться на экране
+            const keep = 100;
             let x = parseFloat(win.style.left) || 0;
             let y = parseFloat(win.style.top) || 0;
             x = Math.min(Math.max(x, Math.min(0, keep - w)), Math.max(0, window.innerWidth - keep));
@@ -3495,7 +3269,6 @@ setTimeout(function() {
 
         function applyState() {
             const st = loadState();
-            // легаси-ключ ghost от прошлой версии окна — удаляем, чтобы не мешал
             if (st.ghost !== undefined) {
                 delete st.ghost;
                 try { localStorage.setItem(STORE_KEY, JSON.stringify(st)); } catch (e) {}
@@ -3519,14 +3292,13 @@ setTimeout(function() {
             if (st.min) setMinimized(true, false);
         }
 
-        // ---- перетаскивание за заголовок --------------------------------
         titleBar.addEventListener('pointerdown', function(e) {
             if (e.button !== 0) return;
-            if (e.target.closest('button')) return; // за кнопки не тащим
-            if (maximized) return;                  // полноэкранное окно не двигается
+            if (e.target.closest('button')) return;
+            if (maximized) return;
             e.preventDefault();
             toAbsolute();
-            overlay.classList.add('dragging');      // гасит iframe, чтобы не «съедал» мышь
+            overlay.classList.add('dragging');
             const startX = e.clientX, startY = e.clientY;
             const origLeft = parseFloat(win.style.left) || 0;
             const origTop = parseFloat(win.style.top) || 0;
@@ -3549,13 +3321,11 @@ setTimeout(function() {
             titleBar.addEventListener('pointercancel', up);
         });
 
-        // двойной клик по заголовку — вернуть в центр
         titleBar.addEventListener('dblclick', function(e) {
             if (e.target.closest('button')) return;
             resetPosition();
         });
 
-        // ---- изменение размера за правый нижний угол --------------------
         document.getElementById('premisesResize').addEventListener('pointerdown', function(e) {
             if (e.button !== 0 || maximized) return;
             e.preventDefault();
@@ -3582,7 +3352,6 @@ setTimeout(function() {
             document.getElementById('premisesResize').addEventListener('pointercancel', up);
         });
 
-        // ---- «на весь экран» / восстановить -----------------------------
         maxBtn.addEventListener('click', function() {
             if (!maximized) {
                 const r = win.getBoundingClientRect();
@@ -3612,12 +3381,11 @@ setTimeout(function() {
             }
         });
 
-        // ---- «свернуть»: остаётся только полоска заголовка, окно можно оттащить в угол
         function setMinimized(on, remember) {
             if (on === minimized) return;
             const resizeHandle = document.getElementById('premisesResize');
             if (on) {
-                toAbsolute(); // фиксируем текущие размеры в px
+                toAbsolute();
                 heightBeforeMin = win.style.height || DEF.height;
                 win.style.height = '38px';
                 frame.style.display = 'none';
@@ -3633,11 +3401,10 @@ setTimeout(function() {
             if (remember !== false) saveState({ min: on });
         }
         minBtn.addEventListener('click', function() {
-            if (maximized) maxBtn.click();  // сначала выходим из полноэкранного режима
+            if (maximized) maxBtn.click();
             setMinimized(!minimized);
         });
 
-        // ---- «прозрачный фон»: окно поверх графика, клики проходят на график
         function setGhost(on, remember) {
             ghost = on;
             overlay.style.background = on ? 'transparent' : 'rgba(0,0,0,0.7)';
@@ -3655,11 +3422,10 @@ setTimeout(function() {
 
         resetBtn.addEventListener('click', resetPosition);
 
-        // ---- открытие / закрытие ---------------------------------------
         function openWindow() {
             overlay.style.display = 'flex';
             applyState();
-            frame.src = './premises.html'; // перезагружаем при каждом открытии
+            frame.src = './premises.html';
         }
         function closeWindow() {
             overlay.style.display = 'none';
@@ -3680,7 +3446,6 @@ setTimeout(function() {
             if (e.key === 'Escape' && overlay.style.display === 'flex') closeWindow();
         });
 
-        // при изменении размера браузера удерживаем окно на экране
         window.addEventListener('resize', function() {
             if (overlay.style.display !== 'flex') return;
             if (maximized) {
@@ -3699,7 +3464,6 @@ setTimeout(function() {
     
     if (!candleBtn || !barBtn) return;
 
-    // Функция синхронизации UI с localStorage
     function syncChartTypeUI() {
         const savedType = localStorage.getItem('chartType') || 'candle';
         if (savedType === 'bar') {
@@ -3711,22 +3475,18 @@ setTimeout(function() {
         }
     }
 
-    // При клике на свечи
     candleBtn.addEventListener('click', function() {
         candleBtn.classList.add('active');
         barBtn.classList.remove('active');
     });
 
-    // При клике на бары
     barBtn.addEventListener('click', function() {
         barBtn.classList.add('active');
         candleBtn.classList.remove('active');
     });
 
-    // 1. При загрузке страницы синхронизируем кнопки с сохраненным значением
     syncChartTypeUI();
     
-    // 2. Слушаем изменения localStorage (на случай, если переключение происходит из другого места)
     window.addEventListener('storage', function(e) {
         if (e.key === 'chartType') {
             syncChartTypeUI();
@@ -3734,182 +3494,12 @@ setTimeout(function() {
     });
 })();
 </script>
-<script>
-(function() {
-    const toggleBtn = document.createElement('div');
-    toggleBtn.id = 'floatingToggleBtn';
-    toggleBtn.innerHTML = '〈';
-    document.body.appendChild(toggleBtn);
 
-    const style = document.createElement('style');
-    style.textContent = `
-        #floatingToggleBtn {
-            position: fixed;
-            top: 80px; /* 👈 Подняли выше (было 120px). Можете поставить 60px или 100px */
-            right: var(--ticker-width, 380px);
-            z-index: 9999999;
-            
-            /* 👇 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ОТ СКАЧКОВ: */
-            width: 16px;       /* Фиксированная ширина, НЕ меняется при наведении */
-            height: 50px;      /* Фиксированная высота */
-            
-            background: transparent; /* Прозрачный по умолчанию */
-            color: transparent;      /* Стрелка невидима по умолчанию */
-            
-            border: none;
-            border-radius: 4px 0 0 4px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            font-weight: bold;
-            
-            /* Ловит мышь всегда, но визуально не мешает */
-            pointer-events: auto; 
-            
-            /* Анимируем только визуальные свойства, не влияющие на границы */
-            transition: background 0.2s ease, color 0.2s ease, right 0.3s ease, box-shadow 0.2s ease;
-        }
-        
-        /* При наведении просто меняем цвет и фон, размеры остаются теми же! */
-        #floatingToggleBtn:hover {
-            background: rgba(90, 90, 90, 0.85);
-            color: #ffffff;
-            box-shadow: -2px 0 8px rgba(0,0,0,0.4);
-        }
+<!-- [FIX-TICKER-FS] Старый IIFE с #floatingToggleBtn удалён.
+     Кнопку сворачивания панели тикеров и синхронизацию с fullscreen-режимом
+     теперь создаёт сам TickerPanel (методы _setupPanelToggle и
+     _setupFullscreenSync в ticker/TickerPanel.js). Иначе два обработчика
+     конфликтуют и баг «тикеры не выезжают после фуллскрина» возвращается. -->
 
-        body.ticker-panel-hidden #floatingToggleBtn {
-            right: 0 !important;
-        }
-        body.ticker-panel-hidden {
-            --ticker-width: 0px !important;
-        }
-        .ticker-panel {
-            transition: transform 0.3s ease !important;
-        }
-        body.ticker-panel-hidden .ticker-panel {
-            transform: translateX(100%) !important;
-        }
-        body.ticker-panel-hidden #chart-container {
-            width: 100vw !important;
-        }
-        .chart-footer-buttons {
-            transition: right 0.3s ease, bottom 0.3s ease !important;
-        }
-        body.ticker-panel-hidden .chart-footer-buttons {
-            right: 8px !important;   /* [КНОПКИ-ПРАВЕЕ] было 20px */
-        }
-        .drawing-toolbar {
-            transition: none !important;
-        }
-    `;
-    document.head.appendChild(style);
-
-    // Функция определения ширины панели для позиционирования кнопки
-    function placeButton(attempts = 0) {
-        if (attempts > 20) return; 
-        
-        const panel = document.querySelector('.ticker-panel');
-        if (panel && panel.offsetWidth > 0) {
-            const width = panel.offsetWidth;
-            document.documentElement.style.setProperty('--ticker-width', width + 'px');
-        } else {
-            setTimeout(() => placeButton(attempts + 1), 500);
-        }
-    }
-
-    setTimeout(() => placeButton(0), 1000);
-    window.addEventListener('resize', () => placeButton(0));
-
-    // Пересчёт позиции панели рисовалок
-    function recalcDrawingToolbar() {
-        const toolbar = document.getElementById('drawingToolbar');
-        if (!toolbar) return;
-
-        const parent = document.getElementById('chart-container') || document.body;
-        const parentRect = parent.getBoundingClientRect();
-        const parentW = parentRect.width;
-        const parentH = parentRect.height;
-        
-        if (parentW <= 0 || parentH <= 0) return;
-        
-        const tbW = toolbar.offsetWidth;
-        const tbH = toolbar.offsetHeight;
-
-        let curLeft = parseFloat(toolbar.style.left) || 20;
-        let curTop = parseFloat(toolbar.style.top) || 60;
-
-        const maxLeft = parentW - tbW - 10;
-        const maxTop = parentH - tbH - 10;
-
-        const newLeft = Math.max(10, Math.min(maxLeft, curLeft));
-        const newTop = Math.max(60, Math.min(maxTop, curTop));
-
-        toolbar.style.left = newLeft + 'px';
-        toolbar.style.top = newTop + 'px';
-        localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
-        localStorage.setItem('drawingToolbarTop', newTop + 'px');
-    }
-
-    // Пересчёт кнопок футера
-    function recalcFooterButtons() {
-        const buttons = document.querySelector('.chart-footer-buttons');
-        if (!buttons) return;
-
-        const panelsContainer = document.getElementById('indicator-panels-container');
-        let offset = 20;
-
-        if (panelsContainer && panelsContainer.offsetHeight > 0) {
-            offset += panelsContainer.offsetHeight;
-        }
-
-        buttons.style.bottom = offset + 'px';
-    }
-
-    // [FIX-TICKER-FS] иконка стрелки всегда соответствует ФАКТИЧЕСКОМУ состоянию
-    // панели. Раньше она менялась только по клику, а в полноэкранном режиме класс
-    // переключает другой обработчик — из-за этого стрелка показывала противоположное
-    // состояние и следующий клик «съедался» впустую.
-    function syncToggleIcon() {
-        const hidden = document.body.classList.contains('ticker-panel-hidden');
-        toggleBtn.innerHTML = hidden ? '〈' : '〉';
-    }
-    // перерисовываем иконку после входа/выхода из полноэкранного режима.
-    // setTimeout(0) — чтобы отработать ПОСЛЕ handleFullscreenChange.
-    ['fullscreenchange', 'webkitfullscreenchange'].forEach(ev =>
-        document.addEventListener(ev, () => setTimeout(syncToggleIcon, 0)));
-
-    // Обработчик клика по стрелке
-    toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        document.body.classList.toggle('ticker-panel-hidden');
-
-        // отмечаем, что состояние менял пользователь, а не вход/выход из полноэкранного
-        if (document.fullscreenElement && window.__vpTickerFs) window.__vpTickerFs.userToggled = true;
-
-        syncToggleIcon();
-
-     setTimeout(() => {
-    const cm = window.chartManager || window.chartManagerInstance;
-    if (cm && cm._isChartValid && cm._isChartValid()) {
-        cm.forceRedraw();
-        if (cm.timerManager) {
-            // _forceUpdate() в TimerManager не существует.
-            // forceColorUpdate() — публичный метод, сбрасывает кэш цвета
-            // и перерисовывает бейдж таймера в новой позиции.
-            cm.timerManager.forceColorUpdate();
-        }
-    }
-    recalcDrawingToolbar();
-    recalcFooterButtons();
-}, 350);
-
-            
-    });
-
-    // JS-обработчики наведения больше не нужны, всё идеально работает на чистом CSS :hover
-})();
-</script>
 </body>
 </html>
