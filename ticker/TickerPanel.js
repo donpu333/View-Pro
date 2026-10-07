@@ -1,8 +1,16 @@
 /* ============================================================================
-   ПОДПИСЬ-QWEN | ✅ ФИНАЛ — ЭТИМ ФАЙЛОМ ЗАМЕНИТЬ В РЕПО: ticker/TickerPanel.js (В ПАПКУ ticker!)
-   Состав: живая версия репо (коммит 00f3b17) + [ANTI-BAN] — на 429/418
-   запросы останавливаются сразу, без ретраев (ретраи превращают 429 в бан IP).
-   Собран: 24.09.2026. Больше НИЧЕГО не менялось.
+   TickerPanel.js — ПОЛНЫЙ КЛАСС (с фиксом стрелки + fullscreen)
+   Замени файл в репо: ticker/TickerPanel.js
+   ============================================================================
+   ЧТО ИСПРАВЛЕНО (баг «стрелка + фуллскрин»):
+   Было две независимых точки правды:
+     • IIFE в index.html дёргал body.ticker-panel-hidden по клику на стрелку,
+       но иконку переключал ВРУЧНУЮ — она рассинхронивалась с реальным классом;
+     • handleFullscreenChange в index.html тоже трогал ticker-panel-hidden,
+       но не сообщал об этом стрелке.
+   Итог: в фуллскрине стрелка прятала панель, при выходе класс оставался,
+   иконка показывала обратное, следующий клик «съедался» впустую.
+   Теперь класс владеет и стрелкой, и fullscreen — единый источник правды.
    ============================================================================ */
 const TICKER_TIMINGS = {
     INITIAL_DATA_DELAY: 500,
@@ -48,10 +56,6 @@ class TickerPanel {
         this._lastUiUpdateMap = new Map();
 
         // ✅ ФИКС: сигнатура последнего обработанного набора customSymbols.
-        // Используется в TickerRenderer.getFilteredTickers() для принудительного
-        // сброса filterCache при смене состава списка (переключение вотчлиста,
-        // массовое добавление/удаление) — иначе возвращался устаревший result
-        // от предыдущего списка.
         this._lastSymbolsSig = null;
 
         this.state = this.storage.state;
@@ -82,10 +86,10 @@ class TickerPanel {
         this._renderPending = false;
 
         // 📈 Акции: цены парных рынков (spot ↔ futures) и служебные индексы
-        this.pairPrices = new Map();          // pairKey -> price
-        this._stockPairHandlers = new Map();  // cardKey -> { pairKey, handler }
-        this._assetClassIndex = new Map();    // key -> 'crypto'|'stocks'
-        this._stockPairIndex = new Map();     // cardKey -> { pairKey, pairLabel, pairTitle }
+        this.pairPrices = new Map();
+        this._stockPairHandlers = new Map();
+        this._assetClassIndex = new Map();
+        this._stockPairIndex = new Map();
 
         this._rowDomCache = new Map();
         this._subscribedSymbols = new Set();
@@ -181,7 +185,217 @@ class TickerPanel {
         this.state.sortBy = savedSortBy === null ? 'volume' : (savedSortBy || null);
         this.state.sortDirection = savedSortDir === null ? 'desc' : (savedSortDir || null);
 
+        // ✅ ФИКС СТРЕЛКИ + FULLSCREEN: класс сам владеет кнопкой сворачивания панели
+        // и реагирует на вход/выход из полноэкранного режима. Единый источник
+        // правды — класс body.ticker-panel-hidden. Иконка стрелки всегда
+        // перерисовывается из фактического состояния класса, а не «на память».
+        this._setupPanelToggle();
+        this._setupFullscreenSync();
+
         this.init();
+    }
+
+    // ============================================================
+    // [FIX-TICKER-FS] СТРЕЛКА СВОРАЧИВАНИЯ ПАНЕЛИ ТИКЕРОВ
+    // ============================================================
+    _setupPanelToggle() {
+        // Кнопку создаём ровно один раз за всю жизнь страницы. Если IIFE
+        // из старого index.html тоже пытается её создать — забираем уже
+        // существующую, чтобы не было двух кнопок-двойников.
+        let btn = document.getElementById('floatingToggleBtn');
+        if (!btn) {
+            btn = document.createElement('div');
+            btn.id = 'floatingToggleBtn';
+            btn.innerHTML = '〈';
+            document.body.appendChild(btn);
+        }
+        this._toggleBtn = btn;
+
+        // Стили. transition только для визуальных свойств — размеры кнопки
+        // фиксированы, чтобы при hover ничего не «дёргалось» по границам.
+        if (!document.getElementById('floatingToggleBtnStyles')) {
+            const style = document.createElement('style');
+            style.id = 'floatingToggleBtnStyles';
+            style.textContent = `
+                #floatingToggleBtn {
+                    position: fixed;
+                    top: 80px;
+                    right: var(--ticker-width, 380px);
+                    z-index: 9999999;
+                    width: 16px;
+                    height: 50px;
+                    background: transparent;
+                    color: transparent;
+                    border: none;
+                    border-radius: 4px 0 0 4px;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 16px;
+                    font-weight: bold;
+                    pointer-events: auto;
+                    transition: background .2s ease, color .2s ease,
+                                right .3s ease, box-shadow .2s ease;
+                }
+                #floatingToggleBtn:hover {
+                    background: rgba(90,90,90,.85);
+                    color: #ffffff;
+                    box-shadow: -2px 0 8px rgba(0,0,0,.4);
+                }
+                body.ticker-panel-hidden #floatingToggleBtn { right: 0 !important; }
+                body.ticker-panel-hidden { --ticker-width: 0px !important; }
+                .ticker-panel { transition: transform .3s ease !important; }
+                body.ticker-panel-hidden .ticker-panel {
+                    transform: translateX(100%) !important;
+                }
+                body.ticker-panel-hidden #chart-container { width: 100vw !important; }
+                .chart-footer-buttons {
+                    transition: right .3s ease, bottom .3s ease !important;
+                }
+                body.ticker-panel-hidden .chart-footer-buttons {
+                    right: 8px !important;
+                }
+                .drawing-toolbar { transition: none !important; }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // Клик по стрелке — единственный переключатель класса.
+        this._toggleHandler = (e) => {
+            e.stopPropagation();
+            const hidden = document.body.classList.toggle('ticker-panel-hidden');
+
+            // Помечаем, что выбор сделан РУКАМИ пользователя — чтобы выход
+            // из полноэкранного режима не «отменил» его принудительно.
+            if (document.fullscreenElement) {
+                window.__vpTickerFs = window.__vpTickerFs || { hiddenBefore: null, userToggled: false };
+                window.__vpTickerFs.userToggled = true;
+            }
+
+            this._syncToggleIcon();
+
+            setTimeout(() => {
+                const cm = window.chartManager || window.chartManagerInstance;
+                if (cm && cm._isChartValid && cm._isChartValid()) {
+                    cm.forceRedraw();
+                    if (cm.timerManager && cm.timerManager.forceColorUpdate) {
+                        cm.timerManager.forceColorUpdate();
+                    }
+                }
+                this._recalcDrawingToolbar();
+                this._recalcFooterButtons();
+            }, 350);
+        };
+        // Снимаем прежний обработчик, если он остался от старой сборки
+        if (this._toggleBtn._vpHandler) {
+            this._toggleBtn.removeEventListener('click', this._toggleBtn._vpHandler);
+        }
+        this._toggleBtn.addEventListener('click', this._toggleHandler);
+        this._toggleBtn._vpHandler = this._toggleHandler;
+
+        // Позиционирование кнопки по фактической ширине панели
+        this._placeButton = (attempts = 0) => {
+            if (attempts > 20) return;
+            const panel = document.querySelector('.ticker-panel');
+            if (panel && panel.offsetWidth > 0) {
+                document.documentElement.style.setProperty('--ticker-width', panel.offsetWidth + 'px');
+            } else {
+                setTimeout(() => this._placeButton(attempts + 1), 500);
+            }
+        };
+        setTimeout(() => this._placeButton(0), 1000);
+
+        this._toggleResizeHandler = () => this._placeButton(0);
+        window.addEventListener('resize', this._toggleResizeHandler);
+
+        // Первичная синхронизация иконки
+        this._syncToggleIcon();
+    }
+
+    /** Иконка стрелки = фактическое состояние body. */
+    _syncToggleIcon() {
+        if (!this._toggleBtn) return;
+        const hidden = document.body.classList.contains('ticker-panel-hidden');
+        this._toggleBtn.innerHTML = hidden ? '〈' : '〉';
+    }
+
+    /** Пересчёт позиции панели рисовалок после изменения ширины графика. */
+    _recalcDrawingToolbar() {
+        const toolbar = document.getElementById('drawingToolbar');
+        if (!toolbar) return;
+        const parent = document.getElementById('chart-container') || document.body;
+        const parentRect = parent.getBoundingClientRect();
+        if (parentRect.width <= 0 || parentRect.height <= 0) return;
+        const tbW = toolbar.offsetWidth, tbH = toolbar.offsetHeight;
+        let curLeft = parseFloat(toolbar.style.left) || 20;
+        let curTop  = parseFloat(toolbar.style.top)  || 60;
+        const maxLeft = parentRect.width  - tbW - 10;
+        const maxTop  = parentRect.height - tbH - 10;
+        const newLeft = Math.max(10, Math.min(maxLeft, curLeft));
+        const newTop  = Math.max(60, Math.min(maxTop,  curTop));
+        toolbar.style.left = newLeft + 'px';
+        toolbar.style.top  = newTop  + 'px';
+        localStorage.setItem('drawingToolbarLeft', newLeft + 'px');
+        localStorage.setItem('drawingToolbarTop',  newTop  + 'px');
+    }
+
+    /** Пересчёт позиции кнопок футера (A / Л / к последней свече). */
+    _recalcFooterButtons() {
+        const buttons = document.querySelector('.chart-footer-buttons');
+        if (!buttons) return;
+        const panelsContainer = document.getElementById('indicator-panels-container');
+        let offset = 20;
+        if (panelsContainer && panelsContainer.offsetHeight > 0) {
+            offset += panelsContainer.offsetHeight;
+        }
+        buttons.style.bottom = offset + 'px';
+    }
+
+    // ============================================================
+    // [FIX-TICKER-FS] СИНХРОНИЗАЦИЯ С ПОЛНОЭКРАННЫМ РЕЖИМОМ
+    // ============================================================
+    _setupFullscreenSync() {
+        window.__vpTickerFs = window.__vpTickerFs || { hiddenBefore: null, userToggled: false };
+
+        const handler = () => {
+            const isFull = !!document.fullscreenElement;
+            const fs = window.__vpTickerFs;
+
+            if (isFull) {
+                // Запомнили состояние до входа — чтобы вернуть как было
+                fs.hiddenBefore = document.body.classList.contains('ticker-panel-hidden');
+                fs.userToggled = false;
+                // В полноэкранном режиме панель по умолчанию убираем
+                document.body.classList.add('ticker-panel-hidden');
+            } else {
+                // Выход из фуллскрина: если пользователь сам дёргал стрелку —
+                // уважаем его выбор, иначе возвращаем как было до входа.
+                if (!fs.userToggled && fs.hiddenBefore === false) {
+                    document.body.classList.remove('ticker-panel-hidden');
+                }
+                fs.hiddenBefore = null;
+                fs.userToggled = false;
+            }
+
+            // Иконка — всегда из фактического состояния класса
+            this._syncToggleIcon();
+
+            // Перерисовать график под новый размер контейнера
+            setTimeout(() => {
+                const cm = window.chartManagerInstance || window.chartManager;
+                if (cm && cm._isChartValid && cm._isChartValid()) {
+                    cm.forceRedraw && cm.forceRedraw();
+                }
+                this._recalcDrawingToolbar();
+                this._recalcFooterButtons();
+                this._placeButton(0);
+            }, 350);
+        };
+
+        document.addEventListener('fullscreenchange', handler);
+        document.addEventListener('webkitfullscreenchange', handler);
+        this._fullscreenHandler = handler;
     }
 
     _scheduleRender() {
@@ -269,11 +483,6 @@ class TickerPanel {
 
     _restoreWebSockets() {
         if (this._isDestroyed) return;
-        // PERF: focus/visibilitychange могут firing'ать часто (клики по другим окнам,
-        // alt-tab туда-обратно). Раньше КАЖДЫЙ вызов запускал полный REST-батч
-        // и полный перерендер списка — одновременно с refresh'ем графика,
-        // что давало «шторм» и подвисание на несколько секунд.
-        // Теперь — не чаще раза в 30 с.
         const nowTs = Date.now();
         if (this._lastRestoreAt && nowTs - this._lastRestoreAt < 30000) return;
         this._lastRestoreAt = nowTs;
@@ -292,22 +501,6 @@ class TickerPanel {
         this._scheduleRender();
     }
 
-    /**
-     * [VP-BANDWIDTH] Ждём «окно тишины» графика перед тяжёлыми закачками.
-     *
-     * Зачем: кэш символов — это ЧЕТЫРЕ запроса exchangeInfo/instruments-info
-     * суммарно ~19 МБ, из них один binance spot exchangeInfo — ~17 МБ
-     * (3705 записей). Раньше он стартовал через 1 с после инициализации панели,
-     * то есть РОВНО тогда, когда AppCoordinator.loadInitialData() тянул свечи
-     * для восстановленного символа. Два потока на один домен api.binance.com:
-     * klines не успевал за 15-секундный таймаут и возвращал null, а
-     * switchSymbol печатал «❌ Не удалось переключиться на SUIUSDT:
-     * Нет данных для SUIUSDT». Причём на СПОТ-тикерах это повторялось каждый
-     * раз: 17 МБ не успевали дочитаться, точность не кэшировалась, и следующая
-     * попытка запускала всё заново.
-     *
-     * @param {number} maxWaitMs сколько максимум ждать (дальше грузим в любом случае)
-     */
     async _waitForChartIdle(maxWaitMs = 20000) {
         const startedAt = Date.now();
         const cm = () => (typeof window !== 'undefined')
@@ -333,12 +526,10 @@ class TickerPanel {
             this.updateModalCount();
             if (loader) loader.style.display = 'none';
             if (container) container.classList.add('ready');
-            // [VP-BANDWIDTH] не стартуем 19 МБ закачку, пока график не загрузил
-            // свечи восстановленного символа (см. _waitForChartIdle).
             (async () => {
                 await this._waitForChartIdle();
                 if (this._isDestroyed) return;
-                await new Promise(r => setTimeout(r, 1500));   // даём графику «усесться»
+                await new Promise(r => setTimeout(r, 1500));
                 if (this._isDestroyed) return;
                 this.refreshSymbolCache(20000).catch(err => console.warn('⚠️ Фон. обновление:', err));
             })();
@@ -348,11 +539,6 @@ class TickerPanel {
         if (loader) loader.style.display = 'block';
         if (container) container.innerHTML = '';
 
-        // [VP-BANDWIDTH] холодный старт (кэша в IndexedDB ещё нет): сначала
-        // даём графику загрузить свечи, и только потом качаем ~19 МБ списков
-        // инструментов. Прежний таймаут 5 с для 17-мегабайтного
-        // binance spot exchangeInfo был недостижим в принципе — запрос
-        // обрывался, список оставался пустым, а трафик тратился впустую.
         await this._waitForChartIdle(15000);
         if (this._isDestroyed) return;
 
@@ -408,19 +594,6 @@ class TickerPanel {
         }
     }
 
-    /**
-     * Обновление кэша инструментов.
-     *
-     * [VP-BANDWIDTH] Три исправления:
-     *  • не запускается, пока график переключает символ/таймфрейм (иначе тяжёлая
-     *    закачка отбирает канал у fetchKlines и график падает с «Нет данных»);
-     *  • таймаут по умолчанию увеличен 10 с -> 20 с: binance spot exchangeInfo
-     *    весит ~17 МБ и на обычном канале за 10 с не дочитывался. Прерванный
-     *    запрос — это потраченный трафик и ПУСТОЙ результат, а следующая
-     *    попытка качала те же 17 МБ заново;
-     *  • причина отказа больше не теряется: раньше `.catch(() => null)`
-     *    проглатывал и таймаут, и 429, и отсутствие сети.
-     */
     async refreshSymbolCache(timeout = 20000) {
         if (this._isRefreshing || this._isDestroyed) return;
         const cm = window.chartManagerInstance || window.chartManager;
@@ -439,7 +612,6 @@ class TickerPanel {
             const controller = new AbortController();
             controllers.push(controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
-            const startedAt = Date.now();
             return fetch(url, { signal: controller.signal })
                 .then(async r => {
                     if (!r.ok) {
@@ -540,23 +712,18 @@ class TickerPanel {
         const MAX_SYMBOLS = 4000;
         let binanceFuturesList = [], binanceSpotList = [], bybitFuturesList = [], bybitSpotList = [];
 
-        // 📈 TradFi-типы Bybit Linear: токенизированные акции, ETF, товары, форекс
         const BYBIT_LINEAR_TRADFI = ['stock', 'ETF', 'commodity', 'forex'];
 
         if (results[0]?.symbols) {
-            // Binance Futures: contractType === 'TRADIFI_PERPETUAL' — перпы на акции/ETF/товары (TSLAUSDT, SPYUSDT, XAUUSDT...)
             binanceFuturesList = results[0].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'futures', assetClass: s.contractType === 'TRADIFI_PERPETUAL' ? 'stocks' : 'crypto' }));
         }
         if (results[1]?.symbols) {
-            // Binance Spot: токенизированных акций нет — вся крипта
             binanceSpotList = results[1].symbols.filter(s => s.symbol?.endsWith('USDT') && s.status === 'TRADING').map(s => ({ symbol: s.symbol, exchange: 'binance', marketType: 'spot', assetClass: 'crypto' }));
         }
         if (results[2]?.retCode === 0 && results[2]?.result?.list) {
-            // Bybit Linear: symbolType 'stock'/'ETF'/'commodity'/'forex' — традиционные рынки
             bybitFuturesList = results[2].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'futures', assetClass: BYBIT_LINEAR_TRADFI.includes(s.symbolType) ? 'stocks' : 'crypto' }));
         }
         if (results[3]?.retCode === 0 && results[3]?.result?.list) {
-            // Bybit Spot: symbolType 'xstocks' — токенизированные акции/ETF (TSLAXUSDT...)
             bybitSpotList = results[3].result.list.filter(s => s.symbol?.endsWith('USDT')).map(s => ({ symbol: s.symbol, exchange: 'bybit', marketType: 'spot', assetClass: s.symbolType === 'xstocks' ? 'stocks' : 'crypto' }));
         }
 
@@ -565,7 +732,6 @@ class TickerPanel {
         this.binanceSymbolsCache = this.sortByPopularity(this.binanceSymbolsCache);
         this.bybitSymbolsCache = this.sortByPopularity(this.bybitSymbolsCache);
 
-        // Крипто-вкладки FUTURES/SPOT больше не содержат акции — они живут во вкладке «Акции/ETF»
         const isStocks = s => s.assetClass === 'stocks';
         this.allBinanceFutures = this.binanceSymbolsCache.filter(s => s.marketType === 'futures' && !isStocks(s)).slice(0, MAX_SYMBOLS);
         this.allBinanceSpot = this.binanceSymbolsCache.filter(s => s.marketType === 'spot' && !isStocks(s)).slice(0, MAX_SYMBOLS);
@@ -580,9 +746,6 @@ class TickerPanel {
         this.updateModalCount();
     }
 
-    // =========================================================================
-    // 📈 АКЦИИ/ETF (TradFi): классификация, пары «спот ↔ фьючерс»
-    // =========================================================================
     _buildAssetClassIndex() {
         this._assetClassIndex = new Map();
         for (const s of this.allSymbolsCache || []) {
@@ -596,9 +759,6 @@ class TickerPanel {
     }
 
     _buildStockPairIndex() {
-        // Для каждого инструмента акций ищем парный рынок:
-        //   Bybit spot xStock (TSLAXUSDT) ↔ Bybit perp (TSLAUSDT)
-        //   Bybit perp / Binance perp (TSLAUSDT) ↔ Bybit spot xStock (TSLAXUSDT)
         this._stockPairIndex = new Map();
         const bybitSpotByBase = new Map();
         const bybitFutByBase = new Map();
@@ -628,7 +788,6 @@ class TickerPanel {
         }
     }
 
-    /** После обновления кэша бирж проставляем assetClass/пары уже созданным тикерам. */
     _restampTickersAssetClass() {
         if (!this.tickersMap || this.tickersMap.size === 0) return;
         let changed = 0;
@@ -652,7 +811,6 @@ class TickerPanel {
         }
     }
 
-    /** «Теневая» подписка на цену парного рынка для плашки акции. */
     _subscribeStockPair(cardKey, pairKey) {
         const pm = window.priceManagerInstance;
         if (!pm || this._isDestroyed || this._stockPairHandlers.has(cardKey)) return;
@@ -680,18 +838,6 @@ class TickerPanel {
         for (const cardKey of [...this._stockPairHandlers.keys()]) this._unsubscribeStockPair(cardKey);
     }
 
-    /**
-     * [VP-NET] fetch с обязательным таймаутом и отменой.
-     *
-     * Зачем: в панели было ПЯТЬ мест с «голым» `await fetch(url)`. Такой запрос
-     * не отменяется НИКОГДА: при зависшем соединении он вечно держит слот в
-     * пуле браузера (лимит ~6 на домен), а домены здесь те же, откуда график
-     * берёт свечи (api.binance.com / fapi.binance.com / api.bybit.com).
-     * Подвисшая пачка тикеров таким образом могла «съесть» весь пул, и
-     * fetchKlines для switchSymbol обрывался по таймауту — «Нет данных».
-     *
-     * @returns {Promise<Response|null>} null при таймауте/сетевой ошибке
-     */
     async _fetchWithTimeout(url, timeoutMs = TICKER_TIMINGS.FETCH_TIMEOUT) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -707,7 +853,6 @@ class TickerPanel {
         }
     }
 
-    /** Разовый REST-запрос, чтобы чип пары не был пустым до первого WS-тика. */
     async _fetchStockPairPrice(pairKey, cardKey) {
         try {
             const [symbol, exchange, marketType] = pairKey.split(':');
@@ -798,18 +943,12 @@ class TickerPanel {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), TICKER_TIMINGS.FETCH_TIMEOUT);
                     let response;
-                    // [VP-NET] clearTimeout в finally: при исключении таймер
-                    // оставался жить и держал ссылку на контроллер.
                     try {
                         response = await fetch(url, { signal: controller.signal });
                     } finally {
                         clearTimeout(timeoutId);
                     }
 
-                    // [ANTI-BAN] 429/418 = биржа сказала «слишком много».
-                    // Немедленно останавливаемся и НЕ ретраим: по правилам Binance
-                    // продолжение запросов после 429 превращается в 418 (бан IP),
-                    // а продолжение после 418 — продлевает бан.
                     if (response.status === 418 || response.status === 429) {
                         console.warn(`⛔ Binance ${response.status} — запросы остановлены, Retry-After: ${response.headers.get('Retry-After') || 'нет'}`);
                         return null;
@@ -817,9 +956,6 @@ class TickerPanel {
                     if (!response.ok) return null;
                     return await response.json();
                 } catch (e) {
-                    // [VP-NET] раньше здесь было `if (e.name !== 'AbortError') continue;`
-                    // — то есть сетевая ошибка молча уходила на следующий круг,
-                    // а причина не логировалась вообще.
                     const reason = (e && e.name === 'AbortError')
                         ? `таймаут ${Math.round(TICKER_TIMINGS.FETCH_TIMEOUT / 1000)} с`
                         : (e && e.message) || String(e);
@@ -966,6 +1102,19 @@ class TickerPanel {
             this._priceUpdateRaf = null;
         }
 
+        // [FIX-TICKER-FS] аккуратно снимаем обработчики стрелки и fullscreen
+        if (this._toggleBtn && this._toggleBtn._vpHandler) {
+            this._toggleBtn.removeEventListener('click', this._toggleBtn._vpHandler);
+            this._toggleBtn._vpHandler = null;
+        }
+        if (this._toggleResizeHandler) {
+            window.removeEventListener('resize', this._toggleResizeHandler);
+        }
+        if (this._fullscreenHandler) {
+            document.removeEventListener('fullscreenchange', this._fullscreenHandler);
+            document.removeEventListener('webkitfullscreenchange', this._fullscreenHandler);
+        }
+
         document.removeEventListener('contextmenu', this._globalContextMenuHandler);
         document.removeEventListener('click', this._globalClickHandler);
         document.removeEventListener('visibilitychange', this._visibilityHandler);
@@ -978,8 +1127,6 @@ class TickerPanel {
         this._pendingPriceUpdates.clear();
         this._lastUiUpdateMap.clear();
 
-        // ✅ ФИКС: сброс сигнатуры, чтобы при пересоздании панели не тянуть
-        // устаревшее значение между инстансами.
         this._lastSymbolsSig = null;
 
         console.log('✅ TickerPanel полностью уничтожен');
@@ -1009,8 +1156,6 @@ class TickerPanel {
         this._subscribedSymbols.clear();
         this._lastUiUpdateMap.clear();
 
-        // ✅ ФИКС: при массовой очистке сбрасываем сигнатуру, чтобы следующий
-        // вызов getFilteredTickers() гарантированно пересчитал результат.
         this._lastSymbolsSig = null;
 
         if (this.renderer) {
@@ -1066,8 +1211,6 @@ class TickerPanel {
         }
 
         this.filterCache = null;
-        // ✅ ФИКС: сбрасываем сигнатуру, чтобы getFilteredTickers() не отдал
-        // кэш от предыдущего списка.
         this._lastSymbolsSig = null;
         this.tickerElements.clear();
         this._rowDomCache.clear();
@@ -1090,13 +1233,12 @@ class TickerPanel {
             if (!this.tickers.includes(existingTicker)) {
                 this.tickers.push(existingTicker);
                 this.filterCache = null;
-                this._lastSymbolsSig = null; // ✅ ФИКС
+                this._lastSymbolsSig = null;
                 if (render) this._scheduleRender();
             }
             return true;
         }
 
-        // 📈 Для акций помним класс актива и пару «спот ↔ фьючерс»
         const assetClass = this._assetClassOf(symbol, exchange, marketType);
         const pair = assetClass === 'stocks' ? (this._stockPairIndex?.get(key) || null) : null;
 
@@ -1121,7 +1263,7 @@ class TickerPanel {
         if (newTicker.pairKey) this._subscribeStockPair(key, newTicker.pairKey);
 
         this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС
+        this._lastSymbolsSig = null;
         if (render) this._scheduleRender();
 
         if (!skipInitialFetch && !this._isBulkAdding) {
@@ -1148,7 +1290,6 @@ class TickerPanel {
             const key = `${symbol}:${exchange}:${marketType}`;
 
             if (!this.tickersMap.has(key)) {
-                // 📈 Для акций помним класс актива и пару «спот ↔ фьючерс»
                 const assetClass = this._assetClassOf(symbol, exchange, marketType);
                 const pair = assetClass === 'stocks' ? (this._stockPairIndex?.get(key) || null) : null;
                 const newTicker = {
@@ -1189,7 +1330,7 @@ class TickerPanel {
         this.syncWithActiveWatchlist();
         this.saveState();
         this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС
+        this._lastSymbolsSig = null;
         this.tickerElements.clear();
         this._scheduleRender();
 
@@ -1457,7 +1598,7 @@ class TickerPanel {
         }
 
         this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС
+        this._lastSymbolsSig = null;
         this._scheduleRender();
 
         if (wasCurrentSymbol && nextTicker) {
@@ -1507,14 +1648,6 @@ class TickerPanel {
             const exchange = tickerItem.dataset.exchange;
             const marketType = tickerItem.dataset.marketType;
 
-            // [VP-CLICK] Раньше здесь сравнивали ТОЛЬКО с состоянием панели и
-            // выходили. Но панель обновлялась оптимистично — ДО загрузки символа,
-            // поэтому при любом рассинхроне (переключение не завершилось, запрос
-            // потерялся в очереди, страница вернулась из фона) повторный клик по
-            // тому же тикеру не делал НИЧЕГО: график оставался на прошлом символе
-            // или пустым, а «вылечить» его кликом было уже невозможно.
-            // Теперь «тем же самым» считается только полное совпадение
-            // панель + график, и при совпадении график всё равно проверяется.
             const cm = this.coordinator?.chartManager;
             const panelMatches = this.state.currentSymbol === symbol &&
                 this.state.currentExchange === exchange &&
@@ -1527,7 +1660,6 @@ class TickerPanel {
         }
     }
 
-    /** [VP-CLICK] График действительно живой: есть свечи, нет зависшего переключения. */
     _isChartUsable(cm) {
         try {
             if (!cm) return false;
@@ -1537,7 +1669,6 @@ class TickerPanel {
         } catch (e) { return false; }
     }
 
-    /** [VP-CLICK] Идёт ли ещё переключение (или наш запрос стоит в очереди). */
     _isSwitchInProgress(cm, symbol) {
         try {
             if (!cm) return false;
@@ -1548,12 +1679,6 @@ class TickerPanel {
         return false;
     }
 
-    /**
-     * [VP-CLICK] Ждём, пока график «усядется»: переключение завершилось, затемнение
-     * погасло, свечи на месте. Без этого проверка результата срабатывала в
-     * переходный момент (оверлей ещё гаснет) и запускала лишнее повторное
-     * переключение того же символа — двойные запросы и мигание графика.
-     */
     _settleChart(cm, timeoutMs = 12000) {
         return new Promise((resolve) => {
             const startedAt = Date.now();
@@ -1567,7 +1692,6 @@ class TickerPanel {
         });
     }
 
-    /** [VP-CLICK] Возврат панели/шапки к символу, который РЕАЛЬНО на графике. */
     _syncPanelToChart(cm) {
         try {
             const sym = cm.currentSymbol, ex = cm.currentExchange, mt = cm.currentMarketType;
@@ -1577,20 +1701,6 @@ class TickerPanel {
         } catch (e) {}
     }
 
-    /**
-     * [VP-CLICK] Единая точка «пользователь выбрал инструмент».
-     *
-     * ЧТО БЫЛО: switchSymbol() вызывался «выстрелил и забыл» (без await и без
-     * проверки результата), а состояние панели, подсветка строки, шапка и
-     * localStorage менялись СРАЗУ. Если переключение вставало в очередь
-     * (_switchingSymbol) или завершалось ошибкой, панель продолжала утверждать,
-     * что инструмент открыт: «кликнул — график пустой / остался старый».
-     *
-     * ЧТО СТАЛО: UI по-прежнему обновляется мгновенно (иначе клик ощущается
-     * «мёртвым»), но результат переключения проверяется, и при расхождении
-     * панель либо дожимает загрузку, либо возвращается к символу, который
-     * РЕАЛЬНО на графике.
-     */
     _requestSymbolSwitch(symbol, exchange, marketType) {
         const cm = this.coordinator?.chartManager;
         if (!cm || typeof cm.switchSymbol !== 'function') return;
@@ -1621,32 +1731,21 @@ class TickerPanel {
             .then(() => { if (!this._isDestroyed) this._verifySymbolSwitch(symbol, exchange, marketType, token); });
     }
 
-    /**
-     * [VP-CLICK] Контроль результата переключения.
-     *
-     * Если график так и не оказался на запрошенном символе (переключение
-     * потерялось в очереди, завершилось ошибкой или зависло), а запрос при этом
-     * НЕ в очереди и сеть есть — повторяем переключение один раз. При повторной
-     * неудаче панель и шапка возвращаются к символу, который реально на графике,
-     * чтобы следующий клик снова сработал (раньше он упирался в защиту
-     * «этот тикер уже выбран» и график оставался чужим/пустым до перезагрузки).
-     */
     _verifySymbolSwitch(symbol, exchange, marketType, token, isRetry = false) {
-        if (this._isDestroyed || token !== this._switchReqToken) return;   // есть более свежий клик
+        if (this._isDestroyed || token !== this._switchReqToken) return;
         const cm = this.coordinator?.chartManager;
         if (!cm) return;
 
         this._settleChart(cm).then(() => {
             if (this._isDestroyed || token !== this._switchReqToken) return;
-            // пользователь тем временем выбрал другой инструмент — не мешаем
             if (this.state.currentSymbol !== symbol || this.state.currentExchange !== exchange ||
                 this.state.currentMarketType !== marketType) return;
 
             const matches = cm.currentSymbol === symbol && cm.currentExchange === exchange &&
                 cm.currentMarketType === marketType;
-            if (matches && this._isChartUsable(cm)) return;                 // всё хорошо
-            if (this._isSwitchInProgress(cm, symbol)) return;               // ещё грузится/в очереди
-            if (typeof navigator !== 'undefined' && navigator.onLine === false) return;  // офлайн
+            if (matches && this._isChartUsable(cm)) return;
+            if (this._isSwitchInProgress(cm, symbol)) return;
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
 
             if (!isRetry) {
                 console.warn(`⚠️ [VP-CLICK] ${symbol}: после клика график остался на ` +
@@ -1665,7 +1764,6 @@ class TickerPanel {
         });
     }
 
-    /** [VP-CLICK] Шапка — один источник правды для трёх вызовов. */
     _setHeaderSymbol(symbol, exchange, marketType) {
         const pairDisplay = document.getElementById('pairDisplay');
         if (pairDisplay) pairDisplay.textContent = symbol;
@@ -1685,7 +1783,7 @@ class TickerPanel {
         else this.state.favorites.splice(index, 1);
 
         this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС (на всякий случай, влияет на вкладку favorites)
+        this._lastSymbolsSig = null;
         this.saveState();
         star.classList.toggle('favorite', index === -1);
 
@@ -1823,7 +1921,7 @@ class TickerPanel {
             flagContainer.replaceChild(placeholder, flag);
         }
         this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС (влияет на вкладку flags)
+        this._lastSymbolsSig = null;
         this.saveState();
 
         if (this.state.activeTab === 'flags') {
@@ -1831,15 +1929,6 @@ class TickerPanel {
         }
     }
 
-    /**
-     * [VP-LOAD] Тихая синхронизация «текущего символа» панели с графиком —
-     * БЕЗ запуска переключения (иначе получился бы цикл: switchSymbol ->
-     * revert -> focusOnSymbol -> switchSymbol ...).
-     *
-     * Нужен для отката UI: клик по тикеру подсвечивает строку и меняет шапку
-     * сразу, а загрузка символа может закончиться ошибкой — тогда график
-     * остаётся на прежнем тикере, и панель обязана вернуться к нему же.
-     */
     setCurrentSymbolSilently(symbol, exchange, marketType) {
         if (this._isDestroyed) return;
         this.state.currentSymbol = symbol;
@@ -1873,8 +1962,6 @@ class TickerPanel {
                 }, 50);
             }
         }
-        // [VP-CLICK] состояние, подсветка, шапка и контроль результата — там же,
-        // где и для обычного клика по списку.
         this._requestSymbolSwitch(symbol, exchange, marketType);
 
         const modal = document.getElementById('addInstrumentModal');
@@ -1910,7 +1997,7 @@ class TickerPanel {
             }
         }
         this.filterCache = null;
-        this._lastSymbolsSig = null; // ✅ ФИКС (влияет на вкладку flags)
+        this._lastSymbolsSig = null;
         this.saveState();
         contextMenu.style.display = 'none';
 
