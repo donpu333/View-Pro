@@ -1,3 +1,4 @@
+
 const SOURCE_PRIORITY = { 'ws': 3, 'rest': 2, 'cache': 1 };
 
 // [FIX-M3] '2h' в UI (TF_LABELS) отсутствует и оставлен в карте для обратной
@@ -124,11 +125,8 @@ class ChartManager {
         this._lastKlinesFailure = null;         // последняя причина отказа REST — для внятной ошибки
         this._serverTimeOffsetMs = 0;           // [VP-CLOCK] serverTime - Date.now(), ограничен ±2 мин
         this._clockSkewWarned = false;
-        // [PERF-FIX] Таймауты загрузки снижены с 15с/10с/3 до 7с/5с/2 — иначе
-        // при подвисшем хосте пользователь ждал до 25с, а с fallback-рынками —
-        // до минуты. Теперь крайний случай — ~12с и UI разблокируется сторожевым.
-        this._klinesMaxAttempts = 2;            // сколько хостов/повторов пробуем
-        this._klinesRetryTimeoutMs = 5000;      // таймаут повторной попытки (первая — _fetchTimeoutMs)
+        this._klinesMaxAttempts = 3;            // сколько хостов/повторов пробуем
+        this._klinesRetryTimeoutMs = 10000;     // таймаут повторной попытки (первая — _fetchTimeoutMs)
         this._klinesRetryDelayMs = 350;         // пауза между попытками
         this._staleCacheMaxAgeMs = 24 * 60 * 60 * 1000;  // «последний шанс»: кэш свечей до 24 ч
         this._badIntervalsWarned = new Set();
@@ -306,7 +304,7 @@ class ChartManager {
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
         this._volumeScaleMargins = { top: 0.8, bottom: 0 };
-        this._fetchTimeoutMs = 7000;   // [PERF-FIX] было 15000 — снижено до 7 с
+        this._fetchTimeoutMs = 15000;
 
         this._visibilityHandler = () => {
             if (!document.hidden) {
@@ -560,6 +558,7 @@ class ChartManager {
     }
 
     // =============== RIGHT EDGE ===============
+       // =============== RIGHT EDGE ===============
     _scrollToRightEdgeWithOffset() {
         if (!this._isChartValid() || !this.chartData || this.chartData.length === 0) return;
         const ts = this.chart.timeScale();
@@ -642,7 +641,7 @@ class ChartManager {
 
     // [HIST-FIX] Было: на КАЖДЫЙ вызов создавалось по копии {...c} на каждую свечю
     // (5000 объектов), складывалось в Map и сортировалось. Вызов идёт на каждую страницу
-    // истории, на каждый trim и на каждое полное перерисовывание — на коротких ТФ это
+    // истории, на каждый trim и на каждое полное перерисование — на коротких ТФ это
     // главный источник «фризов» при листании. Теперь:
     //   • объект бара кэшируется в WeakMap по самой свече и пересоздаётся только если
     //     свеча реально изменилась (живая свеча) — мусора и работы почти нет;
@@ -1017,13 +1016,8 @@ class ChartManager {
      * Идентификатор прогона — ownerToken (а не поколение): поколение может
      * легально смениться фоном (loadInitialData/refreshCandlesInBackground),
      * это не повод бросать наблюдение.
-     *
-     * [PERF-FIX] stallMs было 20000 — при сниженных сетевых таймаутах
-     * (7с + 0.35с + 5с ≈ 12.35с на попытку) сторож должен срабатывать
-     * РАНЬШЕ, чем завершится полный цикл загрузки + фоновый досинхрон.
-     * 30 с — безопасный запас.
      */
-    _armSwitchWatchdog(kind, ownerToken, stallMs = 30000) {
+    _armSwitchWatchdog(kind, ownerToken, stallMs = 20000) {
         this._switchProgress();
         if (this._switchWatchdogTimer !== null) { clearTimeout(this._switchWatchdogTimer); this._switchWatchdogTimer = null; }
         if (this._destroyed) return;
@@ -2354,6 +2348,7 @@ class ChartManager {
     }
 
     // =============== SET DATA ===============
+      // =============== SET DATA ===============
     setDataQuick(data, interval, symbol, exchange = 'binance', marketType = 'futures', forceNewSymbol = false, onReady = null) {
         // [VP-STUCK] единая точка выхода для ранних return'ов (до fireReady ниже)
         const earlyReady = () => { try { this._disableAutoScroll(); } catch (e) {} if (typeof onReady === 'function') { try { onReady(); } catch (e) {} } };
@@ -2643,15 +2638,25 @@ class ChartManager {
     /**
      * [VP-LOAD] Смена символа.
      *
-     * [PERF-FIX] Что ускорилось против предыдущей версии:
-     *   • _prefetchPrecision() больше НЕ ждётся синхронно. Если точности нет
-     *     в кэше — формат цены применяется инферентно (из свечей), а точный
-     *     прилетит фоново и применится до того, как пользователь успеет
-     *     заметить. Было: до 1.5 с мёртвого ожидания ДО первой отрисовки.
-     *   • refreshCandlesInBackground() больше НЕ awaited (было 2.5 с) —
-     *     запускается fire-and-forget сразу после применения свечей.
-     *   • Чёрный оверлей гасится сразу после setDataQuick (в finally), а не
-     *     после сетевого _syncRecentCandles (был ещё 1.2 с).
+     * ЧТО БЫЛО: ровно ОДИН запрос кэша и РОВНО ОДИН запрос к бирже, после чего
+     * сразу `throw new Error('Нет данных для ' + symbol)`. При этом:
+     *   • у switchInterval такой же сценарий ещё в [VP-TF] обзавёлся двумя
+     *     повторами («первый REST после пробуждения страницы может вернуть
+     *     пусто»), а switchSymbol — НЕТ. То есть самый частый путь (клик по
+     *     тикеру) оставался самым хрупким;
+     *   • параллельно стартовал _prefetchPrecision(), который (из-за
+     *     дубля getPrecisionFromExchange) качал весь exchangeInfo Binance
+     *     — до 17 МБ без таймаута, забивая канал именно в тот момент, когда
+     *     грузились свечи;
+     *   • причина отказа терялась: и «нет сети», и 429, и «тикер не торгуется
+     *     на этом рынке» давали один и тот же текст «Нет данных для SYMBOL»;
+     *   • после ошибки шапка и тикер-панель УЖЕ показывали новый символ, а
+     *     график оставался старым, и пользователь не получал никакого сигнала.
+     *
+     * ЧТО СТАЛО: загрузка через _loadCandlesResilient (кэш → сеть с повторами
+     * и запасными хостами → соседний рынок/биржа → устаревший кэш), внятная
+     * причина, тост с кнопкой «Повторить» и откат UI к символу, который
+     * реально остался на графике.
      *
      * @returns {Promise<boolean>} true — данные применены; false — не удалось.
      */
@@ -2744,27 +2749,26 @@ class ChartManager {
             if (window.wsManager?.updateSymbolAndTimeframe) {
                 window.wsManager.updateSymbolAndTimeframe(symbol, this.currentInterval, exchange, marketType);
             }
-            // [PERF-FIX] Точность НЕ ждём: если в кэше есть — применим сразу,
-            // иначе отрисуем с инферентной точностью, а точную подтянем в фоне.
-            // Раньше здесь стоял await _prefetchPrecision (до 1.5 с мёртвого
-            // ожидания ДО первой отрисовки). Формат всё равно скорректируется
-            // по возврату getPrecisionFromExchange — визуальной разницы нет,
-            // кроме того, что график появляется мгновенно.
+            // [VP-PRECISION] Точность добираем ЗДЕСЬ, а не параллельно со свечами.
+            // Раньше _prefetchPrecision() стартовал ПЕРЕД загрузкой и (из-за дубля
+            // getPrecisionFromExchange в Utils.js/PrecisionHelper.js) тянул весь
+            // exchangeInfo Binance — до 17 МБ без таймаута, — отбирая канал у
+            // fetchKlines. Теперь свечи уже получены, запрос лёгкий, а формат цены
+            // известен ДО первой отрисовки (иначе цена «переключалась» с 2 знаков на
+            // 6 уже на глазах). Внутри — гонка с лимитом 1.5 с: зависнуть не может.
+            await this._prefetchPrecision(symbol, exchange, marketType);
+            this._switchProgress();
+            if (this._activeGeneration !== generationId || this._destroyed) return false;
             const cachedPrecision = this._getCachedPrecision(symbol, exchange, marketType);
-            if (cachedPrecision) {
-                this.applyPriceFormat(parseInt(cachedPrecision, 10));
-            } else {
-                this.applyPriceFormat(this._inferPrecisionFromData());
-                this._prefetchPrecision(symbol, exchange, marketType).catch(() => {});
-            }
+            if (cachedPrecision) this.applyPriceFormat(parseInt(cachedPrecision, 10));
             if (!this._isChartValid()) return false;
 
-            // [PERF-FIX] Досинхрон из кэша — fire-and-forget, НЕ блокирует снятие
-            // оверлея и не держит _switchingSymbol=true. Раньше здесь был
-            // Promise.race([refreshCandlesInBackground, 2500ms]) и последующий
-            // await — до 2.5 с ожидания ДО снятия затемнения.
+            let cacheRefreshPromise = null;
             if (isFromCache) {
-                this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {});
+                cacheRefreshPromise = Promise.race([
+                    this.refreshCandlesInBackground(symbol, exchange, marketType, this.currentInterval).catch(() => {}),
+                    new Promise(r => setTimeout(r, 2500))
+                ]);
             }
 
             // [VP-STUCK] ждём финализацию отрисовки, но НЕ вечно: onReady внутри
@@ -2783,6 +2787,9 @@ class ChartManager {
             if (!this.chartData || this.chartData.length === 0) {
                 throw new Error(`${symbol}: свечи не легли на график`);
             }
+            if (this._activeGeneration !== generationId) return true;
+
+            if (cacheRefreshPromise) await cacheRefreshPromise;
             if (this._activeGeneration !== generationId) return true;
 
             if (!isFromCache) {
@@ -2885,17 +2892,18 @@ class ChartManager {
                 }
                 if (dataApplied) {
                     if (owner) { this._startPeriodicSync(); this._startNewCandleChecker(); }
-                    // [PERF-FIX] Затемнение гасим СРАЗУ — данные уже на графике,
-                    // ждать сетевой _syncRecentCandles (до 1.2 с) нет смысла.
-                    // Фоновый досинхрон запускается после снятия оверлея: если
-                    // он что-то и поправит, это будет незаметно.
+                    // [FIX-JUMP] Затемнение гасим ТОЛЬКО после того, как первый
+                    // _syncRecentCandles() усадит график (он может догрузить свечи и
+                    // дёрнуть autoScale). Жёсткий лимит 1200мс — чтобы оверлей не залипал.
                     const genAtHide = this._activeGeneration;
-                    this._doubleFrame(() => {
+                    Promise.race([
+                        this._syncRecentCandles().catch(() => {}),
+                        new Promise(r => setTimeout(r, 1200))
+                    ]).then(() => {
                         if (this._destroyed) return;
-                        if (this._activeGeneration !== genAtHide) return;
+                        if (this._activeGeneration !== genAtHide) return; // уже другое переключение
                         this._hideSymbolSwitchOverlay();
-                    });
-                    this._syncRecentCandles().catch(() => {});
+                    }).catch(() => { try { this._hideSymbolSwitchOverlay(); } catch (e) {} });
                 } else {
                     this._hideSymbolSwitchOverlay();
                 }
@@ -2908,7 +2916,7 @@ class ChartManager {
         }
     }
 
-    async switchInterval(newInterval) {
+       async switchInterval(newInterval) {
         // [FIX-D2] Отложенное переключение возвращает маркер {queued:true}, чтобы
         // вызывающий (TimeframeManager) не принял мгновенный возврат за «интервал
         // не сменился» и не откатил бейдж поверх применённого позже переключения.
@@ -2940,6 +2948,7 @@ class ChartManager {
 
         // [FIX-JUMP2] Флаги для «плавного» снятия затемнения (см. finally ниже).
         let intervalApplied = false;  // данные нового ТФ реально легли на график
+        let bgRefreshDone = false;    // фоновый досинхрон кэша успел отработать ПОД оверлеем
         // [FIX-SCOPE] ОБЯЗАТЕЛЬНО вне try: переменная читается в finally, а let
         // внутри try имеет блочную область -> в finally это ReferenceError, который
         // обрывал finally ДО _hideSymbolSwitchOverlay()/_dispatchPendingSwitch():
@@ -2953,14 +2962,12 @@ class ChartManager {
             // загрузки, и при ошибке сети бейдж/WS/хранилище говорили «4h», а на
             // графике оставались часовые свечи; после восстановления сети WS-клины
             // нового шага дописывались в массив старого — серия превращалась в кашу.
-            // [PERF-FIX] Для смены ТФ выключаем fallback-рынки и stale-кэш: символ
-            // уже подтверждён на этой бирже/рынке, а лишние попытки только
-            // оттягивают момент отказа. Раньше смена ТФ на «мёртвом» хосте
-            // могла тянуться до 60+ секунд (3 fallback × 2 попытки × таймаут).
+            // [VP-TF/VP-LOAD] прежнее «до 2 повторов через 1.2 с» заменено общим
+            // загрузчиком: кэш -> сеть с повторами и запасными хостами -> устаревший
+            // кэш. Логика та же, но попыток больше и причина отказа видна.
             const loaded = await this._loadCandlesResilient(
                 this.currentSymbol, this.currentExchange, this.currentMarketType,
-                newInterval, this._initialBatch || 1000,
-                { requestType: 'switch', allowFallbacks: false, allowStale: false }
+                newInterval, this._initialBatch || 1000, { requestType: 'switch' }
             );
             this._switchProgress();
             if (this._activeGeneration !== generationId || this._destroyed) return;
@@ -2997,10 +3004,14 @@ class ChartManager {
             intervalApplied = true;
             if (!isFromCache) this.saveCandlesToCache(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval, candles).catch(() => {});
             if (isFromCache) {
-                // [PERF-FIX] досинхрон fire-and-forget: ждать 2.5 с нет смысла,
-                // данные из кэша уже отрисованы в setDataQuick. Раньше здесь был
-                // await Promise.race([...2.5s]) — блокировал снятие затемнения.
-                this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {});
+                // [FIX-JUMP2] race вернёт true, если фон УСПЕЛ досинхронить кэш под
+                // оверлеем (отдельный _syncRecentCandles в finally тогда не нужен),
+                // и false, если сработал лимит 2500мс — данные могли остаться старыми.
+                bgRefreshDone = await Promise.race([
+                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).then(() => true, () => true),
+                    new Promise(r => setTimeout(() => r(false), 2500))
+                ]) === true;
+                if (this._activeGeneration !== generationId) return;
             }
             // [FIX] Загрузка рисунков для нового таймфрейма — та же логика, что в switchSymbol.
             // При смене ТФ координатор перечитает данные с новым ключом (символ тот же, но объекты
@@ -3024,12 +3035,14 @@ class ChartManager {
                 this._startPeriodicSync();
                 this._startNewCandleChecker();
             }
-            // [PERF-FIX] Затемнение при смене ТФ гасится СРАЗУ после setDataQuick
-            // (через гарантированный _doubleFrame), а не после сетевого
-            // _syncRecentCandles. Раньше пользователь ждал до 1.2 с чёрный экран
-            // при полностью отрисованном графике. Фоновый досинхрон запускается
-            // уже после снятия оверлея — он ничего не «дёргает» на виду, потому
-            // что setDataQuick уже усадил масштаб.
+            // [FIX-JUMP2] Затемнение при смене ТФ снимается ТОЛЬКО после того, как
+            // график «уселся». Что могло дёрнуть его уже НА ВИДУ:
+            //   • _syncRecentCandles() догружает пропущенные свечи -> autoScale() (~стр. 924);
+            //   • _startNewCandleChecker() сразу гоняет _catchUpMissedCandles();
+            //   • _healDataGaps() лечит дырки асинхронно и тоже перерисовывает.
+            // Теперь всё это происходит под чёрным оверлеем — как в switchSymbol.
+            // Досинхрон пропускаем, если кэш уже досинхронизирован под оверлеем
+            // (bgRefreshDone === true) — лишний сетевой запрос не нужен.
             const stale = this._activeGeneration !== generationId; // уже другое переключение
             if (stale || !intervalApplied) {
                 // либо график уже принадлежит другому переключению (оверлей гасит оно),
@@ -3037,13 +3050,30 @@ class ChartManager {
                 this._hideSymbolSwitchOverlay();
             } else {
                 const genAtHide = this._activeGeneration;
-                this._doubleFrame(() => {
-                    if (this._destroyed) return;
-                    if (this._activeGeneration !== genAtHide) return;
-                    this._hideSymbolSwitchOverlay();
-                });
-                // [PERF-FIX] фоновый досинхрон — ПОСЛЕ снятия оверлея.
-                this._syncRecentCandles().catch(() => {});
+                // [FIX-PENULT] bgRefreshDone больше не повод пропускать досинхрон:
+                // refreshCandlesInBackground() теперь сверяет весь хвост, но
+                // _syncRecentCandles() дополнительно тянет 3 последние свечи и лечит
+                // плейсхолдер. Оба прогона идут ПОД затемнением, «прыжка» на виду нет.
+                const settle = (!bgRefreshDone || isFromCache)
+                    // кэш НЕ был досинхронизирован под оверлеем -> делаем это сейчас,
+                    // иначе он досинхронизируется позже и дёрнет масштаб уже на виду.
+                    ? Promise.race([
+                        this._syncRecentCandles().catch(() => {}),
+                        new Promise(r => setTimeout(r, 1200))   // жёсткий лимит: оверлей не залипнет
+                    ])
+                    // кэш досинхронизирован -> хватит короткой паузы, чтобы
+                    // индикаторы/разделители/хайлайты дорисовались под затемнением.
+                    : new Promise(r => setTimeout(r, 60));
+                // [VP-STUCK] _doubleFrame вместо голого двойного rAF: в скрытой
+                // вкладке затемнение иначе не гасло вообще.
+                settle
+                    .then(() => new Promise(r => this._doubleFrame(r)))
+                    .then(() => {
+                        if (this._destroyed) return;
+                        if (this._activeGeneration !== genAtHide) return; // график уже чужой
+                        this._hideSymbolSwitchOverlay();
+                    })
+                    .catch(() => { try { this._hideSymbolSwitchOverlay(); } catch (e) {} });
             }
             } catch (finErr) {
                 console.error('❌ switchInterval: сбой в finally — снимаю затемнение принудительно', finErr);
@@ -3097,7 +3127,6 @@ class ChartManager {
                 });
                 finish(); return;
             }
-            // [PERF-FIX] точность — fire-and-forget: не блокирует первую отрисовку
             this._prefetchPrecision(this.currentSymbol, this.currentExchange, this.currentMarketType).catch(() => {});
             // [VP-STUCK] лимит ожидания финализации — иначе «пустой график при
             // открытии страницы» залипал навсегда, если страница стартовала скрытой.
@@ -3754,6 +3783,7 @@ class ChartManager {
     }
 
     // =============== FETCH KLINES ===============
+    // =============== FETCH KLINES ===============
     // [VP-KLINES] «Сырые» карты интервалов Bybit — на уровне модуля, чтобы не
     // пересоздавать объект на каждый запрос.
     static _bybitIntervalMap() {
@@ -4183,7 +4213,6 @@ class ChartManager {
                   marketType: marketType === 'futures' ? 'spot' : 'futures' }
             ];
             for (const cand of candidates) {
-                if (this._destroyed) return finish(null, { reason: 'destroyed' });
                 const key = `${symbol}|${cand.exchange}|${cand.marketType}`;
                 if (tried.has(key)) continue;
                 tried.add(key);
@@ -4999,7 +5028,7 @@ class ChartManager {
 
             const applied = this._applyHistoryPage(page, batchSize, genId, interval, fromNetwork);
             if (applied === true) {
-                // [HIST-FIX] добираем ещё страницы подряд, пока край не отодвинется достаточно
+                // [HIST-FIX] добираем ещё صفحات подряд, пока край не отодвинется достаточно
                 // далеко (или пока не кончится история). Именно отсутствие этой цепочки и
                 // давало «листнул — встал — подгрузилось — листнул — встал» на минутках.
                 this._chainPrefetch(genId, interval, 1);
