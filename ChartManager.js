@@ -65,9 +65,6 @@ class ChartManager {
         // [VP-STUCK] сторож залипшего переключения символа/ТФ
         this._switchWatchdogTimer = null;
         this._switchProgressAt = 0;
-        this._switchHardDeadlineAt = 0;        // [PERF-SWITCH2]
-        this._switchStartedAt = 0;             // [PERF-SWITCH5]
-        this._lastSwitchFinishedAt = 0;        // [PERF-SWITCH4]
         this._switchOwnerToken = null;
         // сколько ждём финализацию отрисовки (onReady из setDataQuick)
         this._setDataReadyTimeoutMs = 10000;
@@ -129,9 +126,7 @@ class ChartManager {
         this._serverTimeOffsetMs = 0;           // [VP-CLOCK] serverTime - Date.now(), ограничен ±2 мин
         this._clockSkewWarned = false;
         this._klinesMaxAttempts = 3;            // сколько хостов/повторов пробуем
-        // [PERF-SWITCH2] было 10000. Худший случай на рынок составлял 36 с
-        // (15 + 10 + 10 + паузы), а с тремя запасными рынками — до 144 с.
-        this._klinesRetryTimeoutMs = 5000;      // таймаут повторной попытки (первая — _fetchTimeoutMs)
+        this._klinesRetryTimeoutMs = 10000;     // таймаут повторной попытки (первая — _fetchTimeoutMs)
         this._klinesRetryDelayMs = 350;         // пауза между попытками
         this._staleCacheMaxAgeMs = 24 * 60 * 60 * 1000;  // «последний шанс»: кэш свечей до 24 ч
         this._badIntervalsWarned = new Set();
@@ -309,9 +304,7 @@ class ChartManager {
         this._volumeDataDirty = true;
         this._lastVolumeUpdateIndex = -1;
         this._volumeScaleMargins = { top: 0.8, bottom: 0 };
-        // [PERF-SWITCH2] было 15000: первая попытка блокировала чёрный оверлей
-        // на 15 с при молчащей бирже. 8 с достаточно для холодного REST.
-        this._fetchTimeoutMs = 8000;
+        this._fetchTimeoutMs = 15000;
 
         this._visibilityHandler = () => {
             if (!document.hidden) {
@@ -1011,9 +1004,6 @@ class ChartManager {
     /** Отметка прогресса переключения — для сторожа залипания (_switchWatchdog). */
     _switchProgress() { this._switchProgressAt = Date.now(); }
 
-    /** [PERF-SWITCH4] момент завершения переключения — для паузы deep prefetch. */
-    _markSwitchFinished() { this._lastSwitchFinishedAt = Date.now(); }
-
     /**
      * Сторож переключения символа/ТФ.
      *
@@ -1027,14 +1017,8 @@ class ChartManager {
      * легально смениться фоном (loadInitialData/refreshCandlesInBackground),
      * это не повод бросать наблюдение.
      */
-    _armSwitchWatchdog(kind, ownerToken, stallMs = 20000, hardMs = 25000) {
+    _armSwitchWatchdog(kind, ownerToken, stallMs = 20000) {
         this._switchProgress();
-        this._switchStartedAt = Date.now();   // [PERF-SWITCH5] для прерывания новым кликом
-        // [PERF-SWITCH2] абсолютный дедлайн одного переключения. stallMs сам по
-        // себе не спасал: _switchProgress() вызывается на каждой попытке сети
-        // (ChartManager.js:4123,4125), поэтому «застоя» формально нет, а пользователь
-        // сидит под чёрным оверлеем минутами.
-        this._switchHardDeadlineAt = Date.now() + hardMs;
         if (this._switchWatchdogTimer !== null) { clearTimeout(this._switchWatchdogTimer); this._switchWatchdogTimer = null; }
         if (this._destroyed) return;
         const check = () => {
@@ -1043,10 +1027,8 @@ class ChartManager {
             if (this._switchOwnerToken !== ownerToken) return;      // прогон завершён/заменён
             if (!this._switchingSymbol && !this._isSwitchingInterval) return;
             const stalledFor = Date.now() - (this._switchProgressAt || 0);
-            // [PERF-SWITCH2] срабатываем либо по застою, либо по абсолютному дедлайну
-            const hardHit = this._switchHardDeadlineAt && Date.now() > this._switchHardDeadlineAt;
-            if (stalledFor < stallMs && !hardHit) {                 // прогресс есть — наблюдаем дальше
-                this._switchWatchdogTimer = setTimeout(check, 2000);
+            if (stalledFor < stallMs) {                             // прогресс есть — наблюдаем дальше
+                this._switchWatchdogTimer = setTimeout(check, Math.min(stallMs, 5000));
                 return;
             }
 
@@ -2617,33 +2599,6 @@ class ChartManager {
         if (this.priceManager) this.priceManager.resume?.();
     }
 
-    /**
-     * [PERF-SWITCH5] Прерывание текущего переключения новым кликом.
-     *
-     * ЧТО БЫЛО: пока шло переключение, любой новый клик по тикеру/ТФ молча
-     * складывался в ОДИН слот _pendingSwitchRequest и ждал. Если сеть тормозила,
-     * текущее переключение шло до 36 с (с запасными рынками — до 144 с), и всё
-     * это время интерфейс выглядел зависшим: клики не давали ничего.
-     *
-     * ЧТО СТАЛО: если текущее переключение идёт дольше preemptAfterMs, обрываем
-     * его in-flight REST-запрос. Загрузчик вернёт reason='aborted', прогон
-     * корректно завершится через finally (ветка aborted тост об ошибке НЕ
-     * показывает) и сразу диспетчеризует очередь с НОВЫМ запросом.
-     *
-     * Безопасность: данные, уже лёгшие на график, не трогаем — обрываем только
-     * сетевой запрос слота 'switch'.
-     */
-    _preemptCurrentSwitch(preemptAfterMs = 900) {
-        const startedAt = this._switchStartedAt || 0;
-        if (!startedAt) return false;
-        if (Date.now() - startedAt < preemptAfterMs) return false;
-        const slot = FETCH_CONTROLLER_SLOTS['switch'];
-        if (!this[slot] || this[slot].signal.aborted) return false;
-        try { this[slot].abort(); } catch (e) { return false; }
-        console.warn('⏩ [PERF-SWITCH5] новый запрос во время долгого переключения — обрываю текущую загрузку, очередь двигается сразу');
-        return true;
-    }
-
     _queuePendingSwitch(partial) {
         // [FIX-D3] Храним ТОЛЬКО явно запрошенные поля. Раньше базой служил снапшот
         // текущих symbol/exchange/marketType в момент постановки в очередь: клик по
@@ -2708,7 +2663,6 @@ class ChartManager {
     async switchSymbol(symbol, exchange, marketType) {
         if (this._switchingSymbol || this._isSwitchingInterval) {
             this._queuePendingSwitch({ symbol, exchange, marketType });
-            this._preemptCurrentSwitch();   // [PERF-SWITCH5]
             return false;
         }
         const requested = { symbol, exchange, marketType };
@@ -2835,12 +2789,7 @@ class ChartManager {
             }
             if (this._activeGeneration !== generationId) return true;
 
-            // [PERF-SWITCH1] было: `await cacheRefreshPromise` — до 2500 мс.
-            // Данные УЖЕ на графике, а этот await держал _switchingSymbol=true
-            // и чёрный оверлей, из-за чего клик по следующему тикеру уходил в
-            // очередь одного слота. Досинхрон продолжается в фоне; его результат
-            // проверится по _activeGeneration внутри refreshCandlesInBackground.
-            if (cacheRefreshPromise) cacheRefreshPromise.catch(() => {});
+            if (cacheRefreshPromise) await cacheRefreshPromise;
             if (this._activeGeneration !== generationId) return true;
 
             if (!isFromCache) {
@@ -2924,7 +2873,6 @@ class ChartManager {
         } finally {
             if (this._destroyed) { this._clearSwitchWatchdog(); return; }
             this._clearSwitchWatchdog();
-            this._markSwitchFinished();   // [PERF-SWITCH4]
             // [VP-STUCK] общее состояние снимает ТОЛЬКО владелец переключения.
             // «Оживший» после сторожа старый прогон раньше сбрасывал
             // _switchingSymbol/_updatesSuspended у НОВОГО переключения и
@@ -2972,11 +2920,7 @@ class ChartManager {
         // [FIX-D2] Отложенное переключение возвращает маркер {queued:true}, чтобы
         // вызывающий (TimeframeManager) не принял мгновенный возврат за «интервал
         // не сменился» и не откатил бейдж поверх применённого позже переключения.
-        if (this._isSwitchingInterval || this._switchingSymbol) {
-            this._queuePendingSwitch({ interval: newInterval });
-            this._preemptCurrentSwitch();   // [PERF-SWITCH5]
-            return { queued: true };
-        }
+        if (this._isSwitchingInterval || this._switchingSymbol) { this._queuePendingSwitch({ interval: newInterval }); return { queued: true }; }
         if (this.currentInterval === newInterval) return;
 
         this._isSwitchingInterval = true;
@@ -3063,13 +3007,10 @@ class ChartManager {
                 // [FIX-JUMP2] race вернёт true, если фон УСПЕЛ досинхронить кэш под
                 // оверлеем (отдельный _syncRecentCandles в finally тогда не нужен),
                 // и false, если сработал лимит 2500мс — данные могли остаться старыми.
-                // [PERF-SWITCH1] было: await Promise.race([... , 2500 мс]).
-                // Этот await держал _isSwitchingInterval=true и чёрный оверлей
-                // до 2.5 с ПОСЛЕ того, как свечи нового ТФ легли на график.
-                // Теперь досинхрон идёт в фоне, а «усадку» графика выполняет
-                // _syncRecentCandles() в finally (лимит 1200 мс там уже есть).
-                bgRefreshDone = false;
-                this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).catch(() => {});
+                bgRefreshDone = await Promise.race([
+                    this.refreshCandlesInBackground(this.currentSymbol, this.currentExchange, this.currentMarketType, this.currentInterval).then(() => true, () => true),
+                    new Promise(r => setTimeout(() => r(false), 2500))
+                ]) === true;
                 if (this._activeGeneration !== generationId) return;
             }
             // [FIX] Загрузка рисунков для нового таймфрейма — та же логика, что в switchSymbol.
@@ -3082,7 +3023,6 @@ class ChartManager {
         finally {
             if (this._destroyed) { this._clearSwitchWatchdog(); return; }
             this._clearSwitchWatchdog();
-            this._markSwitchFinished();   // [PERF-SWITCH4]
             // [VP-STUCK] см. switchSymbol: состояние трогает только владелец
             const owner = stillOwner();
             // [FIX-FINALLY] см. switchSymbol: finally обязан доходить до конца,
@@ -4039,11 +3979,8 @@ class ChartManager {
                 return {
                     candles: null,
                     reason: `HTTP ${response.status}${code !== null ? ` (code ${code})` : ''}`,
-                    // [PERF-SWITCH3] 429 добавлен в fatal. Ретраи по рейт-лимитованному
-                    // IP — это ровно то, за что Binance повышает 429 до 418 (бан).
-                    // В ticker/TickerPanel.js такое правило уже есть («[ANTI-BAN]»).
                     fatal: response.status === 403 || response.status === 418 || response.status === 451 ||
-                           response.status === 429 || response.status === 404 || invalidSymbol,
+                           response.status === 404 || invalidSymbol,
                     missing: invalidSymbol || response.status === 404,
                     rawCount: 0
                 };
@@ -5227,14 +5164,6 @@ class ChartManager {
             const r = this.chart?.timeScale()?.getVisibleLogicalRange?.();
             if (r && isFinite(r.from) && r.from < this._preloadThresholdFor(r)) return;
             if (this._historyPrefetchRunning) return;
-            // [PERF-SWITCH4] не копаем историю, если пользователь активно
-            // переключает монеты/ТФ: каждая страница — это 1000 свечей + полный
-            // setData + пересчёт индикаторов. При быстром щёлканье эти запросы
-            // съедали rate limit биржи именно тогда, когда нужны были свечи.
-            if (this._switchingSymbol || this._isSwitchingInterval) { setTimeout(tick, 500); return; }
-            if (this._lastSwitchFinishedAt && Date.now() - this._lastSwitchFinishedAt < 1500) {
-                setTimeout(tick, 500); return;
-            }
 
             this._historyPrefetchRunning = true;
             const done = () => { this._historyPrefetchRunning = false; };
