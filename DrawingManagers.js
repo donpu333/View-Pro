@@ -1,0 +1,11457 @@
+
+// ============================================================================
+const VISIBILITY_MINUTE_TFS = new Set(['1m', '3m', '5m', '15m', '30m', '1h']);
+
+/**
+ * Применяет пресет видимости к чекбоксам панели и к объекту рисовалки.
+ * @param {HTMLElement|null} container список чекбоксов (.timeframe-checkbox-list)
+ * @param {object|null} target         объект с полем timeframeVisibility
+ * @param {'all'|'none'|'minutes'} preset
+ * @returns {boolean} true, если что-то применили
+ */
+function applyTimeframePreset(container, target, preset) {
+    if (!container || !target || !target.timeframeVisibility) return false;
+    const boxes = container.querySelectorAll('input[type="checkbox"]');
+    if (!boxes.length) return false;
+    boxes.forEach(cb => {
+        const tf = cb.dataset.timeframe;
+        if (!tf) return;
+        const value = preset === 'all' ? true
+                    : preset === 'none' ? false
+                    : VISIBILITY_MINUTE_TFS.has(tf);
+        cb.checked = value;
+        target.timeframeVisibility[tf] = value;
+    });
+    return true;
+}
+
+/**
+ * Привязывает кнопки «Минутки / Выбрать всё / Снять всё».
+ * ВАЖНО: используется .onclick, поэтому повторный вызов при следующем открытии
+ * панели просто ПЕРЕЗАПИСЫВАЕТ обработчик — дублей и «залипших» замыканий нет.
+ * Все узлы и целевой объект резолвятся В МОМЕНТ КЛИКА.
+ */
+function bindTimeframePresetButtons(cfg) {
+    const { minutesBtnId, allBtnId, noneBtnId, containerId, getTarget, onChange } = cfg || {};
+    const handler = (preset) => (e) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        const container = containerId ? document.getElementById(containerId) : null;
+        const target = typeof getTarget === 'function' ? getTarget() : getTarget;
+        if (!applyTimeframePreset(container, target, preset)) return;
+        if (typeof onChange === 'function') onChange(target);
+    };
+    const bind = (id, preset) => {
+        if (!id) return;
+        const btn = document.getElementById(id);
+        if (btn) btn.onclick = handler(preset);
+    };
+    bind(minutesBtnId, 'minutes');
+    bind(allBtnId, 'all');
+    bind(noneBtnId, 'none');
+}
+
+class HorizontalRay {
+  constructor(price, time, options = {}) {
+    this.price = price;
+    this.time = time;
+    this.anchorTime = options.anchorTime || time;
+    this.id = `ray_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    
+    // ✅ Убираем timeframeVisibility из options
+    const { timeframeVisibility, anchorCandle, originalStartTime, ...restOptions } = options;
+    
+    this.options = {
+        color: restOptions.color || '#4A90E2',
+        lineWidth: restOptions.lineWidth || 1,
+        lineStyle: restOptions.lineStyle || 'solid',
+        opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.9,
+        extendLeft: restOptions.extendLeft || false,
+        extendRight: restOptions.extendRight !== undefined ? restOptions.extendRight : true,
+        showPrice: restOptions.showPrice !== undefined ? restOptions.showPrice : true,
+        fontSize: restOptions.fontSize || 11.8,
+        ...restOptions
+    };
+    
+    this.anchorCandle = anchorCandle || null;
+    this.timeframeVisibility = timeframeVisibility || {
+        '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+        '1h': true, '4h': true, '6h': true, '12h': true,
+        '1d': true, '1w': true, '1M': true
+    };
+    
+    this.selected = false;
+    this.hovered = false;
+    this.dragging = false;
+    this.showDragPoint = false;
+    this.readyToDrag = false;
+    this.attached = false;
+    this.dragPointX = 0;
+    this.dragPointY = 0;
+    if (originalStartTime) this.anchorTime = originalStartTime;
+}
+
+    updateOptions(newOptions) {
+        this.options = { ...this.options, ...newOptions };
+    }
+    
+    isVisibleOnTimeframe(timeframe) {
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+}
+
+
+// ============================================================
+// [PERF-LABEL v3] Канареечный кэш офскрин-спрайтов подписей.
+// Плашка (фон+тень+текст) — дорогая часть кадра (font x2, measureText,
+// shadowBlur): при многих объектах скролл деградирует линейно.
+// Здесь плашка рендерится в offscreen-canvas ОДИН раз и вставляется
+// drawImage(). ЛЮБАЯ ошибка / вырожденный размер / выключенный флаг /
+// исчерпанный бюджет кадра -> get() вернёт null, и рендерер нарисует
+// плашку СТАРЫМ (оригинальным) кодом в том же кадре: поведение без
+// фикса сохраняется полностью, рендер LWC не может быть порван.
+// ============================================================
+window.VP_SPRITE_STATS = window.VP_SPRITE_STATS || { built: 0, hit: 0, fallback: 0, errors: 0 };
+window.__vpSpriteError = function (e) {
+    const st = window.VP_SPRITE_STATS;
+    st.errors += 1;
+    if (st.errors >= 50 && window.VP_SPRITES !== false) {
+        window.VP_SPRITES = false; // авто kill-switch: дальше только оригинальный код
+        try { console.warn('[PERF-LABEL] слишком много ошибок спрайтов -> фикс отключён автоматически', e); } catch (_) {}
+    }
+};
+const DrawingLabelSprites = (() => {
+    const MAX_ENTRIES = 2048;
+    const MAX_BUILDS_PER_FRAME = 48; // шторм ключей (смена символа/ТФ) распределяем по кадрам
+    let builds = 0;
+    if (typeof requestAnimationFrame === 'function') {
+        (function tick() { builds = 0; requestAnimationFrame(tick); })();
+    }
+    const cache = new Map();
+    return {
+        get(key, build) {
+            const st = window.VP_SPRITE_STATS;
+            if (window.VP_SPRITES === false) return null;
+            const hit = cache.get(key);
+            if (hit) {
+                if (hit.canvas.width > 0 && hit.canvas.height > 0) {
+                    st.hit += 1;
+                    cache.delete(key); cache.set(key, hit); // LRU touch
+                    return hit;
+                }
+                cache.delete(key);
+                return null;
+            }
+            if (builds >= MAX_BUILDS_PER_FRAME) return null;
+            builds += 1;
+            let entry = null;
+            try { entry = build(); } catch (e) { window.__vpSpriteError(e); return null; }
+            if (!entry || !entry.canvas) return null;
+            if (entry.canvas.width <= 0 || entry.canvas.height <= 0) return null;
+            if (cache.size >= MAX_ENTRIES) {
+                const oldest = cache.keys().next();
+                if (!oldest.done) cache.delete(oldest.value);
+            }
+            st.built += 1;
+            cache.set(key, entry);
+            return entry;
+        }
+    };
+})();
+
+class HorizontalRayRenderer {
+    constructor(ray, chartManager) {
+        this._ray = ray;
+        this._chartManager = chartManager;
+        this._hitArea = null;
+        this._priceLabelHitArea = null;
+        this._pixelRatio = window.devicePixelRatio || 1;
+    }
+
+    _getBrightness(color) {
+        let r, g, b;
+        
+        const hexMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+        if (hexMatch) {
+            r = parseInt(hexMatch[1], 16);
+            g = parseInt(hexMatch[2], 16);
+            b = parseInt(hexMatch[3], 16);
+        } else {
+            const rgbMatch = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+            if (rgbMatch) {
+                r = parseInt(rgbMatch[1]);
+                g = parseInt(rgbMatch[2]);
+                b = parseInt(rgbMatch[3]);
+            } else {
+                return 255;
+            }
+        }
+        
+        return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+
+  draw(target) {
+    // Сброс hit-областей в начале каждого кадра
+    this._hitArea = null;
+    this._priceLabelHitArea = null;
+
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._ray.symbolKey !== currentKey) return;
+
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const ray = this._ray;
+        const chartManager = this._chartManager;
+
+        const currentTf = chartManager.currentInterval;
+        if (!ray.isVisibleOnTimeframe(currentTf)) return;
+
+        const yCoordinate = chartManager.priceToCoordinate(ray.price);
+        const xCoordinate = chartManager.timeToCoordinate(ray.time);
+        if (yCoordinate === null || xCoordinate === null) return;
+
+        const timeScale = chartManager.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (!visibleRange) return;
+
+        let startX = 0;
+        let endX = scope.mediaSize.width;
+        if (!ray.options.extendLeft) startX = xCoordinate;
+        if (!ray.options.extendRight) endX = xCoordinate;
+
+        const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+        const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+        const { position: yPos, length: yLength } = positionsLine(
+            yCoordinate, scope.verticalPixelRatio, ray.options.lineWidth, false
+        );
+
+        this._hitArea = {
+            y: yPos,
+            height: yLength,
+            x1: Math.min(startPos, endPos),
+            x2: Math.max(startPos, endPos)
+        };
+
+        ctx.save();
+
+        const color = ray.options.color;
+        const opacity = ray.options.opacity !== undefined ? ray.options.opacity : 0.9;
+
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : null;
+        };
+
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? {
+                r: parseInt(result[1], 10),
+                g: parseInt(result[2], 10),
+                b: parseInt(result[3], 10)
+            } : null;
+        };
+
+        let rgbaColor;
+        let parsed = parseHex(color) || parseRgb(color);
+        if (parsed) {
+            rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        } else {
+            rgbaColor = color;
+        }
+
+        ctx.strokeStyle = rgbaColor;
+        ctx.lineWidth = yLength;
+        
+        if (ray.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+        else if (ray.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+        else ctx.setLineDash([]);
+        
+        ctx.beginPath();
+        ctx.moveTo(startPos, yPos + yLength / 2);
+        ctx.lineTo(endPos, yPos + yLength / 2);
+        ctx.stroke();
+
+        if (ray.readyToDrag || ray.dragging) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = rgbaColor;
+            ctx.beginPath();
+            ctx.arc(Math.round(xCoordinate * scope.horizontalPixelRatio), yPos + yLength / 2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+                              if (ray.options.showPrice) {
+            let vpSpriteDone = false;
+            if (window.VP_SPRITES !== false) {
+                try {
+
+        const precision = (typeof chartManager.getDrawingPrecision === 'function')
+            ? chartManager.getDrawingPrecision()
+            : (typeof chartManager._getTitlePrecision === 'function' ? chartManager._getTitlePrecision() : 2);
+        const priceText = ray.price.toFixed(precision);
+        const currentFontSize = parseInt(ray.options.fontSize) > 0 ? parseInt(ray.options.fontSize) : 20;
+        const solidBgColor = parsed ? `rgb(${parsed.r}, ${parsed.g}, ${parsed.b})` : color;
+        const spriteKey = `ray|${priceText}|${currentFontSize}|${solidBgColor}|${scope.horizontalPixelRatio}|${scope.verticalPixelRatio}`;
+        const sprite = DrawingLabelSprites.get(spriteKey, () => {
+            const hpr = scope.horizontalPixelRatio, vpr = scope.verticalPixelRatio;
+            const meas = document.createElement('canvas').getContext('2d');
+            meas.font = `bold ${currentFontSize * hpr}px 'Trebuchet MS', Arial, sans-serif`;
+            const textWidth = meas.measureText(priceText).width;
+            const padding = 10 * hpr;
+            const labelWidth = textWidth + padding * 2;
+            const labelHeight = (currentFontSize + 8) * vpr;
+            const pad = 6;
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.ceil(labelWidth + pad * 2);
+            canvas.height = Math.ceil(labelHeight + pad * 2);
+            const g = canvas.getContext('2d');
+            g.fillStyle = solidBgColor;
+            g.shadowBlur = 3;
+            g.shadowColor = 'rgba(0,0,0,0.4)';
+            g.fillRect(pad, pad, labelWidth, labelHeight);
+            g.shadowBlur = 0;
+            g.shadowColor = 'transparent';
+            g.fillStyle = this._getBrightness(solidBgColor) < 128 ? '#faf3f3' : '#000000';
+            g.font = `bold ${currentFontSize * hpr}px 'Trebuchet MS', Arial, sans-serif`;
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText(priceText, pad + labelWidth / 2, pad + labelHeight / 2);
+            return { canvas, labelWidth, labelHeight, pad };
+        });
+        if (sprite) {
+            const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - sprite.labelWidth - 2;
+            const labelYPos = yPos - sprite.labelHeight / 2;
+            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: sprite.labelWidth, height: sprite.labelHeight };
+            if (sprite.canvas.width > 0 && sprite.canvas.height > 0) ctx.drawImage(sprite.canvas, labelXPos - sprite.pad, labelYPos - sprite.pad);
+        }
+                    vpSpriteDone = true;
+                } catch (e) { window.__vpSpriteError(e); }
+            }
+            if (!vpSpriteDone) {
+                window.VP_SPRITE_STATS.fallback += 1;
+                // [PERF-PAN] БЫЛО: localStorage.getItem() + parseInt() (и иногда
+                // _inferPrecisionFromData()) на КАЖДОМ кадре для КАЖДОГО луча —
+                // синхронное чтение хранилища прямо в горячем пути рендера.
+                const precision = (typeof chartManager.getDrawingPrecision === 'function')
+                    ? chartManager.getDrawingPrecision()
+                    : (typeof chartManager._getTitlePrecision === 'function' ? chartManager._getTitlePrecision() : 2);
+                const priceText = ray.price.toFixed(precision);
+
+                // ЗАЩИТА ОТ ПОЛОВКИ: если размера нет, ставим 20. Иначе луч будет пропадать.
+                const currentFontSize = parseInt(ray.options.fontSize) > 0 ? parseInt(ray.options.fontSize) : 20;
+
+                // Настраиваем шрифт (можете поменять 'Trebuchet MS' на 'Consolas' или 'Arial', если хотите)
+            ctx.font = `bold ${currentFontSize * scope.horizontalPixelRatio}px 'Trebuchet MS', Arial, sans-serif`;
+                const textMetrics = ctx.measureText(priceText);
+                const textWidth = textMetrics.width;
+                const padding = 10 * scope.horizontalPixelRatio;
+                const labelWidth = textWidth + padding * 2;
+                const labelHeight = (currentFontSize + 8) * scope.verticalPixelRatio;
+
+                const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+                const labelYPos = yPos - labelHeight / 2;
+
+                this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: labelWidth, height: labelHeight };
+
+                const solidBgColor = parsed ? `rgb(${parsed.r}, ${parsed.g}, ${parsed.b})` : color;
+                const brightness = this._getBrightness(solidBgColor);
+                const textColor = brightness < 128 ? '#faf3f3' : '#000000';
+
+                // Рисуем плашку с хвостиком
+                ctx.fillStyle = solidBgColor;
+                ctx.shadowBlur = 3;
+                ctx.shadowColor = 'rgba(0,0,0,0.4)';
+                ctx.beginPath();
+                ctx.moveTo(labelXPos, labelYPos);
+                ctx.lineTo(labelXPos + labelWidth, labelYPos);
+                ctx.lineTo(labelXPos + labelWidth, labelYPos + labelHeight);
+                ctx.lineTo(labelXPos, labelYPos + labelHeight);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+
+                // Пишем сам текст цены
+                ctx.fillStyle = textColor;
+                // ПОВТОРНО указываем шрифт перед текстом (Canvas так работает)
+          ctx.font = `bold ${currentFontSize * scope.horizontalPixelRatio}px 'Trebuchet MS', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+            }
+        }
+        ctx.restore();
+    });
+}
+
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
+
+     hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+        const ray = this._ray;
+        const pixelRatio = window.devicePixelRatio || 1;
+
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (Drag Point)
+        // Если луч выделен и готов к перетаскиванию, проверяем попадание СТРОГО в точку
+        if (ray.readyToDrag || ray.dragging) {
+            const xCoordinate = this._chartManager.timeToCoordinate(ray.time);
+            const yCoordinate = this._chartManager.priceToCoordinate(ray.price);
+            if (xCoordinate !== null && yCoordinate !== null) {
+                const pointX = Math.round(xCoordinate * pixelRatio);
+                // Берем центр линии из уже рассчитанной hit-области
+                const centerY = this._hitArea ? (this._hitArea.y + this._hitArea.height / 2) : (yCoordinate * pixelRatio);
+                
+                const dx = x - pointX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Радиус отрисовки точки = 6 * pixelRatio. Даем запас до 12 пикселей для удобного клика
+                if (distance < 12) {
+                    return { type: 'dragPoint', ray: ray, distance: distance };
+                }
+            }
+        }
+
+        // ✅ 2. Ценовая метка (Label)
+        if (this._priceLabelHitArea) {
+            const padding = 10; // ✅ Уменьшили с 15 до 10 для большей точности
+            const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+            const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+            
+            const inX = x >= this._priceLabelHitArea.x - padding && 
+                        x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+            const inY = y >= this._priceLabelHitArea.y - padding && 
+                        y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+                        
+            if (inX && inY) {
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'label', ray: ray, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        // ✅ 3. Линия (с уменьшенным буфером)
+        if (this._hitArea) {
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4 (решает проблему пересечения близких линий!)
+            const centerY = this._hitArea.y + this._hitArea.height / 2;
+            const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+            
+            if (inY) {
+                const distance = Math.abs(y - centerY);
+                if (distance < bestDistance) {
+                    bestHit = { type: 'line', ray: ray, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        return bestHit;
+    }
+}
+class HorizontalRayPaneView {
+    constructor(ray, chartManager) {
+        this._ray = ray;
+        this._chartManager = chartManager;
+        this._renderer = new HorizontalRayRenderer(ray, chartManager);
+    }
+    renderer() { return this._renderer; }
+    zOrder() { return 'top'; }
+}
+
+class HorizontalRayPrimitive {
+    constructor(ray, chartManager) {
+        this._ray = ray;
+        this._chartManager = chartManager;
+        this._paneView = new HorizontalRayPaneView(ray, chartManager);
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+    
+    paneViews() { return [this._paneView]; }
+    
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+        this._syncRayTime();
+    }
+    
+    updateAllViews() {
+        // [PERF-PAN] requestUpdate() из updateAllViews() убран: мы уже внутри
+        // кадра рендера, новое ray.time подхватывается ЭТИМ ЖЕ кадром. Раньше
+        // вызов назначал вторую полную перерисовку графика (а при «прыгающем»
+        // anchor — бесконечную цепочку инвалидаций).
+        this._syncRayTime();
+    }
+    
+    _syncRayTime() {
+        // [PERF-PAN] БЫЛО: два линейных прохода по всему chartData
+        // (до 12 000 свечей на 1m) на КАЖДОМ кадре и на КАЖДЫЙ луч.
+        // При 10 лучах это ~120 000 итераций/кадр только на привязку времени —
+        // главная причина «тормозов» при перетаскивании на коротких ТФ.
+        // СТАЛО: общий бинарный поиск ChartManager.findNearestCandleTime()
+        // с мемоизацией (повторный запрос в том же поколении данных — O(1)).
+        const ray = this._ray;
+        if (!ray) return;
+        const anchor = ray.anchorTime;
+        if (anchor === undefined || anchor === null) return;
+        const cm = this._chartManager;
+        if (!cm || !cm.chartData || cm.chartData.length === 0) return;
+        // floor-семантика (свеча, ВНУТРИ интервала которой лежит anchor) —
+        // ровно как раньше, но O(log N) + кэш
+        const t = (typeof cm.findCandleFloorTime === 'function')
+            ? cm.findCandleFloorTime(anchor)
+            : (typeof cm.findNearestCandleTime === 'function' ? cm.findNearestCandleTime(anchor) : null);
+        if (typeof t === 'number' && isFinite(t)) ray.time = t;
+    }
+    
+    getRay() { return this._ray; }
+    
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+    
+    detached() {}
+}
+
+// ============================================================
+// ✅ ИСПРАВЛЕНО: Centralized Loading Coordinator
+// ============================================================
+class DrawingLoaderCoordinator {
+    constructor() {
+        this._managers = [];
+        this._loadingQueue = new Map();
+        this._currentSymbolKey = null;
+        this._retryCount = 3;
+        this._retryDelay = 300;
+    }
+
+    register(manager, type) {
+        this._managers.push({ manager, type });
+    }
+
+    async loadAllForSymbol(symbolKey) {
+        if (!symbolKey) return;
+        
+        if (this._loadingQueue.has(symbolKey)) {
+            return this._loadingQueue.get(symbolKey);
+        }
+
+        const loadingPromise = this._executeLoadAll(symbolKey);
+        this._loadingQueue.set(symbolKey, loadingPromise);
+
+        try {
+            await loadingPromise;
+        } finally {
+            this._loadingQueue.delete(symbolKey);
+        }
+
+        return loadingPromise;
+    }
+
+    async _executeLoadAll(symbolKey) {
+        console.log(`🔄 [Coordinator] Starting unified load for ${symbolKey}`);
+        
+        try {
+            await this._waitForReady(5000);
+
+            const allDrawings = await window.db.getByIndex('drawings', 'symbolKey', symbolKey);
+            
+            const categorized = this._categorizeDrawings(allDrawings);
+
+            const loadPromises = this._managers.map(({ manager, type }) => {
+                return this._loadWithRetry(() => 
+                    manager.loadFromData?.(symbolKey, categorized[type] || []) ?? Promise.resolve()
+                );
+            });
+
+            const results = await Promise.allSettled(loadPromises);
+            
+            results.forEach((result, index) => {
+                const type = this._managers[index]?.type;
+                if (result.status === 'rejected') {
+                    console.warn(`⚠️ [Coordinator] Failed to load ${type}:`, result.reason);
+                }
+            });
+
+            console.log(`✅ [Coordinator] Load complete for ${symbolKey}`);
+            
+        } catch (error) {
+            console.error(`❌ [Coordinator] Critical error loading ${symbolKey}:`, error);
+        }
+    }
+
+    async _waitForReady(timeoutMs) {
+        const startTime = Date.now();
+        
+        while (Date.now() - startTime < timeoutMs) {
+            const dbReady = window.dbReady === true;
+            const hasChartData = window.chartManager?.chartData?.length > 0;
+            const hasSeries = !!(window.chartManager?.candleSeries || window.chartManager?.barSeries);
+            
+            if (dbReady && hasChartData && hasSeries) {
+                return true;
+            }
+            
+            await new Promise(r => setTimeout(r, 50));
+        }
+        
+        console.warn(`⚠️ [Coordinator] Ready timeout after ${timeoutMs}ms, proceeding anyway`);
+        return false;
+    }
+
+    async _loadWithRetry(loadFn) {
+        for (let attempt = 1; attempt <= this._retryCount; attempt++) {
+            try {
+                await loadFn();
+                return true;
+            } catch (error) {
+                if (attempt < this._retryCount) {
+                    await new Promise(r => setTimeout(r, this._retryDelay * attempt));
+                } else {
+                    throw error;
+                }
+            }
+        }
+    }
+_categorizeDrawings(allDrawings) {
+    return {
+        ray: allDrawings.filter(d => d.type === 'ray'),
+        trendline: allDrawings.filter(d => d.type === 'trendline'),
+        ruler: allDrawings.filter(d => d.type === 'ruler'),
+        alert: allDrawings.filter(d => d.type === 'alert'),
+        text: allDrawings.filter(d => d.type === 'text'),
+        tradelevel: allDrawings.filter(d => d.type === 'tradelevel') // ✅ ИСПРАВЛЕНО: теперь тип совпадает с TradeLevelManager
+    };
+}
+
+    onSymbolChange(newSymbolKey) {
+        if (newSymbolKey && newSymbolKey !== this._currentSymbolKey) {
+            this._currentSymbolKey = newSymbolKey;
+            this.loadAllForSymbol(newSymbolKey);
+        }
+    }
+}
+
+window.drawingLoaderCoordinator = new DrawingLoaderCoordinator();
+
+class HorizontalRayManager {
+       constructor(chartManager) {
+        this._rays = [];
+        this._chartManager = chartManager;
+        this._selectedRay = null;
+        this._hoveredRay = null;
+        this._isDrawingMode = false;
+        this._magnetEnabled = true;
+        this._isDragging = false;
+        this._dragRay = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragStartTime = 0;
+        this._dragItem = null;
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._needsRedraw = false;
+        this._currentSymbolKey = this._getCurrentSymbolKey();
+        this._isLoading = false;
+        this._handleDblClick = this._handleDblClickFn.bind(this);
+        this._pendingMouseEvent = null;
+        this._hoverRafId = null;
+        this._pixelRatio = window.devicePixelRatio || 1;
+
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+
+        window.drawingLoaderCoordinator.register(this, 'ray');
+
+        setTimeout(async () => {
+            try {
+                if (!window.dbReady) {
+                    await new Promise(resolve => {
+                        const startedAt = Date.now();
+                        const check = () => {
+                            if (window.dbReady || Date.now() - startedAt > 10000) resolve();
+                            else setTimeout(check, 50);
+                        };
+                        check();
+                    });
+                }
+
+                console.log('🚀 Auto-loading rays...');
+                await this.loadRays();
+                console.log('✅ Rays auto-loaded successfully');
+            } catch (error) {
+                console.error('❌ Auto-load rays failed:', error);
+            }
+        }, 150);
+    }
+
+    // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
+ async loadFromData(symbolKey, rayRecords) {
+    if (this._getCurrentSymbolKey() !== symbolKey) {
+        console.warn('⏹️ Symbol changed during load, aborting');
+        return;
+    }
+
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+
+        if (!series) {
+            console.warn('Series not ready for rays, skipping');
+            return;
+        }
+
+        // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+        // ✅ Собираем существующие ID для atomic update
+        const existingIds = new Set(
+            this._rays
+                .filter(item => item.ray.symbolKey === symbolKey)
+                .map(item => item.ray.id)
+        );
+        
+        const newRecordIds = new Set(rayRecords.map(r => r.id));
+        
+        // ✅ Удаляем только те, которых больше нет в БД
+        const toDetach = this._rays.filter(item => 
+            item.ray.symbolKey === symbolKey && !newRecordIds.has(item.ray.id)
+        );
+        
+        for (const item of toDetach) {
+            try { 
+                if (item.series && item.primitive) {
+                    item.series.detachPrimitive(item.primitive); 
+                }
+            } catch(e) {}
+        }
+        
+        this._rays = this._rays.filter(item => 
+            item.ray.symbolKey !== symbolKey || newRecordIds.has(item.ray.id)
+        );
+
+        // ✅ Создаем только новые или обновляем существующие
+        const newRays = [];
+        
+        for (const rec of rayRecords) {
+            try {
+                const existing = this._rays.find(item => item.ray.id === rec.id);
+                
+                if (existing) {
+                    // Обновляем данные существующего
+                    existing.ray.price = rec.data.price;
+                    existing.ray.time = rec.data.time;
+                    existing.ray.anchorTime = rec.data.anchorTime;
+                    existing.ray.options = { ...existing.ray.options, ...rec.data.options };
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    existing.ray.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    existing.ray.anchorCandle = rec.data.anchorCandle;
+                    continue;
+                }
+
+                const ray = new HorizontalRay(rec.data.price, rec.data.time, rec.data.options);
+                ray.id = rec.id;
+                ray.anchorTime = rec.data.anchorTime;
+                
+                // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                ray.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                
+                ray.anchorCandle = rec.data.anchorCandle;
+                ray.symbolKey = rec.symbolKey;
+
+                const primitive = new HorizontalRayPrimitive(ray, this._chartManager);
+                series.attachPrimitive(primitive);
+                newRays.push({ ray, primitive, series });
+            } catch (e) {
+                console.warn('Failed to attach ray:', rec.id, e);
+            }
+        }
+
+        this._rays.push(...newRays);
+        this._requestRedraw();
+        
+        console.log(`✅ Loaded ${rayRecords.length} rays for ${symbolKey}`);
+        
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
+    }
+}
+    _toBitmapCoords(cssX, cssY) {
+        return {
+            x: cssX * this._pixelRatio,
+            y: cssY * this._pixelRatio
+        };
+    }
+
+    _getCurrentSymbolKey() {
+        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const marketType = this._chartManager.currentMarketType || 'futures';
+        return `${symbol}:${exchange}:${marketType}`;
+    }
+    
+    _getRaysForCurrentSymbol() {
+        const currentKey = this._getCurrentSymbolKey();
+        return this._rays.filter(item => item.ray.symbolKey === currentKey);
+    }
+      _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        
+        this._isDragging = false;
+        this._potentialDrag = null;
+
+        if (this._dragRay) {
+            this._dragRay.dragging = false;
+            this._dragRay.attached = false;
+            
+            const newAnchor = this._findClosestCandleTime(this._dragRay.time);
+            if (newAnchor) this._dragRay.anchorTime = newAnchor;
+            
+            this._saveRays();
+            this._dragRay = null;
+            this._dragItem = null;
+            this._requestRedraw();
+        }
+        
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            
+            if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                const newState = !this._isDrawingMode;
+                this.setDrawingMode(newState);
+                if (window.trendLineManager && newState) window.trendLineManager.setDrawingMode(false);
+                if (window.rulerLineManager && newState) window.rulerLineManager.setDrawingMode(false);
+                if (window.alertLineManager && newState) window.alertLineManager.setDrawingMode(false);
+                if (window.textManager && newState) window.textManager.setDrawingMode(false);
+                console.log(`Горизонтальный луч ${newState ? 'включён' : 'выключён'}`);
+            }
+            
+            if (e.key === 'Delete' && this._selectedRay && this._selectedRay.readyToDrag === true) {
+                e.preventDefault();
+                this.deleteRay(this._selectedRay.id);
+                this._selectedRay = null;
+            }
+        });
+    }
+
+    _handleContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+        
+        const hit = this.hitTest(x, y);
+
+        if (hit) {
+            if (this._selectedRay && this._selectedRay !== hit.ray) {
+                this._selectedRay.selected = false;
+                this._selectedRay.showDragPoint = false;
+                this._selectedRay.attached = false;
+            }
+
+            hit.ray.selected = true;
+            hit.ray.attached = false;
+
+            let rayX = this._chartManager.timeToCoordinate(hit.ray.time);
+            let rayY = this._chartManager.priceToCoordinate(hit.ray.price);
+            
+            if (rayX !== null && rayY !== null) {
+                hit.ray.dragPointX = rayX * this._pixelRatio;
+                hit.ray.dragPointY = rayY * this._pixelRatio;
+            }
+
+            this._selectedRay = hit.ray;
+            this._requestRedraw();
+            
+            const menu = document.getElementById('drawingContextMenu');
+            if (menu) {
+                document.getElementById('trendContextMenu').style.display = 'none';
+                document.getElementById('alertContextMenu').style.display = 'none';
+                
+                menu.style.display = 'flex';
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
+                
+                const copyBtn = document.getElementById('contextCopyBtn');
+                const newCopyBtn = copyBtn.cloneNode(true);
+                copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
+                newCopyBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    const priceText = Utils.formatPrice(hit.ray.price);
+                    navigator.clipboard?.writeText(priceText);
+                    menu.style.display = 'none';
+                };
+                
+                const settingsBtn = document.getElementById('contextSettingsBtn');
+                const newSettingsBtn = settingsBtn.cloneNode(true);
+                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
+                newSettingsBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    this._showSettings(hit.ray);
+                    menu.style.display = 'none';
+                };
+                
+                const deleteBtn = document.getElementById('contextDeleteBtn');
+                const newDeleteBtn = deleteBtn.cloneNode(true);
+                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+                newDeleteBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    this.deleteRay(hit.ray.id);
+                    menu.style.display = 'none';
+                };
+            }
+        } else {
+            const menu = document.getElementById('drawingContextMenu');
+            if (menu) menu.style.display = 'none';
+        }
+    }
+       _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+        
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+
+            const rect = container.getBoundingClientRect();
+            const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+            const hit = this.hitTest(x, y);
+            if (hit) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                if (this._selectedRay && this._selectedRay === hit.ray) {
+                    if (!hit.ray.readyToDrag) {
+                        hit.ray.readyToDrag = true;
+                        hit.ray.showDragPoint = true;
+                    }
+                } else {
+                    if (this._selectedRay) {
+                        this._selectedRay.selected = false;
+                        this._selectedRay.showDragPoint = false;
+                        this._selectedRay.readyToDrag = false;
+                        this._selectedRay.attached = false;
+                    }
+                    hit.ray.selected = true;
+                    hit.ray.attached = true;
+                    hit.ray.readyToDrag = false;
+                    this._selectedRay = hit.ray;
+                }
+
+                let rayX = this._chartManager.timeToCoordinate(hit.ray.time);
+                let rayY = this._chartManager.priceToCoordinate(hit.ray.price);
+                if (rayX !== null && rayY !== null) {
+                    hit.ray.dragPointX = rayX * this._pixelRatio;
+                    hit.ray.dragPointY = rayY * this._pixelRatio;
+                }
+
+                if (hit.ray.readyToDrag) {
+
+                    this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
+                    this._potentialDrag = {
+                        ray: hit.ray,
+                        startX: x,
+                        startY: y,
+                        startPrice: hit.ray.price,
+                        startTime: hit.ray.time
+                    };
+                }
+
+                this._requestRedraw();
+            }
+             else {
+                const rayMenu = document.getElementById('drawingContextMenu');
+                if (rayMenu && rayMenu.style.display === 'flex') {
+                    const menuRect = rayMenu.getBoundingClientRect();
+                    const isClickInsideMenu = 
+                        e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
+                        e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+                    if (isClickInsideMenu) return;
+                }
+
+                if (this._dragRay) {
+                    this._dragRay.selected = false;
+                    this._dragRay.showDragPoint = false;
+                    this._dragRay.readyToDrag = false;
+                    this._dragRay.attached = false;
+                    this._dragRay = null;
+                }
+                if (this._selectedRay) {
+                    this._selectedRay.selected = false;
+                    this._selectedRay.showDragPoint = false;
+                    this._selectedRay.readyToDrag = false;
+                    this._selectedRay.attached = false;
+                    this._selectedRay = null;
+                }
+                
+                if (rayMenu) rayMenu.style.display = 'none';
+                
+                this._requestRedraw();
+            }
+        });
+
+        // [ШАГ 2] RAF-троттлинг + guard скролла для mousemove.
+        container.addEventListener('mousemove', (e) => {
+            if (this._isDragging || this._potentialDrag) {
+                this._processMouseMove(e);
+                return;
+            }
+
+            if ((this._chartManager._isScrolling || this._chartManager._isScrollingFast) && !this._potentialDrag && !this._isDragging) {   // [DRAW-DRAG] свой драг не глушим
+                if (this._hoveredRay) {
+                    this._hoveredRay.hovered = false;
+                    this._hoveredRay = null;
+                    this._requestRedraw();
+                }
+                return;
+            }
+
+            this._pendingMouseEvent = e;
+            if (this._hoverRafId) return;
+            this._hoverRafId = requestAnimationFrame(() => {
+                this._hoverRafId = null;
+                this._processMouseMove(this._pendingMouseEvent);
+            });
+        });
+
+        container.addEventListener('mouseup', (e) => {
+            this._potentialDrag = null;
+
+            if (this._isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                this._isDragging = false;
+                if (this._dragRay) {
+                    this._dragRay.dragging = false;
+                    this._dragRay.attached = false;
+                    
+                    const newAnchor = this._findClosestCandleTime(this._dragRay.time);
+                    if (newAnchor) {
+                        this._dragRay.anchorTime = newAnchor;
+                    }
+                    
+                    this._saveRays();
+                    this._dragRay = null;
+                    this._dragItem = null;
+                    this._requestRedraw();
+                }
+
+                container.style.cursor = 'crosshair';
+
+                setTimeout(() => {
+                    const moveEvent = new MouseEvent('mousemove', {
+                        clientX: e.clientX,
+                        clientY: e.clientY
+                    });
+                    container.dispatchEvent(moveEvent);
+                }, 10);
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            if (this._hoverRafId) {
+                cancelAnimationFrame(this._hoverRafId);
+                this._hoverRafId = null;
+            }
+            this._pendingMouseEvent = null;
+
+            if (this._hoveredRay) {
+                this._hoveredRay.hovered = false;
+                this._hoveredRay = null;
+                this._requestRedraw();
+            }
+            container.style.cursor = 'crosshair';
+        });
+
+        container.addEventListener('click', (e) => {
+            if (this._isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            if (this._isDrawingMode) {
+                this._handleChartClick(e);
+            }
+        });
+
+        container.addEventListener('contextmenu', (e) => {
+            this._handleContextMenu(e);
+        });
+    }
+
+    // [ШАГ 2] Сюда переехало старое тело mousemove — вызывается либо напрямую
+    // (при drag), либо через RAF (при hover).
+       _processMouseMove(e) {
+        const container = this._chartManager.chartContainer;
+        // [DRAW-PERF] rect кэшируется на 300 мс: getBoundingClientRect() на каждом
+        // кадре мыши — принудительный layout всей страницы; на насыщенном DOM
+        // перетаскивание становилось «тяжёлым».
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
+
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(bmX - this._potentialDrag.startX);
+            const dy = Math.abs(bmY - this._potentialDrag.startY);
+
+            if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                this._isDragging = true;
+                this._dragRay = this._potentialDrag.ray;
+                this._dragRay.dragging = true;
+                this._dragItem = this._rays.find(it => it.ray === this._dragRay) || null;
+
+                this._dragStartX = this._potentialDrag.startX;
+                this._dragStartY = this._potentialDrag.startY;
+                this._dragStartPrice = this._potentialDrag.startPrice;
+                this._dragStartTime = this._potentialDrag.startTime;
+
+                container.style.cursor = 'grabbing';
+            }
+        }
+
+        if (this._isDragging && this._dragRay) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+            const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+            const rayX = this._chartManager.timeToCoordinate(this._dragStartTime);
+            const rayY = this._chartManager.priceToCoordinate(this._dragStartPrice);
+
+            if (rayX !== null && rayY !== null) {
+                const newX = rayX + deltaX;
+                const newY = rayY + deltaY;
+
+                const newPrice = this._chartManager.coordinateToPrice(newY);
+                const newTime = this._chartManager.coordinateToTime(newX);
+
+                if (newPrice !== null) {
+                    this._dragRay.price = newPrice;
+                }
+                if (newTime !== null) {
+                    this._dragRay.time = newTime;
+                    this._dragRay.anchorTime = newTime;
+                }
+                
+                const newRayX = this._chartManager.timeToCoordinate(this._dragRay.time);
+                const newRayY = this._chartManager.priceToCoordinate(this._dragRay.price);
+
+                if (newRayX !== null && newRayY !== null) {
+                    this._dragRay.dragPointX = newRayX;
+                    this._dragRay.dragPointY = newRayY;
+                }
+
+                this._requestRedraw(this._dragItem);
+            }
+        } else {
+            const raysForCurrent = this._getRaysForCurrentSymbol();
+            let hit = null;
+            
+            for (const item of raysForCurrent) {
+                if (!item.primitive || !item.primitive._paneView || !item.primitive._paneView._renderer) continue;
+                const hitType = item.primitive._paneView._renderer.hitTest(bmX, bmY);
+                if (hitType) {
+                    hit = { ray: item.ray, type: hitType };
+                    break;
+                }
+            }
+            
+            const hitRay = hit ? hit.ray : null;
+
+            if (hitRay) {
+                container.style.cursor = hitRay.readyToDrag ? 'grab' : 'default';
+            } else {
+                container.style.cursor = 'crosshair';
+            }
+
+            if (this._hoveredRay !== hitRay) {
+                if (this._hoveredRay) {
+                    this._hoveredRay.hovered = false;
+                }
+                this._hoveredRay = hitRay;
+                if (hitRay) {
+                    hitRay.hovered = true;
+                }
+                this._requestRedraw();
+            }
+        }
+    }
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        
+        const rayBtn = document.getElementById('toolHorizontalRay');
+        if (rayBtn) {
+            if (enabled) {
+                rayBtn.style.background = '#4A90E2';
+                rayBtn.style.color = '#FFFFFF';
+                rayBtn.classList.add('active');
+            } else {
+                rayBtn.style.background = '';
+                rayBtn.style.color = '';
+                rayBtn.classList.remove('active');
+            }
+        }
+    }
+
+    setMagnetEnabled(enabled) {
+        this._magnetEnabled = enabled;
+        const magnetBtn = document.getElementById('toolMagnet');
+        if (magnetBtn) {
+            if (enabled) {
+                magnetBtn.style.background = '#4A90E2';
+                magnetBtn.style.color = '#FFFFFF';
+                magnetBtn.classList.add('magnet-active');
+            } else {
+                magnetBtn.style.background = '';
+                magnetBtn.style.color = '';
+                magnetBtn.classList.remove('magnet-active');
+            }
+        }
+    }
+
+    createRay(price, time, options = {}) {
+        const defaultVisibility = {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+        
+        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        
+               const ray = new HorizontalRay(price, time, options);
+        ray.timeframeVisibility = timeframeVisibility;
+        ray.anchorTime = time;
+        if (options.anchorCandle) {
+            ray.anchorCandle = { ...options.anchorCandle };
+        }
+        
+        ray.symbolKey = this._getCurrentSymbolKey();
+        ray.symbol = this._chartManager.currentSymbol;
+        ray.exchange = this._chartManager.currentExchange;
+        ray.marketType = this._chartManager.currentMarketType;
+        
+        const primitive = new HorizontalRayPrimitive(ray, this._chartManager);
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+        series.attachPrimitive(primitive);
+        this._rays.push({ ray, primitive, series });
+        this._saveRays();
+        return ray;
+    }
+    
+    deleteRay(rayId) {
+        console.log('🗑️ Удаление луча:', rayId);
+        
+        const index = this._rays.findIndex(r => r.ray.id === rayId);
+        if (index !== -1) {
+            const { primitive, series, ray } = this._rays[index];
+            
+            window.db.delete('drawings', rayId).catch(e => console.warn(e));
+            
+            try { 
+                if (series && primitive) {
+                    series.detachPrimitive(primitive); 
+                }
+            } catch (e) {
+                console.warn('Ошибка при detach:', e);
+            }
+            this._rays.splice(index, 1);
+            
+            if (this._selectedRay && this._selectedRay.id === rayId) {
+                this._selectedRay = null;
+            }
+            if (this._dragRay && this._dragRay.id === rayId) {
+                this._dragRay = null;
+            }
+            
+            this._saveRays();
+            this._requestRedraw();
+            
+            const menu = document.getElementById('drawingContextMenu');
+            if (menu) menu.style.display = 'none';
+            
+            return true;
+        } else {
+            console.warn('Луч не найден:', rayId);
+            return false;
+        }
+    }
+
+    deleteAllRays() {
+        const currentKey = this._getCurrentSymbolKey();
+        const raysToDelete = this._rays.filter(item => item.ray.symbolKey === currentKey);
+        
+        for (const item of raysToDelete) {
+            window.db.delete('drawings', item.ray.id).catch(e => console.warn(e));
+        }
+        
+        raysToDelete.forEach(({ primitive, series }) => {
+            try { 
+                if (series && primitive) {
+                    series.detachPrimitive(primitive); 
+                }
+            } catch(e) {}
+        });
+        
+        this._rays = this._rays.filter(item => item.ray.symbolKey !== currentKey);
+        
+        if (this._selectedRay && this._selectedRay.symbolKey === currentKey) {
+            this._selectedRay = null;
+        }
+        if (this._dragRay && this._dragRay.symbolKey === currentKey) {
+            this._dragRay = null;
+        }
+        
+        this._saveRays();
+        this._requestRedraw();
+    }
+    
+    _detachAllPrimitivesForSymbol(symbolKey) {
+        const itemsForSymbol = this._rays.filter(item => item.ray.symbolKey === symbolKey);
+        for (const item of itemsForSymbol) {
+            if (item.primitive && item.series) {
+                try { 
+                    item.series.detachPrimitive(item.primitive); 
+                } catch(e) {}
+            }
+        }
+        this._rays = this._rays.filter(item => item.ray.symbolKey !== symbolKey);
+    }
+    
+       hitTest(x, y) {
+        const raysForCurrent = this._getRaysForCurrentSymbol();
+        
+        // 1. Абсолютный приоритет: уже выбранный луч (чтобы не соскальзывать на соседний при перетаскивании)
+        if (this._selectedRay) {
+            const selItem = raysForCurrent.find(item => item.ray === this._selectedRay);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                if (hit) return { ray: this._selectedRay, type: hit.type, distance: hit.distance };
+            }
+        }
+        
+        let bestHit = null;
+        let bestDistance = Infinity;
+        
+        // 2. Идем с КОНЦА массива (Z-Index: последние нарисованные объекты находятся "сверху")
+        for (let i = raysForCurrent.length - 1; i >= 0; i--) {
+            const item = raysForCurrent[i];
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.ray === this._selectedRay) continue;
+            
+            const hit = item.primitive._paneView._renderer.hitTest(x, y);
+            
+            if (hit && hit.distance !== undefined) {
+                // ✅ Если текущий объект ближе минимум на 2 пикселя — он точно побеждает
+                if (hit.distance < bestDistance - 2) {
+                    bestHit = { ray: item.ray, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                } 
+                // ✅ Если расстояния почти равны (разница в пределах 2 пикселей), 
+                // то побеждает тот, который "выше" (то есть идет позже в массиве, так как мы идем с конца)
+                else if (hit.distance <= bestDistance + 2) {
+                    bestHit = { ray: item.ray, type: hit.type, distance: hit.distance };
+                    bestDistance = hit.distance;
+                }
+            }
+        }
+        
+        return bestHit;
+    }
+
+    _handleChartClick(event) {
+        if (!this._isDrawingMode) return;
+        
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._chartManager.coordinateToTime(x);
+        let anchorCandle = null;
+        
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle();
+            if (lastCandle) {
+                price = lastCandle.close;
+                time = lastCandle.time;
+            } else {
+                return;
+            }
+        }
+        
+        if (this._magnetEnabled) {
+            const snapped = this._snapToPrice(price, time);
+            price = snapped.price;
+            time = snapped.time;
+            anchorCandle = snapped.anchorCandle;
+        }
+        
+        this.createRay(price, time, {
+            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#0933e2',
+            lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
+            lineStyle: document.getElementById('templateSelect')?.value || 'solid',
+            opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9,
+            showPrice: true,
+            anchorCandle: anchorCandle
+        });
+        
+        this.setDrawingMode(false);
+    }
+    
+    _snapToPrice(price, time) {
+        if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
+        
+        const data = this._chartManager.chartData;
+        
+        // [PERF-PAN] O(log N) вместо линейного скана: _snapToPrice вызывается
+        // на каждое движение мыши при рисовании/перетаскивании объекта.
+        const closestCandle = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
+        
+        const priceY = this._chartManager.priceToCoordinate(price);
+        const highY = this._chartManager.priceToCoordinate(closestCandle.high);
+        const lowY = this._chartManager.priceToCoordinate(closestCandle.low);
+        const closeY = this._chartManager.priceToCoordinate(closestCandle.close);
+        
+        if (priceY === null || highY === null) return { price, time, anchorCandle: null };
+        
+        const dHighPx = Math.abs(highY - priceY);
+        const dLowPx = Math.abs(lowY - priceY);
+        const dClosePx = Math.abs(closeY - priceY);
+        
+        let snappedPrice = price;
+        let anchorType = null;
+        const MAGNET_THRESHOLD = 150;
+        
+        const minDistPx = Math.min(dHighPx, dLowPx, dClosePx);
+        
+        if (minDistPx < MAGNET_THRESHOLD) {
+            if (minDistPx === dHighPx) {
+                snappedPrice = closestCandle.high;
+                anchorType = 'high';
+            } else if (minDistPx === dLowPx) {
+                snappedPrice = closestCandle.low;
+                anchorType = 'low';
+            } else {
+                snappedPrice = closestCandle.close;
+                anchorType = 'close';
+            }
+        }
+        
+        return { 
+            price: snappedPrice, 
+            time: closestCandle.time,
+            anchorCandle: {
+                time: closestCandle.time,
+                type: anchorType,
+                price: snappedPrice
+            }
+        };
+    }
+    
+    _findClosestCandleTime(time) {
+        if (!this._chartManager.chartData.length) return time;
+        // [PERF-PAN] O(log N) вместо линейного скана по всем свечам
+        const cm = this._chartManager;
+        if (typeof cm.findNearestCandleTime === 'function') {
+            const t = cm.findNearestCandleTime(time);
+            if (typeof t === 'number' && isFinite(t)) return t;
+        }
+        return cm.chartData[0].time;
+    }
+_showSettings(ray) {
+    const settings = document.getElementById('drawingSettings');
+
+    // [FIX-VIS] фиксируем ТЕКУЩИЙ луч: обработчики вкладки «Видимость» берут
+    // цель отсюда, а не из замыкания, созданного при первом открытии панели.
+    this._selectedRay = ray;
+    
+    document.getElementById('currentColorBox').style.backgroundColor = ray.options.color;
+    document.getElementById('hexInputInline').value = ray.options.color;
+    document.getElementById('settingThickness').value = ray.options.lineWidth;
+    document.getElementById('templateSelect').value = ray.options.lineStyle;
+    document.getElementById('colorOpacity').value = Math.round(ray.options.opacity * 100);
+    document.getElementById('colorOpacityValue').textContent = document.getElementById('colorOpacity').value + '%';
+    
+    const priceInput = document.getElementById('settingsPriceInput');
+    if (priceInput) {
+        priceInput.value = Utils.formatPrice(ray.price);
+          priceInput.oncontextmenu = (e) => e.stopPropagation();
+    }
+    
+    createColorGrid('inlineColorsGrid', 'currentColorBox', 'colorPickerInline', 'hexInputInline', ray.options.color, 'addColorInline');
+    const hexInput = document.getElementById('hexInputInline');
+    if (hexInput) {
+              hexInput.oncontextmenu = (e) => e.stopPropagation();
+    }
+
+    this._renderTimeframeCheckboxes(ray);
+    
+    settings.style.display = 'block';
+    settings.style.left = '50%';
+    settings.style.top = '50%';
+    settings.style.transform = 'translate(-50%, -50%)';
+    
+       if (!settings.dataset.vpBound) {
+        settings.dataset.vpBound = 'true';
+        settings.addEventListener('mousedown', (e) => e.stopPropagation());
+        settings.addEventListener('mousemove', (e) => e.stopPropagation());
+        settings.addEventListener('mouseup', (e) => e.stopPropagation());
+        settings.addEventListener('click', (e) => e.stopPropagation());
+    }
+    let header = settings.querySelector('.settings-header');
+    if (!header) {
+        header = document.createElement('div');
+        header.className = 'settings-header';
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #404040;';
+        
+        const title = document.createElement('span');
+        title.textContent = 'Настройки луча';
+        title.style.color = '#c5c3c3';
+        title.style.fontSize = '14px';
+        title.style.fontWeight = 'bold';
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background: transparent; border: none; color: #B0B0B0; font-size: 18px; cursor: pointer; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px;';
+        closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
+        closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+        closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            settings.style.display = 'none';
+        };
+        
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        settings.insertBefore(header, settings.firstChild);
+    }
+    
+       if (this._closeOnOutsideClick) {
+        document.removeEventListener('mousedown', this._closeOnOutsideClick);
+    }
+    
+    this._closeOnOutsideClick = (e) => {
+        if (!settings.contains(e.target) && settings.style.display === 'block') {
+            settings.style.display = 'none';
+            document.removeEventListener('mousedown', this._closeOnOutsideClick);
+            this._closeOnOutsideClick = null;
+        }
+    };
+    
+    setTimeout(() => {
+        if (this._closeOnOutsideClick) {
+            document.addEventListener('mousedown', this._closeOnOutsideClick);
+        }
+    }, 100);
+    
+    const stylePanel = document.getElementById('stylePanel');
+    const visibilityPanel = document.getElementById('visibilityPanel');
+    const tabs = document.querySelectorAll('#drawingSettings .settings-tab');
+    
+    tabs.forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.dataset.settingsTab === 'style') {
+            tab.classList.add('active');
+        }
+    });
+    stylePanel.classList.add('active');
+    visibilityPanel.classList.remove('active');
+    
+    tabs.forEach(tab => {
+        const newTab = tab.cloneNode(true);
+        tab.parentNode.replaceChild(newTab, tab);
+    });
+    
+    document.querySelectorAll('#drawingSettings .settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('#drawingSettings .settings-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            
+            if (tab.dataset.settingsTab === 'style') {
+                stylePanel.classList.add('active');
+                visibilityPanel.classList.remove('active');
+            } else {
+                stylePanel.classList.remove('active');
+                visibilityPanel.classList.add('active');
+            }
+        });
+    });
+    
+    const applyBtn = document.getElementById('applyPriceBtn');
+    const newApplyBtn = applyBtn.cloneNode(true);
+    applyBtn.parentNode.replaceChild(newApplyBtn, applyBtn);
+    
+    newApplyBtn.addEventListener('click', () => {
+        const newPrice = parseFloat(document.getElementById('settingsPriceInput').value);
+        if (!isNaN(newPrice)) {
+            ray.price = newPrice;
+            this._requestRedraw();
+            this._saveRays();
+        }
+    });
+    
+    const saveBtn = document.getElementById('saveSettings');
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+    
+    newSaveBtn.addEventListener('click', () => {
+        ray.updateOptions({
+            color: document.getElementById('currentColorBox').style.backgroundColor,
+            lineWidth: parseInt(document.getElementById('settingThickness').value),
+            lineStyle: document.getElementById('templateSelect').value,
+            opacity: parseInt(document.getElementById('colorOpacity').value) / 100
+        });
+        this._requestRedraw();
+        settings.style.display = 'none';
+        this._saveRays();
+    });
+    
+    const deleteBtn = document.getElementById('deleteDrawing');
+    const newDeleteBtn = deleteBtn.cloneNode(true);
+    deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+    
+    newDeleteBtn.addEventListener('click', () => {
+        this.deleteRay(ray.id);
+        settings.style.display = 'none';
+        this._requestRedraw();
+    });
+
+    // ========== КНОПКА "МИНУТКИ" ==========
+    // [FIX-VIS] привязка переехала в _renderTimeframeCheckboxes(ray): там она
+    // выполняется при КАЖДОМ открытии панели через .onclick и всегда работает
+    // с текущим лучом + сразу делает redraw и save.
+    
+
+    // ========== ПЕРЕТАСКИВАНИЕ ПАНЕЛИ ==========
+    // [FIX] Здесь было повреждение после неудачного merge («wind// ... }ow.makePanelDraggable(...);»):
+    // строка window.makePanelDraggable оказалась разорвана вклеенным if-блоком, и при
+    // КАЖДОМ открытии настроек луча бросался ReferenceError: wind is not defined.
+    if (typeof window.makePanelDraggable === 'function') {
+        window.makePanelDraggable(settings);
+    }
+}
+
+    _renderTimeframeCheckboxes(ray) {
+        const container = document.getElementById('timeframeCheckboxList');
+        if (!container) return;
+        
+        const tfLabels = {
+            '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
+            '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
+            '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
+        };
+        
+        let html = '';
+        const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        
+        timeframes.forEach(tf => {
+            const isChecked = ray.timeframeVisibility[tf] !== false;
+            const label = tfLabels[tf] || tf;
+            const shortLabel = tf;
+            
+            html += `
+                <div class="timeframe-checkbox-item">
+                    <input type="checkbox" id="tf_${tf}_${ray.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}>
+                    <label for="tf_${tf}_${ray.id}">${label}</label>
+                    <span class="tf-badge">${shortLabel}</span>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+        
+        // [FIX-VIS] цель всегда берём динамически — текущий открытый луч.
+        const getTarget = () => this._selectedRay || ray;
+
+        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.onchange = (e) => {
+                const target = getTarget();
+                if (!target) return;
+                target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+                this._requestRedraw();
+                this._saveRays();   // [FIX-VIS] видимость не сохранялась в IndexedDB
+            };
+        });
+
+        // [FIX-VIS] «Минутки / Выбрать всё / Снять всё» — .onclick (перезапись
+        // при каждом открытии панели), redraw + save после применения.
+        bindTimeframePresetButtons({
+            minutesBtnId: 'selectMinutesTimeframes',
+            allBtnId: 'selectAllTimeframes',
+            noneBtnId: 'deselectAllTimeframes',
+            containerId: 'timeframeCheckboxList',
+            getTarget,
+            onChange: () => { this._requestRedraw(); this._saveRays(); }
+        });
+    }
+    
+    syncWithNewTimeframe() {
+        const raysForCurrent = this._getRaysForCurrentSymbol();
+        raysForCurrent.forEach(item => {
+            if (item.primitive && item.primitive.updateAllViews) {
+                item.primitive.updateAllViews();
+            }
+            if (item.primitive && item.primitive.requestRedraw) {
+                item.primitive.requestRedraw();
+            }
+        });
+        this._requestRedraw();
+    }
+    
+      _requestRedraw(item = null) {
+        // [ШАГ 3] Быстрый путь: перерисовать ровно один объект (drag, settings)
+        if (item && item.primitive?.requestRedraw) {
+            item.primitive.requestRedraw();
+            return;
+        }
+        // Медленный путь: перерисовать всё для текущего символа (загрузка, удаление)
+        const raysForCurrent = this._getRaysForCurrentSymbol();
+        raysForCurrent.forEach(it => { 
+            if (it.primitive?.requestRedraw) {
+                it.primitive.requestRedraw();
+            }
+        });
+    }
+
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._rays?.forEach(item => { 
+                if (item.primitive?.requestRedraw) {
+                    item.primitive.requestRedraw();
+                }
+            });
+        }
+    }
+
+    _handleDblClickFn(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const { x, y } = this._toBitmapCoords(e.clientX - rect.left, e.clientY - rect.top);
+        const hit = this.hitTest(x, y);
+        
+        this._rays.forEach(item => {
+            item.ray.readyToDrag = false;
+            item.ray.showDragPoint = false;
+        });
+        
+        if (hit && hit.ray) {
+            hit.ray.readyToDrag = true;
+            hit.ray.showDragPoint = true;
+            hit.ray.selected = true;
+            this._selectedRay = hit.ray;
+            this._readyToDragRay = hit.ray;
+            this._requestRedraw();
+        } else {
+            this._selectedRay = null;
+            this._readyToDragRay = null;
+            this._requestRedraw();
+        }
+    }
+    
+    async _saveRays() {
+        if (this._rays.length === 0) return;
+        
+        const promises = this._rays.map(({ ray }) => 
+            window.db.put('drawings', {
+                id: ray.id,
+                type: 'ray',
+                symbolKey: ray.symbolKey,
+                data: {
+                    price: ray.price,
+                    time: ray.time,
+                    anchorTime: ray.anchorTime,
+                    options: ray.options,
+                    timeframeVisibility: ray.timeframeVisibility,
+                    anchorCandle: ray.anchorCandle
+                }
+            }).catch(e => console.warn('Save ray error:', e))
+        );
+        
+        await Promise.all(promises);
+        console.log(`💾 Saved ${this._rays.length} rays`);
+    }
+
+    // ✅ Обратная совместимость - старый метод теперь использует координатор
+    async loadRays() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+    }
+
+    reattachRays() {
+        const currentKey = this._getCurrentSymbolKey();
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+        
+        this._rays.forEach(item => {
+            if (item.ray.symbolKey === currentKey) {
+                try {
+                    if (item.series && item.primitive) {
+                        item.series.detachPrimitive(item.primitive);
+                    }
+                    if (series && item.primitive) {
+                        series.attachPrimitive(item.primitive);
+                    }
+                    item.series = series;
+                } catch(e) {
+                    console.warn('Ошибка переприкрепления луча:', e);
+                }
+            }
+        });
+        
+        this._requestRedraw();
+    }
+    
+    deactivateAll() {
+        this._rays.forEach(item => {
+            item.ray.selected = false;
+            item.ray.showDragPoint = false;
+            item.ray.readyToDrag = false;
+        });
+        this._selectedRay = null;
+    }
+
+    activateObject(ray) {
+        ray.selected = true;
+        ray.showDragPoint = true;
+        ray.readyToDrag = true;
+        this._selectedRay = ray;
+    }
+}
+
+// ============================================================
+// TREND LINE CLASSES
+// ============================================================
+class TrendLine {
+    constructor(point1, point2, options = {}) {
+        this.id = `trend_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        this.point1 = point1 || { price: 0, time: 0 };
+        this.point2 = point2 || { price: 0, time: 0 };
+        this.anchorTime1 = point1?.time || 0;
+        this.anchorTime2 = point2?.time || 0;
+
+        const { timeframeVisibility, anchorCandle1, anchorCandle2, symbolKey, symbol, exchange, marketType, ...restOptions } = options;
+
+        this.options = {
+            color: restOptions.color || '#2505da',
+            lineWidth: restOptions.lineWidth || 2,
+            lineStyle: restOptions.lineStyle || 'solid',
+            opacity: restOptions.opacity !== undefined ? restOptions.opacity : 0.9,
+            extendRight: restOptions.extendRight || false,
+            ...restOptions
+        };
+
+        this.anchorCandle1 = anchorCandle1 || null;
+        this.anchorCandle2 = anchorCandle2 || null;
+        this.timeframeVisibility = timeframeVisibility || {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+        this.selected = false;
+        this.hovered = false;
+        this.dragging = false;
+        this.editMode = false;
+        this.showDragPoint1 = false;
+        this.showDragPoint2 = false;
+        this.dragPointX1 = 0;
+        this.dragPointY1 = 0;
+        this.dragPointX2 = 0;
+        this.dragPointY2 = 0;
+        this._tempPixel1 = null;
+        this._tempPixel2 = null;
+        this._pixelStart1 = null;
+        this._pixelStart2 = null;
+        this.symbolKey = symbolKey || null;
+        this.symbol = symbol || null;
+        this.exchange = exchange || null;
+        this.marketType = marketType || null;
+    }
+
+    updateOptions(newOptions) {
+        this.options = { ...this.options, ...newOptions };
+    }
+
+    isVisibleOnTimeframe(timeframe) {
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+}
+
+class TrendLineRenderer {
+    constructor(trendLine, chartManager) {
+        this._trendLine = trendLine;
+        this._chartManager = chartManager;
+        this._hitAreaLine = null;
+        this._hitAreaPoint1 = null;
+        this._hitAreaPoint2 = null;
+        this._lastValidPoint1 = null;
+        this._lastValidPoint2 = null;
+    }
+
+    draw(target) {
+        this._hitAreaLine = null;
+        this._hitAreaPoint1 = null;
+        this._hitAreaPoint2 = null;
+
+        const currentKey = this._chartManager.getCurrentSymbolKey?.();
+        if (currentKey && this._trendLine.symbolKey !== currentKey) return;
+
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const line = this._trendLine;
+            const chartManager = this._chartManager;
+
+            const currentTf = chartManager.currentInterval;
+            if (!line.isVisibleOnTimeframe(currentTf)) return;
+
+            const data = chartManager.chartData;
+
+            // ✅ Экстраполяция X для зон без свечей
+            const getTimeCoordinate = (time) => {
+                let x = chartManager.timeToCoordinateWithFallback?.(time) ?? chartManager.timeToCoordinate(time);
+                if (x !== null && x !== undefined) return x;
+
+                if (!data || data.length === 0) return null;
+
+                if (data.length === 1) {
+                    const singleX = chartManager.timeToCoordinate(data[0].time);
+                    return singleX !== null ? singleX : 0;
+                }
+
+                const firstCandle = data[0];
+                const lastCandle = data[data.length - 1];
+                const firstX = chartManager.timeToCoordinate(firstCandle.time);
+                const lastX = chartManager.timeToCoordinate(lastCandle.time);
+
+                if (firstX === null || lastX === null || lastX === firstX) return null;
+
+                const msPerPixel = (lastCandle.time - firstCandle.time) / (lastX - firstX);
+                if (time > lastCandle.time) return lastX + (time - lastCandle.time) / msPerPixel;
+                if (time < firstCandle.time) return firstX - (firstCandle.time - time) / msPerPixel;
+                return null;
+            };
+
+            // ✅ Экстраполяция Y для цен за пределами видимого диапазона
+            const getPriceCoordinate = (price) => {
+                let y = chartManager.priceToCoordinateWithFallback?.(price) ?? chartManager.priceToCoordinate(price);
+                if (y !== null && y !== undefined) return y;
+
+                if (!data || data.length === 0) return null;
+
+                let minPrice = Infinity, maxPrice = -Infinity;
+                const mm = chartManager.getChartDataMinMax ? chartManager.getChartDataMinMax() : null;
+                if (mm && isFinite(mm.min) && isFinite(mm.max)) {
+                    minPrice = mm.min; maxPrice = mm.max;
+                } else {
+                    for (const candle of data) {
+                        if (candle.low < minPrice) minPrice = candle.low;
+                        if (candle.high > maxPrice) maxPrice = candle.high;
+                    }
+                }
+
+                const minY = chartManager.priceToCoordinate(maxPrice);
+                const maxY = chartManager.priceToCoordinate(minPrice);
+
+                if (minY === null || maxY === null || maxY === minY) return null;
+
+                const pricePerPixel = (maxPrice - minPrice) / (maxY - minY);
+                if (price > maxPrice) return minY - (price - maxPrice) / pricePerPixel;
+                if (price < minPrice) return maxY + (minPrice - price) / pricePerPixel;
+                return null;
+            };
+
+            let point1X, point1Y, point2X, point2Y;
+
+            if (line._tempPixel1) {
+                point1X = line._tempPixel1.x / scope.horizontalPixelRatio;
+                point1Y = line._tempPixel1.y / scope.verticalPixelRatio;
+            } else {
+                point1X = getTimeCoordinate(line.point1.time);
+                point1Y = getPriceCoordinate(line.point1.price);
+            }
+
+            if (line._tempPixel2) {
+                point2X = line._tempPixel2.x / scope.horizontalPixelRatio;
+                point2Y = line._tempPixel2.y / scope.verticalPixelRatio;
+            } else {
+                point2X = getTimeCoordinate(line.point2.time);
+                point2Y = getPriceCoordinate(line.point2.price);
+            }
+
+            if (point1X === null || point1Y === null || point2X === null || point2Y === null) {
+                if (this._lastValidPoint1 && this._lastValidPoint2) {
+                    point1X = this._lastValidPoint1.x;
+                    point1Y = this._lastValidPoint1.y;
+                    point2X = this._lastValidPoint2.x;
+                    point2Y = this._lastValidPoint2.y;
+                } else {
+                    return;
+                }
+            } else {
+                this._lastValidPoint1 = { x: point1X, y: point1Y };
+                this._lastValidPoint2 = { x: point2X, y: point2Y };
+            }
+
+            const lineWidthBitmap = line.options.lineWidth * scope.verticalPixelRatio;
+
+            const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, lineWidthBitmap, true);
+            const { position: y1 } = positionsLine(point1Y, scope.verticalPixelRatio, lineWidthBitmap, false);
+            const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, lineWidthBitmap, true);
+            const { position: y2 } = positionsLine(point2Y, scope.verticalPixelRatio, lineWidthBitmap, false);
+
+            this._hitAreaPoint1 = { x: x1, y: y1, radius: 10 };
+            this._hitAreaPoint2 = { x: x2, y: y2, radius: 10 };
+            this._hitAreaLine = { x1, y1, x2, y2, height: lineWidthBitmap };
+
+            ctx.save();
+
+            const color = line.options.color;
+            const opacity = line.options.opacity !== undefined ? line.options.opacity : 0.9;
+
+            const parseHex = (hex) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+            };
+            const parseRgb = (rgb) => {
+                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+                return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+            };
+
+            let rgbaColor;
+            let parsed = parseHex(color) || parseRgb(color);
+            if (parsed) {
+                rgbaColor = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+            } else {
+                rgbaColor = color;
+            }
+
+            ctx.strokeStyle = rgbaColor;
+            ctx.lineWidth = lineWidthBitmap;
+
+            if (line.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+            else if (line.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+            else ctx.setLineDash([]);
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+
+            if (line.options.extendRight) {
+                const rightBoundX = scope.bitmapSize.width;
+                let extendX, extendY;
+
+                if (Math.abs(x2 - x1) < 0.001) {
+                    extendX = x2;
+                    extendY = y2;
+                } else {
+                    const slope = (y2 - y1) / (x2 - x1);
+                    const intercept = y1 - slope * x1;
+                    extendX = rightBoundX;
+                    extendY = slope * extendX + intercept;
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(x2, y2);
+                ctx.lineTo(extendX, extendY);
+                ctx.stroke();
+            }
+
+            if (line.editMode) {
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x1, y1, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = rgbaColor;
+                ctx.beginPath();
+                ctx.arc(x1, y1, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x2, y2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = rgbaColor;
+                ctx.beginPath();
+                ctx.arc(x2, y2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+            }
+
+            ctx.restore();
+        });
+    }
+
+      hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точки перетаскивания (если линия в режиме редактирования)
+        // Если линия выделена и показывает точки, клик по точке = немедленный возврат
+        if (this._trendLine.editMode || this._trendLine.showDragPoint1 || this._trendLine.showDragPoint2) {
+            if (this._hitAreaPoint1) {
+                const dx = x - this._hitAreaPoint1.x;
+                const dy = y - this._hitAreaPoint1.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint1.radius) {
+                    return { type: 'point1', trendLine: this._trendLine, distance: distance };
+                }
+            }
+            if (this._hitAreaPoint2) {
+                const dx = x - this._hitAreaPoint2.x;
+                const dy = y - this._hitAreaPoint2.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint2.radius) {
+                    return { type: 'point2', trendLine: this._trendLine, distance: distance };
+                }
+            }
+        }
+
+        // ✅ 2. Точки перетаскивания (даже если не в editMode, но точки видны)
+        if (this._hitAreaPoint1) {
+            const dx = x - this._hitAreaPoint1.x;
+            const dy = y - this._hitAreaPoint1.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < this._hitAreaPoint1.radius && distance < bestDistance) {
+                bestHit = { type: 'point1', trendLine: this._trendLine, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        if (this._hitAreaPoint2) {
+            const dx = x - this._hitAreaPoint2.x;
+            const dy = y - this._hitAreaPoint2.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < this._hitAreaPoint2.radius && distance < bestDistance) {
+                bestHit = { type: 'point2', trendLine: this._trendLine, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        // ✅ 3. Линия (с УМЕНЬШЕННЫМ буфером)
+        if (this._hitAreaLine) {
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4
+            const x1 = this._hitAreaLine.x1;
+            const y1 = this._hitAreaLine.y1;
+            const x2 = this._hitAreaLine.x2;
+            const y2 = this._hitAreaLine.y2;
+
+            const A = x - x1;
+            const B = y - y1;
+            const C = x2 - x1;
+            const D = y2 - y1;
+
+            const dot = A * C + B * D;
+            const len_sq = C * C + D * D;
+            let param = -1;
+
+            if (len_sq !== 0) param = dot / len_sq;
+
+            let xx, yy;
+            if (param < 0) { xx = x1; yy = y1; }
+            else if (param > 1) { xx = x2; yy = y2; }
+            else { xx = x1 + param * C; yy = y1 + param * D; }
+
+            const dx = x - xx;
+            const dy = y - yy;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < buffer && distance < bestDistance) {
+                bestHit = { type: 'line', trendLine: this._trendLine, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        return bestHit;
+    }
+}
+
+class TrendLinePaneView {
+    constructor(trendLine, chartManager) {
+        this._trendLine = trendLine;
+        this._chartManager = chartManager;
+        this._renderer = new TrendLineRenderer(trendLine, chartManager);
+    }
+    renderer() { return this._renderer; }
+    zOrder() { return 'top'; }
+}
+
+class TrendLinePrimitive {
+    constructor(trendLine, chartManager) {
+        this._trendLine = trendLine;
+        this._chartManager = chartManager;
+        this._paneView = new TrendLinePaneView(trendLine, chartManager);
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+    paneViews() { return [this._paneView]; }
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+        this._syncPointsTime();
+    }
+    updateAllViews() {
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
+        this._syncPointsTime();
+    }
+
+    // ✅ ИСПРАВЛЕНО: не перезаписываем время, если оно вне диапазона свечей
+    _syncPointsTime() {
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length === 0) return;
+
+        const lastCandleTime = chartData[chartData.length - 1].time;
+        const firstCandleTime = chartData[0].time;
+
+        const syncPoint = (anchorTime) => {
+            // Если время вне диапазона данных - оставляем как есть
+            if (typeof anchorTime !== 'number' || !isFinite(anchorTime)) return anchorTime;
+            if (anchorTime > lastCandleTime || anchorTime < firstCandleTime) {
+                return anchorTime;
+            }
+            // [PERF-PAN] общий бинарный поиск с кэшем вместо локального
+            const cm = this._chartManager;
+            const t = (cm && typeof cm.findNearestCandleTime === 'function')
+                ? cm.findNearestCandleTime(anchorTime)
+                : null;
+            return (typeof t === 'number' && isFinite(t)) ? t : anchorTime;
+        };
+
+        this._trendLine.point1.time = syncPoint(this._trendLine.anchorTime1);
+        this._trendLine.point2.time = syncPoint(this._trendLine.anchorTime2);
+    }
+
+    getTrendLine() { return this._trendLine; }
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class TempTrendLinePrimitive {
+    constructor(trendLineManager) {
+        this._manager = trendLineManager;
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+    paneViews() {
+        if (!this._manager || !this._manager._tempLine) return [];
+        return [{
+            zOrder: () => 'top',
+            renderer: () => ({
+                draw: (target) => {
+                    target.useBitmapCoordinateSpace(scope => {
+                        const ctx = scope.context;
+                        const tempLine = this._manager._tempLine;
+                        const chartManager = this._manager._chartManager;
+                        if (!tempLine || !tempLine.point1 || !tempLine.point2) return;
+
+                        const data = chartManager.chartData;
+
+                        const getTimeCoordinate = (time) => {
+                            let x = chartManager.timeToCoordinateWithFallback?.(time) ?? chartManager.timeToCoordinate(time);
+                            if (x !== null && x !== undefined) return x;
+                            if (!data || data.length === 0) return null;
+                            if (data.length === 1) return chartManager.timeToCoordinate(data[0].time);
+                            const firstCandle = data[0], lastCandle = data[data.length - 1];
+                            const firstX = chartManager.timeToCoordinate(firstCandle.time);
+                            const lastX = chartManager.timeToCoordinate(lastCandle.time);
+                            if (firstX === null || lastX === null || lastX === firstX) return null;
+                            const msPerPixel = (lastCandle.time - firstCandle.time) / (lastX - firstX);
+                            if (time > lastCandle.time) return lastX + (time - lastCandle.time) / msPerPixel;
+                            if (time < firstCandle.time) return firstX - (firstCandle.time - time) / msPerPixel;
+                            return null;
+                        };
+
+                        const getPriceCoordinate = (price) => {
+                            let y = chartManager.priceToCoordinateWithFallback?.(price) ?? chartManager.priceToCoordinate(price);
+                            if (y !== null && y !== undefined) return y;
+                            if (!data || data.length === 0) return null;
+                            let minPrice = Infinity, maxPrice = -Infinity;
+                            const mmT = chartManager.getChartDataMinMax ? chartManager.getChartDataMinMax() : null;
+                            if (mmT && isFinite(mmT.min) && isFinite(mmT.max)) { minPrice = mmT.min; maxPrice = mmT.max; }
+                            else { for (const c of data) { if (c.low < minPrice) minPrice = c.low; if (c.high > maxPrice) maxPrice = c.high; } }
+                            const minY = chartManager.priceToCoordinate(maxPrice);
+                            const maxY = chartManager.priceToCoordinate(minPrice);
+                            if (minY === null || maxY === null || maxY === minY) return null;
+                            const pricePerPixel = (maxPrice - minPrice) / (maxY - minY);
+                            if (price > maxPrice) return minY - (price - maxPrice) / pricePerPixel;
+                            if (price < minPrice) return maxY + (minPrice - price) / pricePerPixel;
+                            return null;
+                        };
+
+                        const point1X = getTimeCoordinate(tempLine.point1.time);
+                        const point1Y = getPriceCoordinate(tempLine.point1.price);
+                        const point2X = getTimeCoordinate(tempLine.point2.time);
+                        const point2Y = getPriceCoordinate(tempLine.point2.price);
+
+                        if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
+
+                        const lineWidthBitmap = (tempLine.options.lineWidth || 2) * scope.verticalPixelRatio;
+
+                        const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, lineWidthBitmap, true);
+                        const { position: y1 } = positionsLine(point1Y, scope.verticalPixelRatio, lineWidthBitmap, false);
+                        const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, lineWidthBitmap, true);
+                        const { position: y2 } = positionsLine(point2Y, scope.verticalPixelRatio, lineWidthBitmap, false);
+
+                        ctx.save();
+                        ctx.strokeStyle = tempLine.options.color || '#100cdd';
+                        ctx.lineWidth = lineWidthBitmap;
+                        if (tempLine.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+                        else if (tempLine.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+                        else ctx.setLineDash([]);
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+
+                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        ctx.shadowBlur = 4;
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.beginPath();
+                        ctx.arc(x1, y1, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.fillStyle = tempLine.options.color;
+                        ctx.beginPath();
+                        ctx.arc(x1, y1, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.beginPath();
+                        ctx.arc(x2, y2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.fillStyle = tempLine.options.color;
+                        ctx.beginPath();
+                        ctx.arc(x2, y2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+
+                        ctx.restore();
+                    });
+                }
+            })
+        }];
+    }
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+    }
+    updateAllViews() {}
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class TrendLineManager {
+    constructor(chartManager) {
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._trendLines = [];
+        this._chartManager = chartManager;
+        this._selectedLine = null;
+        this._hoveredLine = null;
+        this._isDrawingMode = false;
+        this._magnetEnabled = true;
+        this._tempLine = null;
+        this._tempPrimitive = null;
+        this._isDragging = false;
+        this._dragLine = null;
+        this._dragPoint = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPoint1 = { price: 0, time: 0 };
+        this._dragStartPoint2 = { price: 0, time: 0 };
+                this._dragItem = null;
+        this._drawingStartPoint = null;
+        this._isDrawingSecondPoint = false;
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._handleMouseDown = this._handleMouseDown.bind(this);
+        this._handleMouseMove = this._handleMouseMove.bind(this);
+        this._handleMouseUp = this._handleMouseUp.bind(this);
+        this._handleMouseLeave = this._handleMouseLeave.bind(this);
+        this._handleContextMenu = this._handleContextMenu.bind(this);
+        this._pendingMouseEvent = null;
+        this._hoverRafId = null;
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._isLoading = false;
+        this._needsRedraw = false;
+        this._dblClickTimer = null;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+
+        window.drawingLoaderCoordinator.register(this, 'trendline');
+
+        setTimeout(async () => {
+            try {
+                if (!window.dbReady) {
+                    await new Promise(r => { const c = () => window.dbReady ? r() : setTimeout(c, 50); c(); });
+                }
+                await this.loadTrendLines();
+            } catch (e) { console.error(e); }
+        }, 150);
+    }
+
+    // ✅ НОВЫЙ МЕТОД: Экстраполяция цены для зон вне видимого диапазона
+    _getPriceFromCoordinate(y) {
+        let price = this._chartManager.coordinateToPrice(y);
+        if (price !== null) return price;
+
+        const data = this._chartManager.chartData;
+        if (!data || data.length === 0) return null;
+
+        let minPrice = Infinity, maxPrice = -Infinity;
+        const mmP = this._chartManager.getChartDataMinMax ? this._chartManager.getChartDataMinMax() : null;
+        if (mmP && isFinite(mmP.min) && isFinite(mmP.max)) { minPrice = mmP.min; maxPrice = mmP.max; }
+        else {
+            for (const candle of data) {
+                if (candle.low < minPrice) minPrice = candle.low;
+                if (candle.high > maxPrice) maxPrice = candle.high;
+            }
+        }
+
+        const minY = this._chartManager.priceToCoordinate(maxPrice);
+        const maxY = this._chartManager.priceToCoordinate(minPrice);
+
+        if (minY === null || maxY === null || maxY === minY) return null;
+
+        const pricePerPixel = (maxPrice - minPrice) / (maxY - minY);
+
+        if (y < minY) return maxPrice + (minY - y) * pricePerPixel;
+        if (y > maxY) return minPrice - (y - maxY) * pricePerPixel;
+        return null;
+    }
+
+    async loadFromData(symbolKey, lineRecords) {
+        if (this._getCurrentSymbolKey() !== symbolKey) return;
+
+        try {
+            const series = this._chartManager.currentChartType === 'candle'
+                ? this._chartManager.candleSeries
+                : this._chartManager.barSeries;
+
+            if (!series) return;
+
+            const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+            const defaultVisibility = {};
+            ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+            const existingIds = new Set(
+                this._trendLines
+                    .filter(item => item.trendLine.symbolKey === symbolKey)
+                    .map(item => item.trendLine.id)
+            );
+
+            const newRecordIds = new Set(lineRecords.map(l => l.id));
+
+            const toDetach = this._trendLines.filter(item =>
+                item.trendLine.symbolKey === symbolKey && !newRecordIds.has(item.trendLine.id)
+            );
+
+            for (const item of toDetach) {
+                try {
+                    if (item.series && item.primitive) {
+                        item.series.detachPrimitive(item.primitive);
+                    }
+                } catch (e) { }
+            }
+
+            this._trendLines = this._trendLines.filter(item =>
+                item.trendLine.symbolKey !== symbolKey || newRecordIds.has(item.trendLine.id)
+            );
+
+            const newLines = [];
+            for (const rec of lineRecords) {
+                try {
+                    const existing = this._trendLines.find(item => item.trendLine.id === rec.id);
+                    if (existing) {
+                        existing.trendLine.point1 = rec.data.point1;
+                        existing.trendLine.point2 = rec.data.point2;
+                        existing.trendLine.options = { ...existing.trendLine.options, ...rec.data.options };
+
+                        existing.trendLine.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+
+                        existing.trendLine.anchorTime1 = rec.data.anchorTime1;
+                        existing.trendLine.anchorTime2 = rec.data.anchorTime2;
+                        existing.trendLine.anchorCandle1 = rec.data.anchorCandle1;
+                        existing.trendLine.anchorCandle2 = rec.data.anchorCandle2;
+
+                        continue;
+                    }
+
+                    const line = new TrendLine(rec.data.point1, rec.data.point2, rec.data.options);
+                    line.id = rec.id;
+                    line.symbolKey = rec.symbolKey;
+
+                    line.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+
+                    line.anchorCandle1 = rec.data.anchorCandle1;
+                    line.anchorCandle2 = rec.data.anchorCandle2;
+                    line.anchorTime1 = rec.data.anchorTime1;
+                    line.anchorTime2 = rec.data.anchorTime2;
+
+                    const primitive = new TrendLinePrimitive(line, this._chartManager);
+                    series.attachPrimitive(primitive);
+                    newLines.push({ trendLine: line, primitive, series });
+                } catch (e) {
+                    console.warn('Failed to load trend line:', rec.id, e);
+                }
+            }
+
+            this._trendLines.push(...newLines);
+            this._requestRedraw();
+            console.log(`✅ Loaded ${lineRecords.length} trend lines for ${symbolKey}`);
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+            throw error;
+        }
+    }
+
+    _toBitmapCoords(cssX, cssY) {
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
+    }
+
+        _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+        container.addEventListener('mousedown', this._handleMouseDown);
+
+        // [ШАГ 2] mousemove через «воротник»: fast path для рисования/drag, guard скролла
+        // для hover, RAF-троттлинг для hitTest. Второй (дублирующий) обработчик mousemove
+        // удалён — он только сохранял _lastMouseX/_lastMouseY, а это делает _handleMouseMove.
+        container.addEventListener('mousemove', (e) => {
+            // Fast path 1: рисование второго конца — превью должно идти за мышью без задержки
+            if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+                this._handleMouseMove(e);
+                return;
+            }
+
+            // Fast path 2: начало drag / сам drag — мгновенно
+            if (this._potentialDrag || this._isDragging) {
+                this._handleMouseMove(e);
+                return;
+            }
+
+            // Slow path: hover. Во время скролла hitTest не нужен — только гасим hover
+            if ((this._chartManager._isScrolling || this._chartManager._isScrollingFast) && !this._potentialDrag && !this._isDragging) {   // [DRAW-DRAG] свой драг не глушим
+                if (this._hoveredLine) {
+                    this._hoveredLine.hovered = false;
+                    this._hoveredLine = null;
+                    this._requestRedraw();
+                }
+                return;
+            }
+
+            // RAF-троттлинг: не чаще одного hitTest на кадр
+            this._pendingMouseEvent = e;
+            if (this._hoverRafId) return;
+            this._hoverRafId = requestAnimationFrame(() => {
+                this._hoverRafId = null;
+                this._handleMouseMove(this._pendingMouseEvent);
+            });
+        });
+
+        container.addEventListener('mouseup', this._handleMouseUp);
+        container.addEventListener('mouseleave', this._handleMouseLeave);
+        container.addEventListener('contextmenu', this._handleContextMenu);
+    }
+
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+
+            if (e.key === 'Delete' && this._selectedLine && this._selectedLine.editMode === true) {
+                e.preventDefault();
+                this.deleteTrendLine(this._selectedLine.id);
+                this._selectedLine = null;
+            }
+        });
+    }
+
+    _getCurrentSymbolKey() {
+        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const marketType = this._chartManager.currentMarketType || 'futures';
+        return `${symbol}:${exchange}:${marketType}`;
+    }
+
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const btn = document.getElementById('toolTrendLine');
+        if (btn) {
+            if (enabled) { btn.style.background = '#4A90E2'; btn.style.color = '#FFFFFF'; btn.classList.add('active'); }
+            else { btn.style.background = ''; btn.style.color = ''; btn.classList.remove('active'); }
+        }
+        if (!enabled) {
+            if (this._tempPrimitive) {
+                const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                if (series) try { series.detachPrimitive(this._tempPrimitive); } catch (e) { }
+                this._tempPrimitive = null;
+            }
+            this._drawingStartPoint = null;
+            this._isDrawingSecondPoint = false;
+            this._tempLine = null;
+            this._requestRedraw();
+        }
+    }
+
+    setMagnetEnabled(enabled) {
+        this._magnetEnabled = enabled;
+        const btn = document.getElementById('toolMagnet');
+        if (btn) { if (enabled) btn.classList.add('magnet-active'); else btn.classList.remove('magnet-active'); }
+    }
+
+    _getTimeFromCoordinate(x) {
+        let time = this._chartManager.coordinateToTime(x);
+        if (time !== null) return time;
+        const data = this._chartManager.chartData;
+        if (!data.length) return null;
+        let intervalMs = 60 * 60 * 1000;
+        if (data.length >= 2) intervalMs = data[1].time - data[0].time;
+        const firstCandle = data[0], lastCandle = data[data.length - 1];
+        const firstX = this._chartManager.timeToCoordinate(firstCandle.time);
+        const lastX = this._chartManager.timeToCoordinate(lastCandle.time);
+        if (firstX === null || lastX === null) return null;
+        if (x > lastX) { return lastCandle.time + (x - lastX) / ((lastX - firstX) / (lastCandle.time - firstCandle.time)); }
+        if (x < firstX) { return firstCandle.time - (firstX - x) / ((lastX - firstX) / (lastCandle.time - firstCandle.time)); }
+        return null;
+    }
+
+    createTrendLine(point1, point2, options = {}) {
+        const defaultVisibility = { '1m': true, '3m': true, '5m': true, '15m': true, '30m': true, '1h': true, '4h': true, '6h': true, '12h': true, '1d': true, '1w': true, '1M': true };
+        const trendLine = new TrendLine(point1, point2, { ...options, timeframeVisibility: options.timeframeVisibility || defaultVisibility });
+        trendLine.anchorTime1 = point1.time; trendLine.anchorTime2 = point2.time;
+        trendLine.symbolKey = this._getCurrentSymbolKey();
+        trendLine.symbol = this._chartManager.currentSymbol;
+        trendLine.exchange = this._chartManager.currentExchange;
+        trendLine.marketType = this._chartManager.currentMarketType;
+        const primitive = new TrendLinePrimitive(trendLine, this._chartManager);
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        series.attachPrimitive(primitive);
+        this._trendLines.push({ trendLine, primitive, series });
+        this._saveTrendLines();
+        return trendLine;
+    }
+
+    deleteTrendLine(lineId) {
+        const index = this._trendLines.findIndex(item => item.trendLine.id === lineId);
+        if (index !== -1) {
+            const { primitive, series } = this._trendLines[index];
+            window.db.delete('drawings', lineId).catch(e => console.warn(e));
+            try { series.detachPrimitive(primitive); } catch (e) { }
+            this._trendLines.splice(index, 1);
+            if (this._selectedLine?.id === lineId) this._selectedLine = null;
+            if (this._dragLine?.id === lineId) this._dragLine = null;
+            this._saveTrendLines(); this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    deleteAllTrendLines() {
+        for (const item of this._trendLines) window.db.delete('drawings', item.trendLine.id).catch(e => console.warn(e));
+        this._trendLines.forEach(({ primitive, series }) => { try { series.detachPrimitive(primitive); } catch (e) { } });
+        this._trendLines = []; this._selectedLine = null; this._dragLine = null;
+        this._saveTrendLines(); this._requestRedraw();
+    }
+
+    _handleMouseDown(e) {
+        if (e.button !== 0) return;
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+
+        const trendMenu = document.getElementById('trendContextMenu');
+        if (trendMenu?.style.display === 'flex') {
+            const mr = trendMenu.getBoundingClientRect();
+            if (e.clientX >= mr.left && e.clientX <= mr.right && e.clientY >= mr.top && e.clientY <= mr.bottom) return;
+        }
+
+        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+            this._completeDrawing(x, y);
+            e.preventDefault(); e.stopPropagation();
+            return;
+        }
+
+        const hit = this.hitTest(bmX, bmY);
+        if (hit?.trendLine) {
+            e.preventDefault(); e.stopPropagation();
+
+            const now = Date.now();
+
+            if (this._dblClickTimer && this._potentialDblClickTarget === hit.trendLine && now - this._lastClickTime < this._dblClickTimeout) {
+                clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = null;
+                this._potentialDblClickTarget = null;
+                this._lastClickTime = 0;
+
+                if (hit.trendLine.editMode) {
+
+                    this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
+                    hit.trendLine.editMode = false;
+                    hit.trendLine.showDragPoint1 = false;
+                    hit.trendLine.showDragPoint2 = false;
+                } else {
+                    this._trendLines.forEach(item => {
+                        if (item.trendLine !== hit.trendLine) {
+                            item.trendLine.editMode = false;
+                            item.trendLine.showDragPoint1 = false;
+                            item.trendLine.showDragPoint2 = false;
+                        }
+                    });
+                    hit.trendLine.editMode = true;
+                    hit.trendLine.showDragPoint1 = true;
+                    hit.trendLine.showDragPoint2 = true;
+                    hit.trendLine.selected = true;
+                    if (this._selectedLine && this._selectedLine !== hit.trendLine) {
+                        this._selectedLine.selected = false;
+                    }
+                    this._selectedLine = hit.trendLine;
+                }
+                this._requestRedraw();
+                return;
+            }
+
+            if (this._selectedLine && this._selectedLine !== hit.trendLine) {
+                this._selectedLine.selected = false;
+                this._selectedLine.editMode = false;
+                this._selectedLine.showDragPoint1 = false;
+                this._selectedLine.showDragPoint2 = false;
+            }
+            hit.trendLine.selected = true;
+            this._selectedLine = hit.trendLine;
+
+            this._potentialDblClickTarget = hit.trendLine;
+            this._lastClickTime = now;
+            if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = setTimeout(() => {
+                this._dblClickTimer = null;
+                this._potentialDblClickTarget = null;
+            }, this._dblClickTimeout);
+
+            if (hit.trendLine.editMode) {
+                this._potentialDrag = {
+                    line: hit.trendLine, pointType: hit.type, startX: bmX, startY: bmY,
+                    startPoint1: { ...hit.trendLine.point1 }, startPoint2: { ...hit.trendLine.point2 }
+                };
+                this._chartManager.chartContainer.style.cursor = this._potentialDrag ? 'grabbing' : 'crosshair';
+            }
+
+            this._requestRedraw();
+        } else {
+            if (this._isDrawingMode && !this._isDrawingSecondPoint) {
+                this._startDrawing(x, y);
+                e.preventDefault(); e.stopPropagation();
+                return;
+            }
+            if (this._selectedLine) {
+                this._selectedLine.selected = false;
+                this._selectedLine.editMode = false;
+                this._selectedLine.showDragPoint1 = false;
+                this._selectedLine.showDragPoint2 = false;
+                this._selectedLine = null;
+                this._requestRedraw();
+            }
+            if (trendMenu) trendMenu.style.display = 'none';
+        }
+    }
+
+     _handleMouseMove(e) {
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
+
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+            let price = this._chartManager.coordinateToPrice(cssY);
+            let time = this._chartManager.coordinateToTime(cssX);
+
+            if (price === null) price = this._getPriceFromCoordinate(cssY);
+            if (time === null) time = this._getTimeFromCoordinate(cssX);
+
+            if (price !== null && time !== null) {
+                if (this._tempLine) {
+                    this._tempLine.point2 = { price, time };
+                } else {
+                    this._tempLine = {
+                        point1: this._drawingStartPoint,
+                        point2: { price, time },
+                        options: {
+                            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#2706e4',
+                            lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
+                            lineStyle: document.getElementById('templateSelect')?.value || 'solid'
+                        }
+                    };
+                    const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                    if (series && !this._tempPrimitive) {
+                        this._tempPrimitive = new TempTrendLinePrimitive(this);
+                        try { series.attachPrimitive(this._tempPrimitive); } catch (e) {}
+                    }
+                }
+            }
+            return;
+        }
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(bmX - this._potentialDrag.startX), dy = Math.abs(bmY - this._potentialDrag.startY);
+            if (dx > 3 || dy > 3) {
+                this._isDragging = true; this._dragLine = this._potentialDrag.line; this._dragPoint = this._potentialDrag.pointType;
+                this._dragLine.dragging = true;
+                // [ШАГ 3] Запоминаем item перетаскиваемой линии
+                this._dragItem = this._trendLines.find(it => it.trendLine === this._dragLine) || null;
+                const p1x = this._chartManager.timeToCoordinateWithFallback?.(this._dragLine.point1.time) ?? this._chartManager.timeToCoordinate(this._dragLine.point1.time);
+                const p1y = this._chartManager.priceToCoordinateWithFallback?.(this._dragLine.point1.price) ?? this._chartManager.priceToCoordinate(this._dragLine.point1.price);
+                const p2x = this._chartManager.timeToCoordinateWithFallback?.(this._dragLine.point2.time) ?? this._chartManager.timeToCoordinate(this._dragLine.point2.time);
+                const p2y = this._chartManager.priceToCoordinateWithFallback?.(this._dragLine.point2.price) ?? this._chartManager.priceToCoordinate(this._dragLine.point2.price);
+                if (p1x !== null && p1y !== null) this._dragLine._pixelStart1 = { x: p1x * this._pixelRatio, y: p1y * this._pixelRatio };
+                if (p2x !== null && p2y !== null) this._dragLine._pixelStart2 = { x: p2x * this._pixelRatio, y: p2y * this._pixelRatio };
+                this._dragStartX = this._potentialDrag.startX; this._dragStartY = this._potentialDrag.startY;
+                this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
+                this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
+                this._chartManager.chartContainer.style.cursor = 'grabbing';
+            }
+        }
+        if (this._isDragging && this._dragLine) {
+            e.preventDefault(); e.stopPropagation();
+            const deltaX = bmX - this._dragStartX, deltaY = bmY - this._dragStartY;
+            if (this._dragPoint === 'point1' && this._dragLine._pixelStart1) {
+                this._dragLine._tempPixel1 = { x: this._dragLine._pixelStart1.x + deltaX, y: this._dragLine._pixelStart1.y + deltaY };
+                delete this._dragLine._tempPixel2;
+            } else if (this._dragPoint === 'point2' && this._dragLine._pixelStart2) {
+                this._dragLine._tempPixel2 = { x: this._dragLine._pixelStart2.x + deltaX, y: this._dragLine._pixelStart2.y + deltaY };
+                delete this._dragLine._tempPixel1;
+            } else if (this._dragPoint === 'line' && this._dragLine._pixelStart1 && this._dragLine._pixelStart2) {
+                this._dragLine._tempPixel1 = { x: this._dragLine._pixelStart1.x + deltaX, y: this._dragLine._pixelStart1.y + deltaY };
+                this._dragLine._tempPixel2 = { x: this._dragLine._pixelStart2.x + deltaX, y: this._dragLine._pixelStart2.y + deltaY };
+            }
+            // [ШАГ 3] Перерисовываем только эту линию
+            this._requestRedraw(this._dragItem);
+        } else {
+            const hit = this.hitTest(bmX, bmY);
+            const hitLine = hit?.trendLine ?? null;
+            this._chartManager.chartContainer.style.cursor = hitLine ? (hit.type === 'point1' || hit.type === 'point2' ? 'move' : 'grab') : 'crosshair';
+            if (this._hoveredLine !== hitLine) {
+                if (this._hoveredLine) this._hoveredLine.hovered = false;
+                this._hoveredLine = hitLine;
+                if (hitLine) hitLine.hovered = true;
+                this._requestRedraw();
+            }
+        }
+    }
+       _handleMouseUp(e) {
+        if (this._isDragging) {
+            e.preventDefault(); e.stopPropagation();
+            this._isDragging = false;
+            if (this._dragLine) {
+                if (this._dragPoint === 'point1' && this._dragLine._tempPixel1) {
+                    const price = this._chartManager.coordinateToPrice(this._dragLine._tempPixel1.y / this._pixelRatio);
+                    const time = this._getTimeFromCoordinate(this._dragLine._tempPixel1.x / this._pixelRatio);
+                    if (price !== null && time !== null) {
+                        this._dragLine.point1.price = price;
+                        this._dragLine.point1.time = time;
+                        this._dragLine.anchorCandle1 = null;
+                    }
+                    delete this._dragLine._tempPixel1;
+                } else if (this._dragPoint === 'point2' && this._dragLine._tempPixel2) {
+                    const price = this._chartManager.coordinateToPrice(this._dragLine._tempPixel2.y / this._pixelRatio);
+                    const time = this._getTimeFromCoordinate(this._dragLine._tempPixel2.x / this._pixelRatio);
+                    if (price !== null && time !== null) {
+                        this._dragLine.point2.price = price;
+                        this._dragLine.point2.time = time;
+                        this._dragLine.anchorCandle2 = null;
+                    }
+                    delete this._dragLine._tempPixel2;
+                } else if (this._dragPoint === 'line' && this._dragLine._tempPixel1 && this._dragLine._tempPixel2) {
+                    const price1 = this._chartManager.coordinateToPrice(this._dragLine._tempPixel1.y / this._pixelRatio);
+                    const time1 = this._getTimeFromCoordinate(this._dragLine._tempPixel1.x / this._pixelRatio);
+                    const price2 = this._chartManager.coordinateToPrice(this._dragLine._tempPixel2.y / this._pixelRatio);
+                    const time2 = this._getTimeFromCoordinate(this._dragLine._tempPixel2.x / this._pixelRatio);
+                    if (price1 !== null && time1 !== null && price2 !== null && time2 !== null) {
+                        this._dragLine.point1.price = price1;
+                        this._dragLine.point1.time = time1;
+                        this._dragLine.anchorCandle1 = null;
+                        this._dragLine.point2.price = price2;
+                        this._dragLine.point2.time = time2;
+                        this._dragLine.anchorCandle2 = null;
+                    }
+                    delete this._dragLine._tempPixel1;
+                    delete this._dragLine._tempPixel2;
+                }
+                delete this._dragLine._pixelStart1;
+                delete this._dragLine._pixelStart2;
+                this._dragLine.dragging = false;
+                this._dragLine.anchorTime1 = this._dragLine.point1.time;
+                this._dragLine.anchorTime2 = this._dragLine.point2.time;
+                if (this._selectedLine !== this._dragLine) {
+                    this._dragLine.showDragPoint1 = false;
+                    this._dragLine.showDragPoint2 = false;
+                }
+                this._saveTrendLines();
+                this._dragLine = null;
+                this._dragItem = null;
+                this._requestRedraw();
+            }
+            this._chartManager.chartContainer.style.cursor = 'crosshair';
+        }
+        this._potentialDrag = null;
+    }
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        this._handleMouseUp(e);
+    }
+      _handleMouseLeave() {
+        // [ШАГ 2] Сброс отложенного RAF и события
+        if (this._hoverRafId) {
+            cancelAnimationFrame(this._hoverRafId);
+            this._hoverRafId = null;
+        }
+        this._pendingMouseEvent = null;
+
+        if (this._hoveredLine) { this._hoveredLine.hovered = false; this._hoveredLine = null; this._requestRedraw(); }
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
+    _handleContextMenu(e) {
+        e.preventDefault(); e.stopPropagation();
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left, y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+
+        const hit = this.hitTest(bmX, bmY);
+        if (hit?.trendLine) {
+            if (this._selectedLine && this._selectedLine !== hit.trendLine) {
+                this._selectedLine.selected = false; this._selectedLine.showDragPoint1 = false; this._selectedLine.showDragPoint2 = false;
+            }
+            hit.trendLine.selected = true; hit.trendLine.showDragPoint1 = true; hit.trendLine.showDragPoint2 = true;
+            this._selectedLine = hit.trendLine;
+            this._requestRedraw();
+            const menu = document.getElementById('trendContextMenu');
+            if (menu) {
+                document.getElementById('drawingContextMenu').style.display = 'none';
+                document.getElementById('alertContextMenu').style.display = 'none';
+                const extendBtn = document.getElementById('trendExtendRightBtn');
+                if (extendBtn) {
+                    hit.trendLine.options.extendRight ? extendBtn.classList.add('active') : extendBtn.classList.remove('active');
+                    const nb = extendBtn.cloneNode(true); extendBtn.parentNode.replaceChild(nb, extendBtn);
+                    nb.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        if (this._selectedLine) {
+                            const ns = !this._selectedLine.options.extendRight;
+                            this._selectedLine.updateOptions({ extendRight: ns });
+                            ns ? nb.classList.add('active') : nb.classList.remove('active');
+                            this._requestRedraw(); this._saveTrendLines();
+                        }
+                    });
+                }
+                const sb = document.getElementById('trendSettingsBtn'), nsb = sb.cloneNode(true); sb.parentNode.replaceChild(nsb, sb);
+                nsb.onclick = (ev) => { ev.stopPropagation(); this._showSettings(hit.trendLine); menu.style.display = 'none'; };
+                const db = document.getElementById('trendDeleteBtn'), ndb = db.cloneNode(true); db.parentNode.replaceChild(ndb, db);
+                ndb.onclick = (ev) => { ev.stopPropagation(); this.deleteTrendLine(hit.trendLine.id); menu.style.display = 'none'; };
+                menu.style.display = 'flex'; menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px';
+            }
+        } else { const menu = document.getElementById('trendContextMenu'); if (menu) menu.style.display = 'none'; }
+    }
+
+    _handleKeyDown(e) {
+        if (e.key === 'Delete' && this._selectedLine) { this.deleteTrendLine(this._selectedLine.id); this._selectedLine = null; }
+    }
+
+    // ✅ ИСПРАВЛЕНО: экстраполяция цены при старте рисования
+    _startDrawing(x, y) {
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._getTimeFromCoordinate(x);
+        let anchorCandle = null;
+
+        if (price === null) price = this._getPriceFromCoordinate(y);
+
+        if (price === null || time === null) {
+            const lc = this._chartManager.getLastCandle();
+            if (lc) { price = lc.close; time = lc.time; }
+            else return;
+        }
+
+        if (this._magnetEnabled) {
+            const s = this._snapToPrice(price, time);
+            price = s.price;
+            time = s.time;
+            anchorCandle = s.anchorCandle;
+        }
+
+        this._drawingStartPoint = { price, time, x, y, anchorCandle };
+        this._isDrawingSecondPoint = true;
+        this._tempLine = null;
+        this._requestRedraw();
+    }
+
+    // ✅ ИСПРАВЛЕНО: экстраполяция цены при завершении рисования
+    _completeDrawing(x, y) {
+        if (!this._drawingStartPoint) return;
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._getTimeFromCoordinate(x);
+
+        if (price === null) price = this._getPriceFromCoordinate(y);
+
+        if (price === null || time === null) {
+            const lc = this._chartManager.getLastCandle();
+            if (lc) { price = lc.close; time = lc.time; }
+            else return;
+        }
+
+        const startTime = this._drawingStartPoint.time;
+        const endTime = time;
+        let point1, point2, ac1, ac2;
+
+        if (startTime <= endTime) {
+            point1 = { price: this._drawingStartPoint.price, time: startTime };
+            point2 = { price, time: endTime };
+            ac1 = this._drawingStartPoint.anchorCandle;
+            ac2 = null;
+        } else {
+            point1 = { price, time: endTime };
+            point2 = { price: this._drawingStartPoint.price, time: startTime };
+            ac1 = null;
+            ac2 = this._drawingStartPoint.anchorCandle;
+        }
+
+        this.createTrendLine(point1, point2, {
+            anchorCandle1: ac1,
+            anchorCandle2: ac2,
+            color: document.getElementById('currentColorBox')?.style.backgroundColor || '#1707f8',
+            lineWidth: parseInt(document.getElementById('settingThickness')?.value) || 2,
+            lineStyle: document.getElementById('templateSelect')?.value || 'solid',
+            opacity: parseInt(document.getElementById('colorOpacity')?.value) / 100 || 0.9
+        });
+
+        if (this._tempPrimitive) {
+            const s = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+            if (s) try { s.detachPrimitive(this._tempPrimitive); } catch (e) { }
+            this._tempPrimitive = null;
+        }
+        this._drawingStartPoint = null;
+        this._isDrawingSecondPoint = false;
+        this._tempLine = null;
+        this._requestRedraw();
+        this.setDrawingMode(false);
+    }
+
+      hitTest(x, y) {
+        // 1. Приоритет: уже выбранная линия
+        if (this._selectedLine) {
+            const selItem = this._trendLines.find(item => item.trendLine === this._selectedLine);
+            if (selItem?.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return hit;
+                } catch (e) {}
+            }
+        }
+
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._trendLines.length - 1; i >= 0; i--) {
+            const item = this._trendLines[i];
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.trendLine === this._selectedLine) continue;
+
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        return bestHit;
+    }
+
+    _detachAllPrimitivesForSymbol(symbolKey) {
+        const itemsForSymbol = this._trendLines.filter(item => item.trendLine.symbolKey === symbolKey);
+        for (const item of itemsForSymbol) {
+            if (item.primitive && item.series) {
+                try {
+                    item.series.detachPrimitive(item.primitive);
+                } catch (e) { }
+            }
+        }
+        this._trendLines = this._trendLines.filter(item => item.trendLine.symbolKey !== symbolKey);
+    }
+
+    _snapToPrice(price, time) {
+        if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
+        const data = this._chartManager.chartData;
+        // [PERF-PAN] O(log N) вместо линейного скана
+        const closestCandle = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
+        const priceY = this._chartManager.priceToCoordinate(price);
+        const highY = this._chartManager.priceToCoordinate(closestCandle.high), lowY = this._chartManager.priceToCoordinate(closestCandle.low), closeY = this._chartManager.priceToCoordinate(closestCandle.close);
+        if (priceY === null || highY === null) return { price, time, anchorCandle: null };
+        const dHigh = Math.abs(highY - priceY), dLow = Math.abs(lowY - priceY), dClose = Math.abs(closeY - priceY);
+        let snappedPrice = price, anchorType = null;
+        const minDist = Math.min(dHigh, dLow, dClose);
+        if (minDist < 150) {
+            if (minDist === dHigh) { snappedPrice = closestCandle.high; anchorType = 'high'; }
+            else if (minDist === dLow) { snappedPrice = closestCandle.low; anchorType = 'low'; }
+            else { snappedPrice = closestCandle.close; anchorType = 'close'; }
+        }
+        return { price: snappedPrice, time: closestCandle.time, anchorCandle: { time: closestCandle.time, type: anchorType, price: snappedPrice } };
+    }
+
+    _showSettings(trendLine) {
+        const settings = document.getElementById('trendSettings');
+        if (!settings) return;
+
+        this._selectedLine = trendLine;
+
+        document.getElementById('trendCurrentColorBox').style.backgroundColor = trendLine.options.color;
+        document.getElementById('trendHexInputInline').value = trendLine.options.color;
+        document.getElementById('trendSettingThickness').value = trendLine.options.lineWidth;
+        document.getElementById('trendTemplateSelect').value = trendLine.options.lineStyle;
+        document.getElementById('trendColorOpacity').value = Math.round(trendLine.options.opacity * 100);
+        document.getElementById('trendColorOpacityValue').textContent = Math.round(trendLine.options.opacity * 100) + '%';
+
+        const extendRightCheckbox = document.getElementById('trendExtendRight');
+        if (extendRightCheckbox) extendRightCheckbox.checked = trendLine.options.extendRight || false;
+
+        createColorGrid('trendInlineColorsGrid', 'trendCurrentColorBox', 'trendColorPickerInline', 'trendHexInputInline', trendLine.options.color, 'trendAddColorInline');
+
+        this._renderTimeframeCheckboxes(trendLine);
+
+        settings.style.display = 'block';
+        settings.style.left = '50%';
+        settings.style.top = '50%';
+        settings.style.transform = 'translate(-50%, -50%)';
+
+        let header = settings.querySelector('.settings-header');
+        if (!header) {
+            header = document.createElement('div');
+            header.className = 'settings-header';
+            header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #404040;';
+            const title = document.createElement('span');
+            title.textContent = 'Настройки линии';
+            title.style.cssText = 'color:#FFFFFF;font-size:14px;font-weight:bold;';
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '✕';
+            closeBtn.style.cssText = 'background:transparent;border:none;color:#B0B0B0;font-size:18px;cursor:pointer;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;';
+            closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
+            closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+            closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
+            header.appendChild(title);
+            header.appendChild(closeBtn);
+            settings.insertBefore(header, settings.firstChild);
+        }
+
+        const closeOnOutsideClick = (e) => {
+            if (!settings.style.display || settings.style.display === 'none') {
+                document.removeEventListener('mousedown', closeOnOutsideClick);
+                return;
+            }
+            if (settings.contains(e.target)) return;
+            if (e.target.closest('.drawing-context-menu')) return;
+            if (e.target.closest('.drawing-settings-panel')) return;
+            settings.style.display = 'none';
+            document.removeEventListener('mousedown', closeOnOutsideClick);
+        };
+        document.removeEventListener('mousedown', closeOnOutsideClick);
+        document.addEventListener('mousedown', closeOnOutsideClick);
+
+        const stylePanel = document.getElementById('trendStylePanel');
+        const visibilityPanel = document.getElementById('trendVisibilityPanel');
+        const tabs = document.querySelectorAll('#trendSettings .settings-tab');
+              tabs.forEach(tab => {
+            tab.onclick = function () {
+                document.querySelectorAll('#trendSettings .settings-tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+                if (this.dataset.settingsTab === 'style') {
+                    stylePanel.classList.add('active');
+                    visibilityPanel.classList.remove('active');
+                } else {
+                    stylePanel.classList.remove('active');
+                    visibilityPanel.classList.add('active');
+                }
+            };
+        });
+
+        const saveBtn = document.getElementById('trendSaveSettings');
+        const deleteBtn = document.getElementById('trendDeleteDrawing');
+
+              if (saveBtn) {
+            saveBtn.onclick = () => {
+                trendLine.options.color = document.getElementById('trendHexInputInline').value;
+                trendLine.options.lineWidth = parseInt(document.getElementById('trendSettingThickness').value) || 1;
+                trendLine.options.lineStyle = document.getElementById('trendTemplateSelect').value;
+                trendLine.options.opacity = parseInt(document.getElementById('trendColorOpacity').value) / 100;
+                // [FIX] чекбокса #trendExtendRight в DOM нет — раньше сохранение
+                // настроек молча сбрасывало extendRight в false и луч переставал
+                // продолжаться вправо. Теперь значение сохраняется как есть.
+                const extendRightEl = document.getElementById('trendExtendRight');
+                if (extendRightEl) trendLine.options.extendRight = extendRightEl.checked;
+
+                this._requestRedraw();
+                settings.style.display = 'none';
+                this._saveTrendLines();
+            };
+        }
+
+             if (deleteBtn) {
+            deleteBtn.onclick = () => {
+                this.deleteTrendLine(trendLine.id);
+                settings.style.display = 'none';
+                this._requestRedraw();
+            };
+        }
+
+        if (!settings.dataset.instantBound) {
+            settings.dataset.instantBound = 'true';
+
+            document.getElementById('trendSettingThickness').addEventListener('input', function () {
+                const mgr = window.trendLineManager;
+                if (!mgr || !mgr._selectedLine) return;
+                const val = parseInt(this.value) || 1;
+                mgr._selectedLine.options.lineWidth = val;
+
+                mgr._requestRedraw();
+                mgr._saveTrendLines();
+            });
+
+            document.getElementById('trendColorOpacity').addEventListener('input', function () {
+                const mgr = window.trendLineManager;
+                if (!mgr || !mgr._selectedLine) return;
+                document.getElementById('trendColorOpacityValue').textContent = this.value + '%';
+                mgr._selectedLine.options.opacity = parseInt(this.value) / 100;
+                mgr._requestRedraw();
+                mgr._saveTrendLines();
+            });
+
+            document.getElementById('trendTemplateSelect').addEventListener('change', function () {
+                const mgr = window.trendLineManager;
+                if (!mgr || !mgr._selectedLine) return;
+                const styleMap = { solid: 0, dotted: 1, dashed: 2 };
+                mgr._selectedLine.options.lineStyle = this.value;
+
+                mgr._requestRedraw();
+                mgr._saveTrendLines();
+            });
+        }
+
+        // [FIX-VIS] кнопка «Минутки» привязывается в _renderTimeframeCheckboxes()
+        // при каждом открытии панели (раньше — один раз на всю сессию).
+
+        if (typeof window.makePanelDraggable === 'function') {
+            window.makePanelDraggable(settings);
+        }
+    }
+    _renderTimeframeCheckboxes(trendLine) {
+        const container = document.getElementById('trendTimeframeCheckboxList'); if (!container) return;
+        const tfLabels = { '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
+        let html = ''; const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        timeframes.forEach(tf => { const isChecked = trendLine.timeframeVisibility[tf] !== false; html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="trend_tf_${tf}_${trendLine.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label>${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`; });
+        container.innerHTML = html;
+        // [FIX-VIS] цель — ТЕКУЩАЯ линия (this._selectedLine), а не та, что была
+        // открыта первой; после изменения сразу redraw + save.
+        const getTarget = () => this._selectedLine || trendLine;
+        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.onchange = (e) => {
+                const target = getTarget();
+                if (!target) return;
+                target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+                this._requestRedraw();
+                this._saveTrendLines();
+            };
+        });
+        bindTimeframePresetButtons({
+            minutesBtnId: 'trendSelectMinutesTimeframes',
+            allBtnId: 'trendSelectAllTimeframes',
+            noneBtnId: 'trendDeselectAllTimeframes',
+            containerId: 'trendTimeframeCheckboxList',
+            getTarget,
+            onChange: () => { this._requestRedraw(); this._saveTrendLines(); }
+        });
+    }
+
+      _requestRedraw(item = null) {
+        // [ШАГ 3] Быстрый путь: перерисовать ровно один объект (drag)
+        if (item && item.primitive?.requestRedraw) {
+            item.primitive.requestRedraw();
+            return;
+        }
+        // Медленный путь: перерисовать всё + временный примитив
+        this._trendLines.forEach(it => {
+            if (it.primitive?.requestRedraw) it.primitive.requestRedraw();
+        });
+        if (this._tempPrimitive) this._tempPrimitive.requestRedraw();
+    }
+
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._trendLines?.forEach(item => {
+                if (item.primitive?.requestRedraw) {
+                    item.primitive.requestRedraw();
+                }
+            });
+        }
+    }
+
+    async _saveTrendLines() {
+        if (this._trendLines.length === 0) return;
+        const promises = this._trendLines.map(item => window.db.put('drawings', {
+            id: item.trendLine.id,
+            type: 'trendline',
+            symbolKey: item.trendLine.symbolKey,
+            data: {
+                point1: item.trendLine.point1,
+                point2: item.trendLine.point2,
+                options: item.trendLine.options,
+                timeframeVisibility: item.trendLine.timeframeVisibility,
+                anchorCandle1: item.trendLine.anchorCandle1,
+                anchorCandle2: item.trendLine.anchorCandle2,
+                anchorTime1: item.trendLine.anchorTime1,
+                anchorTime2: item.trendLine.anchorTime2
+            }
+        }).catch(e => console.warn(e)));
+        await Promise.all(promises);
+    }
+
+    async loadTrendLines() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+    }
+
+    syncWithNewTimeframe() { }
+
+    deactivateAll() {
+        this._trendLines.forEach(item => {
+            item.trendLine.selected = false;
+            item.trendLine.editMode = false;
+            item.trendLine.showDragPoint1 = false;
+            item.trendLine.showDragPoint2 = false;
+        });
+        this._selectedLine = null;
+    }
+
+    activateObject(line) {
+        line.selected = true;
+        line.editMode = true;
+        line.showDragPoint1 = true;
+        line.showDragPoint2 = true;
+        this._selectedLine = line;
+    }
+}
+ class RulerLine {
+    constructor(point1, point2, chartManager, options = {}) {
+        this.id = `ruler_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        this.point1 = point1 || { price: 0, time: 0 };
+        this.point2 = point2 || { price: 0, time: 0 };
+        this.chartManager = chartManager;
+        
+        this.anchorTime1 = point1?.time || 0;
+        this.anchorTime2 = point2?.time || 0;
+        
+        this.options = {
+            color: options.color || (this._isBullish() 
+                ? (this.chartManager?.bullishColor || '#00bcd4') 
+                : (this.chartManager?.bearishColor || '#f23645')
+            ),
+            lineWidth: options.lineWidth || 1,
+            lineStyle: options.lineStyle || 'solid',
+            opacity: options.opacity !== undefined ? options.opacity : 0.25,
+            fillOpacity: options.fillOpacity !== undefined ? options.fillOpacity : 0.25,
+            ...options
+        };
+        
+        this.anchorCandle1 = options.anchorCandle1 || null;
+        this.anchorCandle2 = options.anchorCandle2 || null;
+        
+        this.timeframeVisibility = options.timeframeVisibility || {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+        
+        this.selected = false;
+        this.hovered = false;
+        this.dragging = false;
+        this.showDragPoint1 = false;
+        this.showDragPoint2 = false;
+        this.dragPointX1 = 0;
+        this.dragPointY1 = 0;
+        this.dragPointX2 = 0;
+        this.dragPointY2 = 0;
+
+        this.symbolKey = options.symbolKey || null;
+        this.symbol = options.symbol || null;
+        this.exchange = options.exchange || null;
+        this.marketType = options.marketType || null;
+    }
+
+    _isBullish() {
+        return this.point2.price >= this.point1.price;
+    }
+
+    get fillColor() {
+        const bullishColor = this.chartManager?.bullishColor || '#00bcd4';
+        const bearishColor = this.chartManager?.bearishColor || '#f23645';
+        return this._isBullish() ? bullishColor : bearishColor;
+    }
+
+    updateOptions(newOptions) {
+        this.options = { ...this.options, ...newOptions };
+    }
+
+    isVisibleOnTimeframe(timeframe) {
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+}
+
+class RulerLineRenderer {
+    constructor(ruler, chartManager) {
+        this._ruler = ruler;
+        this._chartManager = chartManager;
+        this._hitAreaLine = null;
+        this._hitAreaPoint1 = null;
+        this._hitAreaPoint2 = null;
+        this._hitAreaInfo = null;
+    }
+
+    _extendedTimeToCoordinate(time) {
+        const chartManager = this._chartManager;
+        const standardCoord = chartManager.timeToCoordinate(time);
+        if (standardCoord !== null) return standardCoord;
+        
+        const chartData = chartManager.chartData;
+        if (!chartData || chartData.length === 0) return null;
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        
+        const firstCoord = chartManager.timeToCoordinate(firstTime);
+        const lastCoord = chartManager.timeToCoordinate(lastTime);
+        
+        if (firstCoord === null || lastCoord === null) return null;
+        
+        const barInterval = chartData[1]?.time - chartData[0]?.time || 60;
+        const barWidth = (lastCoord - firstCoord) / (chartData.length - 1);
+        
+        if (time < firstTime) {
+            const barsBefore = Math.round((firstTime - time) / barInterval);
+            return firstCoord - barsBefore * barWidth;
+        } else {
+            const barsAfter = Math.round((time - lastTime) / barInterval);
+            return lastCoord + barsAfter * barWidth;
+        }
+    }
+
+    _extendedPriceToCoordinate(price) {
+        const chartManager = this._chartManager;
+        const standardCoord = chartManager.priceToCoordinate(price);
+        if (standardCoord !== null) return standardCoord;
+        
+        const priceScale = chartManager.priceScale;
+        if (!priceScale) return null;
+        
+        try {
+            const visibleRange = priceScale.visibleRange();
+            if (visibleRange) {
+                const topPrice = visibleRange.to;
+                const bottomPrice = visibleRange.from;
+                
+                const topCoord = chartManager.priceToCoordinate(topPrice);
+                const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
+                
+                if (topCoord !== null && bottomCoord !== null) {
+                    const priceRange = topPrice - bottomPrice;
+                    const coordRange = bottomCoord - topCoord;
+                    const pricePerPixel = priceRange / coordRange;
+                    
+                    if (price > topPrice) {
+                        const pixelsAbove = (price - topPrice) / pricePerPixel;
+                        return topCoord - pixelsAbove;
+                    } else {
+                        const pixelsBelow = (bottomPrice - price) / pricePerPixel;
+                        return bottomCoord + pixelsBelow;
+                    }
+                }
+            }
+        } catch(e) {}
+        
+        return null;
+    }
+
+    draw(target) {
+        this._hitAreaLine = null;
+        this._hitAreaPoint1 = null;
+        this._hitAreaPoint2 = null;
+        this._hitAreaInfo = null;
+
+        const currentKey = this._chartManager.getCurrentSymbolKey?.();
+        if (currentKey && this._ruler.symbolKey !== currentKey) return;
+
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const ruler = this._ruler;
+            const chartManager = this._chartManager;
+
+            const currentTf = chartManager.currentInterval;
+            if (!ruler.isVisibleOnTimeframe(currentTf)) return;
+
+            // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЕ МЕТОДЫ ДЛЯ ПОДДЕРЖКИ ПУСТЫХ ЗОН
+            const point1X = this._extendedTimeToCoordinate(ruler.point1.time);
+            const point1Y = this._extendedPriceToCoordinate(ruler.point1.price);
+            const point2X = this._extendedTimeToCoordinate(ruler.point2.time);
+            const point2Y = this._extendedPriceToCoordinate(ruler.point2.price);
+
+            if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
+
+            const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
+            const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+            const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
+            const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, ruler.options.lineWidth, false);
+
+            this._hitAreaPoint1 = { x: x1, y: y1 + y1Length/2, radius: 10 };
+            this._hitAreaPoint2 = { x: x2, y: y2 + y2Length/2, radius: 10 };
+            this._hitAreaLine = {
+                x1, y1: y1 + y1Length/2,
+                x2, y2: y2 + y2Length/2,
+                height: y1Length
+            };
+
+            ctx.save();
+
+            const leftX = Math.min(x1, x2);
+            const rightX = Math.max(x1, x2);
+            const topY = Math.min(y1, y2) - y1Length/2;
+            const bottomY = Math.max(y1, y2) + y1Length/2;
+            const width = rightX - leftX;
+            const height = bottomY - topY;
+
+            if (width > 0 && height > 0) {
+                const fillColor = ruler.fillColor;
+                const opacity = ruler.options.fillOpacity !== undefined ? ruler.options.fillOpacity : 0.25;
+
+                const parseHex = (hex) => {
+                    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                    return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+                };
+                const parseRgb = (rgb) => {
+                    const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+                    return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+                };
+                let rgbaFill;
+                let parsed = parseHex(fillColor) || parseRgb(fillColor);
+                if (parsed) {
+                    rgbaFill = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+                } else {
+                    rgbaFill = fillColor;
+                }
+
+                ctx.fillStyle = rgbaFill;
+                ctx.fillRect(leftX, topY, width, height);
+                ctx.strokeStyle = fillColor;
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.setLineDash([]);
+                ctx.strokeRect(leftX, topY, width, height);
+            }
+
+            ctx.strokeStyle = ruler.fillColor;
+            ctx.lineWidth = y1Length;
+            ctx.setLineDash([5, 3]);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1 + y1Length/2);
+            ctx.lineTo(x2, y2 + y2Length/2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            if (ruler.showDragPoint1 || ruler.showDragPoint2) {
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = ruler.fillColor;
+                ctx.beginPath();
+                ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x2, y2 + y2Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = ruler.fillColor;
+                ctx.beginPath();
+                ctx.arc(x2, y2 + y2Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+            }
+
+                     // Информационная панель
+            const pixelRatio = window.devicePixelRatio || 1;
+            const scale = Math.min(pixelRatio, 2);
+            const infoY = topY - 5 * scope.verticalPixelRatio * scale;
+            
+            if (infoY > 10) {
+                // ✅ 1. Безопасный расчет изменения цены и процента (защита от деления на 0)
+                const price1 = ruler.point1.price;
+                const price2 = ruler.point2.price;
+                const priceChange = price2 - price1;
+                const percentChange = price1 !== 0 ? (priceChange / price1) * 100 : 0;
+                
+                // ✅ 2. Расчет времени. 
+                // ВАЖНО: Lightweight Charts по умолчанию использует СЕКУНДЫ.
+                // Если ваша система передает время в миллисекундах, раскомментируйте деление на 1000 ниже:
+                // const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time) / 1000;
+                const timeDiffSec = Math.abs(ruler.point2.time - ruler.point1.time);
+                
+                const timeStr = Utils.formatTime(timeDiffSec);
+                const sign = priceChange >= 0 ? '+' : '';
+                const percentStr = `${sign}${percentChange.toFixed(2)}%`;
+                const infoText = `${percentStr}  |  ${timeStr}  |  ${sign}${Utils.formatPrice(Math.abs(priceChange))}`;
+
+                // ✅ 3. Расчет размеров с более точной высотой
+                const baseFontSize = 12;
+                const fontSize = baseFontSize * scale;
+                ctx.font = `bold ${fontSize}px 'Inter', Arial, sans-serif`;
+                
+                const textWidth = ctx.measureText(infoText).width;
+                const paddingX = 10 * scope.horizontalPixelRatio * scale;
+                const paddingY = 6 * scope.verticalPixelRatio * scale;
+                
+                const labelWidth = textWidth + (paddingX * 2);
+                const labelHeight = fontSize + (paddingY * 2); // Более надежная формула высоты
+                
+                const labelX = leftX + (width / 2) - (labelWidth / 2);
+                const labelY = infoY - labelHeight;
+
+                this._hitAreaInfo = { 
+                    x: labelX, 
+                    y: labelY, 
+                    width: labelWidth, 
+                    height: labelHeight 
+                };
+
+                // ✅ 4. Отрисовка фона и тени
+                ctx.fillStyle = 'rgba(30, 30, 30, 0.95)';
+                ctx.shadowBlur = 5 * scope.horizontalPixelRatio * scale;
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+                
+                ctx.beginPath();
+                this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 5 * scope.horizontalPixelRatio * scale);
+                ctx.fill();
+                
+                // ✅ 5. Отрисовка обводки (сбрасываем тень для четкости линии)
+                ctx.shadowBlur = 0; 
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.stroke();
+
+                // ✅ 6. Отрисовка текста
+                ctx.fillStyle = '#FFFFFF';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Центрируем текст ровно внутри прямоугольника
+                ctx.fillText(infoText, labelX + (labelWidth / 2), labelY + (labelHeight / 2));
+            }
+
+            ctx.restore();
+        });
+    }
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
+
+      hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точки перетаскивания (если линейка выделена)
+        if (this._ruler.showDragPoint1 || this._ruler.showDragPoint2) {
+            if (this._hitAreaPoint1) {
+                const dx = x - this._hitAreaPoint1.x;
+                const dy = y - this._hitAreaPoint1.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint1.radius) {
+                    return { type: 'point1', ruler: this._ruler, distance: distance };
+                }
+            }
+            if (this._hitAreaPoint2) {
+                const dx = x - this._hitAreaPoint2.x;
+                const dy = y - this._hitAreaPoint2.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < this._hitAreaPoint2.radius) {
+                    return { type: 'point2', ruler: this._ruler, distance: distance };
+                }
+            }
+        }
+
+        // ✅ 2. Информационная панель (Label)
+        if (this._hitAreaInfo) {
+            const inX = x >= this._hitAreaInfo.x && x <= this._hitAreaInfo.x + this._hitAreaInfo.width;
+            const inY = y >= this._hitAreaInfo.y && y <= this._hitAreaInfo.y + this._hitAreaInfo.height;
+            
+            if (inX && inY) {
+                const centerX = this._hitAreaInfo.x + this._hitAreaInfo.width / 2;
+                const centerY = this._hitAreaInfo.y + this._hitAreaInfo.height / 2;
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < bestDistance) {
+                    bestHit = { type: 'info', ruler: this._ruler, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        // ✅ 3. Точки перетаскивания (обычная проверка, если не сработал абсолютный приоритет)
+        if (this._hitAreaPoint1) {
+            const dx = x - this._hitAreaPoint1.x;
+            const dy = y - this._hitAreaPoint1.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < this._hitAreaPoint1.radius && distance < bestDistance) {
+                bestHit = { type: 'point1', ruler: this._ruler, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        if (this._hitAreaPoint2) {
+            const dx = x - this._hitAreaPoint2.x;
+            const dy = y - this._hitAreaPoint2.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < this._hitAreaPoint2.radius && distance < bestDistance) {
+                bestHit = { type: 'point2', ruler: this._ruler, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        // ✅ 4. Линия (с УМЕНЬШЕННЫМ буфером)
+        if (this._hitAreaLine) {
+            const buffer = 4; // ✅ БЫЛО 10, СТАЛО 4 (решает проблему пересечения близких линий!)
+            const x1 = this._hitAreaLine.x1;
+            const y1 = this._hitAreaLine.y1;
+            const x2 = this._hitAreaLine.x2;
+            const y2 = this._hitAreaLine.y2;
+
+            const A = x - x1;
+            const B = y - y1;
+            const C = x2 - x1;
+            const D = y2 - y1;
+
+            const dot = A * C + B * D;
+            const len_sq = C * C + D * D;
+            let param = -1;
+            if (len_sq !== 0) param = dot / len_sq;
+
+            let xx, yy;
+            if (param < 0) { xx = x1; yy = y1; }
+            else if (param > 1) { xx = x2; yy = y2; }
+            else { xx = x1 + param * C; yy = y1 + param * D; }
+
+            const dx = x - xx;
+            const dy = y - yy;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < buffer && distance < bestDistance) {
+                bestHit = { type: 'line', ruler: this._ruler, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        return bestHit;
+    }
+}
+class TempRulerPointPrimitive {
+    constructor(rulerManager) {
+        this._manager = rulerManager;
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+
+    _extendedTimeToCoordinate(time) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.timeToCoordinate(time);
+        if (standardCoord !== null) return standardCoord;
+        
+        const chartData = chartManager.chartData;
+        if (!chartData || chartData.length === 0) return null;
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        const firstCoord = chartManager.timeToCoordinate(firstTime);
+        const lastCoord = chartManager.timeToCoordinate(lastTime);
+        
+        if (firstCoord === null || lastCoord === null) return null;
+        
+        const barInterval = chartData[1]?.time - chartData[0]?.time || 60;
+        const barWidth = (lastCoord - firstCoord) / (chartData.length - 1);
+        
+        if (time < firstTime) {
+            const barsBefore = Math.round((firstTime - time) / barInterval);
+            return firstCoord - barsBefore * barWidth;
+        } else {
+            const barsAfter = Math.round((time - lastTime) / barInterval);
+            return lastCoord + barsAfter * barWidth;
+        }
+    }
+
+    _extendedPriceToCoordinate(price) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.priceToCoordinate(price);
+        if (standardCoord !== null) return standardCoord;
+        
+        const priceScale = chartManager.priceScale;
+        if (!priceScale) return null;
+        
+        try {
+            const visibleRange = priceScale.visibleRange();
+            if (visibleRange) {
+                const topPrice = visibleRange.to;
+                const bottomPrice = visibleRange.from;
+                const topCoord = chartManager.priceToCoordinate(topPrice);
+                const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
+                
+                if (topCoord !== null && bottomCoord !== null) {
+                    const priceRange = topPrice - bottomPrice;
+                    const coordRange = bottomCoord - topCoord;
+                    const pricePerPixel = priceRange / coordRange;
+                    
+                    if (price > topPrice) {
+                        const pixelsAbove = (price - topPrice) / pricePerPixel;
+                        return topCoord - pixelsAbove;
+                    } else {
+                        const pixelsBelow = (bottomPrice - price) / pricePerPixel;
+                        return bottomCoord + pixelsBelow;
+                    }
+                }
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    paneViews() {
+        if (!this._manager || !this._manager._tempPoint) return [];
+        
+        const paneView = {
+            zOrder: () => 'top',
+            renderer: () => ({
+                draw: (target) => {
+                    target.useBitmapCoordinateSpace(scope => {
+                        const ctx = scope.context;
+                        const point = this._manager._tempPoint;
+                        
+                        if (!point) return;
+                        
+                        const xCoord = this._extendedTimeToCoordinate(point.time);
+                        const yCoord = this._extendedPriceToCoordinate(point.price);
+                        
+                        if (xCoord === null || yCoord === null) return;
+                        
+                        const { position: x } = positionsLine(xCoord, scope.horizontalPixelRatio, 1, true);
+                        const { position: y, length: yLength } = positionsLine(yCoord, scope.verticalPixelRatio, 2, false);
+                        
+                        ctx.save();
+                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        ctx.shadowBlur = 4;
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.beginPath();
+                        ctx.arc(x, y + yLength/2, 8 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.fillStyle = '#4A90E2';
+                        ctx.beginPath();
+                        ctx.arc(x, y + yLength/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.restore();
+                    });
+                }
+            })
+        };
+        return [paneView];
+    }
+
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+    }
+    updateAllViews() {}
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class TempRulerLinePrimitive {
+    constructor(rulerManager) {
+        this._manager = rulerManager;
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+
+    _extendedTimeToCoordinate(time) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.timeToCoordinate(time);
+        if (standardCoord !== null) return standardCoord;
+        
+        const chartData = chartManager.chartData;
+        if (!chartData || chartData.length === 0) return null;
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        const firstCoord = chartManager.timeToCoordinate(firstTime);
+        const lastCoord = chartManager.timeToCoordinate(lastTime);
+        
+        if (firstCoord === null || lastCoord === null) return null;
+        
+        const barInterval = chartData[1]?.time - chartData[0]?.time || 60;
+        const barWidth = (lastCoord - firstCoord) / (chartData.length - 1);
+        
+        if (time < firstTime) {
+            const barsBefore = Math.round((firstTime - time) / barInterval);
+            return firstCoord - barsBefore * barWidth;
+        } else {
+            const barsAfter = Math.round((time - lastTime) / barInterval);
+            return lastCoord + barsAfter * barWidth;
+        }
+    }
+
+    _extendedPriceToCoordinate(price) {
+        const chartManager = this._manager._chartManager;
+        const standardCoord = chartManager.priceToCoordinate(price);
+        if (standardCoord !== null) return standardCoord;
+        
+        const priceScale = chartManager.priceScale;
+        if (!priceScale) return null;
+        
+        try {
+            const visibleRange = priceScale.visibleRange();
+            if (visibleRange) {
+                const topPrice = visibleRange.to;
+                const bottomPrice = visibleRange.from;
+                const topCoord = chartManager.priceToCoordinate(topPrice);
+                const bottomCoord = chartManager.priceToCoordinate(bottomPrice);
+                
+                if (topCoord !== null && bottomCoord !== null) {
+                    const priceRange = topPrice - bottomPrice;
+                    const coordRange = bottomCoord - topCoord;
+                    const pricePerPixel = priceRange / coordRange;
+                    
+                    if (price > topPrice) {
+                        const pixelsAbove = (price - topPrice) / pricePerPixel;
+                        return topCoord - pixelsAbove;
+                    } else {
+                        const pixelsBelow = (bottomPrice - price) / pricePerPixel;
+                        return bottomCoord + pixelsBelow;
+                    }
+                }
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    paneViews() {
+        if (!this._manager || !this._manager._tempLine) return [];
+        
+        const paneView = {
+            zOrder: () => 'top',
+            renderer: () => ({
+                draw: (target) => {
+                    target.useBitmapCoordinateSpace(scope => {
+                        const ctx = scope.context;
+                        const tempLine = this._manager._tempLine;
+                        const chartManager = this._manager._chartManager;
+                        
+                        if (!tempLine || !tempLine.point1 || !tempLine.point2) return;
+                        
+                        const point1X = this._extendedTimeToCoordinate(tempLine.point1.time);
+                        const point1Y = this._extendedPriceToCoordinate(tempLine.point1.price);
+                        const point2X = this._extendedTimeToCoordinate(tempLine.point2.time);
+                        const point2Y = this._extendedPriceToCoordinate(tempLine.point2.price);
+                        
+                        if (point1X === null || point1Y === null || point2X === null || point2Y === null) return;
+                        
+                        const { position: x1 } = positionsLine(point1X, scope.horizontalPixelRatio, 1, true);
+                        const { position: y1, length: y1Length } = positionsLine(point1Y, scope.verticalPixelRatio, 2, false);
+                        const { position: x2 } = positionsLine(point2X, scope.horizontalPixelRatio, 1, true);
+                        const { position: y2, length: y2Length } = positionsLine(point2Y, scope.verticalPixelRatio, 2, false);
+                        
+                        ctx.save();
+                        const isBullish = point2Y <= point1Y;
+                        const bullishColor = chartManager?.bullishColor || '#00bcd4';
+                        const bearishColor = chartManager?.bearishColor || '#f23645';
+                        const lineColor = isBullish ? bullishColor : bearishColor;
+                        
+                        ctx.strokeStyle = lineColor;
+                        ctx.lineWidth = y1Length;
+                        ctx.setLineDash([5, 3]);
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1 + y1Length/2);
+                        ctx.lineTo(x2, y2 + y2Length/2);
+                        ctx.stroke();
+                        
+                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        ctx.shadowBlur = 4;
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.beginPath();
+                        ctx.arc(x1, y1 + y1Length/2, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.fillStyle = lineColor;
+                        ctx.beginPath();
+                        ctx.arc(x1, y1 + y1Length/2, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.restore();
+                    });
+                }
+            })
+        };
+        return [paneView];
+    }
+
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+    }
+    updateAllViews() {}
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class RulerLinePaneView {
+    constructor(ruler, chartManager) {
+        this._ruler = ruler;
+        this._chartManager = chartManager;
+        this._renderer = new RulerLineRenderer(ruler, chartManager);
+    }
+    renderer() { return this._renderer; }
+    zOrder() { return 'top'; }
+}
+
+class RulerLinePrimitive {
+    constructor(ruler, chartManager) {
+        this._ruler = ruler;
+        this._chartManager = chartManager;
+        this._paneView = new RulerLinePaneView(ruler, chartManager);
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+
+    paneViews() { return [this._paneView]; }
+
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+        this._syncPointsTime();
+    }
+
+    updateAllViews() {
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
+        this._syncPointsTime();
+    }
+
+    // ✅ ИСПРАВЛЕНО: Разрешаем времени выходить за пределы существующих свечей
+    _syncPointsTime() {
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length === 0) {
+            this._ruler.point1.time = this._ruler.anchorTime1;
+            this._ruler.point2.time = this._ruler.anchorTime2;
+            return;
+        }
+        
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+
+        const syncPoint = (anchorTime) => {
+            // ✅ Если время в будущем или прошлом, не обрезаем его до последней/первой свечи
+            if (typeof anchorTime !== 'number' || !isFinite(anchorTime)) return anchorTime;
+            if (anchorTime >= lastTime) return anchorTime;
+            if (anchorTime <= firstTime) return anchorTime;
+            // [PERF-PAN] общий бинарный поиск с кэшем вместо локального
+            const cm = this._chartManager;
+            const t = (cm && typeof cm.findNearestCandleTime === 'function')
+                ? cm.findNearestCandleTime(anchorTime)
+                : null;
+            return (typeof t === 'number' && isFinite(t)) ? t : anchorTime;
+        };
+        
+        this._ruler.point1.time = syncPoint(this._ruler.anchorTime1);
+        this._ruler.point2.time = syncPoint(this._ruler.anchorTime2);
+    }
+
+    getRuler() { return this._ruler; }
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class RulerLineManager {
+    constructor(chartManager) {
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._rulers = [];
+        this._chartManager = chartManager;
+        this._selectedRuler = null;
+        this._hoveredRuler = null;
+        this._isDrawingMode = false;
+        this._isDragging = false;
+        this._dragRuler = null;
+        this._dragPoint = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPoint1 = { price: 0, time: 0 };
+        this._dragStartPoint2 = { price: 0, time: 0 };
+                this._dragItem = null;
+        this._drawingStartPoint = null;
+        this._isDrawingSecondPoint = false;
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._tempLine = null;
+        this._tempPoint = null;
+        this._tempLinePrimitive = null;
+        this._tempPointPrimitive = null;
+        this._dblClickTimer = null;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+        this._needsRedraw = false;
+        
+        this._handleMouseDown = this._handleMouseDown.bind(this);
+        this._handleMouseMove = this._handleMouseMove.bind(this);
+        this._handleMouseUp = this._handleMouseUp.bind(this);
+        this._handleMouseLeave = this._handleMouseLeave.bind(this);
+        this._handleContextMenu = this._handleContextMenu.bind(this);
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+                this._pendingMouseEvent = null;
+        this._hoverRafId = null;
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+        this._setupEventListeners();
+        this._setupHotkeys();
+        
+        if (window.drawingLoaderCoordinator) {
+            window.drawingLoaderCoordinator.register(this, 'ruler');
+        }
+        
+        setTimeout(async () => {
+            try {
+                if (!window.dbReady) {
+                    await new Promise(r => { const c = () => window.dbReady ? r() : setTimeout(c, 50); c(); });
+                }
+                await this.loadRulers();
+            } catch (e) { console.error(e); }
+        }, 150);
+        this._isLoading = false;
+    }
+
+    _toBitmapCoords(cssX, cssY) {
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
+    }
+
+      _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+        container.addEventListener('mousedown', this._handleMouseDown);
+
+        // [ШАГ 2] mousemove через «воротник»: fast path для рисования/drag,
+        // guard скролла для hover, RAF-троттлинг для hitTest.
+        container.addEventListener('mousemove', (e) => {
+            // Fast path 1: рисование второй точки — превью должно идти за мышью без задержки
+            if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+                this._handleMouseMove(e);
+                return;
+            }
+
+            // Fast path 2: начало drag / сам drag — мгновенно
+            if (this._potentialDrag || this._isDragging) {
+                this._handleMouseMove(e);
+                return;
+            }
+
+            // Slow path: hover. Во время скролла hitTest не нужен
+            if ((this._chartManager._isScrolling || this._chartManager._isScrollingFast) && !this._potentialDrag && !this._isDragging) {   // [DRAW-DRAG] свой драг не глушим
+                if (this._hoveredRuler) {
+                    this._hoveredRuler.hovered = false;
+                    this._hoveredRuler = null;
+                    this._requestRedraw();
+                }
+                return;
+            }
+
+            // RAF-троттлинг
+            this._pendingMouseEvent = e;
+            if (this._hoverRafId) return;
+            this._hoverRafId = requestAnimationFrame(() => {
+                this._hoverRafId = null;
+                this._handleMouseMove(this._pendingMouseEvent);
+            });
+        });
+
+        container.addEventListener('mouseup', this._handleMouseUp);
+        container.addEventListener('mouseleave', this._handleMouseLeave);
+        container.addEventListener('contextmenu', this._handleContextMenu);
+    }
+
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            
+            if (e.key === 'Delete' && this._selectedRuler && (this._selectedRuler.showDragPoint1 || this._selectedRuler.showDragPoint2)) {
+                e.preventDefault();
+                this.deleteRuler(this._selectedRuler.id);
+                this._selectedRuler = null;
+            }
+        });
+    }
+
+    _getCurrentSymbolKey() {
+        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const marketType = this._chartManager.currentMarketType || 'futures';
+        return `${symbol}:${exchange}:${marketType}`;
+    }
+
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const rulerBtn = document.getElementById('toolRuler');
+        if (rulerBtn) {
+            if (enabled) {
+                rulerBtn.style.background = '#4A90E2';
+                rulerBtn.style.color = '#FFFFFF';
+                rulerBtn.classList.add('active');
+            } else {
+                rulerBtn.style.background = '';
+                rulerBtn.style.color = '';
+                rulerBtn.classList.remove('active');
+            }
+        }
+        if (!enabled) {
+            this._drawingStartPoint = null;
+            this._isDrawingSecondPoint = false;
+            if (this._tempLinePrimitive) {
+                const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                if (series) try { series.detachPrimitive(this._tempLinePrimitive); } catch(e) {}
+                this._tempLinePrimitive = null;
+                this._tempLine = null;
+            }
+            if (this._tempPointPrimitive) {
+                const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                if (series) try { series.detachPrimitive(this._tempPointPrimitive); } catch(e) {}
+                this._tempPointPrimitive = null;
+                this._tempPoint = null;
+            }
+            this._requestRedraw();
+        }
+    }
+
+    setMagnetEnabled(enabled) {}
+
+    // ✅ НОВЫЙ МЕТОД: Получение времени по X даже в пустых зонах (будущее/прошлое)
+    _getExtendedTimeFromX(x) {
+        let time = this._chartManager.coordinateToTime(x);
+        if (time !== null) return time;
+
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length < 2) return null;
+
+        const firstTime = chartData[0].time;
+        const lastTime = chartData[chartData.length - 1].time;
+        const firstX = this._chartManager.timeToCoordinate(firstTime);
+        const lastX = this._chartManager.timeToCoordinate(lastTime);
+
+        if (firstX !== null && lastX !== null) {
+            const barInterval = chartData[1].time - chartData[0].time;
+            const barWidth = (lastX - firstX) / (chartData.length - 1);
+            
+            if (x > lastX) {
+                const barsAfter = Math.round((x - lastX) / barWidth);
+                return lastTime + barsAfter * barInterval;
+            } else if (x < firstX) {
+                const barsBefore = Math.round((firstX - x) / barWidth);
+                return firstTime - barsBefore * barInterval;
+            }
+        }
+        return null;
+    }
+
+    createRuler(point1, point2, options = {}) {
+        const defaultVisibility = { '1m': true, '3m': true, '5m': true, '15m': true, '30m': true, '1h': true, '4h': true, '6h': true, '12h': true, '1d': true, '1w': true, '1M': true };
+        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        const ruler = new RulerLine(point1, point2, this._chartManager, { ...options, timeframeVisibility });
+        ruler.anchorTime1 = point1.time;
+        ruler.anchorTime2 = point2.time;
+        ruler.symbolKey = this._getCurrentSymbolKey();
+        ruler.symbol = this._chartManager.currentSymbol;
+        ruler.exchange = this._chartManager.currentExchange;
+        ruler.marketType = this._chartManager.currentMarketType;
+        const primitive = new RulerLinePrimitive(ruler, this._chartManager);
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        series.attachPrimitive(primitive);
+        this._rulers.push({ ruler, primitive, series });
+        this._saveRulers();
+        return ruler;
+    }
+
+    deleteRuler(rulerId) {
+        const index = this._rulers.findIndex(r => r.ruler.id === rulerId);
+        if (index !== -1) {
+            const { primitive, series } = this._rulers[index];
+            if (window.db) window.db.delete('drawings', rulerId).catch(e => console.warn(e));
+            try { series.detachPrimitive(primitive); } catch (e) {}
+            this._rulers.splice(index, 1);
+            if (this._selectedRuler && this._selectedRuler.id === rulerId) this._selectedRuler = null;
+            if (this._dragRuler && this._dragRuler.id === rulerId) this._dragRuler = null;
+            this._saveRulers();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    deleteAllRulers() {
+        for (const item of this._rulers) {
+            if (window.db) window.db.delete('drawings', item.ruler.id).catch(e => console.warn(e));
+        }
+        this._rulers.forEach(({ primitive, series }) => { try { series.detachPrimitive(primitive); } catch (e) {} });
+        this._rulers = [];
+        this._selectedRuler = null;
+        this._dragRuler = null;
+        this._saveRulers();
+        this._requestRedraw();
+    }
+
+       hitTest(x, y) {
+        // 1. Приоритет: уже выбранная линейка
+        if (this._selectedRuler) {
+            const selItem = this._rulers.find(item => item.ruler === this._selectedRuler);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return hit;
+                } catch (e) {}
+            }
+        }
+
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._rulers.length - 1; i >= 0; i--) {
+            const item = this._rulers[i];
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.ruler === this._selectedRuler) continue;
+
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        return bestHit;
+    }
+    _handleMouseDown(e) {
+        if (e.button !== 0) return;
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+
+        const rulerMenu = document.getElementById('rulerContextMenu');
+        if (rulerMenu && rulerMenu.style.display === 'flex') {
+            const menuRect = rulerMenu.getBoundingClientRect();
+            const isClickInsideMenu = e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+            if (isClickInsideMenu) return;
+        }
+
+        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+            this._completeDrawing(x, y);
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+
+        const hit = this.hitTest(bmX, bmY);
+        if (hit && hit.ruler) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const now = Date.now();
+            
+            if (this._dblClickTimer && this._potentialDblClickTarget === hit.ruler && now - this._lastClickTime < this._dblClickTimeout) {
+                clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = null;
+                this._potentialDblClickTarget = null;
+                this._lastClickTime = 0;
+                
+                if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
+
+                    this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
+                    hit.ruler.showDragPoint1 = false;
+                    hit.ruler.showDragPoint2 = false;
+                } else {
+                    hit.ruler.showDragPoint1 = true;
+                    hit.ruler.showDragPoint2 = true;
+                }
+                this._requestRedraw();
+                return;
+            }
+            
+            if (this._selectedRuler && this._selectedRuler !== hit.ruler) {
+                this._selectedRuler.selected = false;
+                this._selectedRuler.showDragPoint1 = false;
+                this._selectedRuler.showDragPoint2 = false;
+            }
+            hit.ruler.selected = true;
+            this._selectedRuler = hit.ruler;
+            
+            this._potentialDblClickTarget = hit.ruler;
+            this._lastClickTime = now;
+            if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+            this._dblClickTimer = setTimeout(() => {
+                this._dblClickTimer = null;
+                this._potentialDblClickTarget = null;
+            }, this._dblClickTimeout);
+            
+            if (hit.ruler.showDragPoint1 || hit.ruler.showDragPoint2) {
+                this._potentialDrag = { ruler: hit.ruler, pointType: hit.type, startX: bmX, startY: bmY, startPoint1: { ...hit.ruler.point1 }, startPoint2: { ...hit.ruler.point2 } };
+            } else {
+                this._potentialDrag = null;
+            }
+            
+            this._requestRedraw();
+        } else {
+            if (this._isDrawingMode && !this._isDrawingSecondPoint) {
+                this._startDrawing(x, y);
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            if (this._selectedRuler) {
+                this._selectedRuler.selected = false;
+                this._selectedRuler.showDragPoint1 = false;
+                this._selectedRuler.showDragPoint2 = false;
+                this._selectedRuler = null;
+                this._requestRedraw();
+            }
+            if (rulerMenu) rulerMenu.style.display = 'none';
+        }
+    }
+
+      _handleMouseMove(e) {
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
+
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+        if (this._isDrawingMode && this._isDrawingSecondPoint && this._drawingStartPoint) {
+            let price = this._chartManager.coordinateToPrice(cssY);
+            let time = this._getExtendedTimeFromX(cssX);
+            
+            if (price !== null && time !== null) {
+                if (!this._tempLine) {
+                    this._tempLine = { point1: this._drawingStartPoint, point2: { price, time } };
+                    if (!this._tempLinePrimitive) {
+                        this._tempLinePrimitive = new TempRulerLinePrimitive(this);
+                        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+                        if (series) series.attachPrimitive(this._tempLinePrimitive);
+                    }
+                } else {
+                    this._tempLine.point2 = { price, time };
+                }
+            }
+            return;
+        }
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(bmX - this._potentialDrag.startX);
+            const dy = Math.abs(bmY - this._potentialDrag.startY);
+            if (dx > 1 || dy > 1) {
+                this._isDragging = true;
+                this._dragRuler = this._potentialDrag.ruler;
+                this._dragPoint = this._potentialDrag.pointType;
+                this._dragRuler.dragging = true;
+                // [ШАГ 3] Запоминаем item перетаскиваемой линейки
+                this._dragItem = this._rulers.find(it => it.ruler === this._dragRuler) || null;
+                this._dragStartX = this._potentialDrag.startX;
+                this._dragStartY = this._potentialDrag.startY;
+                this._dragStartPoint1 = { ...this._potentialDrag.startPoint1 };
+                this._dragStartPoint2 = { ...this._potentialDrag.startPoint2 };
+                this._chartManager.chartContainer.style.cursor = 'grabbing';
+            }
+        }
+
+        if (this._isDragging && this._dragRuler) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+            const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+            const startPoint = this._dragPoint === 'point1' ? this._dragStartPoint1 : this._dragStartPoint2;
+            
+            let px = this._chartManager.timeToCoordinate(startPoint.time);
+            if (px === null) {
+                const chartData = this._chartManager.chartData;
+                if (chartData && chartData.length > 1) {
+                    const firstTime = chartData[0].time;
+                    const lastTime = chartData[chartData.length - 1].time;
+                    const firstX = this._chartManager.timeToCoordinate(firstTime);
+                    const lastX = this._chartManager.timeToCoordinate(lastTime);
+                    if (firstX !== null && lastX !== null) {
+                        const barInterval = chartData[1].time - chartData[0].time;
+                        const barWidth = (lastX - firstX) / (chartData.length - 1);
+                        if (startPoint.time > lastTime) {
+                            px = lastX + ((startPoint.time - lastTime) / barInterval) * barWidth;
+                        } else {
+                            px = firstX - ((firstTime - startPoint.time) / barInterval) * barWidth;
+                        }
+                    }
+                }
+            }
+            
+            const py = this._chartManager.priceToCoordinate(startPoint.price);
+            
+            if (px !== null && py !== null) {
+                const newX = px + deltaX;
+                const newY = py + deltaY;
+                
+                const newPrice = this._chartManager.coordinateToPrice(newY);
+                const newTime = this._getExtendedTimeFromX(newX);
+                
+                if (this._dragPoint === 'point1') {
+                    if (newPrice !== null) this._dragRuler.point1.price = newPrice;
+                    if (newTime !== null) { this._dragRuler.point1.time = newTime; this._dragRuler.anchorTime1 = newTime; }
+                } else {
+                    if (newPrice !== null) this._dragRuler.point2.price = newPrice;
+                    if (newTime !== null) { this._dragRuler.point2.time = newTime; this._dragRuler.anchorTime2 = newTime; }
+                }
+            }
+            
+            const newColor = this._dragRuler._isBullish() ? '#00bcd4' : '#f23645';
+            this._dragRuler.options.color = newColor;
+            // [ШАГ 3] Перерисовываем только эту линейку
+            this._requestRedraw(this._dragItem);
+        } else {
+            const hit = this.hitTest(bmX, bmY);
+            const hitRuler = hit ? hit.ruler : null;
+            if (hitRuler && (hitRuler.showDragPoint1 || hitRuler.showDragPoint2)) {
+                this._chartManager.chartContainer.style.cursor = (hit.type === 'point1' || hit.type === 'point2') ? 'move' : 'crosshair';
+            } else {
+                this._chartManager.chartContainer.style.cursor = 'crosshair';
+            }
+            if (this._hoveredRuler !== hitRuler) {
+                if (this._hoveredRuler) this._hoveredRuler.hovered = false;
+                this._hoveredRuler = hitRuler;
+                if (hitRuler) hitRuler.hovered = true;
+                this._requestRedraw();
+            }
+        }
+    }
+     _handleMouseUp(e) {
+        if (this._isDragging) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._isDragging = false;
+            if (this._dragRuler) {
+                this._dragRuler.dragging = false;
+                this._dragRuler.anchorTime1 = this._dragRuler.point1.time;
+                this._dragRuler.anchorTime2 = this._dragRuler.point2.time;
+                if (this._selectedRuler !== this._dragRuler) {
+                    this._dragRuler.showDragPoint1 = false;
+                    this._dragRuler.showDragPoint2 = false;
+                }
+                this._saveRulers();
+                this._dragRuler = null;
+                this._dragItem = null;
+                this._requestRedraw();
+            }
+            this._chartManager.chartContainer.style.cursor = 'crosshair';
+        }
+        this._potentialDrag = null;
+    }
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        this._handleMouseUp(e); 
+    }
+    _handleMouseLeave() {
+        // [ШАГ 2] Сброс отложенного RAF и события
+        if (this._hoverRafId) {
+            cancelAnimationFrame(this._hoverRafId);
+            this._hoverRafId = null;
+        }
+        this._pendingMouseEvent = null;
+
+        if (this._hoveredRuler) {
+            this._hoveredRuler.hovered = false;
+            this._hoveredRuler = null;
+            this._requestRedraw();
+        }
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
+
+    _handleContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+        
+        const hit = this.hitTest(bmX, bmY);
+        if (hit && hit.ruler) {
+            if (this._selectedRuler && this._selectedRuler !== hit.ruler) {
+                this._selectedRuler.selected = false;
+                this._selectedRuler.showDragPoint1 = false;
+                this._selectedRuler.showDragPoint2 = false;
+            }
+            hit.ruler.selected = true;
+            hit.ruler.showDragPoint1 = true;
+            hit.ruler.showDragPoint2 = true;
+            this._selectedRuler = hit.ruler;
+            this._requestRedraw();
+            const menu = document.getElementById('rulerContextMenu');
+            if (menu) {
+                const otherMenus = ['drawingContextMenu', 'trendContextMenu', 'alertContextMenu'];
+                otherMenus.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+                menu.style.display = 'flex';
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
+                const settingsBtn = document.getElementById('rulerSettingsBtn');
+                settingsBtn.onclick = null;
+                settingsBtn.onclick = (event) => { event.stopPropagation(); this._showSettings(hit.ruler); menu.style.display = 'none'; };
+                const deleteBtn = document.getElementById('rulerDeleteBtn');
+                deleteBtn.onclick = null;
+                deleteBtn.onclick = (event) => { event.stopPropagation(); this.deleteRuler(hit.ruler.id); menu.style.display = 'none'; };
+            }
+        } else {
+            const menu = document.getElementById('rulerContextMenu');
+            if (menu) menu.style.display = 'none';
+        }
+    }
+
+    _startDrawing(x, y) {
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._getExtendedTimeFromX(x); // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЙ МЕТОД
+        
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle?.() || (this._chartManager.chartData?.length ? this._chartManager.chartData[this._chartManager.chartData.length - 1] : null);
+            if (lastCandle) { 
+                price = price ?? lastCandle.close; 
+                time = time ?? lastCandle.time; 
+            } else {
+                return;
+            }
+        }
+        
+        this._drawingStartPoint = { price, time, x, y, anchorCandle: null };
+        this._isDrawingSecondPoint = true;
+        this._tempPoint = { price, time, x, y };
+        this._tempLine = null;
+        
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        if (series && !this._tempPointPrimitive) {
+            this._tempPointPrimitive = new TempRulerPointPrimitive(this);
+            try { series.attachPrimitive(this._tempPointPrimitive); } catch (e) {}
+        }
+        this._requestRedraw();
+    }
+
+    _completeDrawing(x, y) {
+        if (!this._drawingStartPoint) return;
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._getExtendedTimeFromX(x); // ✅ ИСПОЛЬЗУЕМ РАСШИРЕННЫЙ МЕТОД
+        
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle?.() || (this._chartManager.chartData?.length ? this._chartManager.chartData[this._chartManager.chartData.length - 1] : null);
+            if (lastCandle) { 
+                price = price ?? lastCandle.close; 
+                time = time ?? lastCandle.time; 
+            } else {
+                return;
+            }
+        }
+        
+        const startTime = this._drawingStartPoint.time; 
+        const endTime = time;
+        let point1, point2;
+        
+        if (startTime <= endTime) {
+            point1 = { price: this._drawingStartPoint.price, time: startTime };
+            point2 = { price, time: endTime };
+        } else {
+            point1 = { price, time: endTime };
+            point2 = { price: this._drawingStartPoint.price, time: startTime };
+        }
+        
+        this.createRuler(point1, point2, { anchorCandle1: null, anchorCandle2: null });
+        
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        if (this._tempLinePrimitive) { 
+            if (series) try { series.detachPrimitive(this._tempLinePrimitive); } catch(e) {} 
+            this._tempLinePrimitive = null; 
+            this._tempLine = null; 
+        }
+        if (this._tempPointPrimitive) { 
+            if (series) try { series.detachPrimitive(this._tempPointPrimitive); } catch(e) {} 
+            this._tempPointPrimitive = null; 
+            this._tempPoint = null; 
+        }
+        this._drawingStartPoint = null; 
+        this._isDrawingSecondPoint = false;
+        this._requestRedraw(); 
+        this.setDrawingMode(false);
+    }
+
+       _showSettings(ruler) {
+        const panel = document.getElementById('rulerSettingsPanel');
+        if (!panel) return;
+
+        this._selectedRuler = ruler;
+
+        const opacitySlider = document.getElementById('rulerFillOpacity');
+        const opacityValue = document.getElementById('rulerFillOpacityValue');
+
+        if (opacitySlider && opacityValue) {
+            opacitySlider.value = Math.round((ruler.options.fillOpacity || 0.25) * 100);
+            opacityValue.textContent = opacitySlider.value + '%';
+        }
+
+        const closeBtn = panel.querySelector('.close-settings');
+        if (closeBtn) {
+            closeBtn.onclick = () => { panel.style.display = 'none'; };
+        }
+
+        const saveBtn = document.getElementById('rulerSaveSettings');
+        if (saveBtn) {
+            saveBtn.onclick = () => {
+                if (opacitySlider) {
+                    ruler.updateOptions({ fillOpacity: parseInt(opacitySlider.value) / 100 });
+                    this._requestRedraw();
+                    this._saveRulers();
+                }
+                panel.style.display = 'none';
+            };
+        }
+
+        const deleteBtn = document.getElementById('rulerDeleteFromSettings');
+        if (deleteBtn) {
+            deleteBtn.onclick = () => {
+                this.deleteRuler(ruler.id);
+                panel.style.display = 'none';
+            };
+        }
+
+        panel.style.display = 'block';
+        panel.style.left = '50%';
+        panel.style.top = '50%';
+        panel.style.transform = 'translate(-50%, -50%)';
+
+        const closeOnOutsideClick = (e) => {
+            if (!panel.contains(e.target) && panel.style.display === 'block') {
+                panel.style.display = 'none';
+                document.removeEventListener('mousedown', closeOnOutsideClick);
+            }
+        };
+        setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 100);
+
+        if (!panel.dataset.instantBound) {
+            panel.dataset.instantBound = 'true';
+            opacitySlider.addEventListener('input', () => {
+                const val = parseInt(opacitySlider.value) / 100;
+                opacityValue.textContent = opacitySlider.value + '%';
+                if (this._selectedRuler) {
+                    this._selectedRuler.options.fillOpacity = val;
+                    if (this._selectedRuler.primitive?.requestRedraw) {
+                        this._selectedRuler.primitive.requestRedraw();
+                    }
+                    this._requestRedraw();
+                    this._saveRulers();
+                }
+            });
+        }
+    }
+
+      _requestRedraw(item = null) {
+        // [ШАГ 3] Быстрый путь: перерисовать ровно одну линейку (drag)
+        if (item && item.primitive?.requestRedraw) {
+            item.primitive.requestRedraw();
+            return;
+        }
+        // Медленный путь: перерисовать всё + временные примитивы
+        this._rulers.forEach(it => { if (it.primitive?.requestRedraw) it.primitive.requestRedraw(); });
+        if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
+        if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
+    }
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._rulers?.forEach(item => { 
+                if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+            });
+            if (this._tempLinePrimitive) this._tempLinePrimitive.requestRedraw();
+            if (this._tempPointPrimitive) this._tempPointPrimitive.requestRedraw();
+        }
+    }
+
+    async _saveRulers() {
+        if (this._rulers.length === 0 || !window.db) return;
+        const promises = this._rulers.map(item => window.db.put('drawings', { 
+            id: item.ruler.id, type: 'ruler', symbolKey: item.ruler.symbolKey, 
+            data: { 
+                point1: item.ruler.point1, point2: item.ruler.point2, 
+                options: item.ruler.options, timeframeVisibility: item.ruler.timeframeVisibility, 
+                anchorCandle1: item.ruler.anchorCandle1, anchorCandle2: item.ruler.anchorCandle2, 
+                anchorTime1: item.ruler.anchorTime1, anchorTime2: item.ruler.anchorTime2, 
+                symbol: item.ruler.symbol, exchange: item.ruler.exchange, marketType: item.ruler.marketType 
+            } 
+        }).catch(e => console.warn(e)));
+        await Promise.all(promises);
+    }
+
+    async loadRulers() {
+        const currentKey = this._getCurrentSymbolKey();
+        if (window.drawingLoaderCoordinator) {
+            await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+        }
+    }
+
+ async loadFromData(symbolKey, rulerRecords) {
+    if (this._getCurrentSymbolKey() !== symbolKey) return;
+
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+
+        if (!series) return;
+
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+        const existingIds = new Set(
+            this._rulers.filter(item => item.ruler.symbolKey === symbolKey).map(item => item.ruler.id)
+        );
+        
+        const newRecordIds = new Set(rulerRecords.map(r => r.id));
+        
+        const toDetach = this._rulers.filter(item => 
+            item.ruler.symbolKey === symbolKey && !newRecordIds.has(item.ruler.id)
+        );
+        
+        for (const item of toDetach) {
+            try { if (item.series && item.primitive) item.series.detachPrimitive(item.primitive); } catch(e) {}
+        }
+        
+        this._rulers = this._rulers.filter(item => 
+            item.ruler.symbolKey !== symbolKey || newRecordIds.has(item.ruler.id)
+        );
+
+        const newRulers = [];
+        let loadedCount = 0;
+        let skippedCount = 0;
+
+        for (const rec of rulerRecords) {
+            try {
+                // ✅ ЗАЩИТА: нормализуем данные — поддерживаем и вложенный, и плоский формат
+                const data = rec.data || rec; // если rec.data нет — берём сам rec
+                
+                // ✅ Проверяем обязательные поля
+                if (!data.point1 || !data.point2) {
+                    console.warn('⚠️ Ruler пропущен (нет point1/point2):', rec.id);
+                    skippedCount++;
+                    continue;
+                }
+
+                // ✅ Проверяем, что point1/point2 — валидные объекты
+                if (typeof data.point1.time !== 'number' || typeof data.point1.price !== 'number' ||
+                    typeof data.point2.time !== 'number' || typeof data.point2.price !== 'number') {
+                    console.warn('⚠️ Ruler пропущен (невалидные координаты):', rec.id);
+                    skippedCount++;
+                    continue;
+                }
+
+                const existing = this._rulers.find(item => item.ruler.id === rec.id);
+                
+                if (existing) {
+                    existing.ruler.point1 = data.point1;
+                    existing.ruler.point2 = data.point2;
+                    existing.ruler.options = { ...existing.ruler.options, ...(data.options || {}) };
+                    existing.ruler.timeframeVisibility = { ...defaultVisibility, ...(data.timeframeVisibility || {}) };
+                    existing.ruler.anchorTime1 = data.anchorTime1;
+                    existing.ruler.anchorTime2 = data.anchorTime2;
+                    existing.ruler.anchorCandle1 = data.anchorCandle1;
+                    existing.ruler.anchorCandle2 = data.anchorCandle2;
+                    loadedCount++;
+                    continue;
+                }
+
+                const ruler = new RulerLine(data.point1, data.point2, this._chartManager, data.options);
+                ruler.id = rec.id;
+                ruler.symbolKey = rec.symbolKey || symbolKey;
+                ruler.symbol = data.symbol;
+                ruler.exchange = data.exchange;
+                ruler.marketType = data.marketType;
+                ruler.timeframeVisibility = { ...defaultVisibility, ...(data.timeframeVisibility || {}) };
+                ruler.anchorCandle1 = data.anchorCandle1;
+                ruler.anchorCandle2 = data.anchorCandle2;
+                ruler.anchorTime1 = data.anchorTime1;
+                ruler.anchorTime2 = data.anchorTime2;
+
+                const primitive = new RulerLinePrimitive(ruler, this._chartManager);
+                series.attachPrimitive(primitive);
+                newRulers.push({ ruler, primitive, series });
+                loadedCount++;
+            } catch (e) { 
+                console.warn('Failed to load ruler:', rec.id, e); 
+                skippedCount++;
+            }
+        }
+
+        this._rulers.push(...newRulers);
+        this._requestRedraw();
+        
+        // ✅ Корректный лог: показываем реально загруженные vs пропущенные
+        if (skippedCount > 0) {
+            console.log(`⚠️ Loaded ${loadedCount}/${rulerRecords.length} rulers for ${symbolKey} (${skippedCount} skipped)`);
+        } else {
+            console.log(`✅ Loaded ${loadedCount} rulers for ${symbolKey}`);
+        }
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
+    }
+}
+    _detachAllPrimitivesForSymbol(symbolKey) {
+        const itemsForSymbol = this._rulers.filter(item => item.ruler.symbolKey === symbolKey);
+        for (const item of itemsForSymbol) {
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+        }
+        this._rulers = this._rulers.filter(item => item.ruler.symbolKey !== symbolKey);
+    }
+
+    syncWithNewTimeframe() {}
+
+    deactivateAll() {
+        this._rulers.forEach(item => {
+            item.ruler.selected = false;
+            item.ruler.showDragPoint1 = false;
+            item.ruler.showDragPoint2 = false;
+        });
+        this._selectedRuler = null;
+    }
+
+    activateObject(ruler) {
+        ruler.selected = true;
+        ruler.showDragPoint1 = true;
+        ruler.showDragPoint2 = true;
+        this._selectedRuler = ruler;
+    }
+}
+class AlertLine {  
+    constructor(price, time, options = {}) {
+        const normalizedTime = AlertLine.getTs(time);
+        
+        this.price = price;
+        this.time = normalizedTime;
+        this.anchorTime = normalizedTime;
+        
+        this.triggered = options.triggered ?? false;
+        this.id = `alert_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        
+        this.symbol = options.symbol || 'BTCUSDT';
+        this.exchange = options.exchange || 'binance';
+        this.marketType = options.marketType || 'futures';
+        this.direction = options.direction || 'both';
+        
+        this.createdAt = Date.now();
+        this.status = options.status || 'active';
+        
+        this.active = false;
+        
+        // ИСПРАВЛЕНИЕ: Используем нормализацию вместо прямого присваивания
+        this.repeatCount = AlertLine.normalizeRepeatCount(options.repeatCount ?? 5);
+        this.repeatInterval = options.repeatInterval ?? 1;
+        this.lastTriggerTime = options.lastTriggerTime ?? null;
+        this.triggerCount = options.triggerCount ?? 0;
+        this.triggerLimit = AlertLine.normalizeRepeatCount(this.repeatCount);
+        
+        this.options = {
+            color: options.color || '#808080',
+            lineWidth: options.lineWidth ?? 2,
+            lineStyle: options.lineStyle || 'dotted',
+            opacity: options.opacity ?? 0.26,
+            extendLeft: options.extendLeft ?? true,
+            extendRight: options.extendRight ?? true,
+            showPrice: options.showPrice ?? true,
+            showBell: options.showBell ?? true,
+            fontSize: options.fontSize ?? 10,
+        };
+        
+        this.anchorCandle = options.anchorCandle || null;
+        
+        this.timeframeVisibility = options.timeframeVisibility || {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+        
+        this.selected = false;
+        this.hovered = false;
+        this.dragging = false;
+        this.showDragPoint = false;
+        this.attached = false;
+        this.dragPointX = 0;
+        this.dragPointY = 0;
+        this.symbolKey = options.symbolKey || null;
+        
+        this._firstTriggerTime = null;
+        this._firstTriggerPrice = null;
+    }
+
+    /**
+     * Нормализует значение repeatCount.
+     * Корректно обрабатывает Infinity (число и строку), NaN, отрицательные значения.
+     * @param {*} val - Значение для нормализации
+     * @returns {number|Infinity}
+     */
+    static normalizeRepeatCount(val) {
+        if (val === Infinity || val === 'Infinity' || val === 'infinity') return Infinity;
+        const n = parseInt(val, 10);
+        return isNaN(n) || n < 1 ? 5 : n;
+    }
+
+    updateOptions(newOptions) {
+        const allowedKeys = ['color', 'lineWidth', 'lineStyle', 'opacity', 'extendLeft', 
+                            'extendRight', 'showPrice', 'showBell', 'fontSize'];
+        const filtered = {};
+        for (const key of allowedKeys) {
+            if (newOptions[key] !== undefined) filtered[key] = newOptions[key];
+        }
+        this.options = { ...this.options, ...filtered };
+        
+        // ИСПРАВЛЕНИЕ: Используем нормализацию при обновлении
+        if (newOptions.repeatCount !== undefined) {
+            this.repeatCount = AlertLine.normalizeRepeatCount(newOptions.repeatCount);
+            this.triggerLimit = AlertLine.normalizeRepeatCount(this.repeatCount);
+        }
+        if (newOptions.repeatInterval !== undefined) {
+            this.repeatInterval = newOptions.repeatInterval;
+        }
+        if (newOptions.direction !== undefined) {
+            this.direction = newOptions.direction;
+        }
+    }
+    
+    isVisibleOnTimeframe(timeframe) {
+        // [FIX] как у всех рисовалок (ray/trend/ruler/text/trade): отсутствие
+        // ключа трактуется как «виден». Раньше у алертов было === true, из-за
+        // чего алерт с неполной картой timeframeVisibility не рисовался, хотя
+        // в настройках («Видимость») галка стояла.
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+    
+    canTriggerAgain() {
+        if (this.status !== 'active') return false;
+        if (this.triggerLimit === Infinity) return true;
+        return this.triggerCount < this.triggerLimit;
+    }
+    
+    shouldTriggerByTimer(now) {
+        if (!this.lastTriggerTime) return true;
+        const minutesSinceLast = (now - this.lastTriggerTime) / (60 * 1000);
+        return minutesSinceLast >= this.repeatInterval;
+    }
+    
+    isActive() {
+        if (this.status !== 'active') return false;
+        if (this.repeatCount === Infinity) return true;
+        return this.triggerCount < this.repeatCount;
+    }
+    
+    isCompleted() {
+        return this.status === 'completed' || (this.repeatCount !== Infinity && this.triggerCount >= this.repeatCount);
+    }
+    
+    pause() {
+        if (this.status === 'active') {
+            this.status = 'paused';
+        }
+    }
+    
+    resume() {
+        if (this.status === 'paused' && !this.isCompleted()) {
+            this.status = 'active';
+        }
+    }
+    
+    complete() {
+        this.status = 'completed';
+        this.triggered = true;
+        this.active = false;
+    }
+    
+    resetPriceTrigger() {
+        this.active = false;
+    }
+    
+    static getTs(time) {
+        if (typeof time === 'number') return time;
+        if (typeof time === 'string') {
+            const parsed = Date.parse(time);
+            if (!isNaN(parsed)) return Math.floor(parsed / 1000);
+            return Number(time);
+        }
+        return Number(time) || 0;
+    }
+}
+class AlertLineRenderer {
+    constructor(alert, chartManager) {
+        this._alert = alert;
+        this._chartManager = chartManager;
+        this._hitArea = null;
+        this._priceLabelHitArea = null;
+        
+        // [FIX-AUDIT-A] было `: formatPriceSafe` — такого идентификатора НЕТ нигде в
+        // проекте (проверено по всем 31 файлу). Ветка срабатывала, только если
+        // Utils.formatPrice недоступен, и тогда КОНСТРУКТОР AlertLineRenderer падал с
+        // ReferenceError -> линии алертов переставали рисоваться. Основная ветка
+        // (Utils.formatPrice) не изменена, поэтому штатное поведение то же.
+        this._formatPrice = (typeof Utils !== 'undefined' && typeof Utils.formatPrice === 'function')
+            ? Utils.formatPrice
+            : (price => {
+                if (typeof price !== 'number' || !isFinite(price)) return '—';
+                const abs = Math.abs(price);
+                if (abs >= 1000) return price.toFixed(2);
+                if (abs >= 1)    return price.toFixed(4);
+                if (abs >= 0.01) return price.toFixed(6);
+                return abs > 0 ? price.toFixed(8) : '0';
+            });
+    }
+    
+    draw(target) {
+        this._hitArea = null;
+        this._priceLabelHitArea = null;
+
+        const currentKey = this._chartManager.getCurrentSymbolKey?.();
+        if (currentKey && this._alert.symbolKey !== currentKey) return;
+
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const alert = this._alert;
+            const chartManager = this._chartManager;
+
+            const currentTf = chartManager.currentInterval;
+            if (!alert.isVisibleOnTimeframe(currentTf)) return;
+
+            let yCoordinate = chartManager.priceToCoordinate(alert.price);
+            let xCoordinate = chartManager.timeToCoordinate(alert.time);
+            if (yCoordinate === null || xCoordinate === null) return;
+
+            const timeScale = chartManager.chart.timeScale();
+            const visibleRange = timeScale?.getVisibleLogicalRange();
+            if (!visibleRange) return;
+
+            let startX = 0;
+            let endX = scope.mediaSize.width;
+            if (!alert.options.extendLeft) startX = xCoordinate;
+            if (!alert.options.extendRight) endX = xCoordinate;
+
+            const { position: startPos } = positionsLine(startX, scope.horizontalPixelRatio, 1, true);
+            const { position: endPos } = positionsLine(endX, scope.horizontalPixelRatio, 1, true);
+            const { position: yPos, length: yLength } = positionsLine(
+                yCoordinate, scope.verticalPixelRatio, alert.options.lineWidth, false
+            );
+
+            this._hitArea = { 
+                y: yPos, 
+                height: yLength, 
+                x1: Math.min(startPos, endPos), 
+                x2: Math.max(startPos, endPos) 
+            };
+
+            ctx.save();
+
+            const color = alert.options.color;
+            const opacity = alert.options.opacity !== undefined ? alert.options.opacity : 0.26;
+            const rgbaColor = this._toRgba(color, opacity);
+
+            ctx.strokeStyle = rgbaColor;
+            ctx.lineWidth = yLength;
+            
+            if (alert.options.lineStyle === 'dashed') ctx.setLineDash([10, 8]);
+            else if (alert.options.lineStyle === 'dotted') ctx.setLineDash([2, 4]);
+            else ctx.setLineDash([]);
+            
+            ctx.beginPath();
+            ctx.moveTo(startPos, yPos + yLength / 2);
+            ctx.lineTo(endPos, yPos + yLength / 2);
+            ctx.stroke();
+            
+            ctx.setLineDash([]);
+
+            if (alert.showDragPoint) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(
+                    Math.round(xCoordinate * scope.horizontalPixelRatio), 
+                    yPos + yLength / 2, 
+                    6 * scope.horizontalPixelRatio, 
+                    0, 2 * Math.PI
+                );
+                ctx.fill();
+                
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+                
+                ctx.fillStyle = rgbaColor;
+                ctx.beginPath();
+                ctx.arc(
+                    Math.round(xCoordinate * scope.horizontalPixelRatio), 
+                    yPos + yLength / 2, 
+                    4 * scope.horizontalPixelRatio, 
+                    0, 2 * Math.PI
+                );
+                ctx.fill();
+            }
+
+            if (alert.options.showPrice) {
+                let priceText = this._formatPrice(alert.price);
+                
+                let statusIcon = '';
+                if (alert.status === 'active') {
+                    statusIcon = alert.active ? '🔔 ' : '🔔 ';
+                } else if (alert.status === 'paused') {
+                    statusIcon = '⏸️ ';
+                } else if (alert.status === 'completed' || alert.triggered) {
+                    statusIcon = '✅ ';
+                }
+                priceText = statusIcon + priceText;
+                let vpSpriteDone = false;
+                if (window.VP_SPRITES !== false) {
+                    try {
+
+        const aHpr = scope.horizontalPixelRatio, aVpr = scope.verticalPixelRatio;
+        const aFontSize = alert.options.fontSize;
+        const spriteKey = `alert|${priceText}|${aFontSize}|${rgbaColor}|${aHpr}|${aVpr}`;
+        const sprite = DrawingLabelSprites.get(spriteKey, () => {
+            const meas = document.createElement('canvas').getContext('2d');
+            meas.font = `bold ${aFontSize * aHpr}px 'Inter', Arial, sans-serif`;
+            const textWidth = meas.measureText(priceText).width;
+            const padding = 8 * aHpr;
+            const labelWidth = textWidth + padding * 2;
+            const labelHeight = (aFontSize + 6) * aVpr;
+            const pad = 8;
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.ceil(labelWidth + pad * 2);
+            canvas.height = Math.ceil(labelHeight + pad * 2);
+            const g = canvas.getContext('2d');
+            g.fillStyle = rgbaColor;
+            g.shadowBlur = 4;
+            g.shadowColor = 'rgba(0,0,0,0.3)';
+            g.beginPath();
+            this._roundRect(g, pad, pad, labelWidth, labelHeight, 4 * aHpr);
+            g.fill();
+            g.shadowColor = '#000000';
+            g.shadowBlur = 3;
+            g.shadowOffsetX = 1;
+            g.shadowOffsetY = 1;
+            g.fillStyle = '#FFFFFF';
+            g.font = `bold ${(aFontSize + 1) * aHpr}px 'Inter', Arial, sans-serif`;
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText(priceText, pad + labelWidth / 2, pad + labelHeight / 2);
+            return { canvas, labelWidth, labelHeight, pad };
+        });
+        if (sprite) {
+            const labelXPos = scope.mediaSize.width * aHpr - sprite.labelWidth - 2;
+            const labelYPos = yPos - sprite.labelHeight / 2;
+            this._priceLabelHitArea = { x: labelXPos, y: labelYPos, width: sprite.labelWidth, height: sprite.labelHeight };
+            if (sprite.canvas.width > 0 && sprite.canvas.height > 0) ctx.drawImage(sprite.canvas, labelXPos - sprite.pad, labelYPos - sprite.pad);
+        }
+                        vpSpriteDone = true;
+                    } catch (e) { window.__vpSpriteError(e); }
+                }
+                if (!vpSpriteDone) {
+                    window.VP_SPRITE_STATS.fallback += 1;
+
+
+                    ctx.font = `bold ${alert.options.fontSize * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+                    const textMetrics = ctx.measureText(priceText);
+                    const textWidth = textMetrics.width;
+                    const padding = 8 * scope.horizontalPixelRatio;
+                    const labelWidth = textWidth + padding * 2;
+                    const labelHeight = (alert.options.fontSize + 6) * scope.verticalPixelRatio;
+
+                    const labelXPos = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 2;
+                    const labelYPos = yPos - labelHeight / 2;
+
+                    this._priceLabelHitArea = { 
+                        x: labelXPos, 
+                        y: labelYPos, 
+                        width: labelWidth, 
+                        height: labelHeight 
+                    };
+
+                    ctx.fillStyle = rgbaColor;
+                    ctx.shadowBlur = 4;
+                    ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    this._roundRect(ctx, labelXPos, labelYPos, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+                    ctx.fill();
+
+                    ctx.shadowColor = '#000000';
+                    ctx.shadowBlur = 3;
+                    ctx.shadowOffsetX = 1;
+                    ctx.shadowOffsetY = 1;
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = `bold ${(alert.options.fontSize + 1) * scope.horizontalPixelRatio}px 'Inter', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(priceText, labelXPos + labelWidth / 2, labelYPos + labelHeight / 2);
+                }
+                }
+            
+            ctx.restore();
+        });
+    }
+
+    _toRgba(color, opacity) {
+        const parseHex = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+        const parseRgb = (rgb) => {
+            const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+            return result ? { r: parseInt(result[1], 10), g: parseInt(result[2], 10), b: parseInt(result[3], 10) } : null;
+        };
+        const parseRgba = (rgba) => {
+            const result = /rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/i.exec(rgba);
+            return result ? { 
+                r: parseInt(result[1], 10), 
+                g: parseInt(result[2], 10), 
+                b: parseInt(result[3], 10) 
+            } : null;
+        };
+
+        let parsed = parseHex(color) || parseRgb(color) || parseRgba(color);
+        if (parsed) {
+            return `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${opacity})`;
+        }
+        return color;
+    }
+
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+    }
+
+  hitTest(x, y) {
+    let bestHit = null;
+    let bestDistance = Infinity;
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания.
+    // Радиус 16 bitmap-px ≈ 8 CSS-px на Retina — комфортно для мыши и тачпада.
+    // Фолбэк на экранную координату цены, если _hitArea ещё не сформирована
+    // (первый кадр после загрузки / после смены ТФ).
+    if (this._alert.showDragPoint) {
+        const xCoordinate = this._chartManager.timeToCoordinate(this._alert.time);
+        const yCoordinate = this._chartManager.priceToCoordinate(this._alert.price);
+
+        if (xCoordinate !== null && yCoordinate !== null) {
+            const pointX = Math.round(xCoordinate * pixelRatio);
+            const centerY = this._hitArea
+                ? (this._hitArea.y + this._hitArea.height / 2)
+                : (yCoordinate * pixelRatio);
+
+            const dx = x - pointX;
+            const dy = y - centerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < 16) {
+                return { type: 'dragPoint', alert: this._alert, distance };
+            }
+        }
+    }
+
+    // ✅ 2. Ценовая метка (Label)
+    if (this._priceLabelHitArea) {
+        const padding = 10;
+        const centerX = this._priceLabelHitArea.x + this._priceLabelHitArea.width / 2;
+        const centerY = this._priceLabelHitArea.y + this._priceLabelHitArea.height / 2;
+
+        const inX = x >= this._priceLabelHitArea.x - padding &&
+                    x <= this._priceLabelHitArea.x + this._priceLabelHitArea.width + padding;
+        const inY = y >= this._priceLabelHitArea.y - padding &&
+                    y <= this._priceLabelHitArea.y + this._priceLabelHitArea.height + padding;
+
+        if (inX && inY) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < bestDistance) {
+                bestHit = { type: 'label', alert: this._alert, distance };
+                bestDistance = distance;
+            }
+        }
+    }
+
+    // ✅ 3. Линия (буфер 4 px)
+    if (this._hitArea) {
+        const buffer = 4;
+        const centerY = this._hitArea.y + this._hitArea.height / 2;
+        const inY = Math.abs(y - centerY) < (this._hitArea.height / 2 + buffer);
+        const inX = x >= this._hitArea.x1 - buffer && x <= this._hitArea.x2 + buffer;
+
+        if (inX && inY) {
+            const distance = Math.abs(y - centerY);
+            if (distance < bestDistance) {
+                bestHit = { type: 'line', alert: this._alert, distance };
+                bestDistance = distance;
+            }
+        }
+    }
+
+    return bestHit;
+}
+}
+class AlertLinePaneView {
+    constructor(alert, chartManager) {
+        this._alert = alert;
+        this._chartManager = chartManager;
+        this._renderer = new AlertLineRenderer(alert, chartManager);
+    }
+    
+    renderer() { 
+        return this._renderer; 
+    }
+    
+    zOrder() { 
+        return 'top'; 
+    }
+}
+
+class AlertLinePrimitive {
+    constructor(alert, chartManager) {
+        this._alert = alert;
+        this._chartManager = chartManager;
+        this._paneView = new AlertLinePaneView(alert, chartManager);
+        this._paneViews = [this._paneView];
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+    
+    paneViews() { 
+        return this._paneViews; 
+    }
+    
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+        this._syncTime();
+    }
+    
+    updateAllViews() {
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
+        this._syncTime();
+    }
+    
+    _syncTime() {
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length === 0) return;
+
+        const anchor = AlertLine.getTs(this._alert.anchorTime);
+        if (isNaN(anchor)) return;
+
+        // [PERF-PAN] общий бинарный поиск с кэшем (был локальный бинарный —
+        // оставляем его семантику «ближайшая свеча», но через единый кэш)
+        const cm = this._chartManager;
+        const t = (typeof cm.findNearestCandleTime === 'function')
+            ? cm.findNearestCandleTime(anchor)
+            : null;
+        if (typeof t === 'number' && isFinite(t) && this._alert.time !== t) {
+            this._alert.time = t;
+        }
+    }
+    
+    getAlert() { 
+        return this._alert; 
+    }
+    
+    requestRedraw() { 
+        if (this._requestUpdate) {
+            this._requestUpdate(); 
+        }
+    }
+}
+class AlertLineManager {
+    constructor(chartManager) {
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._alerts = [];
+        this._lastPrices = new Map();
+        this._lastTickAt = new Map();      // [VP-ALERT-FIX] время последнего тика по ключу
+        this._chartManager = chartManager;
+        this._selectedAlert = null;
+        this._hoveredAlert = null;
+        this._isDrawingMode = false;
+        this._isDragging = false;
+        this._dragAlert = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragStartTime = 0;
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._isLoading = false;
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._dblClickTimer = null;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+        this._needsRedraw = false;
+        this._subscriptions = new Map();
+        this._subCheckInterval = null;
+
+        this._allAlertsLoadedFromDB = false;
+        this._loadAllAlertsPromise = null;
+
+        this._alertsCache = null;
+        this._alertsCacheKey = null;
+
+        this._pendingMouseEvent = null;
+        this._hoverRafId = null;
+
+        this._handleContextMenu = this._handleContextMenu.bind(this);
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._setupSettingsListeners();
+
+        if (window.drawingLoaderCoordinator) {
+            window.drawingLoaderCoordinator.register(this, 'alert');
+        }
+
+        setTimeout(async () => {
+            try {
+                if (this._allAlertsLoadedFromDB) return;
+                if (!window.dbReady) {
+                    const dbReadyTimeoutMs = 8000;
+                    const waitStart = Date.now();
+                    await new Promise(r => {
+                        const c = () => {
+                            if (window.dbReady || Date.now() - waitStart > dbReadyTimeoutMs) return r();
+                            setTimeout(c, 50);
+                        };
+                        c();
+                    });
+                }
+                await this.loadAllAlertsFromDB();
+                this._subscribeAlertsToPriceManager();
+            } catch (error) {
+                console.error('❌ Auto-load alerts failed:', error);
+            }
+        }, 150);
+    }
+
+    _getAlertsForCurrentSymbol() {
+        const currentKey = this._getCurrentSymbolKey();
+        if (this._alertsCacheKey === currentKey && this._alertsCache) {
+            return this._alertsCache;
+        }
+        this._alertsCacheKey = currentKey;
+        this._alertsCache = this._alerts.filter(item => item.alert && item.alert.symbolKey === currentKey);
+        return this._alertsCache;
+    }
+
+    _invalidateAlertsCache() {
+        this._alertsCache = null;
+        this._alertsCacheKey = null;
+    }
+
+    _normalizeSymbol(symbol) {
+        return String(symbol || '').toUpperCase().replace(/[_\-]?(PERP|SPOT)$/i, '').replace(/[^A-Z0-9\u3400-\u4DBF\u4E00-\u9FFF]/g, '');
+    }
+
+    _getSubscriptionKey(symbol, exchange, marketType) {
+        const cleanSymbol = this._normalizeSymbol(symbol);
+        const cleanExchange = String(exchange || 'binance').toLowerCase();
+        const cleanMarket = String(marketType || 'futures').toLowerCase();
+        return `${cleanSymbol}:${cleanExchange}:${cleanMarket}`;
+    }
+
+    _hasActiveAlertsForSymbol(symbol, exchange, marketType, excludeAlertId = null) {
+        const targetKey = this._getSubscriptionKey(symbol, exchange, marketType);
+
+        for (const item of this._alerts) {
+            const a = item.alert;
+            if (!a) continue;
+            if (excludeAlertId && a.id === excludeAlertId) continue;
+            if (a.status !== 'active') continue;
+
+            const aKey = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+            if (aKey === targetKey) return true;
+        }
+
+        return false;
+    }
+
+    // [FIX-BAD-SYMBOL] Единое правило валидности символа алерта. Его ОБЯЗАНЫ
+    // использовать и подписка, и сторож _verifySubscriptions: иначе сторож
+    // вечно «воскрешает» подписку на невалидный символ (legacy «USDT»), которую
+    // мы намеренно не создаём — спам warn'ом каждые 10 с, полный пересоздание
+    // подписок и (из-за break) непроверенные ВАЛИДНЫЕ алерты после битого в списке.
+    _isAlertSymbolValid(symbol) {
+        const s = String(symbol || '').toUpperCase().replace(/[^A-Z0-9\u3400-\u4DBF\u4E00-\u9FFF]/g, '');
+        return s.length >= 6;   // кратчайшая реальная пара биржи — 6 символов (ETHBTC...)
+    }
+
+    _subscribeAlertsToPriceManager() {
+        if (!window.priceManagerInstance) {
+            console.warn('⚠️ PriceManager not available, retrying in 1s...');
+            setTimeout(() => this._subscribeAlertsToPriceManager(), 1000);
+            return;
+        }
+
+        for (const item of this._alerts) {
+            const a = item.alert;
+            if (a.status !== 'active') continue;
+
+            // [FIX-BAD-SYMBOL] Алерт с невалидным символом (например, legacy «USDT»)
+            // цену не получит НИКОГДА: биржа не знает такого тикера. Не подписываем
+            // и ОДИН РАЗ внятно говорим пользователю — битый алерт надо удалить
+            // (иначе REST-опрос PriceManager каждую минуту ловил по нему 400).
+            const symClean = String(a.symbol || '').toUpperCase().replace(/[^A-Z0-9\u3400-\u4DBF\u4E00-\u9FFF]/g, '');
+            if (!this._isAlertSymbolValid(symClean)) {
+                if (!this._badSymbolWarned) this._badSymbolWarned = new Set();
+                if (!this._badSymbolWarned.has(symClean)) {
+                    this._badSymbolWarned.add(symClean);
+                    console.warn(`⚠️ [BAD-SYMBOL] Алерт на символ «${a.symbol}» (${a.exchange || 'binance'}/${a.marketType || 'futures'}): ` +
+                        `невалидный символ, он никогда не сработает. Удалите этот алерт из списка.`);
+                }
+                continue;
+            }
+
+            const key = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+
+            if (this._subscriptions.has(key)) continue;
+
+            // ✅ ИСПРАВЛЕНО: PriceManager теперь передает объект payload, а не просто число
+            // Поддерживаем оба формата для обратной совместимости
+            const handler = (payload, symbol, exchange, marketType) => {
+                const price = (typeof payload === 'object' && payload !== null) 
+                    ? payload.price 
+                    : payload;
+                // [VP-ALERT-FIX] «дыра» в подаче цены (сон/фон/обрыв WS): если между
+                // тиками > 60с, пересечение ищется ПО СВЕЧАМ за этот период и триггер
+                // получает фактическое время; тиковая проверка идёт ПОСЛЕ gap-прогона,
+                // чтобы не сработать «по пробуждению» и не задвоить.
+                const key = this._getSubscriptionKey(symbol, exchange, marketType);
+                const nowTick = Date.now();
+                const prevTick = this._lastTickAt.get(key);
+                this._lastTickAt.set(key, nowTick);
+                if (prevTick && nowTick - prevTick > 60000) {
+                    this._checkAlertsOnGap(symbol, price, exchange, marketType, prevTick)
+                        .catch(() => {})
+                        .then(() => this._checkAlerts(symbol, price, exchange, marketType));
+                    return;
+                }
+                this._checkAlerts(symbol, price, exchange, marketType);
+            };
+
+            this._subscriptions.set(key, handler);
+            window.priceManagerInstance.subscribe(key, handler);
+            console.log(`✅ Подписка: ${key}`);
+        }
+
+        if (!this._subCheckInterval) {
+            this._subCheckInterval = setInterval(() => {
+                this._verifySubscriptions();
+            }, 10000);
+        }
+    }
+
+    _verifySubscriptions() {
+        if (!window.priceManagerInstance) {
+            this._subscriptions.clear();
+            this._subscribeAlertsToPriceManager();
+            return;
+        }
+
+        for (const item of this._alerts) {
+            const a = item.alert;
+            if (a.status !== 'active') continue;
+
+            // [FIX-BAD-SYMBOL] Подписки на невалидные символы НЕТ по замыслу
+            // (см. _subscribeAlertsToPriceManager) — «терять» здесь нечего.
+            // Раньше этот цикл каждые 10 с печатал «Lost subscription for
+            // USDT:binance:futures», дёргал полную переподписку и из-за break
+            // НЕ доходил до валидных алертов, стоящих в списке после битого.
+            if (!this._isAlertSymbolValid(a.symbol)) continue;
+
+            const key = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+
+            if (!this._subscriptions.has(key)) {
+                console.warn(`⚠️ Lost subscription for ${key}, resubscribing...`);
+                this._subscribeAlertsToPriceManager();
+                break;
+            }
+        }
+    }
+
+    _unsubscribeKey(key) {
+        const handler = this._subscriptions.get(key);
+        if (handler && window.priceManagerInstance) {
+            try { window.priceManagerInstance.unsubscribe(key, handler); } catch (e) {}
+        }
+        this._subscriptions.delete(key);
+    }
+
+    /**
+     * [VP-ALERT-FIX] Поиск пересечений за период «дыры» в подаче цены.
+     * Берём минутные свечи за период и прогоняем пересечение по high/low:
+     * так алерт не опаздывает на время дыры и не пропускает пересечение,
+     * если цена за дыру ушла за уровень и вернулась.
+     */
+    async _checkAlertsOnGap(symbol, livePrice, exchange, market, gapStartMs) {
+        const cm = this._chartManager || (typeof window !== 'undefined' ? window.chartManagerInstance : null);
+        if (!cm || typeof cm.fetchKlines !== 'function') return;
+        const items = this._alerts.filter(it => {
+            const a = it.alert;
+            return a && a.status === 'active' &&
+                this._normalizeSymbol(a.symbol) === this._normalizeSymbol(symbol) &&
+                String(a.exchange || 'binance').toLowerCase() === String(exchange || 'binance').toLowerCase() &&
+                String(a.marketType || 'futures').toLowerCase() === String(market || 'futures').toLowerCase();
+        });
+        if (!items.length) return;
+        const now = Date.now();
+        const gapMin = Math.ceil((now - gapStartMs) / 60000) + 2;
+        const limit = Math.min(500, Math.max(2, gapMin));
+        let candles = null;
+        try {
+            // [VP-KLINES] было 'user': этот фоновый запрос добивал общий
+            // AbortController «пользовательских» загрузок и обрывал идущее
+            // switchSymbol/loadInitialData — те получали null и падали с
+            // «Нет данных для SYMBOL». Проверка алертов не критична к задержке.
+            candles = await cm.fetchKlines(symbol, exchange, market, '1m', limit, now, 'background');
+        } catch (e) { return; }
+        if (!Array.isArray(candles) || !candles.length) return;
+        const gap = candles.filter(c => c && c.time * 1000 >= gapStartMs - 60000 && c.time * 1000 <= now);
+        if (!gap.length) return;
+        for (const item of items) {
+            const alert = item.alert;
+            if (!alert || alert.status !== 'active') continue;
+            const triggerLimit = AlertLine.normalizeRepeatCount(alert.repeatCount);
+            if (alert.triggerCount >= triggerLimit) continue;
+            let prev = this._lastPrices.get(alert.id);
+            let crossedAt = null;
+            for (const c of gap) {
+                if (prev === undefined) { prev = c.close; continue; }
+                const up = prev <= alert.price && c.high >= alert.price;
+                const dn = prev >= alert.price && c.low <= alert.price;
+                const hit = (alert.direction === 'above' && up) ||
+                            (alert.direction === 'below' && dn) ||
+                            (alert.direction === 'both' && (up || dn));
+                if (hit) { crossedAt = c.time * 1000; break; }
+                prev = c.close;
+            }
+            // тиковая проверка продолжится с close последней свечи дыры — без задвоения
+            this._lastPrices.set(alert.id, gap[gap.length - 1].close);
+            if (crossedAt !== null) {
+                this._fireAlert(alert, alert.price, alert.triggerCount > 0, crossedAt);
+                if (alert.triggerCount >= triggerLimit) {
+                    alert.complete();
+                    this._handleAlertCompletion(alert);
+                }
+            }
+        }
+    }
+
+    /** [VP-ALERT-FIX] единая точка триггера; crossedAt — фактическое время пересечения */
+    _fireAlert(alert, price, isRepeat, crossedAt) {
+        const triggerLimit = AlertLine.normalizeRepeatCount(alert.repeatCount);
+        console.log(`🔥 ТРИГГЕР: ${alert.symbol} @ ${alert.price} (${isRepeat ? 'ПОВТОР ПО ТАЙМЕРУ' : 'ПЕРВОЕ ПЕРЕСЕЧЕНИЕ'} ${alert.triggerCount + 1}/${triggerLimit === Infinity ? '∞' : triggerLimit})` +
+            (crossedAt ? ` [фактическое время пересечения: ${new Date(crossedAt).toLocaleString('ru-RU')}]` : ''));
+        alert.triggerCount++;
+        alert.lastTriggerTime = Date.now();
+        alert.active = true;
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._startInfiniteHighlight(alert.id);
+        this._showAlertNotification(alert, price, isRepeat, crossedAt);
+        this._sendTelegramAlert(alert, price, isRepeat, crossedAt);
+        this._requestRedraw();
+    }
+
+    _checkAlerts(symbol, price, exchange, market) {
+        if (!symbol || !price || isNaN(price)) return;
+
+        const cleanSymbol = this._normalizeSymbol(symbol);
+        const cleanExchange = String(exchange || 'binance').toLowerCase();
+        const cleanMarket = String(market || 'futures').toLowerCase();
+
+        const items = this._alerts.filter(item => {
+            const a = item.alert;
+            if (!a || a.status !== 'active') return false;
+
+            const aSym = this._normalizeSymbol(a.symbol);
+            const aEx = String(a.exchange || 'binance').toLowerCase();
+            const aMk = String(a.marketType || 'futures').toLowerCase();
+
+            return aSym === cleanSymbol && aEx === cleanExchange && aMk === cleanMarket;
+        });
+
+        if (items.length === 0) return;
+
+        const now = Date.now();
+
+        for (const item of items) {
+            const alert = item.alert;
+
+            const lastPrice = this._lastPrices.get(alert.id);
+            this._lastPrices.set(alert.id, price);
+
+            if (lastPrice === undefined) continue;
+
+            if (now - alert.createdAt < 100) continue;
+
+            const triggerLimit = AlertLine.normalizeRepeatCount(alert.repeatCount);
+
+            if (alert.triggerCount >= triggerLimit) {
+                alert.complete();
+                this._handleAlertCompletion(alert);
+                continue;
+            }
+
+            const isFirstTrigger = alert.triggerCount === 0;
+            let shouldTrigger = false;
+
+            if (isFirstTrigger) {
+                const crossedUp = lastPrice <= alert.price && price >= alert.price;
+                const crossedDown = lastPrice >= alert.price && price <= alert.price;
+
+                if (alert.direction === 'above' && crossedUp) shouldTrigger = true;
+                else if (alert.direction === 'below' && crossedDown) shouldTrigger = true;
+                else if (alert.direction === 'both' && (crossedUp || crossedDown)) shouldTrigger = true;
+
+                if (shouldTrigger) {
+                    alert._firstTriggerTime = now;
+                    alert._firstTriggerPrice = price;
+                }
+            } else {
+                const intervalMs = (alert.repeatInterval || 1) * 60000;
+                const msSinceLast = now - alert.lastTriggerTime;
+
+                if (msSinceLast >= intervalMs) {
+                    shouldTrigger = true;
+                }
+            }
+
+            if (shouldTrigger) {
+                this._fireAlert(alert, price, alert.triggerCount > 0, null);
+                if (alert.triggerCount >= triggerLimit) {
+                    alert.complete();
+                    this._handleAlertCompletion(alert);
+                }
+            }
+        }
+    }
+
+    _handleAlertCompletion(alert) {
+        this._stopHighlight(alert.id);
+
+        const alertItem = this._alerts.find(i => i.alert.id === alert.id);
+        if (alertItem && alertItem.primitive && alertItem.series) {
+            try {
+                alertItem.series.detachPrimitive(alertItem.primitive);
+            } catch(e) {
+                console.warn('Failed to detach primitive:', e);
+            }
+            alertItem.primitive = null;
+            alertItem.series = null;
+        }
+
+        const key = this._getSubscriptionKey(alert.symbol, alert.exchange, alert.marketType);
+
+        if (!this._hasActiveAlertsForSymbol(alert.symbol, alert.exchange, alert.marketType, alert.id)) {
+            this._unsubscribeKey(key);
+            console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
+        }
+
+        this._saveAlerts();
+        this._updateAlertsListUI();
+
+        setTimeout(() => this._highlightTriggeredAlert(alert.id), 200);
+    }
+
+    async loadFromData(symbolKey, alertRecords) {
+        try {
+            const currentSymbolKey = this._getCurrentSymbolKey();
+            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+
+            const series = isCurrentSymbol
+                ? (this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries
+                    : this._chartManager.barSeries)
+                : null;
+
+            if (isCurrentSymbol && !series) {
+                console.warn('No series available for current symbol');
+                return;
+            }
+
+            const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+            const defaultVisibility = {};
+            ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+            const newRecordIds = new Set(alertRecords.map(a => a.id));
+
+            if (isCurrentSymbol) {
+                const toDetach = this._alerts.filter(item =>
+                    item.alert.symbolKey === symbolKey && !newRecordIds.has(item.alert.id)
+                );
+                for (const item of toDetach) {
+                    try {
+                        if (item.primitive && item.series) item.series.detachPrimitive(item.primitive);
+                        item.primitive = null;
+                        item.series = null;
+                    } catch(e) {}
+                }
+            }
+
+            this._alerts = this._alerts.filter(item =>
+                item.alert.symbolKey !== symbolKey || newRecordIds.has(item.alert.id)
+            );
+
+            const newAlerts = [];
+            for (const rec of alertRecords) {
+                try {
+                    const existing = this._alerts.find(item => item.alert.id === rec.id);
+
+                    if (existing) {
+                        existing.alert.price = rec.data.price;
+                        existing.alert.time = rec.data.time;
+                        existing.alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                        existing.alert.options = { ...existing.alert.options, ...rec.data.options };
+                        existing.alert.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                        existing.alert.triggered = rec.data.triggered || false;
+                        existing.alert.triggerCount = rec.data.triggerCount || 0;
+                        existing.alert.repeatCount = rec.data.repeatCount ?? 5;
+                        existing.alert.repeatInterval = rec.data.repeatInterval ?? 1;
+                        existing.alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                        existing.alert.active = rec.data.active || false;
+                        existing.alert.status = rec.data.status || 'active';
+                        existing.alert.anchorCandle = rec.data.anchorCandle || null;
+                        existing.alert.symbol = rec.data.symbol || existing.alert.symbol;
+                        existing.alert.exchange = rec.data.exchange || existing.alert.exchange;
+                        existing.alert.marketType = rec.data.marketType || existing.alert.marketType;
+
+                        if (isCurrentSymbol &&
+                            existing.alert.status === 'active' &&
+                            (!existing.primitive || !existing.series)) {
+                            const primitive = new AlertLinePrimitive(existing.alert, this._chartManager);
+                            try {
+                                series.attachPrimitive(primitive);
+                                existing.primitive = primitive;
+                                existing.series = series;
+                            } catch(e) {}
+                        }
+                        continue;
+                    }
+
+                    const alert = new AlertLine(rec.data.price, rec.data.time, rec.data.options);
+                    alert.id = rec.id;
+                    alert.symbolKey = rec.symbolKey;
+                    alert.anchorTime = rec.data.anchorTime || rec.data.time;
+                    alert.symbol = rec.data.symbol;
+                    alert.exchange = rec.data.exchange || 'binance';
+                    alert.marketType = rec.data.marketType || 'futures';
+                    alert.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    alert.triggered = rec.data.triggered || false;
+                    alert.triggerCount = rec.data.triggerCount || 0;
+                    alert.repeatCount = rec.data.repeatCount ?? 5;
+                    alert.repeatInterval = rec.data.repeatInterval ?? 1;
+                    alert.lastTriggerTime = rec.data.lastTriggerTime || null;
+                    alert.active = rec.data.active || false;
+                    alert.status = rec.data.status || 'active';
+                    alert.anchorCandle = rec.data.anchorCandle || null;
+
+                    if (isCurrentSymbol && alert.status === 'active') {
+                        const primitive = new AlertLinePrimitive(alert, this._chartManager);
+                        try {
+                            series.attachPrimitive(primitive);
+                            newAlerts.push({ alert, primitive, series });
+                        } catch(e) {
+                            newAlerts.push({ alert, primitive: null, series: null });
+                        }
+                    } else {
+                        newAlerts.push({ alert, primitive: null, series: null });
+                    }
+                } catch (e) {
+                    console.warn('Failed to load alert:', rec.id, e);
+                }
+            }
+
+            this._alerts.push(...newAlerts);
+            this._invalidateAlertsCache();
+
+            if (isCurrentSymbol) {
+                this._subscribeAlertsToPriceManager();
+                this._updateAlertsListUI();
+                this._requestRedraw();
+            }
+
+            console.log(`✅ Loaded ${alertRecords.length} alerts for ${symbolKey}`);
+        } catch (error) {
+            console.error('❌ loadFromData failed:', error);
+            throw error;
+        }
+    }
+
+    async loadAllAlertsFromDB() {
+        if (this._loadAllAlertsPromise) return this._loadAllAlertsPromise;
+        this._loadAllAlertsPromise = this._doLoadAllAlertsFromDB();
+        try {
+            await this._loadAllAlertsPromise;
+        } finally {
+            this._loadAllAlertsPromise = null;
+        }
+    }
+
+    async _doLoadAllAlertsFromDB() {
+        try {
+            if (!window.db) return;
+            const allRecords = await window.db.getAll('drawings');
+            if (!allRecords || allRecords.length === 0) {
+                this._allAlertsLoadedFromDB = true;
+                return;
+            }
+
+            const alertsBySymbol = {};
+            for (const record of allRecords) {
+                if (record.type !== 'alert') continue;
+                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+                if (!alertsBySymbol[key]) alertsBySymbol[key] = [];
+                alertsBySymbol[key].push(record);
+            }
+
+            for (const [symbolKey, records] of Object.entries(alertsBySymbol)) {
+                await this.loadFromData(symbolKey, records);
+            }
+
+            this._allAlertsLoadedFromDB = true;
+
+            this._subscribeAlertsToPriceManager();
+            console.log(`✅ All alerts loaded (${this._alerts.length} total)`);
+        } catch (error) {
+            console.error('❌ loadAllAlertsFromDB failed:', error);
+        }
+    }
+
+    async loadAlerts() {
+        const currentKey = this._getCurrentSymbolKey();
+        if (window.drawingLoaderCoordinator) {
+            await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+        }
+    }
+
+    createAlert(price, time, options = {}) {
+        const defaultVisibility = {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+
+        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const rawSymbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const cleanSymbol = rawSymbol.toUpperCase().replace(/[^A-Z0-9\u3400-\u4DBF\u4E00-\u9FFF]/g, '');
+
+        const alert = new AlertLine(price, time, {
+            ...options,
+            symbol: cleanSymbol,
+            exchange: exchange,
+            marketType: this._chartManager.currentMarketType || 'futures',
+            timeframeVisibility: timeframeVisibility,
+            repeatCount: options.repeatCount ?? 5,
+            repeatInterval: options.repeatInterval ?? 1,
+            triggerCount: options.triggerCount || 0,
+            lastTriggerTime: options.lastTriggerTime || null,
+            active: options.active || false,
+            status: options.status || 'active'
+        });
+
+        alert.anchorTime = time;
+        alert.triggered = options.triggered || false;
+        alert.symbolKey = this._getCurrentSymbolKey();
+
+        let primitive = null;
+        let series = null;
+
+        if (alert.status === 'active') {
+            primitive = new AlertLinePrimitive(alert, this._chartManager);
+            series = this._chartManager.currentChartType === 'candle'
+                ? this._chartManager.candleSeries
+                : this._chartManager.barSeries;
+            if (series) {
+                try {
+                    series.attachPrimitive(primitive);
+                } catch(e) {
+                    console.warn('Failed to attach primitive:', e);
+                    primitive = null;
+                }
+            }
+        }
+
+        this._alerts.push({ alert, primitive, series });
+        this._invalidateAlertsCache();
+
+        this._subscribeAlertsToPriceManager();
+        this._saveAlerts();
+        this._updateAlertsListUI();
+
+        console.log(`✅ Alert created: ${alert.symbol} at ${price} (${alert.exchange}:${alert.marketType})`);
+        return alert;
+    }
+
+    deleteAlert(alertId) {
+        const index = this._alerts.findIndex(a => a.alert.id === alertId);
+        if (index === -1) return false;
+
+        const { alert, primitive, series } = this._alerts[index];
+
+        this._stopHighlight(alertId);
+
+        if (window.db) {
+            window.db.delete('drawings', alertId).catch(e => console.warn('DB delete error:', e));
+        }
+
+        if (primitive && series) {
+            try {
+                series.detachPrimitive(primitive);
+            } catch (e) {
+                console.warn('Failed to detach primitive:', e);
+            }
+        }
+
+        const key = this._getSubscriptionKey(alert.symbol, alert.exchange, alert.marketType);
+
+        if (!this._hasActiveAlertsForSymbol(alert.symbol, alert.exchange, alert.marketType, alertId)) {
+            this._unsubscribeKey(key);
+            console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
+        }
+
+        this._alerts.splice(index, 1);
+        this._invalidateAlertsCache();
+
+        if (this._selectedAlert?.id === alertId) {
+            this._selectedAlert = null;
+        }
+        if (this._dragAlert?.id === alertId) {
+            this._dragAlert = null;
+        }
+        this._lastPrices.delete(alertId);
+
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+
+        console.log(`🗑️ Alert deleted: ${alert.symbol} ${alert.price}`);
+        return true;
+    }
+
+    pauseAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'active') {
+            item.alert.pause();
+
+            const key = this._getSubscriptionKey(item.alert.symbol, item.alert.exchange, item.alert.marketType);
+            if (!this._hasActiveAlertsForSymbol(item.alert.symbol, item.alert.exchange, item.alert.marketType)) {
+                this._unsubscribeKey(key);
+                console.log(`🔌 Отписка: ${key} (нет активных алертов)`);
+            }
+
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    resumeAlert(alertId) {
+        const item = this._alerts.find(a => a.alert.id === alertId);
+        if (item && item.alert.status === 'paused') {
+            item.alert.resume();
+            if (!item.primitive && item.alert.status === 'active') {
+                const primitive = new AlertLinePrimitive(item.alert, this._chartManager);
+                const series = this._chartManager.currentChartType === 'candle'
+                    ? this._chartManager.candleSeries
+                    : this._chartManager.barSeries;
+                if (series) {
+                    try {
+                        series.attachPrimitive(primitive);
+                        item.primitive = primitive;
+                        item.series = series;
+                    } catch(e) {
+                        console.warn('Failed to attach primitive on resume:', e);
+                    }
+                }
+            }
+            this._subscribeAlertsToPriceManager();
+            this._saveAlerts();
+            this._updateAlertsListUI();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    deleteAllAlerts(skipConfirm = false) {
+        const currentSymbolKey = this._getCurrentSymbolKey();
+        const currentSymbol = this._chartManager.currentSymbol;
+        const alertsToDelete = this._alerts.filter(item => item.alert.symbolKey === currentSymbolKey);
+        if (alertsToDelete.length === 0) return;
+        // [VP-NOCONFIRM] корзина подтверждается двойным кликом по кнопке
+        // (AppCoordinator передаёт skipConfirm=true) — браузерное окно не всплывает.
+        // Прочие вызовы (если появятся) остаются защищёнными диалогом.
+        if (!skipConfirm && !confirm(`Удалить ВСЕ алерты для ${currentSymbol}? (${alertsToDelete.length} шт.)`)) return;
+
+        const keysToRemove = new Set();
+
+        alertsToDelete.forEach(item => {
+            if (window.db) window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+
+            const key = this._getSubscriptionKey(item.alert.symbol, item.alert.exchange, item.alert.marketType);
+            keysToRemove.add(key);
+
+            this._lastPrices.delete(item.alert.id);
+            const index = this._alerts.indexOf(item);
+            if (index !== -1) this._alerts.splice(index, 1);
+        });
+
+        this._invalidateAlertsCache();
+
+        for (const key of keysToRemove) {
+            this._unsubscribeKey(key);
+            console.log(`🔌 Отписка: ${key}`);
+        }
+
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+    deleteCompletedAlerts() {
+        const completedAlerts = this._alerts.filter(item =>
+            item.alert.status === 'completed'
+        );
+        if (completedAlerts.length === 0) return;
+        if (!confirm(`Удалить ${completedAlerts.length} завершенных алертов?`)) return;
+
+        completedAlerts.forEach(item => {
+            if (window.db) window.db.delete('drawings', item.alert.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) {
+                try { item.series.detachPrimitive(item.primitive); } catch(e) {}
+            }
+            this._lastPrices.delete(item.alert.id);
+            const index = this._alerts.indexOf(item);
+            if (index !== -1) this._alerts.splice(index, 1);
+        });
+
+        this._invalidateAlertsCache();
+        this._saveAlerts();
+        this._updateAlertsListUI();
+        this._requestRedraw();
+    }
+
+       hitTest(x, y) {
+        // 1. Приоритет: уже выбранный алерт
+        if (this._selectedAlert) {
+            const selItem = this._alerts.find(item => item.alert === this._selectedAlert);
+            if (selItem?.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return { alert: this._selectedAlert, type: hit.type, distance: hit.distance };
+                } catch (e) {}
+            }
+        }
+        
+        let bestHit = null;
+        let bestDistance = Infinity;
+        
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._alerts.length - 1; i >= 0; i--) {
+            const item = this._alerts[i];
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.alert === this._selectedAlert) continue;
+            
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    } 
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = { alert: item.alert, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    }
+                }
+            } catch (e) {}
+        }
+        return bestHit;
+    }
+
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const alertBtn = document.getElementById('toolAlert');
+        if (alertBtn) {
+            if (enabled) {
+                alertBtn.style.background = '#4A90E2';
+                alertBtn.style.color = '#FFFFFF';
+                alertBtn.classList.add('active');
+                if (window.rayManager) window.rayManager.setDrawingMode(false);
+                if (window.trendLineManager) window.trendLineManager.setDrawingMode(false);
+                if (window.rulerLineManager) window.rulerLineManager.setDrawingMode(false);
+                if (window.textManager) window.textManager.setDrawingMode(false);
+            } else {
+                alertBtn.style.background = '';
+                alertBtn.style.color = '';
+                alertBtn.classList.remove('active');
+            }
+        }
+    }
+
+    deactivateAll() {
+        this._alerts.forEach(item => {
+            if (item.alert) {
+                item.alert.selected = false;
+                item.alert.showDragPoint = false;
+            }
+        });
+        this._selectedAlert = null;
+    }
+
+    setMagnetEnabled(enabled) {
+    }
+
+    activateObject(alert) {
+        alert.selected = true;
+        alert.showDragPoint = true;
+        this._selectedAlert = alert;
+    }
+
+    syncWithNewTimeframe() {
+        for (const item of this._alerts) {
+            if (item.primitive) item.primitive.updateAllViews();
+        }
+    }
+
+    _toBitmapCoords(cssX, cssY) {
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
+    }
+
+    _getCurrentSymbolKey() {
+        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const marketType = this._chartManager.currentMarketType || 'futures';
+        return `${symbol}:${exchange}:${marketType}`;
+    }
+
+    _getTimeFromCoordinate(x) {
+        let time = this._chartManager.coordinateToTime(x);
+        if (time !== null) return time;
+
+        const data = this._chartManager.chartData;
+        if (!data.length) return null;
+
+        const firstCandle = data[0];
+        const lastCandle = data[data.length - 1];
+        const firstX = this._chartManager.timeToCoordinate(firstCandle.time);
+        const lastX = this._chartManager.timeToCoordinate(lastCandle.time);
+
+        if (firstX === null || lastX === null) return null;
+
+        const timeDiff = lastCandle.time - firstCandle.time;
+        if (timeDiff === 0) return lastCandle.time;
+
+        if (x > lastX) {
+            const deltaX = x - lastX;
+            const pixelsPerMs = (lastX - firstX) / timeDiff;
+            return lastCandle.time + deltaX / pixelsPerMs;
+        }
+        if (x < firstX) {
+            const deltaX = firstX - x;
+            const pixelsPerMs = (lastX - firstX) / timeDiff;
+            return firstCandle.time - deltaX / pixelsPerMs;
+        }
+        return null;
+    }
+
+    _requestRedraw() {
+        this._alerts.forEach(item => {
+            if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+        });
+    }
+
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._alerts?.forEach(item => {
+                if (item.primitive?.requestRedraw) item.primitive.requestRedraw();
+            });
+        }
+    }
+
+    async _saveAlerts() {
+        if (!window.db) {
+            console.warn('⚠️ DB not available, alerts saved to memory only');
+            return;
+        }
+
+        const promises = this._alerts.map(item => {
+            const alert = item.alert;
+            return window.db.put('drawings', {
+                id: alert.id,
+                type: 'alert',
+                symbolKey: alert.symbolKey || this._getCurrentSymbolKey(),
+                data: {
+                    price: alert.price,
+                    time: alert.time,
+                    anchorTime: alert.anchorTime || alert.time,
+                    symbol: alert.symbol,
+                    exchange: alert.exchange || 'binance',
+                    marketType: alert.marketType || 'futures',
+                    options: alert.options || {},
+                    timeframeVisibility: alert.timeframeVisibility || {},
+                    triggered: alert.triggered || false,
+                    triggerCount: alert.triggerCount || 0,
+                    repeatCount: alert.repeatCount ?? 5,
+                    repeatInterval: alert.repeatInterval ?? 1,
+                    lastTriggerTime: alert.lastTriggerTime || null,
+                    active: alert.active || false,
+                    status: alert.status || 'active',
+                    anchorCandle: alert.anchorCandle || null
+                }
+            }).catch(e => {
+                console.warn(`Save alert error (${alert.id}):`, e);
+            });
+        });
+
+        await Promise.allSettled(promises);
+    }
+
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+
+            if (e.code === 'KeyI' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.setDrawingMode(!this._isDrawingMode);
+            }
+
+            if (e.key === 'Delete' && this._selectedAlert && this._selectedAlert.showDragPoint === true) {
+                e.preventDefault();
+                this.deleteAlert(this._selectedAlert.id);
+                this._selectedAlert = null;
+            }
+        });
+    }
+
+   _setupEventListeners() {
+    const container = this._chartManager.chartContainer;
+
+    container.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+
+        if (e.target.closest('#alertSettings') ||
+            e.target.closest('#trendSettings') ||
+            e.target.closest('#textSettings') ||
+            e.target.closest('#rulerSettingsPanel') ||
+            e.target.closest('#drawingSettings')) {
+            return;
+        }
+
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+
+        const hit = this.hitTest(bmX, bmY);
+
+        if (hit) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // ✅ Как у луча/тренда: клик по уже выделенному алерту → включаем drag-точку.
+            // НЕ требуем двойного клика. drag стартует со следующим движением мыши.
+            if (this._selectedAlert && this._selectedAlert === hit.alert) {
+                if (!hit.alert.showDragPoint) {
+                    hit.alert.showDragPoint = true;
+                }
+            } else {
+                if (this._selectedAlert) {
+                    this._selectedAlert.selected = false;
+                    this._selectedAlert.showDragPoint = false;
+                }
+                hit.alert.selected = true;
+                hit.alert.showDragPoint = false; // первый клик — только выделение
+                this._selectedAlert = hit.alert;
+            }
+
+            // Синхронизируем экранные координаты drag-точки
+            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+            if (alertX !== null && alertY !== null) {
+                hit.alert.dragPointX = alertX;
+                hit.alert.dragPointY = alertY;
+            }
+
+            // Готовим potential drag — сработает как только мышь сдвинется
+            if (hit.alert.showDragPoint) {
+                this._potentialDrag = {
+                    alert: hit.alert,
+                    startX: bmX,
+                    startY: bmY,
+                    startPrice: hit.alert.price,
+                    startTime: hit.alert.time
+                };
+            } else {
+                this._potentialDrag = null;
+            }
+
+            this._requestRedraw();
+        } else {
+            const alertMenu = document.getElementById('alertContextMenu');
+            if (alertMenu && alertMenu.style.display === 'flex') {
+                const menuRect = alertMenu.getBoundingClientRect();
+                const isClickInsideMenu =
+                    e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
+                    e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+                if (isClickInsideMenu) return;
+            }
+            if (this._selectedAlert) {
+                this._selectedAlert.selected = false;
+                this._selectedAlert.showDragPoint = false;
+                this._selectedAlert = null;
+            }
+            if (alertMenu) alertMenu.style.display = 'none';
+            this._requestRedraw();
+        }
+    });
+
+    // ✅ [FIX] Fast path для drag: как у луча/тренда/текста/линейки.
+    // Раньше ВСЕ mousemove уходили в RAF-троттлинг, из-за чего drag «догонял» курсор
+    // с задержкой в кадр и дёргался при быстром движении.
+    container.addEventListener('mousemove', (e) => {
+        // Fast path: пользователь уже нажал на алерт или тащит его
+        if (this._potentialDrag || this._isDragging) {
+            this._processMouseMove(e);
+            return;
+        }
+
+        // Slow path: hover. Во время скролла hitTest не нужен
+        if (this._chartManager._isScrolling || this._chartManager._isScrollingFast) {
+            if (this._hoveredAlert) {
+                this._hoveredAlert.hovered = false;
+                this._hoveredAlert = null;
+                this._requestRedraw();
+            }
+            return;
+        }
+
+        // RAF-троттлинг: не чаще одного hitTest на кадр
+        this._pendingMouseEvent = e;
+        if (this._hoverRafId) return;
+        this._hoverRafId = requestAnimationFrame(() => {
+            this._hoverRafId = null;
+            this._processMouseMove(this._pendingMouseEvent);
+        });
+    });
+
+    container.addEventListener('mouseup', (e) => {
+        this._potentialDrag = null;
+        if (this._isDragging) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._isDragging = false;
+            if (this._dragAlert) {
+                this._dragAlert.dragging = false;
+                this._dragAlert.attached = false;
+                this._dragAlert.anchorTime = this._dragAlert.time;
+                this._saveAlerts();
+                this._dragAlert = null;
+                this._requestRedraw();
+            }
+            container.style.cursor = 'crosshair';
+            setTimeout(() => {
+                const moveEvent = new MouseEvent('mousemove', {
+                    clientX: e.clientX,
+                    clientY: e.clientY
+                });
+                container.dispatchEvent(moveEvent);
+            }, 10);
+        }
+    });
+
+    container.addEventListener('mouseleave', () => {
+        if (this._hoveredAlert) {
+            this._hoveredAlert.hovered = false;
+            this._hoveredAlert = null;
+            this._requestRedraw();
+        }
+        container.style.cursor = 'crosshair';
+
+        if (this._hoverRafId) {
+            cancelAnimationFrame(this._hoverRafId);
+            this._hoverRafId = null;
+        }
+        this._pendingMouseEvent = null;
+    });
+
+    container.addEventListener('click', (e) => {
+        if (this._isDragging) { e.preventDefault(); e.stopPropagation(); }
+        if (this._isDrawingMode) this._handleChartClick(e);
+    });
+
+    container.addEventListener('contextmenu', this._handleContextMenu);
+}
+
+    _processMouseMove(e) {
+        const container = this._chartManager.chartContainer;
+        // [DRAW-PERF] rect кэшируется на 300 мс: getBoundingClientRect() на каждом
+        // кадре мыши — принудительный layout всей страницы; на насыщенном DOM
+        // перетаскивание становилось «тяжёлым».
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
+
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(bmX - this._potentialDrag.startX);
+            const dy = Math.abs(bmY - this._potentialDrag.startY);
+            if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                this._isDragging = true;
+                this._dragAlert = this._potentialDrag.alert;
+                this._dragAlert.dragging = true;
+                this._dragStartX = this._potentialDrag.startX;
+                this._dragStartY = this._potentialDrag.startY;
+                this._dragStartPrice = this._potentialDrag.startPrice;
+                this._dragStartTime = this._potentialDrag.startTime;
+                container.style.cursor = 'grabbing';
+            }
+        }
+
+        if (this._isDragging && this._dragAlert) {
+            e.preventDefault(); e.stopPropagation();
+
+            const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+            const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+            const alertX = this._chartManager.timeToCoordinate(this._dragStartTime);
+            const alertY = this._chartManager.priceToCoordinate(this._dragStartPrice);
+            if (alertX !== null && alertY !== null) {
+                const newX = alertX + deltaX;
+                const newY = alertY + deltaY;
+                const newPrice = this._chartManager.coordinateToPrice(newY);
+                const newTime = this._chartManager.coordinateToTime(newX);
+                if (newPrice !== null) this._dragAlert.price = newPrice;
+                if (newTime !== null) { this._dragAlert.time = newTime; this._dragAlert.anchorTime = newTime; }
+                const newAlertX = this._chartManager.timeToCoordinate(this._dragAlert.time);
+                const newAlertY = this._chartManager.priceToCoordinate(this._dragAlert.price);
+                if (newAlertX !== null && newAlertY !== null) {
+                    this._dragAlert.dragPointX = newAlertX;
+                    this._dragAlert.dragPointY = newAlertY;
+                }
+                this._requestRedraw();
+            }
+        } else {
+            const hit = this.hitTest(bmX, bmY);
+            const hitAlert = hit ? hit.alert : null;
+            // [DRAW-PERF] запись style.cursor каждый кадр дёргала стили; теперь только при смене
+            const cursor = hitAlert ? 'grab' : 'crosshair';
+            if (container.style.cursor !== cursor) container.style.cursor = cursor;
+            if (this._hoveredAlert !== hitAlert) {
+                if (this._hoveredAlert) this._hoveredAlert.hovered = false;
+                this._hoveredAlert = hitAlert;
+                if (hitAlert) hitAlert.hovered = true;
+                this._requestRedraw();
+            }
+        }
+    }
+
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+
+        this._isDragging = false;
+        this._potentialDrag = null;
+
+        if (this._dragAlert) {
+            this._dragAlert.dragging = false;
+            this._dragAlert.attached = false;
+            this._dragAlert.anchorTime = this._dragAlert.time;
+            this._saveAlerts();
+            this._dragAlert = null;
+            this._requestRedraw();
+        }
+
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
+
+    _handleChartClick(event) {
+        if (!this._isDrawingMode) return;
+
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+
+        let price = this._chartManager.coordinateToPrice(y);
+        let time = this._getTimeFromCoordinate(x);
+
+        if (price === null || time === null) {
+            const lastCandle = this._chartManager.getLastCandle();
+            if (lastCandle) {
+                price = lastCandle.close;
+                time = lastCandle.time;
+            } else return;
+        }
+
+        this.createAlert(price, time, {
+            color: document.getElementById('alertCurrentColorBox')?.style.backgroundColor || '#808080',
+            lineWidth: parseInt(document.getElementById('alertSettingThickness')?.value) || 2,
+            lineStyle: document.getElementById('alertTemplateSelect')?.value || 'dotted',
+            opacity: parseInt(document.getElementById('alertColorOpacity')?.value) / 100 || 0.26,
+            showPrice: true,
+            showBell: document.getElementById('alertShowBell')?.checked || true,
+            repeatCount: document.getElementById('alertRepeatCount')?.value === 'Infinity' ? Infinity : parseInt(document.getElementById('alertRepeatCount')?.value) || 5,
+            repeatInterval: parseInt(document.getElementById('alertRepeatInterval')?.value) || 1,
+            anchorCandle: null,
+            status: 'active'
+        });
+
+        this.setDrawingMode(false);
+    }
+
+    _handleContextMenu(e) {
+        e.preventDefault(); e.stopPropagation();
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+
+        const hit = this.hitTest(bmX, bmY);
+        if (hit) {
+            if (this._selectedAlert && this._selectedAlert !== hit.alert) {
+                this._selectedAlert.selected = false;
+                this._selectedAlert.showDragPoint = false;
+                this._selectedAlert.attached = false;
+            }
+            hit.alert.selected = true;
+            hit.alert.showDragPoint = true;
+            hit.alert.attached = false;
+            const alertX = this._chartManager.timeToCoordinate(hit.alert.time);
+            const alertY = this._chartManager.priceToCoordinate(hit.alert.price);
+            if (alertX !== null && alertY !== null) {
+                hit.alert.dragPointX = alertX;
+                hit.alert.dragPointY = alertY;
+            }
+            this._selectedAlert = hit.alert;
+            this._requestRedraw();
+
+            const menu = document.getElementById('alertContextMenu');
+            if (menu) {
+                document.getElementById('drawingContextMenu').style.display = 'none';
+                document.getElementById('trendContextMenu').style.display = 'none';
+                menu.style.display = 'flex';
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
+
+                const copyBtn = document.getElementById('alertContextCopyBtn');
+                const newCopyBtn = copyBtn.cloneNode(true);
+                copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
+                newCopyBtn.onclick = (event) => { event.stopPropagation(); navigator.clipboard?.writeText(Utils.formatPrice(hit.alert.price)); menu.style.display = 'none'; };
+
+                const settingsBtn = document.getElementById('alertContextSettingsBtn');
+                const newSettingsBtn = settingsBtn.cloneNode(true);
+                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
+                newSettingsBtn.onclick = (event) => { event.stopPropagation(); this._showSettings(hit.alert); menu.style.display = 'none'; };
+
+                const pauseBtn = document.getElementById('alertContextPauseBtn');
+                if (pauseBtn) {
+                    const newPauseBtn = pauseBtn.cloneNode(true);
+                    pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
+                    // [FIX] иконка — inline-SVG в стиле остальных кнопок контекстных
+                    // меню (текстовый глиф ⏸ не рендерился и выглядел пустым квадратом)
+                    const isPaused = hit.alert.status === 'paused';
+                    newPauseBtn.innerHTML = isPaused
+                        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="7 4 20 12 7 20 7 4"></polygon></svg>'
+                        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="9" y1="5" x2="9" y2="19"></line><line x1="15" y1="5" x2="15" y2="19"></line></svg>';
+                    newPauseBtn.title = isPaused ? 'Возобновить алерт' : 'Пауза алерта';
+                    newPauseBtn.onclick = (event) => {
+                        event.stopPropagation();
+                        if (hit.alert.status === 'paused') hit.alert.resume();
+                        else hit.alert.pause();
+                        this._saveAlerts();
+                        this._updateAlertsListUI();
+                        this._requestRedraw();
+                        menu.style.display = 'none';
+                    };
+                }
+
+                const deleteBtn = document.getElementById('alertContextDeleteBtn');
+                const newDeleteBtn = deleteBtn.cloneNode(true);
+                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+                newDeleteBtn.onclick = (event) => { event.stopPropagation(); this.deleteAlert(hit.alert.id); menu.style.display = 'none'; };
+            }
+        } else {
+            const menu = document.getElementById('alertContextMenu');
+            if (menu) menu.style.display = 'none';
+        }
+    }
+
+    _showSettings(alert) {
+        const settings = document.getElementById('alertSettings');
+        if (!settings) return;
+
+        // [FIX-VIS] фиксируем текущий алерт для обработчиков вкладки «Видимость».
+        this._selectedAlert = alert;
+
+        document.getElementById('alertCurrentColorBox').style.backgroundColor = alert.options.color;
+        document.getElementById('alertHexInputInline').value = alert.options.color;
+        document.getElementById('alertSettingThickness').value = alert.options.lineWidth;
+        document.getElementById('alertTemplateSelect').value = alert.options.lineStyle;
+        document.getElementById('alertColorOpacity').value = Math.round(alert.options.opacity * 100);
+        document.getElementById('alertColorOpacityValue').textContent = document.getElementById('alertColorOpacity').value + '%';
+
+        const bellCheckbox = document.getElementById('alertShowBell');
+        if (bellCheckbox) bellCheckbox.checked = alert.options.showBell !== false;
+
+        createColorGrid('alertInlineColorsGrid', 'alertCurrentColorBox', 'alertHexInputInline', alert.options.color, 'alertAddColorInline');
+
+        const priceInput = document.getElementById('alertSettingsPriceInput');
+        if (priceInput) priceInput.value = Utils.formatPrice(alert.price);
+
+        const repeatCountSelect = document.getElementById('alertRepeatCount');
+        if (repeatCountSelect) repeatCountSelect.value = alert.repeatCount === Infinity ? 'Infinity' : alert.repeatCount;
+
+        const repeatIntervalSelect = document.getElementById('alertRepeatInterval');
+        if (repeatIntervalSelect) repeatIntervalSelect.value = alert.repeatInterval;
+
+        this._renderTimeframeCheckboxes(alert);
+
+        settings.style.display = 'block';
+        settings.style.left = '50%';
+        settings.style.top = '50%';
+        settings.style.transform = 'translate(-50%, -50%)';
+        settings.dataset.alertId = alert.id;
+
+        const stylePanel = document.getElementById('alertStylePanel');
+        const repeatPanel = document.getElementById('alertRepeatPanel');
+        const visibilityPanel = document.getElementById('alertVisibilityPanel');
+
+        stylePanel.classList.add('active');
+        repeatPanel.classList.remove('active');
+        visibilityPanel.classList.remove('active');
+
+        document.querySelectorAll('#alertSettings .settings-tab').forEach(tab => {
+            tab.classList.remove('active');
+            if (tab.dataset.alertSettingsTab === 'style') tab.classList.add('active');
+        });
+
+        settings.onmousedown = (e) => e.stopPropagation();
+
+        if (!document._alertSettingsCloseHandler) {
+            document._alertSettingsCloseHandler = (e) => {
+                if (!settings.contains(e.target) && settings.style.display === 'block') {
+                    settings.style.display = 'none';
+                }
+            };
+            document.addEventListener('mousedown', document._alertSettingsCloseHandler);
+        }
+    }
+
+    _setupSettingsListeners() {
+        const settings = document.getElementById('alertSettings');
+        if (!settings || settings._listenersSetup) return;
+        settings._listenersSetup = true;
+
+        settings.querySelectorAll('.settings-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.alertSettingsTab;
+                document.getElementById('alertStylePanel').classList.toggle('active', tabName === 'style');
+                document.getElementById('alertRepeatPanel').classList.toggle('active', tabName === 'repeat');
+                document.getElementById('alertVisibilityPanel').classList.toggle('active', tabName === 'visibility');
+                settings.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+            });
+        });
+
+        document.getElementById('alertApplyPriceBtn').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
+            if (!alert) return;
+            const newPrice = parseFloat(document.getElementById('alertSettingsPriceInput').value);
+            if (!isNaN(newPrice)) {
+                alert.price = newPrice;
+                this._requestRedraw();
+                this._saveAlerts();
+            }
+        });
+
+        document.getElementById('alertSaveSettings').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            const alert = this._alerts.find(a => a.alert.id === alertId)?.alert;
+            if (!alert) return;
+            const repeatCountVal = document.getElementById('alertRepeatCount').value;
+            alert.updateOptions({
+                color: document.getElementById('alertCurrentColorBox').style.backgroundColor,
+                lineWidth: parseInt(document.getElementById('alertSettingThickness').value),
+                lineStyle: document.getElementById('alertTemplateSelect').value,
+                opacity: parseInt(document.getElementById('alertColorOpacity').value) / 100,
+                showBell: document.getElementById('alertShowBell').checked,
+                repeatCount: repeatCountVal === 'Infinity' ? Infinity : parseInt(repeatCountVal),
+                repeatInterval: parseInt(document.getElementById('alertRepeatInterval').value)
+            });
+            this._requestRedraw();
+            settings.style.display = 'none';
+            this._saveAlerts();
+            this._updateAlertsListUI();
+        });
+
+        document.getElementById('alertDeleteDrawing').addEventListener('click', () => {
+            const alertId = settings.dataset.alertId;
+            this.deleteAlert(alertId);
+            settings.style.display = 'none';
+            this._requestRedraw();
+        });
+    }
+
+    _renderTimeframeCheckboxes(alert) {
+        const container = document.getElementById('alertTimeframeCheckboxList');
+        if (!container) return;
+
+        const tfLabels = {
+            '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут',
+            '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов',
+            '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц'
+        };
+
+        let html = '';
+        const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+
+        timeframes.forEach(tf => {
+            const isChecked = alert.timeframeVisibility[tf] !== false;
+            html += `
+                <div class="timeframe-checkbox-item">
+                    <input type="checkbox" id="alert_tf_${tf}_${alert.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}>
+                    <label for="alert_tf_${tf}_${alert.id}">${tfLabels[tf] || tf}</label>
+                    <span class="tf-badge">${tf}</span>
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+
+        // [FIX-VIS] цель — ТЕКУЩИЙ алерт; redraw обязателен, иначе линия
+        // продолжала рисоваться до первой посторонней перерисовки чарта.
+        const getTarget = () => this._selectedAlert || alert;
+
+        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.onchange = (e) => {
+                const target = getTarget();
+                if (!target) return;
+                target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+                this._requestRedraw();
+                this._saveAlerts();
+            };
+        });
+
+        // [FIX-VIS] у алерта кнопки «Минутки» раньше вообще не было — добавлена
+        // в index.html (#alertSelectMinutesTimeframes) для единообразия.
+        bindTimeframePresetButtons({
+            minutesBtnId: 'alertSelectMinutesTimeframes',
+            allBtnId: 'alertSelectAllTimeframes',
+            noneBtnId: 'alertDeselectAllTimeframes',
+            containerId: 'alertTimeframeCheckboxList',
+            getTarget,
+            onChange: () => { this._requestRedraw(); this._saveAlerts(); }
+        });
+    }
+
+    _startInfiniteHighlight(alertId) {
+        this._stopHighlight(alertId);
+
+        setTimeout(() => {
+            const content = document.getElementById('alertHistoryContent');
+            if (!content) return;
+
+            const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+            if (!item) return;
+
+            if (!item._originalStyles) {
+                item._originalStyles = {
+                    bg: item.style.backgroundColor,
+                    boxShadow: item.style.boxShadow,
+                    borderLeftColor: item.style.borderLeftColor,
+                    borderLeftWidth: item.style.borderLeftWidth,
+                    transition: item.style.transition
+                };
+            }
+
+            let isHighlighted = false;
+
+            const blink = () => {
+                if (!item.isConnected) {
+                    if (item._blinkInterval) {
+                        clearInterval(item._blinkInterval);
+                        item._blinkInterval = null;
+                    }
+                    return;
+                }
+
+                isHighlighted = !isHighlighted;
+
+                if (isHighlighted) {
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.35)';
+                    item.style.boxShadow = 'inset 0 0 25px rgba(0, 255, 100, 0.6), 0 0 20px rgba(0, 255, 100, 0.8)';
+                    item.style.borderLeftColor = '#00FF00';
+                    item.style.borderLeftWidth = '6px';
+                    item.style.transition = 'all 0.35s ease';
+                } else {
+                    item.style.backgroundColor = 'rgba(0, 255, 100, 0.1)';
+                    item.style.boxShadow = 'inset 0 0 10px rgba(0, 255, 100, 0.25)';
+                    item.style.borderLeftColor = '#00DD00';
+                    item.style.borderLeftWidth = '4px';
+                    item.style.transition = 'all 0.35s ease';
+                }
+            };
+
+            blink();
+            item._blinkInterval = setInterval(blink, 550);
+
+            item._stopBlink = () => {
+                if (item._blinkInterval) {
+                    clearInterval(item._blinkInterval);
+                    item._blinkInterval = null;
+                }
+                const orig = item._originalStyles || {};
+                item.style.backgroundColor = orig.bg || '';
+                item.style.boxShadow = orig.boxShadow || '';
+                item.style.borderLeftColor = orig.borderLeftColor || '';
+                item.style.borderLeftWidth = orig.borderLeftWidth || '';
+                item.style.transition = orig.transition || '';
+            };
+
+            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+    }
+
+    _stopHighlight(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (item && item._stopBlink) {
+            item._stopBlink();
+        }
+    }
+
+    _highlightTriggeredAlert(alertId) {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab;
+        if (activeTab !== 'triggered') return;
+
+        const item = content.querySelector(`.alert-list-item[data-id="${alertId}"]`);
+        if (!item) return;
+
+        item.style.backgroundColor = 'rgba(255, 200, 0, 0.25)';
+        item.style.boxShadow = '0 0 25px rgba(255, 200, 0, 0.6)';
+        item.style.borderLeftColor = '#FFC800';
+        item.style.borderLeftWidth = '5px';
+        item.style.transition = 'all 0.5s ease';
+
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        setTimeout(() => {
+            if (item.isConnected) {
+                item.style.backgroundColor = 'rgba(255, 200, 0, 0.08)';
+                item.style.boxShadow = 'none';
+                item.style.borderLeftWidth = '3px';
+            }
+        }, 8000);
+    }
+
+    _showAlertNotification(alert, currentPrice, isRepeat = false, crossedAt = null) {
+        const notification = document.getElementById('alertNotification');
+
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const alertPriceFormatted = Utils.formatPrice(alert.price);
+        // [VP-ALERT-FIX] при догонном пересечении (по свечам) показываем ФАКТИЧЕСКОЕ
+        // время пересечения, а не момент, когда обработчик наконец получил тик
+        const timeStr = crossedAt
+            ? new Date(crossedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ← время пересечения (уточнено по свечам)'
+            : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
+
+        if (notification) {
+            notification.innerHTML = `
+                <div class="alert-title">🔔 ${alert.symbol} - АЛЕРТ СРАБОТАЛ${repeatText}</div>
+                <div class="alert-price">${priceFormatted} / ${alertPriceFormatted}</div>
+                <div class="alert-repeat">${timeStr}</div>
+            `;
+            notification.style.display = 'block';
+            notification.style.borderLeftColor = alert.options.color;
+            setTimeout(() => { notification.style.display = 'none'; }, 5000);
+        }
+
+        this._playAlertSound();
+        this._showSystemNotification(alert, currentPrice, isRepeat);
+    }
+
+       _playAlertSound() {
+        try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+
+            if (!this._alertAudioCtx) this._alertAudioCtx = new AudioContext();
+            const ctx = this._alertAudioCtx;
+
+            if (ctx.state === 'suspended') {
+                ctx.resume().catch(() => {});
+            }
+
+            const now = ctx.currentTime;
+            const melody = [523, 587, 659, 698, 784, 880, 988, 1047, 988, 880, 784, 698, 659, 587, 523, 494];
+
+            melody.forEach((freq, i) => {
+                const startTime = now + i * 0.15;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0, startTime);
+                gain.gain.linearRampToValueAtTime(0.25, startTime + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(startTime);
+                osc.stop(startTime + 0.2);
+            });
+        } catch (e) {}
+    }
+       _showSystemNotification(alert, currentPrice, isRepeat = false) {
+        if (!("Notification" in window)) return;
+
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const repeatText = isRepeat ? ` (повтор ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : '';
+
+        const showNotification = () => {
+            const notification = new Notification(`🔔 ${alert.symbol} - АЛЕРТ${repeatText}`, {
+                body: `Цена: ${priceFormatted} | Уровень: ${Utils.formatPrice(alert.price)}`,
+                icon: 'favicon.svg',
+                silent: false
+            });
+            notification.onclick = () => { window.focus(); notification.close(); };
+            setTimeout(() => notification.close(), 10000);
+        };
+
+        if (Notification.permission === "granted") showNotification();
+        else if (Notification.permission !== "denied") {
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") showNotification();
+            });
+        }
+    }
+
+    _sendTelegramAlert(alert, currentPrice, isRepeat = false, crossedAt = null) {
+        const chatId = localStorage.getItem('telegramChatId');
+        if (!chatId) return;
+
+        const priceFormatted = Utils.formatPrice(currentPrice);
+        const alertPriceFormatted = Utils.formatPrice(alert.price);
+
+        const direction = currentPrice > alert.price ? '⬆️ Выше' : '⬇️ Ниже';
+        const repeatText = isRepeat ? `\n🔄 Повтор: ${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount}` : '';
+
+        const message = `🚨 АЛЕРТ СРАБОТАЛ!\n\n📊 Пара: ${alert.symbol}\n💰 Цена алерта: ${alertPriceFormatted}\n📈 Текущая цена: ${priceFormatted}\n🧭 Направление: ${direction}${repeatText}\n⏰ Время: ${(crossedAt ? new Date(crossedAt) : new Date()).toLocaleString('ru-RU')}${crossedAt ? ' (фактическое пересечение, уточнено по свечам)' : ''}`;
+
+        const formData = new URLSearchParams();
+        formData.append('chat_id', chatId);
+        formData.append('text', message);
+
+        // [VP-NET] таймаут обязателен: script.google.com умеет «думать»
+        // десятками секунд. Без отмены каждая зависшая отправка держала слот
+        // пула соединений и молча накапливалась при каждом срабатывании алерта.
+        (function () {
+            const ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+            const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
+            return fetch(CONFIG.telegramProxyUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: formData,
+                signal: ctrl ? ctrl.signal : undefined
+            }).finally(() => { if (timer) clearTimeout(timer); });
+        })().catch(err => console.warn('Ошибка отправки в Telegram:', err && err.message ? err.message : err));
+    }
+
+        _updateAlertsListUI() {
+        const content = document.getElementById('alertHistoryContent');
+        if (!content) return;
+
+        // SVG-иконки
+        const SVG_PAUSE = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M360-336h72v-288h-72v288Zm168 0h72v-288h-72v288ZM480.28-96Q401-96 331-126t-122.5-82.5Q156-261 126-330.96t-30-149.5Q96-560 126-629.5q30-69.5 82.5-122T330.96-834q69.96-30 149.5-30t149.04 30q69.5 30 122 82.5T834-629.28q30 69.73 30 149Q864-401 834-331t-82.5 122.5Q699-156 629.28-126q-69.73 30-149 30Zm-.28-72q130 0 221-91t91-221q0-130-91-221t-221-91q-130 0-221 91t-91 221q0 130 91 221t221 91Zm0-312Z"/></svg>';
+        const SVG_PLAY  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="m384-312 264-168-264-168v336Zm96.28 216Q401-96 331-126t-122.5-82.5Q156-261 126-330.96t-30-149.5Q96-560 126-629.5q30-69.5 82.5-122T330.96-834q69.96-30 149.5-30t149.04 30q69.5 30 122 82.5T834-629.28q30 69.73 30 149Q864-401 834-331t-82.5 122.5Q699-156 629.28-126q-69.73 30-149 30Zm-.28-72q130 0 221-91t91-221q0-130-91-221t-221-91q-130 0-221 91t-91 221q0 130 91 221t221 91Zm0-312Z"/></svg>';
+        const SVG_GOTO  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M288-288h72v-288h-72v288Zm156 0h72v-384h-72v384Zm156 0h72v-144h-72v144ZM216-144q-29.7 0-50.85-21.15Q144-186.3 144-216v-528q0-29.7 21.15-50.85Q186.3-816 216-816h528q29.7 0 50.85 21.15Q816-773.7 816-744v528q0 29.7-21.15 50.85Q773.7-144 744-144H216Zm0-72h528v-528H216v528Zm0-528v528-528Z"/></svg>';
+        const SVG_COPY  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M744-192H312q-29 0-50.5-21.5T240-264v-576q0-29 21.5-50.5T312-912h312l192 192v456q0 29-21.5 50.5T744-192ZM576-672v-168H312v576h432v-408H576ZM168-48q-29 0-50.5-21.5T96-120v-552h72v552h456v72H168Zm144-792v195-195 576-576Z"/></svg>';
+        const SVG_CLOSE = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="m291-240-51-51 189-189-189-189 51-51 189 189 189-189 51 51-189 189 189 189-51 51-189-189-189 189Z"/></svg>';
+        const SVG_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>';
+        const SVG_BELL  = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M192-216v-72h48v-240q0-87 53.5-153T432-763v-53q0-20 14-34t34-14q20 0 34 14t14 34v53q85 16 138.5 82T720-528v240h48v72H192Zm288-276Zm-.21 396Q450-96 429-117.15T408-168h144q0 30-21.21 51t-51 21ZM312-288h336v-240q0-70-49-119t-119-49q-70 0-119 49t-49 119v240Z"/></svg>';
+
+        const BTN_STYLE = 'width:28px;height:28px;padding:0;margin:0;background:transparent;border:none;border-radius:4px;color:#888;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:color 0.15s ease,background 0.15s ease,transform 0.15s ease;line-height:1;flex-shrink:0;';
+        const ACTIONS_STYLE = 'display:flex;align-items:center;gap:2px;flex-shrink:0;';
+
+        // [НОВОЕ] Хелпер: получить текущую рыночную цену для символа
+        const getMarketPrice = (symbol, exchange, marketType) => {
+            exchange = exchange || 'binance';
+            marketType = marketType || 'futures';
+
+            // 1. Пытаемся через PriceManager
+            try {
+                if (window.priceManagerInstance?.getPrice) {
+                    let p = window.priceManagerInstance.getPrice(symbol, exchange, marketType);
+                    if (p && typeof p === 'object') {
+                        if (typeof p.price === 'number') p = p.price;
+                        else if (typeof p.close === 'number') p = p.close;
+                        else if (typeof p.last === 'number') p = p.last;
+                        else p = null;
+                    }
+                    if (typeof p === 'string') p = Number(p);
+                    if (typeof p === 'number' && isFinite(p) && p > 0) return p;
+                }
+            } catch (e) {}
+
+            // 2. Fallback: если это текущий символ на графике
+            const cm = this._chartManager;
+            if (cm && cm.currentSymbol === symbol &&
+                (cm.currentExchange || 'binance') === exchange &&
+                (cm.currentMarketType || 'futures') === marketType) {
+                if (typeof cm.currentRealPrice === 'number' && cm.currentRealPrice > 0) {
+                    return cm.currentRealPrice;
+                }
+                if (cm.chartData && cm.chartData.length > 0) {
+                    const last = cm.chartData[cm.chartData.length - 1];
+                    if (last && typeof last.close === 'number' && last.close > 0) return last.close;
+                }
+            }
+
+            return null;
+        };
+
+        // [НОВОЕ] Хелпер: цвет цены алерта относительно рынка
+        const getAlertPriceColor = (alertPrice, marketPrice) => {
+            if (marketPrice === null || !isFinite(marketPrice)) return '#B0B0B0';
+            if (alertPrice > marketPrice) return '#00ff88';  // выше рынка — зелёный
+            if (alertPrice < marketPrice) return '#f23645';  // ниже рынка — красный
+            return '#B0B0B0';                                 // равно — серый
+        };
+
+        const activeAlerts = this._alerts
+            .map(a => a.alert)
+            .filter(alert => alert.status === 'active' || alert.status === 'paused')
+            .sort((a, b) => {
+                if (a.active && !b.active) return -1;
+                if (!a.active && b.active) return 1;
+                return b.createdAt - a.createdAt;
+            });
+
+        const completedAlerts = this._alerts
+            .map(a => a.alert)
+            .filter(alert => alert.status === 'completed')
+            .sort((a, b) => (b.lastTriggerTime || 0) - (a.lastTriggerTime || 0));
+
+        const activeTab = document.querySelector('.history-tab.active')?.dataset.tab || 'active';
+
+        let html = '';
+
+        if (activeTab === 'active') {
+            const displayAlerts = [...activeAlerts];
+            if (displayAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет активных алертов</div>';
+            } else {
+                html = '<div class="alert-list">';
+                displayAlerts.forEach(alert => {
+                    const priceFormatted = Utils.formatPrice(alert.price);
+                    const color = alert.options.color;
+                    const isActive = alert.active;
+                    const isPaused = alert.status === 'paused';
+
+                    const exchangeBadge = alert.exchange || 'binance';
+                    const marketBadge = (alert.marketType || 'futures') === 'spot' ? 'Spot' : 'Fut';
+
+                    const statusText = isPaused ? 'На паузе' : (isActive ? `Активен (${alert.triggerCount}/${alert.repeatCount === Infinity ? '∞' : alert.repeatCount})` : 'Ожидание');
+
+                    // [НОВОЕ] Цвет цены
+                    const marketPrice = getMarketPrice(alert.symbol, alert.exchange, alert.marketType);
+                    const alertPriceColor = getAlertPriceColor(alert.price, marketPrice);
+
+                    html += `
+                        <div class="alert-list-item ${isActive ? 'is-active' : ''} ${isPaused ? 'is-paused' : ''}"
+                             style="border-left-color: ${color};${isActive ? 'background: rgba(0,255,100,0.05);' : ''}${isPaused ? 'background: rgba(255,165,0,0.05);' : ''}"
+                             data-id="${alert.id}">
+                            <div class="trigger-bell">${SVG_BELL}</div>
+                            <div>
+                                <div class="price">
+                                    <span class="copy-symbol" style="color:#FFD700; font-weight:bold; cursor:pointer;"
+                                          data-symbol="${alert.symbol}"
+                                          title="Копировать тикер">
+                                        ${alert.symbol}
+                                    </span>
+                                    <span style="font-size: 0.7em; color: #888;">${exchangeBadge}:${marketBadge}</span>
+                                    <div style="color:${alertPriceColor}; font-weight:600; margin-top:2px;">${priceFormatted}</div>
+                                </div>
+                                <div class="info">
+                                    <span>${alert.repeatCount === Infinity ? '♾️' : alert.repeatCount} × ${alert.repeatInterval} мин</span>
+                                    <span>${statusText}</span>
+                                </div>
+                            </div>
+                            <div class="actions" style="${ACTIONS_STYLE}">
+                                <button class="goto-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        data-exchange="${alert.exchange || 'binance'}" 
+                                        data-market-type="${alert.marketType || 'futures'}" 
+                                        title="Перейти на график">${SVG_GOTO}</button>
+                                <button class="copy-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        title="Копировать тикер">${SVG_COPY}</button>
+                                <button class="pause-alert" style="${BTN_STYLE}"
+                                        data-id="${alert.id}" 
+                                        title="${isPaused ? 'Возобновить' : 'Пауза'}">${isPaused ? SVG_PLAY : SVG_PAUSE}</button>
+                                <button class="delete-alert" style="${BTN_STYLE}"
+                                        data-id="${alert.id}" 
+                                        title="Удалить">${SVG_CLOSE}</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+        } else {
+            if (completedAlerts.length === 0) {
+                html = '<div class="empty-alerts">Нет завершенных алертов</div>';
+            } else {
+                html = '<div class="alert-list">';
+                completedAlerts.forEach(alert => {
+                    const priceFormatted = Utils.formatPrice(alert.price);
+                    const color = alert.options.color;
+                    const triggerTime = alert.lastTriggerTime || alert.createdAt;
+                    const timeStr = new Date(triggerTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const dateStr = new Date(triggerTime).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                    const repeatInfo = alert.triggerCount > 0 ? ` (${alert.triggerCount}×)` : '';
+
+                    // [НОВОЕ] Цвет цены
+                    const marketPrice = getMarketPrice(alert.symbol, alert.exchange, alert.marketType);
+                    const alertPriceColor = getAlertPriceColor(alert.price, marketPrice);
+
+                    html += `
+                        <div class="alert-list-item completed" style="border-left-color: ${color}; opacity: 0.8;" data-id="${alert.id}">
+                            <div>
+                                <div class="price">
+                                    <span class="copy-symbol" style="color:#FFD700; font-weight:bold; cursor:pointer;"
+                                          data-symbol="${alert.symbol}"
+                                          title="Копировать тикер">
+                                        ${alert.symbol}
+                                    </span>
+                                    <div style="color:${alertPriceColor}; font-weight:600; margin-top:2px;">${priceFormatted}${repeatInfo}</div>
+                                </div>
+                                <div class="info">
+                                    <span>🕐 ${dateStr} ${timeStr}</span>
+                                    <span>✅ Завершен</span>
+                                </div>
+                            </div>
+                            <div class="actions" style="${ACTIONS_STYLE}">
+                                <button class="goto-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        data-exchange="${alert.exchange || 'binance'}" 
+                                        data-market-type="${alert.marketType || 'futures'}" 
+                                        title="Перейти на график">${SVG_GOTO}</button>
+                                <button class="copy-alert-symbol" style="${BTN_STYLE}"
+                                        data-symbol="${alert.symbol}" 
+                                        title="Копировать тикер">${SVG_COPY}</button>
+                                <button class="delete-alert" style="${BTN_STYLE}"
+                                        data-id="${alert.id}" 
+                                        title="Удалить">${SVG_CLOSE}</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+
+                html += `
+                    <div style="padding: 10px; text-align: center;">
+                        <button class="clear-completed-btn" style="background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                            🗑️ Удалить все завершенные (${completedAlerts.length})
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        content.innerHTML = html;
+
+        // Копирование по клику на тикер
+        content.querySelectorAll('.copy-symbol').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigator.clipboard?.writeText(el.dataset.symbol);
+                el.style.color = '#00FF00';
+                setTimeout(() => el.style.color = '#FFD700', 500);
+            });
+        });
+
+        // Перейти на график
+        content.querySelectorAll('.goto-alert-symbol').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const symbol = btn.dataset.symbol;
+                const exchange = btn.dataset.exchange || 'binance';
+                const marketType = btn.dataset.marketType || 'futures';
+                this._goToSymbol(symbol, exchange, marketType);
+            });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#4A90E2'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
+        });
+
+        // Копировать тикер
+        content.querySelectorAll('.copy-alert-symbol').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigator.clipboard?.writeText(btn.dataset.symbol);
+                const original = btn.innerHTML;
+                btn.innerHTML = SVG_CHECK;
+                btn.style.color = '#00FF00';
+                setTimeout(() => {
+                    btn.innerHTML = original;
+                    btn.style.color = '#888';
+                }, 500);
+            });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#FFD700'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
+        });
+
+        // Удалить
+        content.querySelectorAll('.delete-alert').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteAlert(btn.dataset.id);
+            });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#f23645'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
+        });
+
+        // Пауза/возобновить
+        content.querySelectorAll('.pause-alert').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const alert = this._alerts.find(a => a.alert.id === id)?.alert;
+                if (alert) {
+                    if (alert.status === 'paused') this.resumeAlert(id);
+                    else this.pauseAlert(id);
+                }
+            });
+            btn.addEventListener('mouseenter', () => { btn.style.color = '#ffa500'; btn.style.background = 'rgba(255,255,255,0.08)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.color = '#888'; btn.style.background = 'transparent'; });
+        });
+
+        const clearBtn = content.querySelector('.clear-completed-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => this.deleteCompletedAlerts());
+        }
+    }
+        // [НОВОЕ] Переход на график указанного символа — как в TickerModal (кнопка "прицелиться")
+    _goToSymbol(symbol, exchange, marketType) {
+        const cm = this._chartManager;
+        const tp = (typeof window !== 'undefined')
+            ? (window.tickerPanelInstance || window.tickerPanel)
+            : null;
+        const same = cm && cm.currentSymbol === symbol &&
+            cm.currentExchange === exchange &&
+            cm.currentMarketType === marketType;
+
+        // [VP-GOTO] как «прицел» в модальном окне: график + тикер-панель
+        // (скролл к строке, подсветка, подписи пары/биржи/рынка).
+        // focusOnSymbol сам переключает график, а на том же символе — без перезагрузки.
+        if (tp && typeof tp.focusOnSymbol === 'function') {
+            tp.focusOnSymbol(symbol, exchange, marketType);
+        } else if (same) {
+            const p = document.getElementById('alertHistoryPanel');
+            if (p) p.style.display = 'none';
+            return;
+        } else if (window.app && typeof window.app.loadSymbol === 'function') {
+            window.app.loadSymbol(symbol, exchange, marketType);
+        } else if (cm && typeof cm.switchSymbol === 'function') {
+            cm.switchSymbol(symbol, exchange, marketType);
+        } else {
+            console.warn('Не найден обработчик переключения символа');
+            return;
+        }
+
+        const panel = document.getElementById('alertHistoryPanel');
+        if (panel) panel.style.display = 'none';
+    }
+    debugAlertTimers() {
+        console.log('=== ДЕБАГ ИНТЕРВАЛОВ АЛЕРТОВ ===');
+
+        for (const item of this._alerts) {
+            const a = item.alert;
+            if (a.status !== 'active') continue;
+
+            const now = Date.now();
+            const lastPrice = this._lastPrices.get(a.id);
+            const msSinceLastTrigger = a.lastTriggerTime ? now - a.lastTriggerTime : Infinity;
+            const intervalMs = (a.repeatInterval || 1) * 60000;
+            const canTrigger = a.triggerCount === 0 || msSinceLastTrigger >= intervalMs;
+            const key = this._getSubscriptionKey(a.symbol, a.exchange, a.marketType);
+            const subscribed = this._subscriptions.has(key);
+
+            console.log(`📌 ${a.symbol} @ ${a.price}:`);
+            console.log(`   Ключ: ${key}`);
+            console.log(`   Подписан: ${subscribed ? '✅' : '❌'}`);
+            console.log(`   Срабатываний: ${a.triggerCount}`);
+            console.log(`   Последний триггер: ${a.lastTriggerTime ? new Date(a.lastTriggerTime).toLocaleTimeString() : 'никогда'}`);
+            console.log(`   Прошло: ${msSinceLastTrigger === Infinity ? '∞' : (msSinceLastTrigger/1000).toFixed(1)}с`);
+            console.log(`   Интервал: ${a.repeatInterval}мин (${intervalMs/1000}с)`);
+            console.log(`   Может триггерить: ${canTrigger ? '✅ ДА' : '❌ НЕТ (ждем)'}`);
+            console.log(`   Последняя цена: ${lastPrice || 'нет'}`);
+            console.log(`   Статус: ${a.status}`);
+            console.log('');
+        }
+
+        console.log(`📊 Всего подписок: ${this._subscriptions.size}`);
+        console.log(`📊 Подписанные символы:`, [...this._subscriptions.keys()]);
+        console.log(`📊 Полная загрузка из БД завершена: ${this._allAlertsLoadedFromDB ? '✅' : '❌'}`);
+    }
+
+    getAlertsStats() {
+        const total = this._alerts.length;
+        const active = this._alerts.filter(a => a.alert.status === 'active').length;
+        const paused = this._alerts.filter(a => a.alert.status === 'paused').length;
+        const completed = this._alerts.filter(a => a.alert.status === 'completed').length;
+        const withPrimitive = this._alerts.filter(a => a.primitive !== null).length;
+
+        console.log('=== ALERTS STATS ===');
+        console.log(`📊 Всего: ${total}`);
+        console.log(`🟢 Активных: ${active}`);
+        console.log(`🟡 На паузе: ${paused}`);
+        console.log(`✅ Завершено: ${completed}`);
+        console.log(`🎨 С примитивом: ${withPrimitive}`);
+        console.log(`💰 В lastPrices: ${this._lastPrices.size}`);
+        console.log(`📡 Подписок: ${this._subscriptions.size}`);
+
+        return { total, active, paused, completed, withPrimitive, lastPrices: this._lastPrices.size, subscriptions: this._subscriptions.size };
+    }
+
+    destroy() {
+        window.removeEventListener('mouseup', this._handleGlobalMouseUp);
+
+        if (document._alertSettingsCloseHandler) {
+            document.removeEventListener('mousedown', document._alertSettingsCloseHandler);
+            document._alertSettingsCloseHandler = null;
+        }
+
+        if (this._subCheckInterval) {
+            clearInterval(this._subCheckInterval);
+            this._subCheckInterval = null;
+        }
+
+        if (window.priceManagerInstance) {
+            for (const [key, handler] of this._subscriptions.entries()) {
+                try { window.priceManagerInstance.unsubscribe(key, handler); } catch (e) {}
+            }
+        }
+        this._subscriptions.clear();
+        this._alerts = [];
+        this._lastPrices.clear();
+        this._selectedAlert = null;
+        this._hoveredAlert = null;
+
+        if (this._hoverRafId) {
+            cancelAnimationFrame(this._hoverRafId);
+            this._hoverRafId = null;
+        }
+        this._pendingMouseEvent = null;
+
+        console.log('🗑️ AlertLineManager destroyed');
+    }
+}
+// ============================================================
+// TEXT DRAWING CLASSES
+// ============================================================
+
+class TextDrawing {
+    constructor(text, time, price, options = {}) {
+    // [FIX-M5] текст ВСЕГДА строка: не-строка (число/объект) раньше долетала до
+    // TextPrimitive.draw и spam'ила «text.text.split is not a function» каждый кадр.
+    this.text = (text === null || text === undefined || text === '') ? 'Текст' : String(text);
+    this.time = time;
+    this.price = price;
+    this.anchorTime = time;
+    this.id = `text_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    
+    // ✅ Убираем всё лишнее из options
+    const { timeframeVisibility, anchorCandle, symbolKey, symbol, exchange, marketType, ...restOptions } = options;
+    
+    this.options = {
+        color: restOptions.color || '#FFFFFF',
+        bgColor: restOptions.bgColor || '#000000',
+        fontSize: restOptions.fontSize || 12,
+        bold: restOptions.bold || false,
+        opacity: restOptions.opacity !== undefined ? restOptions.opacity : 1,
+        bgOpacity: restOptions.bgOpacity !== undefined ? restOptions.bgOpacity : 0,
+        ...restOptions
+    };
+    
+    this.anchorCandle = anchorCandle || null;
+    this.timeframeVisibility = timeframeVisibility || {
+        '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+        '1h': true, '4h': true, '6h': true, '12h': true,
+        '1d': true, '1w': true, '1M': true
+    };
+    this.selected = false;
+    this.hovered = false;
+    this.dragging = false;
+    this.showDragPoint = false;
+    this.attached = false;
+    this.dragPointX = 0;
+    this.dragPointY = 0;
+    this.symbolKey = symbolKey || null;
+    this.symbol = symbol || null;
+    this.exchange = exchange || null;
+    this.marketType = marketType || null;
+}
+    updateOptions(newOptions) {
+        this.options = { ...this.options, ...newOptions };
+        if (newOptions.text !== undefined) this.text = newOptions.text;
+    }
+    
+    isVisibleOnTimeframe(timeframe) {
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+}
+
+class TextRenderer {
+    constructor(textDrawing, chartManager) {
+        this._text = textDrawing;
+        this._chartManager = chartManager;
+        this._hitArea = null;
+        this._dragHitArea = null;
+    }
+
+  draw(target) {
+    // Сброс hit-областей
+    this._hitArea = null;
+    this._dragHitArea = null;
+
+    const currentKey = this._chartManager.getCurrentSymbolKey?.();
+    if (currentKey && this._text.symbolKey !== currentKey) return;
+
+    target.useBitmapCoordinateSpace(scope => {
+        const ctx = scope.context;
+        const text = this._text;
+        const chartManager = this._chartManager;
+
+        const currentTf = chartManager.currentInterval;
+        if (!text.isVisibleOnTimeframe(currentTf)) return;
+
+        const xCoordinate = chartManager.timeToCoordinate(text.time);
+        const yCoordinate = chartManager.priceToCoordinate(text.price);
+        if (xCoordinate === null || yCoordinate === null) return;
+
+        const { position: x } = positionsLine(xCoordinate, scope.horizontalPixelRatio, 1, true);
+        const { position: y } = positionsLine(yCoordinate, scope.verticalPixelRatio, 1, true);
+
+            let vpSpriteDone = false;
+            if (window.VP_SPRITES !== false) {
+                try {
+
+        ctx.save();
+        const tHpr = scope.horizontalPixelRatio, tVpr = scope.verticalPixelRatio;
+        const tBgOpacity = text.options.bgOpacity !== undefined ? text.options.bgOpacity : 0;
+        const tTextOpacity = text.options.opacity !== undefined ? text.options.opacity : 1;
+        const spriteKey = `txt|${text.text}|${text.options.fontSize}|${!!text.options.bold}|${text.options.bgColor}|${tBgOpacity}|${text.options.color}|${tTextOpacity}|${tHpr}|${tVpr}`;
+        const sprite = DrawingLabelSprites.get(spriteKey, () => {
+            const fontSize = text.options.fontSize * tVpr;
+            const font = `${text.options.bold ? 'bold ' : ''}${fontSize}px 'Inter', Arial, sans-serif`;
+            const lines = String(text.text).split('\n');
+            const lineHeight = fontSize * 1.4;
+            const meas = document.createElement('canvas').getContext('2d');
+            meas.font = font;
+            let textWidth = 0;
+            for (const line of lines) {
+                const w = meas.measureText(line).width;
+                if (w > textWidth) textWidth = w;
+            }
+            const padding = 8 * tHpr;
+            const rectWidth = textWidth + padding * 2;
+            const rectHeight = lines.length * lineHeight + padding * 2;
+            const pad = 8;
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.ceil(rectWidth + pad * 2);
+            canvas.height = Math.ceil(rectHeight + pad * 2);
+            const g = canvas.getContext('2d');
+            const parseC = (c) => {
+                const hexM = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(c || '');
+                if (hexM) return { r: parseInt(hexM[1], 16), g: parseInt(hexM[2], 16), b: parseInt(hexM[3], 16) };
+                const rgbM = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(c || '');
+                if (rgbM) return { r: +rgbM[1], g: +rgbM[2], b: +rgbM[3] };
+                return null;
+            };
+            const pBg = parseC(text.options.bgColor);
+            g.fillStyle = pBg ? `rgba(${pBg.r}, ${pBg.g}, ${pBg.b}, ${tBgOpacity})` : text.options.bgColor;
+            g.shadowColor = 'rgba(0,0,0,0.5)';
+            g.shadowBlur = 4;
+            g.beginPath();
+            this._roundRect(g, pad, pad, rectWidth, rectHeight, 6 * tHpr);
+            g.fill();
+            g.shadowBlur = 0;
+            const pTxt = parseC(text.options.color);
+            g.fillStyle = pTxt ? `rgba(${pTxt.r}, ${pTxt.g}, ${pTxt.b}, ${tTextOpacity})` : text.options.color;
+            g.font = font;
+            g.textAlign = 'left';
+            g.textBaseline = 'top';
+            for (let li = 0; li < lines.length; li++) {
+                g.fillText(lines[li], pad + padding, pad + padding + li * lineHeight);
+            }
+            return { canvas, rectWidth, rectHeight, pad };
+        });
+        if (sprite) {
+            const rectX = x;
+            const rectY = y - sprite.rectHeight / 2;
+            this._hitArea = { x: rectX, y: rectY, width: sprite.rectWidth, height: sprite.rectHeight };
+            if (sprite.canvas.width > 0 && sprite.canvas.height > 0) ctx.drawImage(sprite.canvas, rectX - sprite.pad, rectY - sprite.pad);
+        }
+                    vpSpriteDone = true;
+                } catch (e) { window.__vpSpriteError(e); }
+            }
+            if (!vpSpriteDone) {
+                window.VP_SPRITE_STATS.fallback += 1;
+            const fontSize = text.options.fontSize * scope.verticalPixelRatio;
+            const font = `${text.options.bold ? 'bold ' : ''}${fontSize}px 'Inter', Arial, sans-serif`;
+            ctx.font = font;
+
+            // Многострочность
+            const lines = text.text.split('\n');
+            const lineHeight = fontSize * 1.4;
+            const textBlockHeight = lines.length * lineHeight;
+
+            let textWidth = 0;
+            for (const line of lines) {
+                const w = ctx.measureText(line).width;
+                if (w > textWidth) textWidth = w;
+            }
+
+            const padding = 8 * scope.horizontalPixelRatio;
+            const rectWidth = textWidth + padding * 2;
+            const rectHeight = textBlockHeight + padding * 2;
+            const rectX = x;
+            const rectY = y - rectHeight / 2;
+
+            this._hitArea = { x: rectX, y: rectY, width: rectWidth, height: rectHeight };
+
+            ctx.save();
+
+            let bgColor = text.options.bgColor;
+            const bgOpacity = text.options.bgOpacity !== undefined ? text.options.bgOpacity : 0;
+
+            const parseHex = (hex) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : null;
+            };
+            const parseRgb = (rgb) => {
+                const result = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(rgb);
+                return result ? {
+                    r: parseInt(result[1], 10),
+                    g: parseInt(result[2], 10),
+                    b: parseInt(result[3], 10)
+                } : null;
+            };
+
+            let parsedBg = parseHex(bgColor) || parseRgb(bgColor);
+            let rgbaBg;
+            if (parsedBg) {
+                rgbaBg = `rgba(${parsedBg.r}, ${parsedBg.g}, ${parsedBg.b}, ${bgOpacity})`;
+            } else {
+                rgbaBg = bgColor;
+            }
+
+            ctx.fillStyle = rgbaBg;
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            this._roundRect(ctx, rectX, rectY, rectWidth, rectHeight, 6 * scope.horizontalPixelRatio);
+            ctx.fill();
+
+            let textColor = text.options.color;
+            const textOpacity = text.options.opacity !== undefined ? text.options.opacity : 1;
+            let parsedText = parseHex(textColor) || parseRgb(textColor);
+            let rgbaText;
+            if (parsedText) {
+                rgbaText = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, ${textOpacity})`;
+            } else {
+                rgbaText = textColor;
+            }
+
+            ctx.fillStyle = rgbaText;
+            ctx.shadowBlur = 0;
+            ctx.font = font;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+
+            // Отрисовка каждой строки
+            for (let i = 0; i < lines.length; i++) {
+                const lineY = rectY + padding + i * lineHeight;
+                ctx.fillText(lines[i], rectX + padding, lineY);
+            }
+            }
+
+        if (text.showDragPoint) {
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.fillStyle = text.options.color;
+            ctx.beginPath();
+            ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+            ctx.fill();
+
+            this._dragHitArea = { x: x, y: y, radius: 10 * scope.horizontalPixelRatio };
+        }
+
+        ctx.restore();
+    });
+}
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
+
+      hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 1. АБСОЛЮТНЫЙ ПРИОРИТЕТ: Точка перетаскивания (если текст выделен)
+        if (this._text.showDragPoint && this._dragHitArea) {
+            const dx = x - this._dragHitArea.x;
+            const dy = y - this._dragHitArea.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // Если попали в радиус точки перетаскивания — немедленно возвращаем результат
+            if (distance < this._dragHitArea.radius) {
+                return { type: 'drag', text: this._text, distance: distance };
+            }
+        }
+
+        // ✅ 2. Текстовый прямоугольник (основная область)
+        if (this._hitArea) {
+            const inX = x >= this._hitArea.x && x <= this._hitArea.x + this._hitArea.width;
+            const inY = y >= this._hitArea.y && y <= this._hitArea.y + this._hitArea.height;
+            
+            if (inX && inY) {
+                const centerX = this._hitArea.x + this._hitArea.width / 2;
+                const centerY = this._hitArea.y + this._hitArea.height / 2;
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < bestDistance) {
+                    bestHit = { type: 'drag', text: this._text, distance: distance };
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        // ✅ 3. Drag точка (резервная проверка, если по какой-то причине не сработал приоритет выше)
+        if (this._dragHitArea) {
+            const dx = x - this._dragHitArea.x;
+            const dy = y - this._dragHitArea.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < this._dragHitArea.radius && distance < bestDistance) {
+                bestHit = { type: 'drag', text: this._text, distance: distance };
+                bestDistance = distance;
+            }
+        }
+
+        return bestHit;
+    }
+}
+
+class TextPaneView {
+    constructor(text, chartManager) {
+        this._text = text;
+        this._chartManager = chartManager;
+        this._renderer = new TextRenderer(text, chartManager);
+    }
+    renderer() { return this._renderer; }
+    zOrder() { return 'top'; }
+}
+
+class TextPrimitive {
+    constructor(text, chartManager) {
+        this._text = text;
+        this._chartManager = chartManager;
+        this._paneView = new TextPaneView(text, chartManager);
+        this._chart = null;
+        this._series = null;
+        this._requestUpdate = null;
+    }
+    
+    paneViews() { return [this._paneView]; }
+    
+    attached({ chart, series, requestUpdate }) {
+        this._chart = chart;
+        this._series = series;
+        this._requestUpdate = requestUpdate;
+        this._syncTime();
+    }
+    
+    updateAllViews() {
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
+        this._syncTime();
+    }
+    
+    _syncTime() {
+        const chartData = this._chartManager.chartData;
+        if (!chartData || chartData.length === 0) return;
+
+        const anchor = this._text.anchorTime;
+        if (anchor === undefined) return;
+
+        // Если магнит выключен — не округляем
+        if (this._chartManager.textManager && !this._chartManager.textManager._magnetEnabled) {
+            this._text.time = anchor;
+            return;
+        }
+
+        // [PERF-PAN] общий бинарный поиск с кэшем вместо локального
+        const cm = this._chartManager;
+        const t = (typeof cm.findNearestCandleTime === 'function')
+            ? cm.findNearestCandleTime(anchor)
+            : null;
+        if (typeof t === 'number' && isFinite(t)) this._text.time = t;
+    }
+    
+    getText() { return this._text; }
+    
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+// ============================================================
+// TEXT MANAGER — ПОЛНЫЙ КЛАСС
+// ============================================================
+
+class TextManager {
+    constructor(chartManager) {
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._texts = [];
+        this._chartManager = chartManager;
+        this._selectedText = null;
+        this._hoveredText = null;
+        this._isDrawingMode = false;
+        
+        this._isDragging = false;
+        this._dragText = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragStartTime = 0;
+        this._dragItem = null;
+
+        this._lastMouseX = 0;
+        this._lastMouseY = 0;
+        this._potentialDrag = null;
+        this._dragThreshold = 5;
+        this._isLoading = false;
+        this._magnetEnabled = true; 
+        this._dblClickTimer = null;
+        this._potentialDblClickTarget = null;
+        this._dblClickTimeout = 350;
+        this._lastClickTime = 0;
+        this._handleContextMenu = this._handleContextMenu.bind(this);
+                this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+
+                this._pendingMouseEvent = null;
+        this._hoverRafId = null;
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._needsRedraw = false;
+        
+        // ✅ Регистрируем в координаторе
+        window.drawingLoaderCoordinator.register(this, 'text');
+        
+        // ✅ Единая задержка 150ms
+        setTimeout(async () => {
+            try {
+                if (!window.dbReady) {
+                    await new Promise(resolve => {
+                        const check = () => window.dbReady ? resolve() : setTimeout(check, 50);
+                        check();
+                    });
+                }
+                console.log('🚀 Auto-loading texts...');
+                await this.loadTexts();
+                console.log('✅ Texts loaded');
+            } catch (error) {
+                console.error('❌ Auto-load texts failed:', error);
+            }
+        }, 150);
+    }
+
+    // ✅ НОВЫЙ МЕТОД: Загрузка из данных координатора
+   async loadFromData(symbolKey, textRecords) {
+    if (this._getCurrentSymbolKey() !== symbolKey) return;
+
+    try {
+        const series = this._chartManager.currentChartType === 'candle' 
+            ? this._chartManager.candleSeries 
+            : this._chartManager.barSeries;
+
+        if (!series) return;
+
+        // ✅ ГАРАНТИРОВАННЫЙ НАБОР ТАЙМФРЕЙМОВ
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+
+        const existingIds = new Set(
+            this._texts
+                .filter(item => item.text.symbolKey === symbolKey)
+                .map(item => item.text.id)
+        );
+        
+        const newRecordIds = new Set(textRecords.map(t => t.id));
+        
+        const toDetach = this._texts.filter(item => 
+            item.text.symbolKey === symbolKey && !newRecordIds.has(item.text.id)
+        );
+        
+        for (const item of toDetach) {
+            try { 
+                if (item.primitive && item.series) {
+                    item.series.detachPrimitive(item.primitive); 
+                }
+            } catch(e) {
+                console.warn('Error detaching old primitive:', e);
+            }
+        }
+        
+        this._texts = this._texts.filter(item => 
+            item.text.symbolKey !== symbolKey || newRecordIds.has(item.text.id)
+        );
+
+        const newTexts = [];
+        for (const rec of textRecords) {
+            try {
+                const existing = this._texts.find(item => item.text.id === rec.id);
+                if (existing) {
+                    existing.text.text = rec.data.text;
+                    existing.text.price = rec.data.price;
+                    existing.text.time = rec.data.time;
+                    existing.text.options = { ...existing.text.options, ...rec.data.options };
+                    
+                    // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                    existing.text.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    
+                    continue;
+                }
+
+                const textDrawing = new TextDrawing(rec.data.text, rec.data.time, rec.data.price, rec.data.options);
+                textDrawing.id = rec.id;
+                textDrawing.symbolKey = rec.symbolKey;
+                textDrawing.symbol = rec.data.symbol;
+                textDrawing.exchange = rec.data.exchange;
+                textDrawing.marketType = rec.data.marketType;
+                textDrawing.anchorTime = rec.data.anchorTime || rec.data.time;
+                
+                // ✅ ГАРАНТИРУЕМ ВСЕ 12 ТАЙМФРЕЙМОВ
+                textDrawing.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                
+                textDrawing.anchorCandle = rec.data.anchorCandle || null;
+                
+                const primitive = new TextPrimitive(textDrawing, this._chartManager);
+                series.attachPrimitive(primitive);
+                newTexts.push({ text: textDrawing, primitive, series });
+            } catch (e) { 
+                console.warn('Failed to load text:', rec.id, e); 
+            }
+        }
+
+        this._texts.push(...newTexts);
+        this._requestRedraw();
+        console.log(`✅ Loaded ${textRecords.length} texts for ${symbolKey}`);
+    } catch (error) {
+        console.error('❌ loadFromData failed:', error);
+        throw error;
+    }
+}
+    _toBitmapCoords(cssX, cssY) {
+        return { x: cssX * this._pixelRatio, y: cssY * this._pixelRatio };
+    }
+
+    _getCurrentSymbolKey() {
+        const symbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const exchange = this._chartManager.currentExchange || 'binance';
+        const marketType = this._chartManager.currentMarketType || 'futures';
+        return `${symbol}:${exchange}:${marketType}`;
+    }
+    _handleGlobalMouseUp(e) {
+        if (!this._isDragging) return;
+        
+        this._isDragging = false;
+        this._potentialDrag = null;
+
+        if (this._dragText) {
+            this._dragText.dragging = false;
+            this._dragText.attached = false;
+            this._dragText.anchorTime = this._dragText.time;
+            this._saveTexts();
+            this._dragText = null;
+            this._dragItem = null;
+            this._requestRedraw();
+        }
+        
+        this._chartManager.chartContainer.style.cursor = 'crosshair';
+    }
+   _setupHotkeys() {
+    document.addEventListener('keydown', (e) => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        
+        // Delete — только если есть точка перетаскивания
+        if (e.key === 'Delete' && this._selectedText && this._selectedText.showDragPoint === true) {
+            e.preventDefault();
+            this.deleteText(this._selectedText.id);
+            this._selectedText = null;
+        }
+    });
+}
+
+    _handleContextMenu(e) {
+        e.preventDefault(); e.stopPropagation();
+
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+        const hit = this.hitTest(bmX, bmY);
+
+        if (hit) {
+            if (this._selectedText && this._selectedText !== hit.text) {
+                this._selectedText.selected = false;
+                this._selectedText.showDragPoint = false;
+                this._selectedText.attached = false;
+            }
+
+            hit.text.selected = true;
+            hit.text.showDragPoint = true;
+            hit.text.attached = false;
+
+            const textX = this._chartManager.timeToCoordinate(hit.text.time);
+            const textY = this._chartManager.priceToCoordinate(hit.text.price);
+            if (textX !== null && textY !== null) {
+                hit.text.dragPointX = textX;
+                hit.text.dragPointY = textY;
+            }
+
+            this._selectedText = hit.text;
+            this._requestRedraw();
+
+            const menu = document.getElementById('textContextMenu');
+            if (menu) {
+                document.getElementById('drawingContextMenu').style.display = 'none';
+                document.getElementById('trendContextMenu').style.display = 'none';
+                document.getElementById('alertContextMenu').style.display = 'none';
+
+                menu.style.display = 'flex';
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
+
+                const copyBtn = document.getElementById('textContextCopyBtn');
+                const newCopyBtn = copyBtn.cloneNode(true);
+                copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
+                newCopyBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    navigator.clipboard?.writeText(hit.text.text);
+                    menu.style.display = 'none';
+                };
+
+                const settingsBtn = document.getElementById('textContextSettingsBtn');
+                const newSettingsBtn = settingsBtn.cloneNode(true);
+                settingsBtn.parentNode.replaceChild(newSettingsBtn, settingsBtn);
+                newSettingsBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    this._showSettings(hit.text);
+                    menu.style.display = 'none';
+                };
+
+                const deleteBtn = document.getElementById('textContextDeleteBtn');
+                const newDeleteBtn = deleteBtn.cloneNode(true);
+                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
+                newDeleteBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    this.deleteText(hit.text.id);
+                    menu.style.display = 'none';
+                };
+            }
+        } else {
+            const menu = document.getElementById('textContextMenu');
+            if (menu) menu.style.display = 'none';
+        }
+    }
+
+       _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+
+            const rect = container.getBoundingClientRect();
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+            const { x: bmX, y: bmY } = this._toBitmapCoords(x, y);
+            const hit = this.hitTest(bmX, bmY);
+
+            if (hit) {
+                e.preventDefault(); e.stopPropagation();
+
+                const now = Date.now();
+                
+                // Двойной клик
+                if (this._dblClickTimer && this._potentialDblClickTarget === hit.text && now - this._lastClickTime < this._dblClickTimeout) {
+                    clearTimeout(this._dblClickTimer);
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                    this._lastClickTime = 0;
+                    
+                    hit.text.showDragPoint = !hit.text.showDragPoint;
+                    this._requestRedraw();
+                    return;
+                }
+
+                // Одиночный клик
+                if (this._selectedText && this._selectedText !== hit.text) {
+                    this._selectedText.selected = false;
+                    this._selectedText.showDragPoint = false;
+                }
+
+                hit.text.selected = true;
+                this._selectedText = hit.text;
+                
+                this._potentialDblClickTarget = hit.text;
+                this._lastClickTime = now;
+                if (this._dblClickTimer) clearTimeout(this._dblClickTimer);
+                this._dblClickTimer = setTimeout(() => {
+                    this._dblClickTimer = null;
+                    this._potentialDblClickTarget = null;
+                }, this._dblClickTimeout);
+
+                if (hit.text.showDragPoint) {
+
+                    this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли фигуру — график замер (как в TradingView)
+                    const textX = this._chartManager.timeToCoordinate(hit.text.time);
+                    const textY = this._chartManager.priceToCoordinate(hit.text.price);
+                    if (textX !== null && textY !== null) {
+                        hit.text.dragPointX = textX;
+                        hit.text.dragPointY = textY;
+                    }
+                    this._potentialDrag = {
+                        text: hit.text,
+                        startX: bmX,
+                        startY: bmY,
+                        startPrice: hit.text.price,
+                        startTime: hit.text.time
+                    };
+                } else {
+                    this._potentialDrag = null;
+                }
+
+                this._requestRedraw();
+            } else {
+                const textMenu = document.getElementById('textContextMenu');
+                if (textMenu && textMenu.style.display === 'flex') {
+                    const menuRect = textMenu.getBoundingClientRect();
+                    const isClickInsideMenu = 
+                        e.clientX >= menuRect.left && e.clientX <= menuRect.right &&
+                        e.clientY >= menuRect.top && e.clientY <= menuRect.bottom;
+                    if (isClickInsideMenu) return;
+                }
+
+                if (this._selectedText) {
+                    this._selectedText.selected = false;
+                    this._selectedText.showDragPoint = false;
+                    this._selectedText = null;
+                }
+                
+                if (textMenu) textMenu.style.display = 'none';
+                this._requestRedraw();
+            }
+        });
+
+        // [ШАГ 2] mousemove через «воротник»: fast path для drag,
+        // guard скролла для hover, RAF-троттлинг для hitTest.
+        container.addEventListener('mousemove', (e) => {
+            // Fast path: начало drag / сам drag — мгновенно
+            if (this._potentialDrag || this._isDragging) {
+                this._processMouseMove(e);
+                return;
+            }
+
+            // Slow path: hover. Во время скролла hitTest не нужен
+            if ((this._chartManager._isScrolling || this._chartManager._isScrollingFast) && !this._potentialDrag && !this._isDragging) {   // [DRAW-DRAG] свой драг не глушим
+                if (this._hoveredText) {
+                    this._hoveredText.hovered = false;
+                    this._hoveredText = null;
+                    this._requestRedraw();
+                }
+                return;
+            }
+
+            // RAF-троттлинг
+            this._pendingMouseEvent = e;
+            if (this._hoverRafId) return;
+            this._hoverRafId = requestAnimationFrame(() => {
+                this._hoverRafId = null;
+                this._processMouseMove(this._pendingMouseEvent);
+            });
+        });
+
+        container.addEventListener('mouseup', (e) => {
+            this._potentialDrag = null;
+
+            if (this._isDragging) {
+                e.preventDefault(); e.stopPropagation();
+
+                this._isDragging = false;
+                if (this._dragText) {
+                    this._dragText.dragging = false;
+                    this._dragText.attached = false;
+                    
+                    this._dragText.anchorTime = this._dragText.time;
+
+                    this._saveTexts();
+                    this._dragText = null;
+                    this._dragItem = null;
+                    this._requestRedraw();
+                }
+
+                container.style.cursor = 'crosshair';
+
+                setTimeout(() => {
+                    const moveEvent = new MouseEvent('mousemove', {
+                        clientX: e.clientX,
+                        clientY: e.clientY
+                    });
+                    container.dispatchEvent(moveEvent);
+                }, 10);
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            // [ШАГ 2] Сброс отложенного RAF и события
+            if (this._hoverRafId) {
+                cancelAnimationFrame(this._hoverRafId);
+                this._hoverRafId = null;
+            }
+            this._pendingMouseEvent = null;
+
+            if (this._hoveredText) {
+                this._hoveredText.hovered = false;
+                this._hoveredText = null;
+                this._requestRedraw();
+            }
+            container.style.cursor = 'crosshair';
+        });
+
+        container.addEventListener('click', (e) => {
+            if (this._isDragging) {
+                e.preventDefault(); e.stopPropagation();
+            }
+            if (this._isDrawingMode) {
+                this._handleChartClick(e);
+            }
+        });
+
+        container.addEventListener('contextmenu', this._handleContextMenu);
+    }
+    // [ШАГ 2] Сюда переехало старое тело mousemove — вызывается либо напрямую
+    // (при drag), либо через RAF (при hover).
+       _processMouseMove(e) {
+        const container = this._chartManager.chartContainer;
+        // [DRAW-PERF] rect кэшируется на 300 мс: getBoundingClientRect() на каждом
+        // кадре мыши — принудительный layout всей страницы; на насыщенном DOM
+        // перетаскивание становилось «тяжёлым».
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        this._lastMouseX = cssX;
+        this._lastMouseY = cssY;
+
+        const { x: bmX, y: bmY } = this._toBitmapCoords(cssX, cssY);
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(bmX - this._potentialDrag.startX);
+            const dy = Math.abs(bmY - this._potentialDrag.startY);
+
+            if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                this._isDragging = true;
+                this._dragText = this._potentialDrag.text;
+                this._dragText.dragging = true;
+                // [ШАГ 3] Запоминаем item перетаскиваемого текста
+                this._dragItem = this._texts.find(it => it.text === this._dragText) || null;
+
+                this._dragStartX = this._potentialDrag.startX;
+                this._dragStartY = this._potentialDrag.startY;
+                this._dragStartPrice = this._potentialDrag.startPrice;
+                this._dragStartTime = this._potentialDrag.startTime;
+
+                container.style.cursor = 'grabbing';
+            }
+        }
+
+        if (this._isDragging && this._dragText) {
+            e.preventDefault(); e.stopPropagation();
+
+            const deltaX = (bmX - this._dragStartX) / this._pixelRatio;
+            const deltaY = (bmY - this._dragStartY) / this._pixelRatio;
+
+            const textX = this._chartManager.timeToCoordinate(this._dragStartTime);
+            const textY = this._chartManager.priceToCoordinate(this._dragStartPrice);
+
+            if (textX !== null && textY !== null) {
+                const newX = textX + deltaX;
+                const newY = textY + deltaY;
+
+                const newPrice = this._chartManager.coordinateToPrice(newY);
+                const newTime = this._getTimeFromCoordinate(newX);
+
+                if (newPrice !== null) this._dragText.price = newPrice;
+                if (newTime !== null) {
+                    this._dragText.time = newTime;
+                    this._dragText.anchorTime = newTime;
+                }
+
+                const newTextX = this._chartManager.timeToCoordinate(this._dragText.time);
+                const newTextY = this._chartManager.priceToCoordinate(this._dragText.price);
+                if (newTextX !== null && newTextY !== null) {
+                    this._dragText.dragPointX = newTextX;
+                    this._dragText.dragPointY = newTextY;
+                }
+
+                // [ШАГ 3] Перерисовываем только этот текст
+                this._requestRedraw(this._dragItem);
+            }
+        } else {
+            const hit = this.hitTest(bmX, bmY);
+            const hitText = hit ? hit.text : null;
+
+            if (hitText) {
+                container.style.cursor = 'grab';
+            } else {
+                container.style.cursor = 'crosshair';
+            }
+
+            if (this._hoveredText !== hitText) {
+                if (this._hoveredText) this._hoveredText.hovered = false;
+                this._hoveredText = hitText;
+                if (hitText) hitText.hovered = true;
+                this._requestRedraw();
+            }
+        }
+    }
+    _getTimeFromCoordinate(x) {
+        let time = this._chartManager.coordinateToTime(x);
+        if (time !== null) return time;
+        
+        const data = this._chartManager.chartData;
+        if (!data.length) return null;
+        
+        let intervalMs = 60 * 60 * 1000;
+        if (data.length >= 2) intervalMs = data[1].time - data[0].time;
+        
+        const firstCandle = data[0];
+        const lastCandle = data[data.length - 1];
+        const firstX = this._chartManager.timeToCoordinate(firstCandle.time);
+        const lastX = this._chartManager.timeToCoordinate(lastCandle.time);
+        
+        if (firstX === null || lastX === null) return null;
+        
+        if (x > lastX) {
+            const deltaX = x - lastX;
+            const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
+            const deltaTime = deltaX / pixelsPerMs;
+            return lastCandle.time + deltaTime;
+        }
+        
+        if (x < firstX) {
+            const deltaX = firstX - x;
+            const pixelsPerMs = (lastX - firstX) / (lastCandle.time - firstCandle.time);
+            const deltaTime = deltaX / pixelsPerMs;
+            return firstCandle.time - deltaTime;
+        }
+        
+        return null;
+    }
+
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const textBtn = document.getElementById('toolText');
+        if (textBtn) {
+            if (enabled) {
+                textBtn.style.background = '#4A90E2';
+                textBtn.style.color = '#FFFFFF';
+                textBtn.classList.add('active');
+            } else {
+                textBtn.style.background = '';
+                textBtn.style.color = '';
+                textBtn.classList.remove('active');
+            }
+        }
+    }
+
+    setMagnetEnabled(enabled) {
+        this._magnetEnabled = enabled;
+    }
+
+    createText(text, time, price, options = {}) {
+        const defaultVisibility = {
+            '1m': true, '3m': true, '5m': true, '15m': true, '30m': true,
+            '1h': true, '4h': true, '6h': true, '12h': true,
+            '1d': true, '1w': true, '1M': true
+        };
+        const timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+
+        const textDrawing = new TextDrawing(text, time, price, {
+            ...options,
+            timeframeVisibility
+        });
+        
+        textDrawing.anchorTime = time;
+        textDrawing.symbolKey = this._getCurrentSymbolKey();
+        textDrawing.symbol = this._chartManager.currentSymbol;
+        textDrawing.exchange = this._chartManager.currentExchange;
+        textDrawing.marketType = this._chartManager.currentMarketType;
+
+        const primitive = new TextPrimitive(textDrawing, this._chartManager);
+        const series = this._chartManager.currentChartType === 'candle'
+            ? this._chartManager.candleSeries
+            : this._chartManager.barSeries;
+        series.attachPrimitive(primitive);
+        this._texts.push({ text: textDrawing, primitive, series });
+        this._saveTexts();
+        return textDrawing;
+    }
+
+    deleteText(textId) {
+        const index = this._texts.findIndex(t => t.text.id === textId);
+        if (index !== -1) {
+            const { primitive, series } = this._texts[index];
+            window.db.delete('drawings', textId).catch(e => console.warn(e));
+            try { series.detachPrimitive(primitive); } catch (e) {}
+            this._texts.splice(index, 1);
+            if (this._selectedText && this._selectedText.id === textId) this._selectedText = null;
+            if (this._dragText && this._dragText.id === textId) this._dragText = null;
+            this._saveTexts();
+            this._requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    deleteAllTexts() {
+        for (const item of this._texts) {
+            window.db.delete('drawings', item.text.id).catch(e => console.warn(e));
+        }
+        this._texts.forEach(({ primitive, series }) => {
+            try { series.detachPrimitive(primitive); } catch (e) {}
+        });
+        this._texts = [];
+        this._selectedText = null;
+        this._dragText = null;
+        this._saveTexts();
+        this._requestRedraw();
+    }
+
+_detachAllPrimitivesForSymbol(symbolKey) {
+    const itemsForSymbol = this._texts.filter(item => item.text.symbolKey === symbolKey);
+    for (const item of itemsForSymbol) {
+        if (item.primitive && item.series) {
+            try { 
+                item.series.detachPrimitive(item.primitive); 
+            } catch(e) {}
+        }
+    }
+    this._texts = this._texts.filter(item => item.text.symbolKey !== symbolKey);
+}
+
+    hitTest(x, y) {
+        // 1. Абсолютный приоритет: уже выбранный текст
+        if (this._selectedText) {
+            const selItem = this._texts.find(item => item.text === this._selectedText);
+            if (selItem && selItem.primitive?._paneView?._renderer) {
+                try {
+                    const hit = selItem.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return { text: this._selectedText, type: hit.type, distance: hit.distance };
+                } catch (e) {}
+            }
+        }
+
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        // ✅ 2. Идем с КОНЦА массива (Z-Index: новые объекты поверх старых)
+        for (let i = this._texts.length - 1; i >= 0; i--) {
+            const item = this._texts[i];
+            if (!item.primitive?._paneView?._renderer) continue;
+            if (item.text === this._selectedText) continue;
+
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                
+                if (hit && hit.distance !== undefined) {
+                    // Строго ближе минимум на 2 пикселя
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = { text: item.text, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    }
+                    // Почти одинаковое расстояние — побеждает верхний (Z-Index)
+                    else if (hit.distance <= bestDistance + 2) {
+                        bestHit = { text: item.text, type: hit.type, distance: hit.distance };
+                        bestDistance = hit.distance;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        return bestHit;
+    }
+   _handleChartClick(event) {
+    if (!this._isDrawingMode) return;
+    
+    const rect = this._chartManager.chartContainer.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    let price = this._chartManager.coordinateToPrice(y);
+    let time = this._chartManager.coordinateToTime(x);
+    let anchorCandle = null;
+    
+    if (price === null || time === null) {
+        const lastCandle = this._chartManager.getLastCandle();
+        if (lastCandle) {
+            price = lastCandle.close;
+            time = lastCandle.time;
+        } else {
+            return;
+        }
+    }
+    
+    // Магнит только если включён
+    if (this._magnetEnabled) {
+        const snapped = this._snapToPrice(price, time);
+        price = snapped.price;
+        time = snapped.time;
+        anchorCandle = snapped.anchorCandle;
+    }
+    
+    const color = document.getElementById('textCurrentColorBox')?.style.backgroundColor || '#FFFFFF';
+    const bgColor = document.getElementById('textBgColorBox')?.style.backgroundColor || '#000000';
+    const fontSize = parseInt(document.getElementById('textFontSize')?.value) || 12;
+    const bold = document.getElementById('textBold')?.checked || false;
+    const opacity = parseInt(document.getElementById('textOpacity')?.value) / 100 || 1;
+    const bgOpacity = parseInt(document.getElementById('textBgOpacity')?.value) / 100 || 0;
+    
+    const newText = this.createText('Текст', time, price, {
+        color, 
+        bgColor, 
+        fontSize, 
+        bold, 
+        opacity, 
+        bgOpacity, 
+        anchorCandle
+    });
+    
+    setTimeout(() => {
+        this._showSettings(newText);
+    }, 100);
+    
+    this.setDrawingMode(false);
+}
+    _snapToPrice(price, time) {
+        if (!this._chartManager.chartData.length) return { price, time, anchorCandle: null };
+        const data = this._chartManager.chartData;
+        // [PERF-PAN] O(log N) вместо линейного скана
+        const closestCandle = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
+        const priceY = this._chartManager.priceToCoordinate(price);
+        const highY = this._chartManager.priceToCoordinate(closestCandle.high);
+        const lowY = this._chartManager.priceToCoordinate(closestCandle.low);
+        const closeY = this._chartManager.priceToCoordinate(closestCandle.close);
+        if (priceY === null || highY === null) return { price, time, anchorCandle: null };
+        const dHighPx = Math.abs(highY - priceY);
+        const dLowPx = Math.abs(lowY - priceY);
+        const dClosePx = Math.abs(closeY - priceY);
+        let snappedPrice = price;
+        let anchorType = null;
+        const MAGNET_THRESHOLD = 150;
+        const minDistPx = Math.min(dHighPx, dLowPx, dClosePx);
+        if (minDistPx < MAGNET_THRESHOLD) {
+            if (minDistPx === dHighPx) { snappedPrice = closestCandle.high; anchorType = 'high'; }
+            else if (minDistPx === dLowPx) { snappedPrice = closestCandle.low; anchorType = 'low'; }
+            else { snappedPrice = closestCandle.close; anchorType = 'close'; }
+        }
+        return { price: snappedPrice, time: closestCandle.time, anchorCandle: { time: closestCandle.time, type: anchorType, price: snappedPrice } };
+    }
+
+    _findClosestCandleTime(time) {
+        if (!this._chartManager.chartData.length) return time;
+        // [PERF-PAN] O(log N) вместо линейного скана по всем свечам
+        const cm = this._chartManager;
+        if (typeof cm.findNearestCandleTime === 'function') {
+            const t = cm.findNearestCandleTime(time);
+            if (typeof t === 'number' && isFinite(t)) return t;
+        }
+        return cm.chartData[0].time;
+    }
+
+   _showSettings(text) {
+    const settings = document.getElementById('textSettings');
+    if (!settings) return;
+
+    this._selectedText = text;
+
+    document.getElementById('textCurrentColorBox').style.backgroundColor = text.options.color;
+    document.getElementById('textHexInputInline').value = text.options.color;
+    document.getElementById('textBgColorBox').style.backgroundColor = text.options.bgColor;
+    document.getElementById('textBgHexInput').value = text.options.bgColor;
+    document.getElementById('textFontSize').value = text.options.fontSize;
+    document.getElementById('textBold').checked = text.options.bold || false;
+    document.getElementById('textOpacity').value = Math.round(text.options.opacity * 100);
+    document.getElementById('textOpacityValue').textContent = document.getElementById('textOpacity').value + '%';
+    document.getElementById('textBgOpacity').value = Math.round(text.options.bgOpacity * 100);
+    document.getElementById('textBgOpacityValue').textContent = document.getElementById('textBgOpacity').value + '%';
+    document.getElementById('textContentInput').value = text.text;
+
+    createColorGrid('textInlineColorsGrid', 'textCurrentColorBox', 'textColorPickerInline', 'textHexInputInline', text.options.color, 'textAddColorInline');
+    createColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgColorPicker', 'textBgHexInput', text.options.bgColor, 'textBgAddColor');
+    this._renderColorGrid('textBgColorsGrid', 'textBgColorBox', 'textBgHexInput', text.options.bgColor);
+    this._renderTimeframeCheckboxes(text);
+
+    settings.style.display = 'block';
+    settings.style.left = '50%';
+    settings.style.top = '50%';
+    settings.style.transform = 'translate(-50%, -50%)';
+
+    // ✅ ЗАЩИТА ОТ НАКОПЛЕНИЯ LISTENER'ОВ
+    if (!settings.dataset.vpBound) {
+        settings.dataset.vpBound = 'true';
+        settings.addEventListener('mousedown', (e) => e.stopPropagation());
+        settings.addEventListener('mousemove', (e) => e.stopPropagation());
+        settings.addEventListener('mouseup', (e) => e.stopPropagation());
+        settings.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    let header = settings.querySelector('.settings-header');
+    if (!header) {
+        header = document.createElement('div');
+        header.className = 'settings-header';
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #404040;';
+        const title = document.createElement('span');
+        title.textContent = 'Настройки текста';
+        title.style.color = '#FFFFFF';
+        title.style.fontSize = '14px';
+        title.style.fontWeight = 'bold';
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background: transparent; border: none; color: #B0B0B0; font-size: 18px; cursor: pointer; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 4px;';
+        closeBtn.onmouseover = () => closeBtn.style.background = '#404040';
+        closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+        closeBtn.onclick = (e) => { e.stopPropagation(); settings.style.display = 'none'; };
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        settings.insertBefore(header, settings.firstChild);
+    }
+
+    if (this._closeOnOutsideClick) {
+        document.removeEventListener('mousedown', this._closeOnOutsideClick);
+    }
+    
+    this._closeOnOutsideClick = (e) => {
+        if (!settings.contains(e.target) && settings.style.display === 'block') {
+            settings.style.display = 'none';
+            document.removeEventListener('mousedown', this._closeOnOutsideClick);
+            this._closeOnOutsideClick = null;
+        }
+    };
+    
+    setTimeout(() => {
+        if (this._closeOnOutsideClick) {
+            document.addEventListener('mousedown', this._closeOnOutsideClick);
+        }
+    }, 100);
+
+    const textPanel = document.getElementById('textEditPanel');
+    const stylePanel = document.getElementById('textStylePanel');
+    const visibilityPanel = document.getElementById('textVisibilityPanel');
+    const tabs = document.querySelectorAll('#textSettings .settings-tab');
+
+    tabs.forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.dataset.textSettingsTab === 'text') tab.classList.add('active');
+    });
+
+    if (textPanel) textPanel.classList.add('active');
+    if (stylePanel) stylePanel.classList.remove('active');
+    if (visibilityPanel) visibilityPanel.classList.remove('active');
+
+    // ✅ onclick вместо addEventListener (нет накопления)
+    tabs.forEach(tab => {
+        tab.onclick = function() {
+            document.querySelectorAll('#textSettings .settings-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            if (textPanel) textPanel.classList.remove('active');
+            if (stylePanel) stylePanel.classList.remove('active');
+            if (visibilityPanel) visibilityPanel.classList.remove('active');
+            if (this.dataset.textSettingsTab === 'text' && textPanel) textPanel.classList.add('active');
+            else if (this.dataset.textSettingsTab === 'style' && stylePanel) stylePanel.classList.add('active');
+            else if (this.dataset.textSettingsTab === 'visibility' && visibilityPanel) visibilityPanel.classList.add('active');
+        };
+    });
+
+    const saveBtn = document.getElementById('textSaveSettings');
+    const deleteBtn = document.getElementById('textDeleteDrawing');
+
+    if (saveBtn) {
+        saveBtn.onclick = () => {
+            text.updateOptions({
+                color: document.getElementById('textCurrentColorBox').style.backgroundColor,
+                bgColor: document.getElementById('textBgColorBox').style.backgroundColor,
+                fontSize: parseInt(document.getElementById('textFontSize').value),
+                bold: document.getElementById('textBold').checked,
+                opacity: parseInt(document.getElementById('textOpacity').value) / 100,
+                bgOpacity: parseInt(document.getElementById('textBgOpacity').value) / 100,
+                text: document.getElementById('textContentInput').value
+            });
+            this._requestRedraw();
+            settings.style.display = 'none';
+            this._saveTexts();
+        };
+    }
+
+    if (deleteBtn) {
+        deleteBtn.onclick = () => {
+            this.deleteText(text.id);
+            settings.style.display = 'none';
+            this._requestRedraw();
+        };
+    }
+
+    if (!settings.dataset.instantBound) {
+        settings.dataset.instantBound = 'true';
+
+        document.getElementById('textFontSize').addEventListener('input', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            const val = parseInt(this.value) || 12;
+            mgr._selectedText.options.fontSize = val;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+
+        document.getElementById('textBold').addEventListener('change', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            mgr._selectedText.options.bold = this.checked;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+
+        document.getElementById('textOpacity').addEventListener('input', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            document.getElementById('textOpacityValue').textContent = this.value + '%';
+            mgr._selectedText.options.opacity = parseInt(this.value) / 100;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+
+        document.getElementById('textBgOpacity').addEventListener('input', function() {
+            const mgr = window.textManager;
+            if (!mgr || !mgr._selectedText) return;
+            document.getElementById('textBgOpacityValue').textContent = this.value + '%';
+            mgr._selectedText.options.bgOpacity = parseInt(this.value) / 100;
+            if (mgr._selectedText.primitive) mgr._selectedText.primitive.requestRedraw();
+            mgr._requestRedraw();
+            mgr._saveTexts();
+        });
+    }
+
+    // [FIX-VIS] кнопка «Минутки» привязывается в _renderTimeframeCheckboxes()
+    // при каждом открытии панели (раньше — один раз на всю сессию).
+
+    if (typeof window.makePanelDraggable === 'function') {
+        window.makePanelDraggable(settings);
+    }
+}
+    _renderColorGrid(gridId, colorBoxId, hexInputId, selectedColor) {
+        const grid = document.getElementById(gridId);
+        if (!grid) return;
+        const colors = ['#FFFFFF', '#EF5350', '#26A69A', '#FFA726', '#AB47BC', '#5C6BC0', '#66BB6A', '#FF7043', '#7E57C2', '#42A5F5', '#EC407A', '#FFCA28', '#8D6E63', '#B0BEC5', '#000000', '#F44336', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50'];
+        grid.innerHTML = '';
+        colors.forEach(color => {
+            const square = document.createElement('div');
+            square.className = 'color-square';
+            square.style.backgroundColor = color;
+            if (color === selectedColor) square.classList.add('selected');
+            square.addEventListener('click', () => {
+                document.querySelectorAll(`#${gridId} .color-square`).forEach(s => s.classList.remove('selected'));
+                square.classList.add('selected');
+                document.getElementById(colorBoxId).style.backgroundColor = color;
+                document.getElementById(hexInputId).value = color;
+            });
+            grid.appendChild(square);
+        });
+        const addBtnId = gridId === 'textInlineColorsGrid' ? 'textAddColorInline' : 'textBgAddColor';
+        const addBtn = document.getElementById(addBtnId);
+        const hexInput = document.getElementById(hexInputId);
+        if (addBtn && hexInput) {
+            addBtn.onclick = () => {
+                let hex = hexInput.value.trim();
+                if (!hex.startsWith('#')) hex = '#' + hex;
+                if (/^#[0-9A-F]{6}$/i.test(hex)) {
+                    const square = document.createElement('div');
+                    square.className = 'color-square';
+                    square.style.backgroundColor = hex;
+                    square.addEventListener('click', () => {
+                        document.querySelectorAll(`#${gridId} .color-square`).forEach(s => s.classList.remove('selected'));
+                        square.classList.add('selected');
+                        document.getElementById(colorBoxId).style.backgroundColor = hex;
+                        hexInput.value = hex;
+                    });
+                    grid.appendChild(square);
+                    document.querySelectorAll(`#${gridId} .color-square`).forEach(s => s.classList.remove('selected'));
+                    square.classList.add('selected');
+                    document.getElementById(colorBoxId).style.backgroundColor = hex;
+                }
+            };
+        }
+    }
+
+   _renderTimeframeCheckboxes(text) {
+    const container = document.getElementById('textTimeframeCheckboxList');
+    if (!container) return;
+    const tfLabels = { '1m': '1 минута', '3m': '3 минуты', '5m': '5 минут', '15m': '15 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
+    let html = '';
+    const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+    timeframes.forEach(tf => {
+        const isChecked = text.timeframeVisibility[tf] !== false;
+        html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="text_tf_${tf}_${text.id}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="text_tf_${tf}_${text.id}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
+    });
+    container.innerHTML = html;
+    // [FIX-VIS] цель — ТЕКУЩИЙ текст (this._selectedText).
+    const getTarget = () => this._selectedText || text;
+    container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.onchange = (e) => {
+            const target = getTarget();
+            if (!target) return;
+            target.timeframeVisibility[e.target.dataset.timeframe] = e.target.checked;
+            this._requestRedraw();
+            this._saveTexts();
+        };
+    });
+    // [FIX-VIS] раньше здесь было `onclick = null` + addEventListener: onclick=null
+    // НЕ снимает слушатели, добавленные через addEventListener, поэтому они
+    // накапливались при каждом открытии панели и дёргали старые (чужие) тексты.
+    bindTimeframePresetButtons({
+        minutesBtnId: 'textSelectMinutesTimeframes',
+        allBtnId: 'textSelectAllTimeframes',
+        noneBtnId: 'textDeselectAllTimeframes',
+        containerId: 'textTimeframeCheckboxList',
+        getTarget,
+        onChange: () => { this._requestRedraw(); this._saveTexts(); }
+    });
+}
+
+       _requestRedraw(item = null) {
+        // [ШАГ 3] Быстрый путь: перерисовать ровно один текст (drag)
+        if (item && item.primitive?.requestRedraw) {
+            item.primitive.requestRedraw();
+            return;
+        }
+        // Медленный путь: перерисовать все тексты
+        this._texts.forEach(it => {
+            if (it.primitive?.requestRedraw) it.primitive.requestRedraw();
+        });
+    }
+    _applyRedrawIfNeeded() {
+        if (this._needsRedraw) {
+            this._needsRedraw = false;
+            this._texts?.forEach(item => { 
+                if (item.primitive?.requestRedraw) {
+                    item.primitive.requestRedraw();
+                }
+            });
+        }
+    }
+
+    async _saveTexts() {
+        if (this._texts.length === 0) return;
+        const promises = this._texts.map(item => 
+            window.db.put('drawings', {
+                id: item.text.id,
+                type: 'text',
+                symbolKey: item.text.symbolKey,
+                data: {
+                    text: item.text.text,
+                    time: item.text.time,
+                    anchorTime: item.text.anchorTime,
+                    price: item.text.price,
+                    options: item.text.options,
+                    timeframeVisibility: item.text.timeframeVisibility,
+                    anchorCandle: item.text.anchorCandle,
+                    symbol: item.text.symbol,
+                    exchange: item.text.exchange,
+                    marketType: item.text.marketType
+                }
+            }).catch(e => console.warn('Save text error:', e))
+        );
+        await Promise.all(promises);
+    }
+
+      async loadTexts() {
+        const currentKey = this._getCurrentSymbolKey();
+        await window.drawingLoaderCoordinator.loadAllForSymbol(currentKey);
+    }
+
+    syncWithNewTimeframe() {}
+
+    deactivateAll() {
+        this._texts.forEach(item => {
+            item.text.selected = false;
+            item.text.showDragPoint = false;
+        });
+        this._selectedText = null;
+    }
+
+    activateObject(text) {
+        text.selected = true;
+        text.showDragPoint = true;
+        this._selectedText = text;
+    }
+}
+function getFormattedPriceFromChart(chartManager, price) {
+    // [PERF-PAN] без series.options() (глубокий клон опций серии)
+    try {
+        const precision = (typeof chartManager.getDrawingPrecision === 'function')
+            ? chartManager.getDrawingPrecision()
+            : (typeof chartManager._getTitlePrecision === 'function' ? chartManager._getTitlePrecision() : 2);
+        return Number(price).toFixed(precision);
+    } catch (e) {
+        return Number(price).toFixed(2);
+    }
+}
+class TradeLevel {
+    constructor(entryPrice, stopLossPrice, options = {}) {
+        this.entryPrice = entryPrice;
+        this.stopLossPrice = stopLossPrice;
+        this.takeProfitPrice = null;
+        this.takeProfitPrice2 = null; // НОВЫЙ: Второй тейк-профит
+        this.direction = options.direction || (stopLossPrice > entryPrice ? 'short' : 'long');
+        this.riskRewardRatio = options.riskRewardRatio || 3;
+        this.riskRewardRatio2 = options.riskRewardRatio2 || 5; // НОВЫЙ: R:R для второго тейка (по умолчанию 5)
+        this.manualTP = options.manualTP || false;
+        this.manualTP2 = options.manualTP2 || false; // НОВЫЙ: Флаг ручного изменения второго тейка
+        this.entryTime = options.time || Date.now() / 1000;
+        this.anchorTime = this.entryTime;
+        this.id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+            ? crypto.randomUUID()
+            : `trade_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        this.symbolKey = options.symbolKey || null;
+        this.symbol = options.symbol || null;
+        this.exchange = options.exchange || null;
+        this.marketType = options.marketType || null;
+
+        // НОВЫЙ: Риск на сделку в долларах (используется для расчёта объёма позиции). По умолчанию $10.
+        this.riskAmount = (options.riskAmount !== undefined && options.riskAmount !== null && !isNaN(options.riskAmount))
+            ? Number(options.riskAmount)
+            : 20;
+
+        this.options = {
+            slColor: options.slColor || '#f23645',
+            tpColor: options.tpColor || '#00ff88',
+            lineWidth: options.lineWidth || 1,
+            showLabels: options.showLabels !== undefined ? options.showLabels : true,
+            showPlechi: options.showPlechi !== undefined ? options.showPlechi : true,
+            showTP2: options.showTP2 !== undefined ? options.showTP2 : true, // НОВЫЙ: Показывать второй тейк
+            arrowOnly: options.arrowOnly !== undefined ? options.arrowOnly : false, // НОВЫЙ: «Только стрелка» — скрыть все линии и плашки
+        };
+
+        const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        const defaultVisibility = {};
+        ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+        this.timeframeVisibility = options.timeframeVisibility || defaultVisibility;
+
+        this.selected = false;
+        this.hovered = false;
+        this.dragging = false;
+        this.showDragPoints = false;
+        this.showVolumeLabel = false; // НОВЫЙ: показывать плашку объёма (появляется при наведении на ТВХ)
+        this.updateTP();
+    }
+
+    updateTP() {
+        const risk = Math.abs(this.entryPrice - this.stopLossPrice);
+        if (isNaN(risk) || risk === 0) return;
+
+        // Обновление первого тейка
+        if (!this.manualTP || this.takeProfitPrice === null || isNaN(this.takeProfitPrice)) {
+            const multiplier = this.riskRewardRatio || 3;
+            if (this.direction === 'long') {
+                this.takeProfitPrice = this.entryPrice + (risk * multiplier);
+            } else {
+                this.takeProfitPrice = this.entryPrice - (risk * multiplier);
+            }
+        }
+
+        // Обновление второго тейка (по умолчанию 5к1)
+        if (!this.manualTP2 || this.takeProfitPrice2 === null || isNaN(this.takeProfitPrice2)) {
+            const multiplier2 = this.riskRewardRatio2 || 5;
+            if (this.direction === 'long') {
+                this.takeProfitPrice2 = this.entryPrice + (risk * multiplier2);
+            } else {
+                this.takeProfitPrice2 = this.entryPrice - (risk * multiplier2);
+            }
+        }
+    }
+
+    update() {
+        this.direction = this.stopLossPrice > this.entryPrice ? 'short' : 'long';
+        this.updateTP();
+    }
+
+    // НОВЫЙ: Объём позиции (в единицах базового актива), рассчитанный из риска в долларах и дистанции до стопа
+    getPositionSize() {
+        const risk = Math.abs(this.entryPrice - this.stopLossPrice);
+        const riskAmount = (this.riskAmount !== undefined && this.riskAmount !== null && !isNaN(this.riskAmount)) ? this.riskAmount : 20;
+        if (!risk || isNaN(risk) || risk === 0) return 0;
+        return riskAmount / risk;
+    }
+
+    // НОВЫЙ: Стоимость позиции в долларах (объём * цена входа) — ориентировочный размер позиции без учёта плеча
+    getPositionValue() {
+        const size = this.getPositionSize();
+        if (!size || isNaN(size) || this.entryPrice === null || isNaN(this.entryPrice)) return 0;
+        return size * this.entryPrice;
+    }
+
+    isVisibleOnTimeframe(timeframe) {
+        return this.timeframeVisibility[timeframe] !== false;
+    }
+}
+
+class TradeLevelRenderer {
+    constructor(trade, chartManager) {
+        this._trade = trade;
+        this._chartManager = chartManager;
+        this._hitAreas = [];
+        this._pixelRatio = window.devicePixelRatio || 1;
+    }
+
+    _getPrecision() {
+        // [PERF-PAN] БЫЛО: series.options() — lightweight-charts возвращает
+        // ПОЛНЫЙ ГЛУБОКИЙ КЛОН объекта опций серии. _formatPrice() вызывается
+        // ~5 раз за отрисовку одной сделки, т.е. десятки клонов на КАЖДЫЙ кадр.
+        // СТАЛО: кэш точности в ChartManager (инвалидируется в applyPriceFormat).
+        const cm = this._chartManager;
+        try {
+            if (typeof cm.getDrawingPrecision === 'function') return cm.getDrawingPrecision();
+            if (typeof cm._getTitlePrecision === 'function') return cm._getTitlePrecision();
+        } catch (e) {}
+        // фолбэк: не чаще раза в секунду, а не на каждый кадр
+        const now = Date.now();
+        if (this._precisionFallbackAt === undefined || now - this._precisionFallbackAt > 1000) {
+            this._precisionFallbackAt = now;
+            try {
+                const series = cm.currentChartType === 'candle' ? cm.candleSeries : cm.barSeries;
+                const p = series?.options()?.priceFormat?.precision;
+                if (typeof p === 'number' && isFinite(p)) this._precisionFallback = p;
+            } catch (e) {}
+        }
+        return this._precisionFallback ?? 2;
+    }
+
+    _formatPrice(price) {
+        if (price === null || price === undefined || isNaN(price)) return '';
+        return Number(price).toFixed(this._getPrecision());
+    }
+
+    // НОВЫЙ: Форматирование объёма позиции с адаптивной точностью
+    _formatQty(qty) {
+        if (qty === null || qty === undefined || isNaN(qty)) return '0';
+        if (qty === 0) return '0';
+        const abs = Math.abs(qty);
+        let decimals;
+        if (abs < 1) decimals = 6;
+        else if (abs < 10) decimals = 4;
+        else if (abs < 1000) decimals = 2;
+        else decimals = 0;
+        let str = qty.toFixed(decimals);
+        if (str.indexOf('.') !== -1) {
+            str = str.replace(/0+$/, '').replace(/\.$/, '');
+        }
+        return str === '' || str === '-' ? '0' : str;
+    }
+
+    draw(target) {
+        this._hitAreas = [];
+        const trade = this._trade;
+        const chartManager = this._chartManager;
+        const currentKey = chartManager.getCurrentSymbolKey ? chartManager.getCurrentSymbolKey() : null;
+        if (currentKey && trade.symbolKey && trade.symbolKey !== currentKey) return;
+
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const currentTf = chartManager.currentInterval;
+            if (!trade.isVisibleOnTimeframe(currentTf)) return;
+
+            const entryY = chartManager.priceToCoordinate(trade.entryPrice);
+            const slY = chartManager.priceToCoordinate(trade.stopLossPrice);
+            const tpY = (trade.takeProfitPrice !== null && !isNaN(trade.takeProfitPrice)) ? chartManager.priceToCoordinate(trade.takeProfitPrice) : null;
+            const tp2Y = (trade.takeProfitPrice2 !== null && !isNaN(trade.takeProfitPrice2)) ? chartManager.priceToCoordinate(trade.takeProfitPrice2) : null;
+            const xCoord = chartManager.timeToCoordinate(trade.entryTime);
+
+            const mediaW = scope.mediaSize.width * scope.horizontalPixelRatio;
+            const x = (xCoord !== null ? xCoord : mediaW / (2 * scope.horizontalPixelRatio)) * scope.horizontalPixelRatio;
+            const entry = entryY !== null ? entryY * scope.verticalPixelRatio : null;
+            const sl = slY !== null ? slY * scope.verticalPixelRatio : null;
+            const tp = tpY !== null ? tpY * scope.verticalPixelRatio : null;
+            const tp2 = tp2Y !== null ? tp2Y * scope.verticalPixelRatio : null;
+
+            const isLong = trade.direction === 'long';
+            const entryColor = isLong ? '#00ff88' : '#f23645';
+            const arrowSize = 6 * scope.horizontalPixelRatio;
+
+            // НОВЫЙ: режим «Только стрелка» — не рисуем линии ТВХ/Стоп/Тейк/Тейк2,
+            // плашки с ценами, «плечи» и драг-точки. Остаётся только стрелка входа.
+            // Клик по стрелке по-прежнему выделяет сделку: её можно перетащить по
+            // времени, открыть настройки (ПКМ) и удалить. Хит-зоны невидимых линий
+            // не добавляем, чтобы курсор не «хватал» пустое место.
+            if (trade.options.arrowOnly === true) {
+                if (entry !== null) {
+                    ctx.save();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 2 * scope.horizontalPixelRatio;
+                    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+                    ctx.shadowBlur = 4;
+                    ctx.beginPath();
+                    if (isLong) {
+                        ctx.moveTo(x, entry - arrowSize);
+                        ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
+                        ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
+                    } else {
+                        ctx.moveTo(x, entry + arrowSize);
+                        ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
+                        ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = entryColor;
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                    this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade, isPoint: true });
+                }
+                return;
+            }
+
+            if (entry !== null) {
+                this._drawLine(ctx, scope, entry, entryColor, 'solid', 0.7);
+
+                ctx.save();
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2 * scope.horizontalPixelRatio;
+                ctx.shadowColor = 'rgba(0,0,0,0.7)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                if (isLong) {
+                    ctx.moveTo(x, entry - arrowSize);
+                    ctx.lineTo(x - arrowSize, entry + arrowSize * 0.5);
+                    ctx.lineTo(x + arrowSize, entry + arrowSize * 0.5);
+                } else {
+                    ctx.moveTo(x, entry + arrowSize);
+                    ctx.lineTo(x - arrowSize, entry - arrowSize * 0.5);
+                    ctx.lineTo(x + arrowSize, entry - arrowSize * 0.5);
+                }
+                ctx.closePath();
+                ctx.fillStyle = entryColor;
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+
+                this._drawLabel(ctx, scope, `ТВХ ${this._formatPrice(trade.entryPrice)}`, entry, entryColor);
+
+                // НОВЫЙ: Отдельная плашка с объёмом позиции (в монетах и в $), появляется только при наведении на ТВХ
+                if (trade.showVolumeLabel) {
+                    const posSize = (typeof trade.getPositionSize === 'function') ? trade.getPositionSize() : 0;
+                    const posValue = (typeof trade.getPositionValue === 'function') ? trade.getPositionValue() : 0;
+                    if (posSize > 0 && isFinite(posSize) && isFinite(posValue)) {
+                        const coinSymbol = (trade.symbol || '').replace(/(USDT|BUSD|USDC|USD)$/i, '');
+                        const qtyStr = this._formatQty(posSize);
+                        const volText = coinSymbol
+                            ? `Объём: ${qtyStr} ${coinSymbol} (~$${posValue.toFixed(2)})`
+                            : `Объём: ${qtyStr} (~$${posValue.toFixed(2)})`;
+                        const fontSize = 10 * scope.horizontalPixelRatio;
+                        const padding = 6 * scope.horizontalPixelRatio;
+                        const labelHeight = fontSize + padding * 2;
+                        const gap = 4 * scope.horizontalPixelRatio;
+                        const volY = entry + labelHeight + gap;
+                        this._drawLabel(ctx, scope, volText, volY, '#4A90E2');
+                    }
+                }
+            }
+
+            const riskAbs = Math.abs(trade.entryPrice - trade.stopLossPrice);
+            const riskPercent = trade.entryPrice !== 0 ? (riskAbs / trade.entryPrice) * 100 : 0;
+            const rewardPercent = riskPercent * trade.riskRewardRatio;
+            const rewardPercent2 = riskPercent * (trade.riskRewardRatio2 || 5);
+
+            if (sl !== null) {
+                this._drawLine(ctx, scope, sl, trade.options.slColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `Стоп ${this._formatPrice(trade.stopLossPrice)} (${riskPercent.toFixed(2)}%)`, sl, trade.options.slColor);
+            }
+
+            if (tp !== null) {
+                this._drawLine(ctx, scope, tp, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `Тейк ${this._formatPrice(trade.takeProfitPrice)} (1:${trade.riskRewardRatio.toFixed(2)} | ${rewardPercent.toFixed(2)}%)`, tp, trade.options.tpColor);
+            }
+
+            // НОВЫЙ: Отрисовка второго тейка (только если включен в настройках)
+            if (tp2 !== null && trade.options.showTP2 !== false) {
+                this._drawLine(ctx, scope, tp2, trade.options.tpColor, 'dashed', 0.7);
+                this._drawLabel(ctx, scope, `Тейк 2 ${this._formatPrice(trade.takeProfitPrice2)} (1:${(trade.riskRewardRatio2 || 5).toFixed(2)} | ${rewardPercent2.toFixed(2)}%)`, tp2, trade.options.tpColor);
+            }
+
+            if (trade.selected && trade.options.showPlechi && entry !== null) {
+                ctx.save();
+                ctx.setLineDash([4, 4]);
+                ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+                ctx.globalAlpha = 0.3;
+                if (sl !== null) { ctx.strokeStyle = trade.options.slColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, sl); ctx.stroke(); }
+                if (tp !== null) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp); ctx.stroke(); }
+                if (tp2 !== null && trade.options.showTP2 !== false) { ctx.strokeStyle = trade.options.tpColor; ctx.beginPath(); ctx.moveTo(x, entry); ctx.lineTo(x, tp2); ctx.stroke(); }
+                ctx.restore();
+            }
+
+            if (trade.showDragPoints) {
+                if (entry !== null) this._drawDragPoint(ctx, scope, x, entry, entryColor);
+                if (sl !== null) this._drawDragPoint(ctx, scope, x, sl, trade.options.slColor);
+                if (tp !== null) this._drawDragPoint(ctx, scope, x, tp, trade.options.tpColor);
+                if (tp2 !== null && trade.options.showTP2 !== false) this._drawDragPoint(ctx, scope, x, tp2, trade.options.tpColor);
+            }
+
+            const hitBuffer = 8 * scope.horizontalPixelRatio;
+
+            if (entry !== null) {
+                this._hitAreas.push({ type: 'entry', x, y: entry, radius: arrowSize * 1.5, trade, isPoint: true });
+                this._hitAreas.push({ type: 'entry-line', x1: 0, x2: mediaW, y: entry, buffer: hitBuffer, trade });
+            }
+            if (sl !== null) {
+                this._hitAreas.push({ type: 'sl', x1: 0, x2: mediaW, y: sl, buffer: hitBuffer, trade });
+            }
+            if (tp !== null) {
+                this._hitAreas.push({ type: 'tp', x1: 0, x2: mediaW, y: tp, buffer: hitBuffer, trade });
+            }
+            // НОВЫЙ: Хит-зона для второго тейка (только если включен)
+            if (tp2 !== null && trade.options.showTP2 !== false) {
+                this._hitAreas.push({ type: 'tp2', x1: 0, x2: mediaW, y: tp2, buffer: hitBuffer, trade });
+            }
+        });
+    }
+
+    _drawLine(ctx, scope, y, color, style, opacity) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = opacity;
+        ctx.lineWidth = 1 * scope.horizontalPixelRatio;
+        ctx.setLineDash(style === 'dashed' ? [6, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(scope.mediaSize.width * scope.horizontalPixelRatio, y);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    _drawLabel(ctx, scope, text, y, color) {
+        let vpSpriteDone = false;
+        if (window.VP_SPRITES !== false) {
+            try {
+
+        const hpr = scope.horizontalPixelRatio;
+        const spriteKey = `trade|${text}|${color}|${hpr}`;
+        const sprite = DrawingLabelSprites.get(spriteKey, () => {
+            const fontSize = 10 * hpr;
+            const padding = 6 * hpr;
+            const meas = document.createElement('canvas').getContext('2d');
+            meas.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+            const labelWidth = meas.measureText(text).width + padding * 2;
+            const labelHeight = fontSize + padding * 2;
+            const pad = 8;
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.ceil(labelWidth + pad * 2);
+            canvas.height = Math.ceil(labelHeight + pad * 2);
+            const g = canvas.getContext('2d');
+            g.fillStyle = 'rgba(20, 20, 20, 0.85)';
+            g.shadowBlur = 4;
+            g.shadowColor = 'rgba(0,0,0,0.5)';
+            g.beginPath();
+            this._roundRect(g, pad, pad, labelWidth, labelHeight, 4 * hpr);
+            g.fill();
+            g.shadowBlur = 0;
+            g.fillStyle = color;
+            g.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+            g.textAlign = 'right';
+            g.textBaseline = 'middle';
+            g.fillText(text, pad + labelWidth - padding, pad + labelHeight / 2);
+            return { canvas, labelWidth, labelHeight, pad };
+        });
+        if (sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0) {
+            const labelX = scope.mediaSize.width * hpr - sprite.labelWidth - 5 * hpr;
+            const labelY = y - sprite.labelHeight / 2;
+            ctx.drawImage(sprite.canvas, labelX - sprite.pad, labelY - sprite.pad);
+            return;
+        }
+                vpSpriteDone = true;
+            } catch (e) { window.__vpSpriteError(e); }
+        }
+        if (!vpSpriteDone) {
+            window.VP_SPRITE_STATS.fallback += 1;
+            ctx.save();
+            const fontSize = 10 * scope.horizontalPixelRatio;
+            ctx.font = `${fontSize}px 'Inter', Arial, sans-serif`;
+            const metrics = ctx.measureText(text);
+            const padding = 6 * scope.horizontalPixelRatio;
+            const labelWidth = metrics.width + padding * 2;
+            const labelHeight = fontSize + padding * 2;
+            const labelX = scope.mediaSize.width * scope.horizontalPixelRatio - labelWidth - 5 * scope.horizontalPixelRatio;
+            const labelY = y - labelHeight / 2;
+            ctx.fillStyle = 'rgba(20, 20, 20, 0.85)';
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.beginPath();
+            this._roundRect(ctx, labelX, labelY, labelWidth, labelHeight, 4 * scope.horizontalPixelRatio);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, labelX + labelWidth - padding, labelY + labelHeight / 2);
+            ctx.restore();
+        }
+    }
+
+    _drawDragPoint(ctx, scope, x, y, color) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(x, y, 6 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillStyle = color;
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(x, y, 4 * scope.horizontalPixelRatio, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    _roundRect(ctx, x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
+
+    hitTest(x, y) {
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        for (const area of this._hitAreas) {
+            if (area.type === 'entry' && area.isPoint) {
+                const dx = x - area.x;
+                const dy = y - area.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < area.radius && distance < bestDistance) {
+                    bestHit = { type: area.type, trade: area.trade, distance };
+                    bestDistance = distance;
+                    if (bestDistance === 0) return bestHit;
+                }
+            }
+        }
+
+        for (const area of this._hitAreas) {
+            if (area.isPoint) continue;
+            if (x >= area.x1 && x <= area.x2) {
+                const distance = Math.abs(y - area.y);
+                if (distance < area.buffer && distance < bestDistance) {
+                    bestHit = { type: area.type, trade: area.trade, distance };
+                    bestDistance = distance;
+                    if (bestDistance === 0) return bestHit;
+                }
+            }
+        }
+        return bestHit;
+    }
+}
+
+class TradeLevelPaneView {
+    constructor(trade, chartManager) {
+        this._trade = trade;
+        this._chartManager = chartManager;
+        this._renderer = new TradeLevelRenderer(trade, chartManager);
+    }
+    renderer() { return this._renderer; }
+    zOrder() { return 'top'; }
+}
+
+class TradeLevelPrimitive {
+    constructor(trade, chartManager) {
+        this._trade = trade;
+        this._chartManager = chartManager;
+        this._paneView = new TradeLevelPaneView(trade, chartManager);
+        this._requestUpdate = null;
+    }
+    paneViews() { return [this._paneView]; }
+    attached({ chart, series, requestUpdate }) {
+        this._requestUpdate = requestUpdate;
+        this._syncTime();
+    }
+    updateAllViews() {
+        // [PERF-PAN] без requestUpdate() — значение используется в этом же кадре
+        this._syncTime();
+    }
+    _syncTime() {
+        // [PERF-PAN] БЫЛО: линейный скан всего chartData (до 12 000 свечей)
+        // на КАЖДОМ кадре и на КАЖДУЮ сделку. При 20 сделках на 1m —
+        // ~240 000 итераций/кадр только на привязку времени.
+        const cm = this._chartManager;
+        const chartData = cm.chartData;
+        if (!chartData || chartData.length === 0) return;
+        const anchor = this._trade.anchorTime ?? this._trade.entryTime;
+        const t = (typeof cm.findNearestCandleTime === 'function')
+            ? cm.findNearestCandleTime(anchor)
+            : null;
+        if (typeof t === 'number' && isFinite(t)) this._trade.entryTime = t;
+    }
+    getTrade() { return this._trade; }
+    requestRedraw() { if (this._requestUpdate) this._requestUpdate(); }
+}
+
+class TradeLevelManager {
+    constructor(chartManager) {
+        this._trades = [];
+        this._chartManager = chartManager;
+        this._selectedTrade = null;
+        this._hoveredTrade = null;
+        this._isDrawingMode = false;
+        this._potentialDrag = null;
+        this._isDragging = false;
+        this._dragTrade = null;
+        this._dragType = null;
+        this._dragStartY = 0;
+        this._dragStartPrice = 0;
+        this._dragThreshold = 4;
+        this._dragItem = null;
+
+        this._drawingEntry = null;
+        this._isWaitingForSL = false;
+        this._pixelRatio = window.devicePixelRatio || 1;
+        this._magnetEnabled = true;
+        this._magnetPriceThresholdPx = 12;
+        this._selectedDirection = 'long';
+        this._editingTrade = null;
+        this._tpManuallySet = false;
+        this._pendingTradeTime = null;
+        this._lastMouseClientX = 0;
+        this._lastMouseClientY = 0;
+        this._tempTrade = null;
+        this._defaultRiskAmount = 20; // НОВЫЙ: Риск на сделку по умолчанию, $
+        this._volumeHoverTrade = null; // НОВЫЙ: сделка, для которой сейчас показана плашка объёма
+        this._volumeHideTimeout = null; // НОВЫЙ: таймер отложенного скрытия плашки объёма
+        this._volumeHideDelayMs = 1000; // НОВЫЙ: задержка скрытия плашки объёма после ухода курсора
+
+        if (window.drawingLoaderCoordinator) window.drawingLoaderCoordinator.register(this, 'tradelevel');
+
+        this._setupEventListeners();
+        this._setupHotkeys();
+        this._handleGlobalMouseUp = this._handleGlobalMouseUp.bind(this);
+        window.addEventListener('mouseup', this._handleGlobalMouseUp);
+        this._pendingMouseEvent = null;
+        this._hoverRafId = null;
+        setTimeout(async () => {
+            try {
+                if (this._trades.length > 0) return;
+                if (!window.dbReady) await new Promise(r => { const c = () => window.dbReady ? r() : setTimeout(c, 50); c(); });
+                await this.loadAllTradesFromDB();
+            } catch (error) { console.error('❌ Auto-load trades failed:', error); }
+        }, 150);
+    }
+
+        _handleGlobalMouseUp() {
+        if (this._potentialDrag && !this._isDragging) this._potentialDrag = null;
+        if (this._isDragging) {
+            this._isDragging = false;
+            if (this._dragTrade) {
+                this._dragTrade.dragging = false;
+                this._saveTrades();
+                this._dragTrade = null;
+                this._dragType = null;
+                this._dragItem = null;
+                this._chartManager.chartContainer.style.cursor = 'crosshair';
+                this._requestRedraw();
+            }
+        }
+    }
+
+    _getChartPrecision() {
+        // [PERF-PAN] без series.options() (глубокий клон опций) — берём кэш
+        const cm = this._chartManager;
+        try {
+            if (typeof cm.getDrawingPrecision === 'function') return cm.getDrawingPrecision();
+            if (typeof cm._getTitlePrecision === 'function') return cm._getTitlePrecision();
+        } catch (e) {}
+        return 2;
+    }
+
+    _formatPrice(price) {
+        if (price === null || price === undefined || isNaN(price)) return '';
+        return Number(price).toFixed(this._getChartPrecision());
+    }
+
+    // НОВЫЙ: Форматирование объёма позиции с адаптивной точностью (для панели настроек)
+    _formatQty(qty) {
+        if (qty === null || qty === undefined || isNaN(qty)) return '0';
+        if (qty === 0) return '0';
+        const abs = Math.abs(qty);
+        let decimals;
+        if (abs < 1) decimals = 6;
+        else if (abs < 10) decimals = 4;
+        else if (abs < 1000) decimals = 2;
+        else decimals = 0;
+        let str = qty.toFixed(decimals);
+        if (str.indexOf('.') !== -1) {
+            str = str.replace(/0+$/, '').replace(/\.$/, '');
+        }
+        return str === '' || str === '-' ? '0' : str;
+    }
+
+    _updateStep() {
+        const entryInput = document.getElementById('tradeEntryInput');
+        const slInput = document.getElementById('tradeSLInput');
+        const tpInput = document.getElementById('tradeTPInput');
+        const precision = this._getChartPrecision();
+        const step = Math.pow(10, -precision);
+        if (entryInput) entryInput.step = step;
+        if (slInput) slInput.step = step;
+        if (tpInput) tpInput.step = step;
+    }
+
+    async loadFromData(symbolKey, tradeRecords) {
+        try {
+            const currentSymbolKey = this._getCurrentSymbolKey();
+            const isCurrentSymbol = (currentSymbolKey === symbolKey);
+            const series = isCurrentSymbol ? (this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries) : null;
+            if (isCurrentSymbol && !series) return;
+
+            const ALL_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+            const defaultVisibility = {};
+            ALL_TFS.forEach(tf => { defaultVisibility[tf] = true; });
+            const newRecordIds = new Set(tradeRecords.map(t => t.id));
+
+            if (isCurrentSymbol) {
+                const toDetach = this._trades.filter(item => item.trade.symbolKey === symbolKey && !newRecordIds.has(item.trade.id));
+                for (const item of toDetach) {
+                    try { if (item.primitive && item.series) item.series.detachPrimitive(item.primitive); } catch(e) {}
+                }
+            }
+            this._trades = this._trades.filter(item => item.trade.symbolKey !== symbolKey || newRecordIds.has(item.trade.id));
+
+            const newTrades = [];
+            for (const rec of tradeRecords) {
+                try {
+                    const existing = this._trades.find(item => item.trade.id === rec.id);
+                    if (existing) {
+                        existing.trade.entryPrice = rec.data.entryPrice;
+                        existing.trade.stopLossPrice = rec.data.stopLossPrice;
+                        existing.trade.takeProfitPrice = rec.data.takeProfitPrice;
+                        existing.trade.takeProfitPrice2 = rec.data.takeProfitPrice2; // НОВЫЙ
+                        existing.trade.direction = rec.data.direction;
+                        existing.trade.riskRewardRatio = rec.data.riskRewardRatio;
+                        existing.trade.riskRewardRatio2 = rec.data.riskRewardRatio2; // НОВЫЙ
+                        existing.trade.manualTP = rec.data.manualTP || false;
+                        existing.trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
+                        existing.trade.riskAmount = (rec.data.riskAmount !== undefined && rec.data.riskAmount !== null && !isNaN(rec.data.riskAmount)) ? rec.data.riskAmount : (existing.trade.riskAmount ?? this._defaultRiskAmount); // НОВЫЙ
+                        existing.trade.entryTime = rec.data.entryTime;
+                        existing.trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
+                        existing.trade.options = { ...existing.trade.options, ...rec.data.options }; // Обновляет showTP2 и другие опции
+                        existing.trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                        if (!existing.trade.manualTP) existing.trade.updateTP();
+                        if (isCurrentSymbol && (!existing.primitive || !existing.series || existing.series !== series)) {
+                            try {
+                                if (existing.primitive && existing.series) existing.series.detachPrimitive(existing.primitive);
+                                const primitive = new TradeLevelPrimitive(existing.trade, this._chartManager);
+                                series.attachPrimitive(primitive);
+                                existing.primitive = primitive;
+                                existing.series = series;
+                            } catch(e) { console.warn('Failed to re-attach trade:', e); }
+                        }
+                        continue;
+                    }
+                    const trade = new TradeLevel(rec.data.entryPrice, rec.data.stopLossPrice, rec.data.options);
+                    trade.id = rec.id;
+                    trade.symbolKey = rec.symbolKey;
+                    trade.takeProfitPrice = rec.data.takeProfitPrice;
+                    trade.takeProfitPrice2 = rec.data.takeProfitPrice2; // НОВЫЙ
+                    trade.direction = rec.data.direction;
+                    trade.riskRewardRatio = rec.data.riskRewardRatio;
+                    trade.riskRewardRatio2 = rec.data.riskRewardRatio2; // НОВЫЙ
+                    trade.manualTP = rec.data.manualTP || false;
+                    trade.manualTP2 = rec.data.manualTP2 || false; // НОВЫЙ
+                    trade.riskAmount = (rec.data.riskAmount !== undefined && rec.data.riskAmount !== null && !isNaN(rec.data.riskAmount)) ? rec.data.riskAmount : this._defaultRiskAmount; // НОВЫЙ
+                    trade.entryTime = rec.data.entryTime;
+                    trade.anchorTime = rec.data.anchorTime ?? rec.data.entryTime;
+                    trade.timeframeVisibility = { ...defaultVisibility, ...(rec.data.timeframeVisibility || {}) };
+                    trade.symbol = rec.data.symbol;
+                    trade.exchange = rec.data.exchange || 'binance';
+                    trade.marketType = rec.data.marketType || 'futures';
+                    if (!trade.manualTP) trade.updateTP();
+
+                    if (isCurrentSymbol) {
+                        const primitive = new TradeLevelPrimitive(trade, this._chartManager);
+                        try { series.attachPrimitive(primitive); newTrades.push({ trade, primitive, series }); } catch(e) { newTrades.push({ trade, primitive: null, series: null }); }
+                    } else {
+                        newTrades.push({ trade, primitive: null, series: null });
+                    }
+                } catch (e) { console.warn('Failed to load trade:', rec.id, e); }
+            }
+            this._trades.push(...newTrades);
+            if (isCurrentSymbol) this._requestRedraw();
+        } catch (error) { console.error('❌ loadFromData failed:', error); }
+    }
+
+    async loadTrades() {
+        const key = this._getCurrentSymbolKey();
+        if (window.drawingLoaderCoordinator) await window.drawingLoaderCoordinator.loadAllForSymbol(key);
+    }
+
+    async _saveTrades() {
+        if (!window.db) return;
+        const promises = this._trades.map(item => {
+            const trade = item.trade;
+            return window.db.put('drawings', {
+                id: trade.id, type: 'tradelevel', symbolKey: trade.symbolKey || this._getCurrentSymbolKey(),
+                data: {
+                    entryPrice: trade.entryPrice, stopLossPrice: trade.stopLossPrice, takeProfitPrice: trade.takeProfitPrice, takeProfitPrice2: trade.takeProfitPrice2, // НОВЫЙ
+                    direction: trade.direction, riskRewardRatio: trade.riskRewardRatio, riskRewardRatio2: trade.riskRewardRatio2, manualTP: trade.manualTP, manualTP2: trade.manualTP2, // НОВЫЙ
+                    riskAmount: trade.riskAmount, // НОВЫЙ: сохраняем риск на сделку ($)
+                    entryTime: trade.entryTime, anchorTime: trade.anchorTime ?? trade.entryTime,
+                    options: trade.options, // Содержит showTP2
+                    timeframeVisibility: trade.timeframeVisibility,
+                    symbol: trade.symbol, exchange: trade.exchange, marketType: trade.marketType
+                }
+            }).catch(e => console.error(`❌ Save trade error (${trade.id}):`, e));
+        });
+        await Promise.allSettled(promises);
+    }
+
+    async loadAllTradesFromDB() {
+        try {
+            if (!window.db) return;
+            const allRecords = await window.db.getAll('drawings');
+            if (!allRecords || allRecords.length === 0) return;
+            const tradesBySymbol = {};
+            for (const record of allRecords) {
+                if (record.type !== 'tradelevel') continue;
+                const key = record.symbolKey || `${record.data.symbol}:${record.data.exchange}:${record.data.marketType}`;
+                if (!tradesBySymbol[key]) tradesBySymbol[key] = [];
+                tradesBySymbol[key].push(record);
+            }
+            for (const [symbolKey, records] of Object.entries(tradesBySymbol)) {
+                await this.loadFromData(symbolKey, records);
+            }
+        } catch (error) { console.error('❌ loadAllTradesFromDB failed:', error); }
+    }
+
+    createTrade(entryPrice, stopLossPrice, options = {}) {
+        const rawSymbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const cleanSymbol = rawSymbol.toUpperCase().replace(/[^A-Z0-9\u3400-\u4DBF\u4E00-\u9FFF]/g, '');
+        const exchange = (this._chartManager.currentExchange || 'binance').toLowerCase();
+        const marketType = (this._chartManager.currentMarketType || 'futures').toLowerCase();
+        const trade = new TradeLevel(entryPrice, stopLossPrice, {
+            riskAmount: this._defaultRiskAmount, // НОВЫЙ: значение по умолчанию, может быть переопределено options ниже
+            ...options,
+            time: options.time || Date.now() / 1000, symbolKey: `${cleanSymbol}:${exchange}:${marketType}`, symbol: cleanSymbol, exchange, marketType
+        });
+        if (trade.takeProfitPrice === null || isNaN(trade.takeProfitPrice)) trade.updateTP();
+        const series = this._chartManager.currentChartType === 'candle' ? this._chartManager.candleSeries : this._chartManager.barSeries;
+        const primitive = new TradeLevelPrimitive(trade, this._chartManager);
+        series.attachPrimitive(primitive);
+        this._trades.push({ trade, primitive, series });
+        this._saveTrades();
+        this._requestRedraw();
+        return trade;
+    }
+
+    deleteTrade(tradeId) {
+        const index = this._trades.findIndex(t => t.trade.id === tradeId);
+        if (index === -1) return false;
+        const { trade, primitive, series } = this._trades[index];
+        if (window.db) window.db.delete('drawings', tradeId).catch(e => console.warn(e));
+        if (primitive && series) { try { series.detachPrimitive(primitive); } catch(e) {} }
+        this._trades.splice(index, 1);
+        if (this._selectedTrade?.id === tradeId) this._selectedTrade = null;
+        if (this._dragTrade?.id === tradeId) this._dragTrade = null;
+        this._saveTrades();
+        this._requestRedraw();
+        return true;
+    }
+
+    deleteAllTrades() {
+        const currentKey = this._getCurrentSymbolKey();
+        const toDelete = this._trades.filter(t => t.trade.symbolKey === currentKey);
+        for (const item of toDelete) {
+            if (window.db) window.db.delete('drawings', item.trade.id).catch(e => console.warn(e));
+            if (item.primitive && item.series) { try { item.series.detachPrimitive(item.primitive); } catch(e) {} }
+        }
+        this._trades = this._trades.filter(t => t.trade.symbolKey !== currentKey);
+        this._selectedTrade = null;
+        this._dragTrade = null;
+        this._saveTrades();
+        this._requestRedraw();
+    }
+
+    setDrawingMode(enabled) {
+        this._isDrawingMode = enabled;
+        const btn = document.getElementById('toolTradeLevel');
+        if (btn) {
+            if (enabled) { btn.style.background = '#4A90E2'; btn.style.color = '#FFFFFF'; btn.classList.add('active'); }
+            else { btn.style.background = ''; btn.style.color = ''; btn.classList.remove('active'); }
+        }
+        if (!enabled) {
+            this._drawingEntry = null;
+            this._isWaitingForSL = false;
+            this._editingTrade = null;
+            this._pendingTradeTime = null;
+            const panel = document.getElementById('tradeCreatePanel');
+            if (panel) panel.style.display = 'none';
+            if (this._atrController) this._atrController.onPanelClose(); // НОВЫЙ
+        }
+    }
+
+    setMagnetEnabled(enabled) { this._magnetEnabled = enabled; }
+
+    // НОВЫЙ: Показать плашку объёма для сделки немедленно (отменяет отложенное скрытие)
+    _showVolumeLabelFor(trade) {
+        if (this._volumeHideTimeout) {
+            clearTimeout(this._volumeHideTimeout);
+            this._volumeHideTimeout = null;
+        }
+        if (this._volumeHoverTrade && this._volumeHoverTrade !== trade) {
+            this._volumeHoverTrade.showVolumeLabel = false;
+        }
+        this._volumeHoverTrade = trade;
+        if (!trade.showVolumeLabel) {
+            trade.showVolumeLabel = true;
+            this._requestRedraw();
+        }
+    }
+
+    // НОВЫЙ: Запланировать скрытие плашки объёма через 1 секунду после ухода курсора с ТВХ
+    _scheduleHideVolumeLabel() {
+        if (!this._volumeHoverTrade || this._volumeHideTimeout) return;
+        const tradeToHide = this._volumeHoverTrade;
+        this._volumeHideTimeout = setTimeout(() => {
+            tradeToHide.showVolumeLabel = false;
+            this._volumeHideTimeout = null;
+            if (this._volumeHoverTrade === tradeToHide) this._volumeHoverTrade = null;
+            this._requestRedraw();
+        }, this._volumeHideDelayMs);
+    }
+
+    hitTest(x, y) {
+        if (this._selectedTrade) {
+            const item = this._trades.find(t => t.trade === this._selectedTrade);
+            if (item && item.primitive) {
+                try {
+                    const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                    if (hit) return hit;
+                } catch (e) {}
+            }
+        }
+
+        let bestHit = null;
+        let bestDistance = Infinity;
+
+        for (let i = this._trades.length - 1; i >= 0; i--) {
+            const item = this._trades[i];
+            if (item.trade === this._selectedTrade) continue;
+            if (!item.primitive) continue;
+
+            try {
+                const hit = item.primitive._paneView._renderer.hitTest(x, y);
+                if (hit && hit.distance !== undefined) {
+                    if (hit.distance < bestDistance - 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    } else if (hit.distance <= bestDistance + 2) {
+                        bestHit = hit;
+                        bestDistance = hit.distance;
+                    }
+                }
+            } catch (e) {}
+        }
+        return bestHit;
+    }
+
+          _setupEventListeners() {
+        const container = this._chartManager.chartContainer;
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('#tradeCreatePanel') || e.target.closest('#tradeSettingsPanel')) return;
+            const tradeMenu = document.getElementById('tradeContextMenu');
+            if (tradeMenu && tradeMenu.style.display === 'flex') {
+                const menuRect = tradeMenu.getBoundingClientRect();
+                if (e.clientX >= menuRect.left && e.clientX <= menuRect.right && e.clientY >= menuRect.top && e.clientY <= menuRect.bottom) return;
+            }
+            const rect = container.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * this._pixelRatio;
+            const y = (e.clientY - rect.top) * this._pixelRatio;
+            if (this._isDrawingMode) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                this._handleDrawingClick(e);
+                return;
+            }
+            const hit = this.hitTest(x, y);
+            if (hit) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this._selectedTrade && this._selectedTrade !== hit.trade) {
+                    this._selectedTrade.selected = false;
+                    this._selectedTrade.showDragPoints = false;
+                }
+                hit.trade.selected = true;
+                hit.trade.showDragPoints = true;
+                this._selectedTrade = hit.trade;
+                this._chartManager.lockChartScrollForDrawing?.();   // [DRAW-DRAG] взяли сделку — график замер (как в TradingView)
+                this._potentialDrag = { trade: hit.trade, type: hit.type, startX: x, startY: y, startEntry: hit.trade.entryPrice, startSL: hit.trade.stopLossPrice, startTP: hit.trade.takeProfitPrice, startTP2: hit.trade.takeProfitPrice2, startTime: hit.trade.entryTime };
+                this._requestRedraw();
+            } else {
+                if (this._selectedTrade) {
+                    this._selectedTrade.selected = false;
+                    this._selectedTrade.showDragPoints = false;
+                    this._selectedTrade = null;
+                    this._requestRedraw();
+                }
+                if (tradeMenu) tradeMenu.style.display = 'none';
+            }
+        });
+
+        // [ШАГ 2] mousemove через «воротник»: fast path для рисования SL и drag,
+        // guard скролла для hover, RAF-троттлинг для hitTest и плашки объёма.
+        container.addEventListener('mousemove', (e) => {
+            // Fast path 1: рисование стоп-лосса — превью должно идти за мышью мгновенно
+            if (this._isDrawingMode && this._isWaitingForSL && this._tempTrade && this._drawingEntry) {
+                this._processMouseMove(e);
+                return;
+            }
+
+            // Fast path 2: начало drag / сам drag
+            if (this._potentialDrag || this._isDragging) {
+                this._processMouseMove(e);
+                return;
+            }
+
+            // Slow path: hover. Во время скролла hitTest не нужен
+            if ((this._chartManager._isScrolling || this._chartManager._isScrollingFast) && !this._potentialDrag && !this._isDragging) {   // [DRAW-DRAG] свой драг не глушим
+                if (this._hoveredTrade) {
+                    this._hoveredTrade.hovered = false;
+                    this._hoveredTrade = null;
+                    this._requestRedraw();
+                }
+                return;
+            }
+
+            // RAF-троттлинг
+            this._pendingMouseEvent = e;
+            if (this._hoverRafId) return;
+            this._hoverRafId = requestAnimationFrame(() => {
+                this._hoverRafId = null;
+                this._processMouseMove(this._pendingMouseEvent);
+            });
+        });
+
+        container.addEventListener('mouseup', (e) => {
+            this._potentialDrag = null;
+            if (this._isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+                this._isDragging = false;
+                if (this._dragTrade) {
+                    this._dragTrade.dragging = false;
+                    this._saveTrades();
+                    this._dragTrade = null;
+                    this._dragType = null;
+                    this._dragItem = null;
+                    container.style.cursor = 'crosshair';
+                    this._requestRedraw();
+                }
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            // [ШАГ 2] Сброс отложенного RAF и события
+            if (this._hoverRafId) {
+                cancelAnimationFrame(this._hoverRafId);
+                this._hoverRafId = null;
+            }
+            this._pendingMouseEvent = null;
+
+            if (this._hoveredTrade) {
+                this._hoveredTrade.hovered = false;
+                this._hoveredTrade = null;
+                this._requestRedraw();
+            }
+            this._scheduleHideVolumeLabel();
+        });
+
+        container.addEventListener('contextmenu', (e) => { this._handleContextMenu(e); });
+    }
+       _processMouseMove(e) {
+        const container = this._chartManager.chartContainer;
+        this._lastMouseClientX = e.clientX;
+        this._lastMouseClientY = e.clientY;
+        // [DRAW-PERF] кэш rect — см. комментарий в остальных менеджерах
+        const nowMs = performance.now();
+        if (!this._containerRectCache || nowMs - this._containerRectCacheAt > 300) {
+            this._containerRectCache = container.getBoundingClientRect();
+            this._containerRectCacheAt = nowMs;
+        }
+        const rect = this._containerRectCache;
+        const x = (e.clientX - rect.left) * this._pixelRatio;
+        const y = (e.clientY - rect.top) * this._pixelRatio;
+
+        if (this._isDrawingMode && this._isWaitingForSL && this._tempTrade && this._drawingEntry) {
+            const cssX = e.clientX - rect.left;
+            const cssY = e.clientY - rect.top;
+            let price = this._chartManager.coordinateToPrice(cssY);
+            if (price !== null && !isNaN(price)) {
+                if (this._magnetEnabled) {
+                    const time = this._chartManager.coordinateToTime(cssX) ?? this._drawingEntry.time;
+                    const snapped = this._snapToCandle(price, time);
+                    price = snapped.price;
+                }
+                this._tempTrade.stopLossPrice = price;
+                this._tempTrade.manualTP = false;
+                this._tempTrade.manualTP2 = false;
+                this._tempTrade.update();
+                this._requestRedraw();
+            }
+            container.style.cursor = 'crosshair';
+            return;
+        }
+
+        if (this._potentialDrag && !this._isDragging) {
+            const dx = Math.abs(x - this._potentialDrag.startX);
+            const dy = Math.abs(y - this._potentialDrag.startY);
+            if (dx > this._dragThreshold || dy > this._dragThreshold) {
+                this._isDragging = true;
+                this._dragTrade = this._potentialDrag.trade;
+                this._dragType = this._potentialDrag.type;
+                this._dragStartY = this._potentialDrag.startY;
+                if (this._dragType === 'entry') this._dragStartPrice = this._potentialDrag.startEntry;
+                else if (this._dragType === 'sl') this._dragStartPrice = this._potentialDrag.startSL;
+                else if (this._dragType === 'tp') this._dragStartPrice = this._potentialDrag.startTP;
+                else if (this._dragType === 'tp2') this._dragStartPrice = this._potentialDrag.startTP2;
+                // [ШАГ 3] Запоминаем item перетаскиваемой сделки
+                this._dragItem = this._trades.find(it => it.trade === this._dragTrade) || null;
+                container.style.cursor = 'grabbing';
+            }
+        }
+        if (this._isDragging && this._dragTrade) {
+            e.preventDefault();
+            e.stopPropagation();
+            const deltaCssX = (x - this._potentialDrag.startX) / this._pixelRatio;
+            const deltaCssY = (y - this._potentialDrag.startY) / this._pixelRatio;
+            if (this._dragType === 'entry') {
+                const startTimeX = this._chartManager.timeToCoordinate(this._potentialDrag.startTime);
+                if (startTimeX !== null) {
+                    const newTime = this._chartManager.coordinateToTime(startTimeX + deltaCssX);
+                    if (newTime !== null) { this._dragTrade.entryTime = newTime; this._dragTrade.anchorTime = newTime; }
+                }
+            } else if (this._dragType === 'sl') {
+                const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startSL);
+                if (startPriceY !== null) {
+                    const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+                    if (newPrice !== null) { this._dragTrade.stopLossPrice = newPrice; this._dragTrade.manualTP = false; this._dragTrade.manualTP2 = false; }
+                }
+            } else if (this._dragType === 'tp') {
+                const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP);
+                if (startPriceY !== null) {
+                    const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+                    if (newPrice !== null) {
+                        this._dragTrade.takeProfitPrice = newPrice;
+                        this._dragTrade.manualTP = true;
+                        const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
+                        const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
+                        this._dragTrade.riskRewardRatio = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio;
+                    }
+                }
+            } else if (this._dragType === 'tp2') {
+                const startPriceY = this._chartManager.priceToCoordinate(this._potentialDrag.startTP2);
+                if (startPriceY !== null) {
+                    const newPrice = this._chartManager.coordinateToPrice(startPriceY + deltaCssY);
+                    if (newPrice !== null) {
+                        this._dragTrade.takeProfitPrice2 = newPrice;
+                        this._dragTrade.manualTP2 = true;
+                        const risk = Math.abs(this._dragTrade.entryPrice - this._dragTrade.stopLossPrice);
+                        const reward = Math.abs(newPrice - this._dragTrade.entryPrice);
+                        this._dragTrade.riskRewardRatio2 = risk > 0 ? (reward / risk) : this._dragTrade.riskRewardRatio2;
+                    }
+                }
+            }
+            this._dragTrade.update();
+            // [ШАГ 3] Перерисовываем только эту сделку
+            this._requestRedraw(this._dragItem);
+            return;
+        }
+        const hit = this.hitTest(x, y);
+        container.style.cursor = hit ? 'grab' : 'crosshair';
+        if (this._hoveredTrade !== hit?.trade) {
+            if (this._hoveredTrade) this._hoveredTrade.hovered = false;
+            this._hoveredTrade = hit?.trade || null;
+            if (this._hoveredTrade) this._hoveredTrade.hovered = true;
+            this._requestRedraw();
+        }
+
+        // Плашка объёма появляется только при наведении на линию/точку ТВХ
+        const isEntryHover = !!(hit && (hit.type === 'entry' || hit.type === 'entry-line'));
+        if (isEntryHover) {
+            this._showVolumeLabelFor(hit.trade);
+        } else {
+            this._scheduleHideVolumeLabel();
+        }
+    }
+    _handleDrawingClick(e) {
+        if (e.target.closest('#tradeCreatePanel')) return;
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const cssY = (e.clientY - rect.top);
+        const cssX = (e.clientX - rect.left);
+        let price = this._chartManager.coordinateToPrice(cssY);
+        let time = this._chartManager.coordinateToTime(cssX);
+        if (price === null || time === null) {
+            const last = this._chartManager.getLastCandle();
+            if (last) { price = last.close; time = last.time; } else return;
+        }
+        if (this._magnetEnabled) {
+            const snapped = this._snapToCandle(price, time);
+            price = snapped.price;
+            time = snapped.time;
+        }
+        if (!this._isWaitingForSL) {
+            this._drawingEntry = { price, time };
+            this._pendingTradeTime = time;
+            this._isWaitingForSL = true;
+            this._tempTrade = this.createTrade(price, price, { time: time });
+        } else {
+            const entryPrice = this._drawingEntry.price;
+            const entryTime = this._drawingEntry.time;
+            const slPrice = price;
+            if (this._tempTrade) { this.deleteTrade(this._tempTrade.id); this._tempTrade = null; }
+            const direction = slPrice > entryPrice ? 'short' : 'long';
+            this.createTrade(entryPrice, slPrice, { direction: direction, time: entryTime });
+            this._drawingEntry = null;
+            this._isWaitingForSL = false;
+            this._pendingTradeTime = null;
+            this.setDrawingMode(false);
+        }
+    }
+
+    _cancelDrawing() {
+        if (this._tempTrade) {
+            this.deleteTrade(this._tempTrade.id);
+            this._tempTrade = null;
+        }
+        this._drawingEntry = null;
+        this._isWaitingForSL = false;
+        this._pendingTradeTime = null;
+        this.setDrawingMode(false);
+    }
+
+    _handleContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = this._chartManager.chartContainer.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * this._pixelRatio;
+        const y = (e.clientY - rect.top) * this._pixelRatio;
+        const hit = this.hitTest(x, y);
+        if (!hit) {
+            const menu = document.getElementById('tradeContextMenu');
+            if (menu) menu.style.display = 'none';
+            return;
+        }
+        if (this._selectedTrade && this._selectedTrade !== hit.trade) {
+            this._selectedTrade.selected = false;
+            this._selectedTrade.showDragPoints = false;
+        }
+        hit.trade.selected = true;
+        hit.trade.showDragPoints = true;
+        this._selectedTrade = hit.trade;
+        this._requestRedraw();
+        const menu = document.getElementById('tradeContextMenu');
+        if (menu) {
+            ['drawingContextMenu', 'trendContextMenu', 'alertContextMenu', 'rulerContextMenu', 'textContextMenu'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+            menu.style.display = 'flex';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            const settingsBtn = document.getElementById('tradeContextSettingsBtn');
+            if (settingsBtn) {
+                settingsBtn.onclick = (ev) => { ev.stopPropagation(); this._showSettings(hit.trade); menu.style.display = 'none'; };
+            }
+            const deleteBtn = document.getElementById('tradeContextDeleteBtn');
+            if (deleteBtn) {
+                deleteBtn.onclick = (ev) => { ev.stopPropagation(); this.deleteTrade(hit.trade.id); menu.style.display = 'none'; };
+            }
+        }
+    }
+
+    _setupHotkeys() {
+        document.addEventListener('keydown', (e) => {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            if (e.code === 'KeyL' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                this.setDrawingMode(!this._isDrawingMode);
+            }
+            if (e.key === 'Escape' && this._isDrawingMode) {
+                e.preventDefault();
+                this._cancelDrawing();
+                return;
+            }
+            if (e.key === 'Delete' && this._selectedTrade) {
+                e.preventDefault();
+                this.deleteTrade(this._selectedTrade.id);
+                this._selectedTrade = null;
+            }
+        });
+    }
+
+    // НОВЫЙ: Создаёт (если ещё не создано) поле ввода риска на сделку ($) в панели настроек
+    _ensureRiskInput(panel) {
+        let container = panel.querySelector('#riskAmountContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'riskAmountContainer';
+            container.className = 'setting-row';
+            container.style.marginTop = '10px';
+            container.innerHTML = `
+                <label style="display:flex; flex-direction:column; gap:4px; color:#E0E0E0; font-size:12px; width:100%;">
+                    <span>Риск на сделку ($)</span>
+                    <input type="number" id="tradeRiskAmountInput" min="0" step="0.01"
+                        style="background:#2D2D2D;border:1px solid #404040;color:#fff;padding:6px 8px;border-radius:4px;width:100%;box-sizing:border-box;">
+                </label>
+            `;
+            const rrInput = panel.querySelector('#tradeRRInput');
+            const anchor = rrInput ? (rrInput.closest('.setting-row') || rrInput.parentElement) : null;
+            if (anchor && anchor.parentElement) {
+                anchor.parentElement.insertBefore(container, anchor.nextSibling);
+            } else {
+                panel.appendChild(container);
+            }
+        }
+        return container.querySelector('#tradeRiskAmountInput');
+    }
+
+    // НОВЫЙ: Создаёт (если ещё не создано) строку предпросмотра объёма позиции
+    _ensurePositionPreview(panel) {
+        let el = panel.querySelector('#tradePreviewPosition');
+        if (!el) {
+            const rewardEl = document.getElementById('tradePreviewReward');
+            const row = document.createElement('div');
+            row.id = 'tradePreviewPositionRow';
+            row.style.marginTop = '6px';
+            row.style.fontSize = '12px';
+            row.style.color = '#B0B0B0';
+            row.innerHTML = `<span>Объём позиции: </span><span id="tradePreviewPosition" style="color:#E0E0E0; font-weight:600;">—</span>`;
+            // [UI-UNIFY] Раньше строка вставлялась, только если rewardEl лежал внутри
+            // .setting-row — в разметке панели такого предка не было, и «Объём позиции»
+            // молча не появлялся вовсе (опциональная цепочка коротко замыкалась).
+            // Теперь якорь — сам блок предпросмотра (.trade-preview).
+            const anchorBox = rewardEl ? (rewardEl.closest('.trade-preview') || rewardEl.parentElement?.parentElement) : null;
+            if (anchorBox && anchorBox.parentElement) {
+                anchorBox.parentElement.insertBefore(row, anchorBox.nextSibling);
+            } else {
+                panel.appendChild(row);
+            }
+            el = row.querySelector('#tradePreviewPosition');
+        }
+        return el;
+    }
+
+    _showSettings(trade = null) {
+        const panel = document.getElementById('tradeCreatePanel');
+        if (!panel) return;
+        this._potentialDrag = null;
+        this._isDragging = false;
+        this._editingTrade = trade;
+        // [FIX-VIS] Режим СОЗДАНИЯ сделки: объекта ещё нет, и вкладка «Видимость»
+        // правила «в пустоту» — чекбоксы переключались, но новая сделка всё равно
+        // создавалась со всеми ТФ. Заводим черновик, который переносится на сделку
+        // в _handlePanelSubmit(). При редактировании черновик не нужен.
+        this._pendingTradeVisibility = trade ? null : {};
+        const entryInput = document.getElementById('tradeEntryInput');
+        const slInput = document.getElementById('tradeSLInput');
+        const tpInput = document.getElementById('tradeTPInput');
+        const rrInput = document.getElementById('tradeRRInput');
+        const createBtn = document.getElementById('tradeCreateBtn');
+
+        // НОВЫЙ: поле ввода риска на сделку ($)
+        const riskInput = this._ensureRiskInput(panel);
+        this._ensurePositionPreview(panel);
+
+        if (trade) {
+            entryInput.value = this._formatPrice(trade.entryPrice);
+            slInput.value = this._formatPrice(trade.stopLossPrice);
+            if (tpInput) tpInput.value = this._formatPrice(trade.takeProfitPrice);
+            if (rrInput) rrInput.value = trade.riskRewardRatio.toFixed(2);
+            if (riskInput) riskInput.value = ((trade.riskAmount !== undefined && trade.riskAmount !== null && !isNaN(trade.riskAmount)) ? trade.riskAmount : this._defaultRiskAmount).toFixed(2);
+            this._setDirection(trade.direction);
+            if (createBtn) createBtn.textContent = 'Сохранить';
+            this._tpManuallySet = trade.manualTP || false;
+        } else {
+            entryInput.value = '';
+            slInput.value = '';
+            if (tpInput) tpInput.value = '';
+            if (rrInput) rrInput.value = '3.00';
+            if (riskInput) riskInput.value = this._defaultRiskAmount.toFixed(2); // НОВЫЙ: по умолчанию $10
+            this._setDirection('long');
+            if (createBtn) createBtn.textContent = 'Создать';
+            this._tpManuallySet = false;
+        }
+        // [UI-UNIFY] Единый футер как у луча/тренда/алерта/линейки/текста:
+        // редактирование сделки — «Сохранить» + «Удалить», создание — «Создать» + «Отмена».
+        const tradeDeleteBtn = document.getElementById('tradeDeleteDrawing');
+        const tradeCancelBtn = document.getElementById('tradeCancelBtn');
+        if (tradeDeleteBtn) tradeDeleteBtn.style.display = trade ? '' : 'none';
+        if (tradeCancelBtn) tradeCancelBtn.style.display = trade ? 'none' : '';
+        [entryInput, slInput, tpInput, rrInput, riskInput].forEach(inp => { if (inp) inp.oncontextmenu = (e) => e.stopPropagation(); });
+        panel.onmousedown = (e) => e.stopPropagation();
+        panel.onmousemove = (e) => e.stopPropagation();
+        panel.onmouseup = (e) => e.stopPropagation();
+        panel.onclick = (e) => e.stopPropagation();
+        entryInput.oninput = () => { this._tpManuallySet = false; this._updateStep(); this._updatePreview(); };
+        slInput.oninput = () => { this._tpManuallySet = false; this._updateStep(); this._updatePreview(); };
+        if (rrInput) rrInput.oninput = () => { this._tpManuallySet = false; this._updatePreview(); };
+        if (tpInput) tpInput.oninput = () => { this._tpManuallySet = true; this._updatePreview(); };
+        if (riskInput) riskInput.oninput = () => { this._updatePreview(); }; // НОВЫЙ
+        const longBtn = document.getElementById('tradeDirectionLong');
+        const shortBtn = document.getElementById('tradeDirectionShort');
+        if (longBtn) longBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('long'); this._updatePreview(); };
+        if (shortBtn) shortBtn.onclick = (e) => { e.stopPropagation(); this._setDirection('short'); this._updatePreview(); };
+        createBtn.onclick = (e) => { e.stopPropagation(); this._handlePanelSubmit(); };
+        // [UI-UNIFY] «Удалить» — как в луче и других рисовалках: удаляет редактируемую
+        // сделку и закрывает панель. В режиме создания кнопка скрыта.
+        if (tradeDeleteBtn) tradeDeleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            const t = this._editingTrade;
+            if (t) this.deleteTrade(t.id);
+            this._closePanel();
+        };
+        document.getElementById('tradeCancelBtn').onclick = (e) => { e.stopPropagation(); this._closePanel(); };
+        document.getElementById('closeTradeCreate').onclick = (e) => { e.stopPropagation(); this._closePanel(); };
+        panel.style.display = 'block';
+        panel.style.position = 'fixed';
+        panel.style.left = '50%';
+        panel.style.top = '50%';
+        panel.style.transform = 'translate(-50%, -50%)';
+        panel.style.zIndex = '99999';
+        const container = this._chartManager.chartContainer;
+        if (container) container.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: this._lastMouseClientX || 0, clientY: this._lastMouseClientY || 0 }));
+        this._makeDraggable(panel);
+        this._updateStep();
+        this._updatePreview();
+
+        this._renderTimeframeCheckboxes(trade);
+        // [UI-UNIFY] id вкладок с префиксом trade*: раньше #stylePanel/#visibilityPanel
+        // дублировали id панели луча (getElementById всегда брал лучевую панель).
+        const stylePanel = panel.querySelector('#tradeStylePanel');
+        const visibilityPanel = panel.querySelector('#tradeVisibilityPanel');
+        const tabStyle = panel.querySelector('#tabStyle');
+        const tabVisibility = panel.querySelector('#tabVisibility');
+
+        // НОВЫЙ: вкладка «ATR» — расчёт стопа в % от ДНЕВНОГО ATR.
+        // Данные/настройки берутся из индикатора «ATR Multi» (MultiTimeframeATRIndicator),
+        // вся логика — в TradeATR.js (window.TradeATRController).
+        const atrPanel = panel.querySelector('#tradeAtrPanel');
+        const tabATR = panel.querySelector('#tabATR');
+        if (typeof window.TradeATRController === 'function') {
+            if (!this._atrController) this._atrController = new window.TradeATRController(this._chartManager);
+            if (this._atrController.bind(panel, this)) this._atrController.onPanelOpen();
+        }
+
+        // НОВЫЙ: Динамическое добавление чекбокса для скрытия второго тейка в панель стилей
+        if (stylePanel) {
+            let tp2CheckboxContainer = stylePanel.querySelector('#showTP2Container');
+            if (!tp2CheckboxContainer) {
+                tp2CheckboxContainer = document.createElement('div');
+                tp2CheckboxContainer.id = 'showTP2Container';
+                tp2CheckboxContainer.className = 'setting-row';
+                tp2CheckboxContainer.style.marginTop = '12px';
+                tp2CheckboxContainer.style.paddingTop = '12px';
+                tp2CheckboxContainer.style.borderTop = '1px solid #404040';
+                tp2CheckboxContainer.innerHTML = `
+                    <label style="display: flex; align-items: center; gap: 8px; color: #E0E0E0; cursor: pointer; font-size: 13px; user-select: none;">
+                        <input type="checkbox" id="showTP2Checkbox" style="accent-color: #4A90E2; width: 16px; height: 16px; cursor: pointer;">
+                        <span>Показывать второй тейк-профит (5:1)</span>
+                    </label>
+                `;
+                stylePanel.appendChild(tp2CheckboxContainer);
+            }
+            const showTP2Checkbox = tp2CheckboxContainer.querySelector('#showTP2Checkbox');
+            if (showTP2Checkbox) {
+                showTP2Checkbox.checked = trade ? (trade.options.showTP2 !== false) : true;
+                showTP2Checkbox.onchange = (e) => {
+                    if (trade) {
+                        trade.options.showTP2 = e.target.checked;
+                        this._requestRedraw();
+                        this._saveTrades();
+                    }
+                };
+            }
+        }
+
+        // НОВЫЙ: чекбокс «Только стрелка» — скрывает все линии (ТВХ/Стоп/Тейки)
+        // и плашки, оставляя только стрелку входа.
+        if (stylePanel) {
+            let arrowOnlyContainer = stylePanel.querySelector('#arrowOnlyContainer');
+            if (!arrowOnlyContainer) {
+                arrowOnlyContainer = document.createElement('div');
+                arrowOnlyContainer.id = 'arrowOnlyContainer';
+                arrowOnlyContainer.className = 'setting-row';
+                arrowOnlyContainer.style.marginTop = '8px';
+                arrowOnlyContainer.innerHTML = `
+                    <label style="display: flex; align-items: center; gap: 8px; color: #E0E0E0; cursor: pointer; font-size: 13px; user-select: none;">
+                        <input type="checkbox" id="arrowOnlyCheckbox" style="accent-color: #4A90E2; width: 16px; height: 16px; cursor: pointer;">
+                        <span>Только стрелка (скрыть все линии)</span>
+                    </label>
+                `;
+                stylePanel.appendChild(arrowOnlyContainer);
+            }
+            const arrowOnlyCheckbox = arrowOnlyContainer.querySelector('#arrowOnlyCheckbox');
+            if (arrowOnlyCheckbox) {
+                arrowOnlyCheckbox.checked = trade ? (trade.options.arrowOnly === true) : false;
+                arrowOnlyCheckbox.onchange = (e) => {
+                    if (trade) {
+                        trade.options.arrowOnly = e.target.checked;
+                        this._requestRedraw();
+                        this._saveTrades();
+                    }
+                };
+            }
+        }
+
+        // НОВЫЙ: три вкладки — Стиль / ATR / Видимость
+        const tradeTabs = [
+            { name: 'style',      btn: tabStyle,      body: stylePanel },
+            { name: 'atr',        btn: tabATR,        body: atrPanel },
+            { name: 'visibility', btn: tabVisibility, body: visibilityPanel }
+        ];
+        const switchTab = (tabName) => {
+            tradeTabs.forEach(t => {
+                const active = t.name === tabName;
+                // [UI-UNIFY] вкладки — общий класс .settings-tab(.active), как у луча/тренда/алерта
+                if (t.btn) t.btn.classList.toggle('active', active);
+                if (t.body) t.body.style.display = active ? 'block' : 'none';
+            });
+            if (tabName === 'atr' && this._atrController) this._atrController.onTabShow();
+        };
+        switchTab('style');
+        if (tabStyle) tabStyle.onclick = (e) => { e.stopPropagation(); switchTab('style'); };
+        if (tabATR) tabATR.onclick = (e) => { e.stopPropagation(); switchTab('atr'); };
+        if (tabVisibility) tabVisibility.onclick = (e) => { e.stopPropagation(); switchTab('visibility'); };
+
+        setTimeout(() => entryInput.focus(), 100);
+    }
+
+    _renderTimeframeCheckboxes(trade) {
+        const panel = document.getElementById('tradeCreatePanel');
+        if (!panel) return;
+        // [UI-UNIFY] id с префиксом trade*: раньше дублировали id панели луча, и
+        // <label for="tf_1m"> отсюда переключал чекбокс ЧУЖОЙ панели (первый id в DOM).
+        const container = panel.querySelector('#tradeTimeframeCheckboxList');
+        if (!container) return;
+        const tfLabels = { '1m': '1 мин', '3m': '3 мин', '5m': '5 мин', '15m': '15 мин', '30m': '30 мин', '1h': '1 час', '4h': '4 часа', '6h': '6 часов', '12h': '12 часов', '1d': '1 день', '1w': '1 неделя', '1M': '1 месяц' };
+        let html = '';
+        const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '6h', '12h', '1d', '1w', '1M'];
+        // [FIX-VIS] цель: редактируемая сделка ИЛИ черновик видимости (создание).
+        if (!trade && !this._pendingTradeVisibility) this._pendingTradeVisibility = {};
+        const visibility = trade ? trade.timeframeVisibility : this._pendingTradeVisibility;
+        const setVis = (tf, val) => {
+            if (trade) trade.timeframeVisibility[tf] = val;
+            else if (this._pendingTradeVisibility) this._pendingTradeVisibility[tf] = val;
+        };
+        const getPresetTarget = () => (trade ? trade
+            : { timeframeVisibility: this._pendingTradeVisibility || (this._pendingTradeVisibility = {}) });
+        const afterChange = () => { if (trade) { this._requestRedraw(); this._saveTrades(); } };
+        timeframes.forEach(tf => {
+            const isChecked = visibility[tf] !== false;
+            html += `<div class="timeframe-checkbox-item"><input type="checkbox" id="trade_tf_${tf}" data-timeframe="${tf}" ${isChecked ? 'checked' : ''}><label for="trade_tf_${tf}">${tfLabels[tf] || tf}</label><span class="tf-badge">${tf}</span></div>`;
+        });
+        container.innerHTML = html;
+        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.onchange = (e) => {
+                setVis(e.target.dataset.timeframe, e.target.checked);
+                afterChange();
+            };
+        });
+        const selectAllBtn = panel.querySelector('#tradeSelectAllTimeframes');
+        const deselectAllBtn = panel.querySelector('#tradeDeselectAllTimeframes');
+        const selectMinutesBtn = panel.querySelector('#tradeSelectMinutesTimeframes');
+        // [FIX-VIS] единый помощник пресетов (см. начало файла) + .onclick:
+        // работает и при редактировании сделки, и при создании (черновик).
+        if (selectAllBtn) {
+            selectAllBtn.onclick = (e) => {
+                e.stopPropagation();
+                applyTimeframePreset(container, getPresetTarget(), 'all');
+                afterChange();
+            };
+        }
+        if (deselectAllBtn) {
+            deselectAllBtn.onclick = (e) => {
+                e.stopPropagation();
+                applyTimeframePreset(container, getPresetTarget(), 'none');
+                afterChange();
+            };
+        }
+        if (selectMinutesBtn) {
+            selectMinutesBtn.onclick = (e) => {
+                e.stopPropagation();
+                applyTimeframePreset(container, getPresetTarget(), 'minutes');
+                afterChange();
+            };
+        }
+    }
+
+    _makeDraggable(panel) {
+        if (panel._draggableSetup) return;
+        panel._draggableSetup = true;
+        const header = panel.querySelector('.settings-header');
+        if (!header) return;
+        header.style.cursor = 'move';
+        header.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'A'].includes(e.target.tagName)) return;
+            e.preventDefault();
+            header.setPointerCapture(e.pointerId);
+            let startX = e.clientX, startY = e.clientY, origX = panel.offsetLeft, origY = panel.offsetTop;
+            panel.style.userSelect = 'none'; panel.style.cursor = 'grabbing'; header.style.cursor = 'grabbing';
+            const moveHandler = (ev) => { panel.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`; };
+            const upHandler = (ev) => {
+                panel.style.left = (origX + ev.clientX - startX) + 'px';
+                panel.style.top = (origY + ev.clientY - startY) + 'px';
+                panel.style.transform = ''; panel.style.userSelect = ''; panel.style.cursor = ''; header.style.cursor = 'move';
+                header.releasePointerCapture(e.pointerId);
+                header.removeEventListener('pointermove', moveHandler);
+                header.removeEventListener('pointerup', upHandler);
+            };
+            header.addEventListener('pointermove', moveHandler);
+            header.addEventListener('pointerup', upHandler);
+        });
+    }
+
+    _showPanelError(message) {
+        const rewardEl = document.getElementById('tradePreviewReward');
+        if (rewardEl) rewardEl.innerHTML = `<span style="color:#f23645; font-weight:bold;">❌ ${message}</span>`;
+        const createBtn = document.getElementById('tradeCreateBtn');
+        if (createBtn) { createBtn.disabled = true; createBtn.style.opacity = '0.5'; }
+    }
+
+    _updatePreview() {
+        const entryInput = document.getElementById('tradeEntryInput');
+        const slInput = document.getElementById('tradeSLInput');
+        const tpInput = document.getElementById('tradeTPInput');
+        const rrInput = document.getElementById('tradeRRInput');
+        const riskInput = document.getElementById('tradeRiskAmountInput'); // НОВЫЙ
+        const createBtn = document.getElementById('tradeCreateBtn');
+        const positionEl = document.getElementById('tradePreviewPosition'); // НОВЫЙ
+        const direction = this._selectedDirection || 'long';
+        const entry = parseFloat(entryInput?.value);
+        const sl = parseFloat(slInput?.value);
+        const riskAmount = riskInput ? (parseFloat(riskInput.value) || 0) : this._defaultRiskAmount; // НОВЫЙ
+
+        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) {
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = '—';
+            document.getElementById('tradePreviewReward').textContent = '—';
+            if (positionEl) positionEl.textContent = '—'; // НОВЫЙ
+            if (rrInput) rrInput.value = '3.00';
+            if (createBtn) { createBtn.disabled = false; createBtn.style.opacity = '1'; }
+            return;
+        }
+        if (direction === 'long' && sl >= entry) { this._showPanelError('Для Long SL должен быть НИЖЕ Entry'); return; }
+        if (direction === 'short' && sl <= entry) { this._showPanelError('Для Short SL должен быть ВЫШЕ Entry'); return; }
+        const risk = Math.abs(entry - sl);
+
+        // НОВЫЙ: расчёт объёма позиции по риску ($) и дистанции до стопа
+        if (positionEl) {
+            if (risk > 0 && riskAmount > 0) {
+                const positionSize = riskAmount / risk;
+                const positionValue = positionSize * entry;
+                positionEl.textContent = `${this._formatQty(positionSize)} (~$${positionValue.toFixed(2)})`;
+            } else {
+                positionEl.textContent = '—';
+            }
+        }
+
+        const tpValue = tpInput ? tpInput.value.trim() : '';
+        const tp = tpValue !== '' ? parseFloat(tpValue) : null;
+        let rr = rrInput ? (parseFloat(rrInput.value) || 2) : 2;
+        if (tp !== null && !isNaN(tp)) {
+            if (direction === 'long' && tp <= entry) { this._showPanelError('Для Long TP должен быть ВЫШЕ Entry'); return; }
+            if (direction === 'short' && tp >= entry) { this._showPanelError('Для Short TP должен быть НИЖЕ Entry'); return; }
+            const reward = Math.abs(tp - entry);
+            rr = risk > 0 ? (reward / risk) : 2;
+            if (rrInput) rrInput.value = rr.toFixed(2);
+            document.getElementById('tradePreviewTP').textContent = this._formatPrice(tp);
+            document.getElementById('tradePreviewRisk').textContent = `${this._formatPrice(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
+            document.getElementById('tradePreviewReward').textContent = `${this._formatPrice(reward)} (${((reward / entry) * 100).toFixed(2)}%) | R:R 1:${rr.toFixed(2)}`;
+        } else {
+            document.getElementById('tradePreviewTP').textContent = '—';
+            document.getElementById('tradePreviewRisk').textContent = `${this._formatPrice(risk)} (${((risk / entry) * 100).toFixed(2)}%)`;
+            document.getElementById('tradePreviewReward').textContent = '—';
+        }
+        if (createBtn) { createBtn.disabled = false; createBtn.style.opacity = '1'; }
+    }
+
+    _handlePanelSubmit() {
+        const entryInput = document.getElementById('tradeEntryInput');
+        const slInput = document.getElementById('tradeSLInput');
+        const tpInput = document.getElementById('tradeTPInput');
+        const rrInput = document.getElementById('tradeRRInput');
+        const riskInput = document.getElementById('tradeRiskAmountInput'); // НОВЫЙ
+        const entry = parseFloat(entryInput.value);
+        const sl = parseFloat(slInput.value);
+        const direction = this._selectedDirection || 'long';
+        const tpValue = tpInput ? tpInput.value.trim() : '';
+        const tp = tpValue !== '' ? parseFloat(tpValue) : null;
+        const rr = rrInput ? (parseFloat(rrInput.value) || 2) : 2;
+        const riskAmount = riskInput ? (parseFloat(riskInput.value) || 0) : this._defaultRiskAmount; // НОВЫЙ
+        if (isNaN(entry) || isNaN(sl) || entry === 0 || sl === 0) { this._showPanelError('Введите корректные цены'); return; }
+        if (entry === sl) { this._showPanelError('Цена входа и стоп-лосс не могут быть равны'); return; }
+        if (direction === 'long' && sl >= entry) { this._showPanelError('Для Long стоп-лосс должен быть НИЖЕ цены входа'); return; }
+        if (direction === 'short' && sl <= entry) { this._showPanelError('Для Short стоп-лосс должен быть ВЫШЕ цены входа'); return; }
+        if (tp !== null && !isNaN(tp)) {
+            if (direction === 'long' && tp <= entry) { this._showPanelError('Для Long тейк-профит должен быть ВЫШЕ цены входа'); return; }
+            if (direction === 'short' && tp >= entry) { this._showPanelError('Для Short тейк-профит должен быть НИЖЕ цены входа'); return; }
+        }
+        const risk = Math.abs(entry - sl);
+        if (this._editingTrade) {
+            this._editingTrade.entryPrice = entry;
+            this._editingTrade.stopLossPrice = sl;
+            this._editingTrade.direction = direction;
+            this._editingTrade.riskAmount = riskAmount; // НОВЫЙ
+            if (tp !== null && !isNaN(tp)) {
+                this._editingTrade.takeProfitPrice = tp;
+                this._editingTrade.manualTP = true;
+                this._editingTrade.riskRewardRatio = risk > 0 ? (Math.abs(tp - entry) / risk) : rr;
+                this._editingTrade.manualTP2 = false; // второй тейк следует за соотношением riskRewardRatio2
+                this._editingTrade.updateTP();        // пересчитать TP2 под новый риск
+            } else {
+                this._editingTrade.manualTP = false;
+                this._editingTrade.riskRewardRatio = rr;
+                this._editingTrade.manualTP2 = false;
+                this._editingTrade.update();
+            }
+            this._editingTrade = null;
+        } else {
+            const tradeTime = this._pendingTradeTime || Date.now() / 1000;
+            const trade = this.createTrade(entry, sl, { riskRewardRatio: rr, direction: direction, time: tradeTime, riskAmount: riskAmount }); // НОВЫЙ: riskAmount
+            // [FIX-VIS] переносим на новую сделку видимость, выбранную в панели
+            if (this._pendingTradeVisibility && Object.keys(this._pendingTradeVisibility).length) {
+                trade.timeframeVisibility = { ...trade.timeframeVisibility, ...this._pendingTradeVisibility };
+            }
+            if (tp !== null && !isNaN(tp)) {
+                trade.takeProfitPrice = tp;
+                trade.manualTP = true;
+                trade.riskRewardRatio = risk > 0 ? (Math.abs(tp - entry) / risk) : rr;
+            } else {
+                trade.manualTP = false;
+                trade.update();
+            }
+        }
+        this._pendingTradeTime = null;
+        this._closePanel();
+        this._saveTrades(); // НОВЫЙ: гарантированное сохранение обновлённого riskAmount
+    }
+
+    _closePanel() {
+        const panel = document.getElementById('tradeCreatePanel');
+        if (panel) { if (panel._destroyDrag) panel._destroyDrag(); panel.style.display = 'none'; }
+        if (this._atrController) this._atrController.onPanelClose(); // НОВЫЙ: стоп автообновления ATR
+        this._drawingEntry = null;
+        this._isWaitingForSL = false;
+        this._editingTrade = null;
+        this._pendingTradeTime = null;
+        this._pendingTradeVisibility = null;   // [FIX-VIS] сброс черновика видимости
+        this.setDrawingMode(false);
+        this._saveTrades();
+        this._requestRedraw();
+    }
+
+    _setDirection(direction) {
+        this._selectedDirection = direction;
+        const longBtn = document.getElementById('tradeDirectionLong');
+        const shortBtn = document.getElementById('tradeDirectionShort');
+        if (direction === 'long') {
+            if (longBtn) { longBtn.style.background = '#0aa037'; longBtn.style.borderColor = '#0aa037'; }
+            if (shortBtn) { shortBtn.style.background = '#2D2D2D'; shortBtn.style.borderColor = '#404040'; }
+        } else {
+            if (shortBtn) { shortBtn.style.background = '#ad1010'; shortBtn.style.borderColor = '#ad1010'; }
+            if (longBtn) { longBtn.style.background = '#2D2D2D'; longBtn.style.borderColor = '#404040'; }
+        }
+    }
+
+    _snapToCandle(price, time) {
+        const data = this._chartManager.chartData;
+        if (!data || data.length === 0) return { price, time };
+        // [PERF-PAN] O(log N) вместо линейного скана по всем свечам
+        const closest = (typeof this._chartManager.findNearestCandle === 'function'
+            ? this._chartManager.findNearestCandle(time)
+            : null) || data[0];
+        const newTime = closest.time;
+        if (this._magnetEnabled) {
+            const priceY = this._chartManager.priceToCoordinate(price);
+            const highY = this._chartManager.priceToCoordinate(closest.high);
+            const lowY = this._chartManager.priceToCoordinate(closest.low);
+            const closeY = this._chartManager.priceToCoordinate(closest.close);
+            if (priceY !== null && highY !== null) {
+                const dHigh = Math.abs(highY - priceY);
+                const dLow = Math.abs(lowY - priceY);
+                const dClose = Math.abs(closeY - priceY);
+                const minDist = Math.min(dHigh, dLow, dClose);
+                if (minDist < this._magnetPriceThresholdPx) {
+                    if (minDist === dHigh) price = closest.high;
+                    else if (minDist === dLow) price = closest.low;
+                    else price = closest.close;
+                }
+            }
+        }
+        return { price, time: newTime };
+    }
+
+    _getCurrentSymbolKey() {
+        const rawSymbol = this._chartManager.currentSymbol || 'BTCUSDT';
+        const cleanSymbol = rawSymbol.toUpperCase().replace(/[^A-Z0-9\u3400-\u4DBF\u4E00-\u9FFF]/g, '');
+        const exchange = (this._chartManager.currentExchange || 'binance').toLowerCase();
+        const marketType = (this._chartManager.currentMarketType || 'futures').toLowerCase();
+        return `${cleanSymbol}:${exchange}:${marketType}`;
+    }
+    _requestRedraw(item = null) {
+        // [ШАГ 3] Быстрый путь: перерисовать ровно одну сделку (drag)
+        if (item && item.primitive && item.primitive.requestRedraw) {
+            item.primitive.requestRedraw();
+            return;
+        }
+        // Медленный путь: перерисовать все сделки
+        for (const it of this._trades) {
+            if (it.primitive && it.primitive.requestRedraw) it.primitive.requestRedraw();
+        }
+    }
+
+    syncWithNewTimeframe() {
+        for (const item of this._trades) {
+            if (item.primitive && item.primitive.updateAllViews) item.primitive.updateAllViews();
+        }
+        this._requestRedraw();
+    }
+
+    deactivateAll() {
+        for (const item of this._trades) {
+            item.trade.selected = false;
+            item.trade.showDragPoints = false;
+        }
+        this._selectedTrade = null;
+    }
+
+    activateObject(trade) {
+        trade.selected = true;
+        trade.showDragPoints = true;
+        this._selectedTrade = trade;
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.TradeLevel = TradeLevel;
+    window.TradeLevelRenderer = TradeLevelRenderer;
+    window.TradeLevelPaneView = TradeLevelPaneView;
+    window.TradeLevelPrimitive = TradeLevelPrimitive;
+    window.TradeLevelManager = TradeLevelManager;
+}
+// ========== ГОРЯЧИЕ КЛАВИШИ ==========
+function isTyping() {
+    const a = document.activeElement;
+    return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
+}
+
+// 1. ОБРАБОТЧИК КЛАВИАТУРЫ (Клавиши)
+document.addEventListener('keydown', (e) => {
+    if (isTyping()) return;
+    
+    // Z - магнит
+    if (e.code === 'KeyZ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        const newState = !window.rayManager?._magnetEnabled;
+        if (window.rayManager) window.rayManager.setMagnetEnabled(newState);
+        if (window.trendLineManager) window.trendLineManager.setMagnetEnabled(newState);
+        if (window.rulerLineManager) window.rulerLineManager.setMagnetEnabled(newState);
+        if (window.alertLineManager) window.alertLineManager.setMagnetEnabled(newState);
+        if (window.textManager) window.textManager.setMagnetEnabled(newState);
+        const btn = document.getElementById('toolMagnet');
+        if (btn) btn.classList.toggle('magnet-active', newState);
+    }
+    
+    // U - трендовая линия
+    if (e.code === 'KeyU' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (window.trendLineManager) {
+            const ns = !window.trendLineManager._isDrawingMode;
+            window.trendLineManager.setDrawingMode(ns);
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            const btn = document.getElementById('toolTrendLine');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+    
+    // O - горизонтальный луч
+    if (e.code === 'KeyO' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        if (window.rayManager) {
+            const ns = !window.rayManager._isDrawingMode;
+            window.rayManager.setDrawingMode(ns);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            const btn = document.getElementById('toolHorizontalRay');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+    
+    // T - текст
+    if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (window.textManager) {
+            const ns = !window.textManager._isDrawingMode;
+            window.textManager.setDrawingMode(ns);
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.rulerLineManager && ns) window.rulerLineManager.setDrawingMode(false);
+            const btn = document.getElementById('toolText');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+}); // ✅ Закрывающая скобка для keydown
+
+// 2. ОБРАБОТЧИК МЫШИ (Средняя кнопка / Колесико для Линейки)
+// ✅ ИСПРАВЛЕНО: Теперь этот блок находится ОТДЕЛЬНО и регистрируется сразу при загрузке страницы
+document.addEventListener('mousedown', function(e) {
+    // Проверяем, что нажата средняя кнопка мыши (колесико)
+    if (e.button === 1) {
+        e.preventDefault(); // ✅ Обязательно: отключаем стандартный авто-скролл страницы колесиком
+        
+        if (window.rulerLineManager) {
+            const ns = !window.rulerLineManager._isDrawingMode;
+            window.rulerLineManager.setDrawingMode(ns);
+            
+            if (window.rayManager && ns) window.rayManager.setDrawingMode(false);
+            if (window.trendLineManager && ns) window.trendLineManager.setDrawingMode(false);
+            if (window.alertLineManager && ns) window.alertLineManager.setDrawingMode(false);
+            if (window.textManager && ns) window.textManager.setDrawingMode(false);
+            
+            const btn = document.getElementById('toolRuler');
+            if (btn) btn.style.background = ns ? '#4A90E2' : '';
+        }
+    }
+});
+(function() {
+    const container = document.getElementById('chart-container');
+    if (!container) return;
+
+    container.addEventListener('click', function(e) {
+        const panelIds = ['drawingSettings', 'trendSettings', 'alertSettings', 'textSettings', 'rulerSettingsPanel'];
+        panelIds.forEach(id => {
+            const panel = document.getElementById(id);
+            if (panel && panel.style.display === 'block' && !panel.contains(e.target)) {
+                panel.style.display = 'none';
+            }
+        });
+    });
+})();
+// ============================================================================
+// iPad / Touch support — превращает касания в mouse-события для всех
+// менеджеров рисования. Существующий код НЕ трогаем — только добавляем мост.
+// ============================================================================
+(function setupIPadTouchBridge() {
+    'use strict';
+
+    const CONTAINER_ID          = 'chart-container';
+    const LONG_PRESS_MS         = 550;
+    const DRAG_THRESHOLD_PX     = 4;    // после этого движение = drag рисунка
+    const DOUBLE_TAP_MS         = 350;
+    const DOUBLE_TAP_DIST_PX    = 30;
+
+    let container       = null;
+    let activePointer   = null;         // { id, startX, startY, lastX, lastY, startTime, isDragging, longPressFired, longPressTimer }
+    let lastTapTime     = 0;
+    let lastTapX        = 0;
+    let lastTapY        = 0;
+
+    // ------------------------------------------------------------------------
+    // Утилиты
+    // ------------------------------------------------------------------------
+    function getManagers() {
+        return [
+            window.rayManager,
+            window.trendLineManager,
+            window.rulerLineManager,
+            window.alertLineManager,
+            window.textManager,
+            window.tradeLevelManager,
+            window.tradeManager
+        ].filter(Boolean);
+    }
+
+    function isDrawingModeActive() {
+        return getManagers().some(m => m._isDrawingMode === true);
+    }
+
+    function isPointerOverDrawing(clientX, clientY) {
+        if (!container) return false;
+        const rect = container.getBoundingClientRect();
+        const pixelRatio = window.devicePixelRatio || 1;
+        const x = (clientX - rect.left) * pixelRatio;
+        const y = (clientY - rect.top)  * pixelRatio;
+
+        for (const m of getManagers()) {
+            if (typeof m.hitTest !== 'function') continue;
+            try {
+                const hit = m.hitTest(x, y);
+                if (hit) return true;
+            } catch (_) { /* менеджер ещё не готов — не наша проблема */ }
+        }
+        return false;
+    }
+
+    function isInteractiveElement(el) {
+        if (!el || !el.tagName) return false;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' ||
+            tag === 'button' || tag === 'a' || tag === 'label') return true;
+        if (el.isContentEditable) return true;
+        // Не перехватываем тапы внутри всплывающих панелей и меню
+        if (el.closest) {
+            if (el.closest('[id$="ContextMenu"]')) return true;
+            if (el.closest('[id$="Settings"]'))    return true;
+            if (el.closest('[id$="Panel"]'))       return true;
+            if (el.closest('.drawing-context-menu')) return true;
+            if (el.closest('.drawing-settings-panel')) return true;
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------------------
+    // Синтез mouse-событий. Диспатчим на container, чтобы события НЕ уходили
+    // вниз (Lightweight Charts слушает на своём canvas — он их не увидит,
+    // а менеджеры, слушающие на container, увидят).
+    // ------------------------------------------------------------------------
+    function fireMouse(type, touch, extra) {
+        const evt = new MouseEvent(type, Object.assign({
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            screenX: touch.screenX || touch.clientX,
+            screenY: touch.screenY || touch.clientY,
+            button: 0,
+            buttons: (type === 'mouseup' || type === 'click') ? 0 : 1
+        }, extra || {}));
+        container.dispatchEvent(evt);
+        return evt;
+    }
+
+    function fireContextMenu(x, y) {
+        const evt = new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: x, clientY: y,
+            button: 2, buttons: 2
+        });
+        container.dispatchEvent(evt);
+    }
+
+    function fireMouseLeave() {
+        // mouseleave НЕ всплывает, поэтому диспатчим прямо на container —
+        // менеджеры слушают именно его.
+        const evt = new MouseEvent('mouseleave', {
+            bubbles: false, cancelable: false, view: window
+        });
+        container.dispatchEvent(evt);
+    }
+
+    // ------------------------------------------------------------------------
+    // Обработчики touch
+    // ------------------------------------------------------------------------
+    function onTouchStart(e) {
+        if (e.touches.length !== 1) return;   // мультитач (pinch) не трогаем
+        if (activePointer) return;
+
+        const touch = e.touches[0];
+
+        if (isInteractiveElement(e.target)) return;
+        if (!isDrawingModeActive() && !isPointerOverDrawing(touch.clientX, touch.clientY)) {
+            return; // не наше касание — пусть LWC панорамирует
+        }
+
+        // Перехватываем касание: блокируем LWC и дефолтное поведение браузера
+        e.stopPropagation();
+        e.preventDefault();
+
+        activePointer = {
+            id: touch.identifier,
+            startX: touch.clientX,
+            startY: touch.clientY,
+            lastX: touch.clientX,
+            lastY: touch.clientY,
+            startTime: Date.now(),
+            isDragging: false,
+            longPressFired: false,
+            longPressTimer: null
+        };
+
+        // Долгое нажатие → contextmenu
+        activePointer.longPressTimer = setTimeout(() => {
+            if (!activePointer || activePointer.isDragging || activePointer.longPressFired) return;
+            activePointer.longPressFired = true;
+            fireContextMenu(activePointer.lastX, activePointer.lastY);
+            if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
+        }, LONG_PRESS_MS);
+    }
+
+    function onTouchMove(e) {
+        if (!activePointer) return;
+
+        let touch = null;
+        for (let i = 0; i < e.touches.length; i++) {
+            if (e.touches[i].identifier === activePointer.id) {
+                touch = e.touches[i];
+                break;
+            }
+        }
+        if (!touch) return;
+
+        activePointer.lastX = touch.clientX;
+        activePointer.lastY = touch.clientY;
+
+        const dx = touch.clientX - activePointer.startX;
+        const dy = touch.clientY - activePointer.startY;
+        const dist = Math.hypot(dx, dy);
+
+        if (activePointer.longPressTimer && dist > DRAG_THRESHOLD_PX) {
+            clearTimeout(activePointer.longPressTimer);
+            activePointer.longPressTimer = null;
+        }
+
+        if (activePointer.longPressFired) {
+            e.stopPropagation();
+            e.preventDefault();
+            return;
+        }
+
+        // Превращаем в drag после порога
+        if (!activePointer.isDragging && dist > DRAG_THRESHOLD_PX) {
+            activePointer.isDragging = true;
+            fireMouse('mousedown', {
+                clientX: activePointer.startX,
+                clientY: activePointer.startY
+            });
+        }
+
+        e.stopPropagation();
+        if (activePointer.isDragging) e.preventDefault();
+
+        fireMouse('mousemove', touch);
+    }
+
+    function onTouchEnd(e) {
+        if (!activePointer) return;
+
+        let touch = null;
+        if (e.changedTouches) {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    touch = e.changedTouches[i];
+                    break;
+                }
+            }
+        }
+
+        const state = activePointer;
+        activePointer = null;
+
+        if (state.longPressTimer) {
+            clearTimeout(state.longPressTimer);
+            state.longPressTimer = null;
+        }
+
+        e.stopPropagation();
+
+        if (!touch) return;
+
+        if (state.longPressFired) {
+            e.preventDefault();
+            return;
+        }
+
+        if (state.isDragging) {
+            e.preventDefault();
+            fireMouse('mouseup', touch);
+            fireMouseLeave();
+            return;
+        }
+
+        // Тап без движения
+        const movedDist = Math.hypot(touch.clientX - state.startX, touch.clientY - state.startY);
+        if (movedDist >= DRAG_THRESHOLD_PX) return;
+
+        e.preventDefault();
+        fireMouse('mousedown', { clientX: state.startX, clientY: state.startY });
+        fireMouse('mouseup',   touch);
+        fireMouse('click',     touch, { buttons: 0, detail: 1 });
+
+        // Двойной тап → dblclick
+        const now = Date.now();
+        const dt  = now - lastTapTime;
+        const dd  = Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY);
+
+        if (dt < DOUBLE_TAP_MS && dd < DOUBLE_TAP_DIST_PX) {
+            const dblEvt = new MouseEvent('dblclick', {
+                bubbles: true, cancelable: true, view: window,
+                clientX: touch.clientX, clientY: touch.clientY,
+                button: 0, buttons: 0, detail: 2
+            });
+            container.dispatchEvent(dblEvt);
+            lastTapTime = 0;
+        } else {
+            lastTapTime = now;
+            lastTapX = touch.clientX;
+            lastTapY = touch.clientY;
+        }
+    }
+
+    function onTouchCancel(e) {
+        if (!activePointer) return;
+
+        let touch = null;
+        if (e.changedTouches) {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    touch = e.changedTouches[i];
+                    break;
+                }
+            }
+        }
+
+        const state = activePointer;
+        activePointer = null;
+        if (state.longPressTimer) clearTimeout(state.longPressTimer);
+
+        if (state.isDragging && touch) {
+            fireMouse('mouseup', touch);
+            fireMouseLeave();
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Инициализация (с ретраем, если контейнер появится позже)
+    // ------------------------------------------------------------------------
+    function init() {
+        // Критично для iPad: отключаем скролл и зум жесты на контейнере
+        container.style.touchAction     = 'none';
+        container.style.webkitUserSelect = 'none';
+        container.style.userSelect       = 'none';
+        if ('webkitTouchCallout' in container.style) {
+            container.style.webkitTouchCallout = 'none';
+        }
+
+        // capture:true — чтобы успеть перехватить до Lightweight Charts и
+        // при необходимости остановить всплытие (stopPropagation).
+        container.addEventListener('touchstart',  onTouchStart,  { passive: false, capture: true });
+        container.addEventListener('touchmove',   onTouchMove,   { passive: false, capture: true });
+        container.addEventListener('touchend',    onTouchEnd,    { passive: false, capture: true });
+        container.addEventListener('touchcancel', onTouchCancel, { passive: false, capture: true });
+
+        // Страховка на случай, если палец ушёл за пределы контейнера во время drag
+        document.addEventListener('touchend', function (e) {
+            if (!activePointer || !e.changedTouches) return;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    onTouchEnd(e);
+                    return;
+                }
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchcancel', function (e) {
+            if (!activePointer || !e.changedTouches) return;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === activePointer.id) {
+                    onTouchCancel(e);
+                    return;
+                }
+            }
+        }, { passive: false });
+
+        // Блокируем системный pinch-zoom на контейнере
+        container.addEventListener('gesturestart',  e => e.preventDefault(), { passive: false });
+        container.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+        container.addEventListener('gestureend',    e => e.preventDefault(), { passive: false });
+
+        // Блокируем double-tap-zoom iOS (он приходит отдельно от наших dblclick)
+        let lastEnd = 0;
+        container.addEventListener('touchend', function (e) {
+            const now = Date.now();
+            if (now - lastEnd <= 300) e.preventDefault();
+            lastEnd = now;
+        }, { passive: false });
+
+        console.log('✅ [iPad] Touch-to-mouse bridge ready');
+    }
+
+    function tryInit() {
+        container = document.getElementById(CONTAINER_ID);
+        if (!container) { setTimeout(tryInit, 200); return; }
+        if (container.dataset.__touchBridgeReady === '1') return;
+        container.dataset.__touchBridgeReady = '1';
+        init();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryInit);
+    } else {
+        tryInit();
+    }
+})();
+if (typeof window !== 'undefined') {
+    window.HorizontalRayManager = HorizontalRayManager;
+    window.TrendLineManager = TrendLineManager;
+    window.RulerLineManager = RulerLineManager;
+    window.AlertLineManager = AlertLineManager;
+    window.TextManager = TextManager;
+}
